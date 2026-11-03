@@ -17,10 +17,12 @@ import numpy as np
 
 import hwave.sc as sc
 from hwave.solver import flex_bond
-from hwave.solver.so_bond import (SLOT_CONVENTION, BondSlotGeometry, SOBondCaps, SOBondPlan,
-                                  _file_records, gamma_p, plan_so_bond, slot_geometry,
-                                  so_bond_bubble, so_bond_dress, so_bond_pairing_vertex_parts,
-                                  so_bond_topology, so_bond_vertex)
+from hwave.solver.so_bond import (SLOT_CONVENTION, BondSlotGeometry, PackedArrays, SOBondCaps,
+                                  SOBondPlan, _file_records, estimate_packed_kernel_workspace_bytes,
+                                  estimate_sector_solver_bytes, gamma_p, plan_so_bond,
+                                  slot_geometry, so_bond_bubble, so_bond_dress,
+                                  so_bond_pairing_vertex_parts, so_bond_topology, so_bond_vertex,
+                                  sz_sector_map)
 from hwave.solver.so_records import compile_interaction
 from tests.so_bond_fixtures import exact, onsite_decl, production_gamma_b, rpa_spinful_gamma
 from tests.so_bond_oracles import (BASE, CELL, COMPILER_TABLES, TYPES, TYPES_OFFSITE, closed_row,
@@ -553,6 +555,310 @@ class TestMeshAndPlan(unittest.TestCase):
             q = plan_so_bond(nmat=8, nvol=5, B=3, nd=2, consumers=("vertex",), caps=NOCAP)
         self.assertIsNone(q.cap_host)
         self.assertIn(q.reason, "\n".join(cm.output))
+
+
+def _sigma_sq(B, nd):
+    """``sum_sigma n_sigma^2`` of the S_z-packed layout: ``n_0 = 2 B norb^2``,
+    ``n_{+-1} = B norb^2``."""
+    norb = nd // 2
+    n0, n1 = 2 * B * norb * norb, B * norb * norb
+    return n0 * n0 + 2 * n1 * n1
+
+
+_PACKED_WHY = "so bond layout: sz_packed (S_z conserved: no spin-flip transfer, " \
+              "no S_z-changing interaction)"
+
+
+def _packed_plan(**kw):
+    args = dict(nmat=8, nvol=8, B=3, nd=4, consumers=("pairing_static",), caps=NOCAP,
+                layout="sz_packed", layout_reason=_PACKED_WHY)
+    args.update(kw)
+    return plan_so_bond(**args)
+
+
+class TestPackedPlan(unittest.TestCase):
+    """Construction check of the admission plan in the S_z-packed layout:
+    the rows scale with ``sum_sigma n_sigma^2 = (6/16) ND^2``, the pair block
+    and the static bubble temporary do not, the layout is observed at the
+    dressing and the pairing parts, and the refusals."""
+
+    def _scaled(self, p, S):
+        nvol, nmat = p.nvol, p.nmat
+        return {"gamma_b": 16 * nvol * S, "chibar_static": 16 * nvol * S,
+                "chi_static": 16 * nvol * S, "v_bare": 16 * nvol * S, "v_fluct": 16 * nvol * S,
+                "dress_batch": 7 * 16 * p.dress_capacity * nvol * S,
+                "chibar": 16 * nmat * nvol * S, "chi": 16 * nmat * nvol * S,
+                "pairing_q_workspace": 2 * 16 * S, "vertex_batch_workspace": 2 * 16 * S}
+
+    def test_sigma_sq_is_six_sixteenths(self):
+        for B, nd in ((1, 2), (3, 4), (5, 6)):
+            ND = B * nd * nd
+            self.assertEqual(16 * _sigma_sq(B, nd), 6 * ND * ND)
+
+    def test_packed_rows(self):
+        for B, nd in ((1, 2), (3, 4), (5, 2)):
+            for consumers, keep in ((("pairing_static",), False),
+                                    (("chi_static", "chi_dynamic"), True)):
+                with self.subTest(B=B, nd=nd, consumers=consumers):
+                    kw = dict(nmat=8, nvol=8, B=B, nd=nd, consumers=consumers, caps=NOCAP,
+                              keep_chi=keep, vertex_batch="chi_dynamic" in consumers)
+                    pk = plan_so_bond(layout="sz_packed", layout_reason=_PACKED_WHY, **kw)
+                    de = plan_so_bond(**kw)
+                    S, ND = _sigma_sq(B, nd), B * nd * nd
+                    self.assertEqual((pk.layout, pk.layout_reason), ("sz_packed", _PACKED_WHY))
+                    self.assertEqual([(ph, n) for ph, n, _ in pk.rows],
+                                     [(ph, n) for ph, n, _ in de.rows])
+                    scaled_p, scaled_d = self._scaled(pk, S), self._scaled(de, ND * ND)
+                    dense_rows = {(ph, n): b for ph, n, b in de.rows}
+                    seen = set()
+                    for ph, n, b in pk.rows:
+                        if n in scaled_p:
+                            self.assertEqual(b, scaled_p[n], (ph, n))
+                            self.assertEqual(dense_rows[(ph, n)], scaled_d[n], (ph, n))
+                        else:
+                            self.assertIn(n, ("bubble_pair_block", "bubble_static_temp"))
+                            self.assertEqual(b, dense_rows[(ph, n)], (ph, n))
+                        seen.add(n)
+                    self.assertIn("bubble_pair_block", seen)
+                    self.assertLess(pk.peak_host, de.peak_host)
+
+    def test_packed_rows_cover_every_phase(self):
+        p = _packed_plan(consumers=("pairing_static", "chi_dynamic"), keep_chi=True,
+                         vertex_batch=True)
+        names = {n for _, n, _ in p.rows}
+        self.assertEqual(names, {"gamma_b", "chibar_static", "bubble_static_temp",
+                                 "bubble_pair_block", "dress_batch", "chi_static", "chibar",
+                                 "chi", "vertex_batch_workspace", "v_bare", "v_fluct",
+                                 "pairing_q_workspace"})
+        rows = {(ph, n): b for ph, n, b in p.rows}
+        self.assertEqual(rows[("chi_static", "bubble_static_temp")], 16 * 8 * 48 * 48)
+        self.assertEqual(rows[("chi_dynamic", "vertex_batch_workspace")], 2 * 16 * 864)
+        self.assertEqual(rows[("resident", "gamma_b")], 16 * 8 * 864)
+        # the resident vertex row is the allocation of the packed array
+        self.assertEqual(rows[("resident", "gamma_b")],
+                         PackedArrays.zeros(sz_sector_map(GEOM, 4), (8,)).nbytes)
+
+    def test_reason_and_layout_reason(self):
+        d = plan_so_bond(nmat=8, nvol=5, B=3, nd=2, consumers=("vertex",), caps=NOCAP)
+        self.assertEqual(d.layout_reason,
+                         "so bond layout: dense (reason: not selected by the caller)")
+        self.assertIn("; dense layout, host placement;", d.reason)
+        p = _packed_plan()
+        self.assertIn("; sz_packed layout, host placement;", p.reason)
+        forced = 'so bond layout: dense (reason: forced by so_bond_layout = "dense")'
+        f = plan_so_bond(nmat=8, nvol=5, B=3, nd=2, consumers=("vertex",), caps=NOCAP,
+                         layout="dense", layout_reason=forced)
+        self.assertEqual(f.layout_reason, forced)
+
+    def test_layout_argument_refusals(self):
+        for kw, msg in (
+                (dict(layout="Sz_packed", layout_reason=_PACKED_WHY),
+                 "plan_so_bond: layout must be 'dense' or 'sz_packed', got 'Sz_packed'"),
+                (dict(layout="sz_packed"),
+                 "plan_so_bond: layout = sz_packed needs its layout_reason (the reason line "
+                 "of the layout selection)"),
+                (dict(layout="sz_packed", layout_reason="so bond layout: dense (reason: x)"),
+                 "plan_so_bond: layout_reason must be a string starting with 'so bond layout: "
+                 "sz_packed (', got 'so bond layout: dense (reason: x)'"),
+                (dict(layout_reason=3),
+                 "plan_so_bond: layout_reason must be a string starting with 'so bond layout: "
+                 "dense (', got 3"),
+                (dict(vertex_batch=True),
+                 "plan_so_bond: vertex_batch needs the consumer chi_dynamic (the vertex batch "
+                 "reads dressed frequency batches)")):
+            with self.subTest(kw=kw):
+                args = dict(nmat=8, nvol=5, B=3, nd=2, consumers=("pairing_static",),
+                            caps=NOCAP)
+                args.update(kw)
+                with self.assertRaisesRegex(ValueError, exact(msg)):
+                    plan_so_bond(**args)
+
+    def test_layout_observed_at_dress_and_parts(self):
+        pk = _packed_plan(nvol=5, consumers=("pairing_static",))
+        de = plan_so_bond(nmat=8, nvol=5, B=3, nd=4, consumers=("pairing_static",), caps=NOCAP)
+        # the dressing and the parts observe the layout as an optional field (dense when absent)
+        de.require("so_bond_dress", nvol=5, ND=48, batch=1)
+        de.require("so_bond_dress", nvol=5, ND=48, batch=1, layout="dense")
+        pk.require("so_bond_dress", nvol=5, ND=48, batch=1, layout="sz_packed")
+        pk.require("so_bond_pairing_vertex_parts", nvol=5, ND=48, B=3, layout="sz_packed")
+        for helper, obs in (("so_bond_dress", dict(nvol=5, ND=48, batch=1)),
+                            ("so_bond_pairing_vertex_parts", dict(nvol=5, ND=48, B=3))):
+            with self.subTest(helper=helper):
+                with self.assertRaisesRegex(ValueError, exact(
+                        "{}: the admission plan has layout = sz_packed but the call has "
+                        "layout = dense ({})".format(helper, pk.reason))):
+                    pk.require(helper, **obs)
+                with self.assertRaisesRegex(ValueError, exact(
+                        "{}: the admission plan has layout = dense but the call has "
+                        "layout = sz_packed ({})".format(helper, de.reason))):
+                    de.require(helper, layout="sz_packed", **obs)
+        with self.assertRaisesRegex(ValueError, exact(
+                "SOBondPlan.require: so_bond_dress observes the fields nvol, ND, batch, "
+                "layout (optional), got ND, batch, nvol, other")):
+            de.require("so_bond_dress", nvol=5, ND=48, batch=1, other=1)
+
+    def test_packed_x_with_dense_plan_refused(self):
+        de = plan_so_bond(nmat=8, nvol=5, B=3, nd=4, consumers=("pairing_static",), caps=NOCAP)
+        pk = _packed_plan(nvol=5, consumers=("pairing_static",))
+        sm = sz_sector_map(GEOM, 4)
+        xp = PackedArrays.zeros(sm, (1, 5))
+        gb = np.zeros((5, 48, 48), dtype=np.complex128)
+        with self.assertRaisesRegex(ValueError, exact(
+                "so_bond_dress: the admission plan has layout = dense but the call has "
+                "layout = sz_packed ({})".format(de.reason))):
+            so_bond_dress(xp, gb, plan=de, l0=4, spatial_shape=(5, 1, 1))
+        with self.assertRaisesRegex(ValueError, exact(
+                "so_bond_dress: the admission plan has layout = sz_packed but the call has "
+                "layout = dense ({})".format(pk.reason))):
+            so_bond_dress(np.zeros((1, 5, 48, 48), complex), gb, plan=pk, l0=4,
+                          spatial_shape=(5, 1, 1))
+        with self.assertRaisesRegex(ValueError, exact(
+                "so_bond_pairing_vertex_parts: the admission plan has layout = sz_packed but "
+                "the call has layout = dense ({})".format(pk.reason))):
+            so_bond_pairing_vertex_parts(gb, np.zeros_like(gb), GEOM, plan=pk)
+
+    def test_vertex_batch_require(self):
+        p = plan_so_bond(nmat=8, nvol=5, B=3, nd=2, consumers=("chi_dynamic",), caps=NOCAP,
+                         vertex_batch=True)
+        self.assertEqual(dict((n, b) for _, n, b in p.rows)["vertex_batch_workspace"],
+                         2 * 16 * 12 * 12)
+        p.require("so_bond_pairing_vertex_batch", nvol=5, ND=12, B=3, layout="dense", batch=8)
+        q = plan_so_bond(nmat=8, nvol=5, B=3, nd=2, consumers=("chi_dynamic",), caps=NOCAP)
+        with self.assertRaisesRegex(ValueError, exact(
+                "so_bond_pairing_vertex_batch: the admission plan has no row "
+                "'vertex_batch_workspace' (closed consumers: vertex, chi_dynamic; {})"
+                .format(q.reason))):
+            q.require("so_bond_pairing_vertex_batch", nvol=5, ND=12, B=3, layout="dense",
+                      batch=8)
+        with self.assertRaisesRegex(ValueError, exact(
+                "so_bond_pairing_vertex_batch: a batch of 9 slices exceeds the plan's batch "
+                "capacity (dress_capacity = 8) ({})".format(p.reason))):
+            p.require("so_bond_pairing_vertex_batch", nvol=5, ND=12, B=3, layout="dense",
+                      batch=9)
+
+    def test_packed_cap_refusal(self):
+        with self.assertRaises(ValueError) as cm:
+            _packed_plan(caps=SOBondCaps(1024.0, 1e-6, None))
+        msg = str(cm.exception)
+        self.assertTrue(msg.startswith("spin-orbital bond Eliashberg needs an estimated peak"),
+                        msg)
+        self.assertIn("one store slot = 16·Nmat·nvol·Σn_σ² bytes (Σn_σ² = (6/16)·ND²) = ", msg)
+        self.assertIn("resident  gamma_b  {}".format(16 * 8 * 864), msg)
+
+
+def _solver_formula(dims, k, n_full_gap, n_sector_vec):
+    """The sector solver's estimate, written out: per sector the larger of
+    its branch (dense or ARPACK) and the null-operator row, the maximum over
+    sectors, plus the candidate and kept dense gaps, the reduced vectors and
+    the fixed call allowance."""
+    per = []
+    for d, n in zip(dims, n_sector_vec):
+        if d <= max(2 * k + 1, 20):
+            branch = 16 * 7 * d * d + 16 * 3 * n * d + 16 * 4 * d
+        else:
+            ncv = min(max(2 * k + 1, 20), d)
+            branch = (16 * (ncv * d + 3 * ncv * ncv + 14 * ncv + 3 * d)
+                      + 24 * n + 6 * 16 * n + 16 * 3 * k * (d + n))
+        null = 16 * (min(k, d) * (d + n) + n_full_gap)
+        per.append(max(branch, null))
+    return (max(per) + 16 * (k + sum(min(k, d) for d in dims)) * n_full_gap
+            + 16 * sum(min(k, d) * d for d in dims) + 16 * 1024)
+
+
+class TestSectorEstimators(unittest.TestCase):
+    """Construction check of the two memory estimators of the S_z-sector
+    eigen solve: their values equal the written-out formulas on both
+    branches and both null-operator regimes, and the argument refusals."""
+
+    def test_sector_solver_formula(self):
+        cases = []
+        for k in (1, 10):
+            for dims in ((7,), (20,), (21,), (60,), (7, 20, 21, 60), (0, 21, 3)):
+                for extra in (0, 5, 4000):
+                    nvec = tuple(2 * d + extra for d in dims)
+                    # a long gap: the null-operator row (one scattered gap) wins
+                    for pad in (3, 10 ** 6):
+                        cases.append((dims, k, sum(nvec) + pad, nvec))
+        for dims, k, nfull, nvec in cases:
+            with self.subTest(dims=dims, k=k, nvec=nvec):
+                got = estimate_sector_solver_bytes(list(dims), k, nfull, n_sector_vec=nvec)
+                self.assertIsInstance(got, int)
+                self.assertEqual(got, _solver_formula(dims, k, nfull, nvec))
+
+    def test_sector_solver_branches(self):
+        # k = 1: dim 20 is dense, 21 ARPACK (ncv = 20); k = 10: 21 dense, 60 ARPACK (ncv = 21)
+        tail = 16 * 1024
+        self.assertEqual(estimate_sector_solver_bytes([20], 1, 40, n_sector_vec=[40]),
+                         max(16 * 7 * 400 + 16 * 3 * 40 * 20 + 16 * 80, 16 * (60 + 40))
+                         + 16 * 2 * 40 + 16 * 20 + tail)
+        arp = (16 * (20 * 21 + 3 * 400 + 14 * 20 + 3 * 21) + 24 * 42 + 6 * 16 * 42
+               + 16 * 3 * (21 + 42))
+        self.assertEqual(estimate_sector_solver_bytes([21], 1, 42, n_sector_vec=[42]),
+                         max(arp, 16 * (63 + 42)) + 16 * 2 * 42 + 16 * 21 + tail)
+        self.assertEqual(estimate_sector_solver_bytes([21], 10, 42, n_sector_vec=[42]),
+                         16 * 7 * 441 + 16 * 3 * 42 * 21 + 16 * 84 + 16 * 20 * 42
+                         + 16 * 10 * 21 + tail)
+        arp = (16 * (21 * 60 + 3 * 441 + 14 * 21 + 3 * 60) + 24 * 120 + 6 * 16 * 120
+               + 16 * 30 * (60 + 120))
+        self.assertEqual(estimate_sector_solver_bytes([60], 10, 120, n_sector_vec=[120]),
+                         arp + 16 * 20 * 120 + 16 * 10 * 60 + tail)
+
+    def test_sector_solver_refusals(self):
+        name = "estimate_sector_solver_bytes"
+        for args, kw, msg in (
+                (([], 1, 4), dict(n_sector_vec=[]),
+                 "dims must be a non-empty sequence of integers >= 0, got []"),
+                (([2.0], 1, 4), dict(n_sector_vec=[4]),
+                 "dims must be a non-empty sequence of integers >= 0, got [2.0]"),
+                (([-1], 1, 4), dict(n_sector_vec=[4]),
+                 "dims must be a non-empty sequence of integers >= 0, got [-1]"),
+                (([2, 1], 1, 8), dict(n_sector_vec=[4]),
+                 "n_sector_vec must be a sequence of 2 integers >= 0 (one per dims entry), "
+                 "got [4]"),
+                (([2], 1, 8), dict(n_sector_vec=[True]),
+                 "n_sector_vec must be a sequence of 1 integers >= 0 (one per dims entry), "
+                 "got [True]"),
+                (([3], 1, 8), dict(n_sector_vec=[5]),
+                 "dims[0] = 3 exceeds n_sector_vec[0] / 2 = 5 / 2"),
+                (([2], 0, 8), dict(n_sector_vec=[4]), "k must be an integer >= 1, got 0"),
+                (([2], True, 8), dict(n_sector_vec=[4]), "k must be an integer >= 1, got True"),
+                (([2], 1, 3), dict(n_sector_vec=[4]),
+                 "n_full_gap must be an integer >= sum(n_sector_vec) = 4, got 3"),
+                (([2], 1, 4.0), dict(n_sector_vec=[4]),
+                 "n_full_gap must be an integer >= sum(n_sector_vec) = 4, got 4.0")):
+            with self.subTest(msg=msg):
+                with self.assertRaisesRegex(ValueError, exact("{}: {}".format(name, msg))):
+                    estimate_sector_solver_bytes(*args, **kw)
+
+    def test_kernel_workspace_formula(self):
+        for B in (1, 3, 5):
+            for counts in ((1, 2, 1), (4, 8, 4), (9, 18, 9)):
+                for nvol, nfreq in ((1, 1), (6, 4)):
+                    with self.subTest(B=B, counts=counts, nvol=nvol, nfreq=nfreq):
+                        sq = sum(n * n for n in counts)
+                        self.assertEqual(
+                            estimate_packed_kernel_workspace_bytes(B, counts, nvol, nfreq),
+                            {"hoisted_blocks": 16 * B * B * sq * nvol * nfreq,
+                             "g2_sectors": 16 * sq * nvol * nfreq,
+                             "hoist_workspace": 16 * 6 * max(counts) ** 2 * nvol * nfreq,
+                             "g2_gather": 16 * max(counts) ** 2 * nvol * nfreq,
+                             "matvec_workspace": 16 * (max(3 + B, 6) * max(counts) * nvol
+                                                       * nfreq + 3 * 8192),
+                             "call_overhead": 16 * 1024})
+
+    def test_kernel_workspace_refusals(self):
+        name = "estimate_packed_kernel_workspace_bytes"
+        for args, msg in (
+                ((0, (1, 2, 1), 1, 1), "B must be an integer >= 1, got 0"),
+                ((1.0, (1, 2, 1), 1, 1), "B must be an integer >= 1, got 1.0"),
+                ((1, (1, 2), 1, 1), "pp_pair_counts must be three positive integers, got (1, 2)"),
+                ((1, (1, 0, 1), 1, 1),
+                 "pp_pair_counts must be three positive integers, got (1, 0, 1)"),
+                ((1, (1, 2, 1), 0, 1), "nvol must be an integer >= 1, got 0"),
+                ((1, (1, 2, 1), 1, False), "nfreq must be an integer >= 1, got False")):
+            with self.subTest(msg=msg):
+                with self.assertRaisesRegex(ValueError, exact("{}: {}".format(name, msg))):
+                    estimate_packed_kernel_workspace_bytes(*args)
 
 
 if __name__ == "__main__":

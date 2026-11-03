@@ -1035,13 +1035,16 @@ def _fixture_ii_transfer():
     return tr
 
 
-def _fixture_ii_tables():
+def _fixture_ii_tables(*, pairlift=True):
     """Fixture (ii) interactions (norb_phys = 2): CoulombIntra on site, every
     other type on the NN inter-orbital rows ``X_01(+1) = v``,
-    ``X_01(-1) = 0.6 v`` with their partners (complex PairHop)."""
+    ``X_01(-1) = 0.6 v`` with their partners (complex PairHop);
+    ``pairlift=False`` drops PairLift."""
     out = {"CoulombIntra": {((0, 0, 0), (0, 0)): BASE["CoulombIntra"],
                             ((0, 0, 0), (1, 1)): 0.8 * BASE["CoulombIntra"]}}
     for t in TYPES_OFFSITE:
+        if t == "PairLift" and not pairlift:
+            continue
         out[t] = {**closed_row(1, 0, 1, BASE[t]), **closed_row(-1, 0, 1, 0.6 * BASE[t])}
     return out
 
@@ -1673,3 +1676,275 @@ UNVERSIONED_REFUSAL_TEXT = (
     "version, from the Transfer/Extern input (the run and the [file.output] key that "
     "write each archive are listed under 'Archive checks' in the hwave_sc "
     "documentation).")
+
+
+# ---------------------------------------------------------------------------
+# S_z-conserving fixtures (no spin-flip transfer, no PairLift, Zeeman 0.15)
+# ---------------------------------------------------------------------------
+
+#: L = 5, norb_phys = 1: every S_z-conserving type on NN and NNN bonds,
+#: spin-diagonal hopping, Zeeman 0.15. The same object as FIXTURE_I_SZ (the
+#: periodic five-site chain, a ring), named for the S_z-packed tests.
+FIXTURE_SZ_RING = FIXTURE_I_SZ
+
+
+def _grid_sz_transfer(*, spin_symmetric=False):
+    """norb_phys = 1 on the 5x3 grid, spin diagonal: on-site ``0.1`` and a
+    random complex hopping per spin (seed 13, times 1/2) on the x and y
+    bonds, with its partner at ``-R``. ``spin_symmetric=True`` puts the
+    spin-up hopping on both spins (the same draws)."""
+    rng = np.random.default_rng(13)
+    tr = {((0, 0, 0), (s, s)): 0.1 for s in (0, 1)}
+    for R in GRID_BONDS[:2]:
+        t = 0.5 * (rng.normal(size=2) + 1j * rng.normal(size=2))
+        if spin_symmetric:
+            t = np.array([t[0], t[0]])
+        for s in (0, 1):
+            tr[(R, (s, s))] = t[s]
+            tr[(_neg(R), (s, s))] = np.conj(t[s])
+    return tr
+
+
+def _grid_sz_tables():
+    """CoulombIntra on site; every other S_z-conserving type on the x bond
+    (``v``) and the y bond (``0.8 v``), Hermitian-closed."""
+    out = {"CoulombIntra": {((0, 0, 0), (0, 0)): BASE["CoulombIntra"]}}
+    for t in TYPES_OFFSITE:
+        if t == "PairLift":
+            continue
+        tbl = {}
+        for R, f in zip(GRID_BONDS[:2], (1.0, 0.8)):
+            tbl.update(closed_row(R, 0, 0, f * BASE[t]))
+        out[t] = tbl
+    return out
+
+
+#: the 5x3 mesh (norb_phys = 1, B = 5 channels: on site, +-x, +-y) with
+#: every S_z-conserving type, spin-diagonal hopping and Zeeman 0.15
+FIXTURE_SZ_GRID = FixtureSpec.make((5, 3, 1), 1, 2.0, 0.2, _grid_sz_transfer(),
+                                   _grid_sz_tables(), zeeman=0.15)
+
+#: the spin-diagonal inter-orbital term ``i lambda s_z`` (``s_z = +-1``) of
+#: :data:`FIXTURE_LZSZ`: ``R -> lambda`` for ``c+_{0 s}(0) c_{1 s}(R)``
+LZSZ = {(0, 0, 0): 0.25, (1, 0, 0): 0.15}
+
+
+def _lzsz_transfer():
+    """norb_phys = 2: :data:`TRANSFER_II` on both spins plus ``i lambda s_z``
+    between orbitals 0 and 1 on site and on the NN bond (:data:`LZSZ`), with
+    the Hermitian partners; no spin-flip entry."""
+    tr = {}
+
+    def add(key, v):
+        tr[key] = tr.get(key, 0.0) + v
+    for (r, a, b), t in TRANSFER_II.items():
+        for s in (0, 1):
+            add(((r, 0, 0), (2 * a + s, 2 * b + s)), t)
+    for R, lam in LZSZ.items():
+        for s, sz in ((0, 1.0), (1, -1.0)):
+            add((R, (s, 2 + s)), 1j * lam * sz)
+            add((_neg(R), (2 + s, s)), -1j * lam * sz)
+    return tr
+
+
+#: L = 5, norb_phys = 2: the orbital-angular-momentum-like ``i lambda s_z``
+#: inter-orbital hopping (on site and NN), every S_z-conserving type on the
+#: NN inter-orbital rows, Zeeman 0.15
+FIXTURE_LZSZ = FixtureSpec.make(5, 2, 2.0, 0.8, _lzsz_transfer(),
+                                _fixture_ii_tables(pairlift=False), zeeman=0.15)
+
+#: the zero-field partner of :data:`FIXTURE_SZ_GRID` with the spin-up hopping
+#: on both spins: the global spin flip is a symmetry, so it maps the pair-S_z
+#: sector +1 onto -1 and their spectra coincide (the hopping of
+#: :data:`FIXTURE_SZ_GRID` differs between the spins, so its zero-field
+#: spectra do not)
+FIXTURE_SZ_GRID_H0 = FixtureSpec.make((5, 3, 1), 1, 2.0, 0.2,
+                                      _grid_sz_transfer(spin_symmetric=True),
+                                      _grid_sz_tables())
+#: :data:`FIXTURE_SZ_GRID_H0` in the field 0.15: only the Zeeman term splits
+#: the sectors +1 and -1
+FIXTURE_SZ_GRID_SYM = FIXTURE_SZ_GRID_H0._replace(zeeman=0.15)
+
+
+def _lzsz_grid_transfer():
+    """norb_phys = 2 on the 5x3 grid: :data:`TRANSFER_II` along x on both
+    spins, its bond rows times 0.8 along y, and ``i lambda s_z`` between
+    orbitals 0 and 1 on site and on the x bond (:data:`LZSZ`), with the
+    Hermitian partners; no spin-flip entry."""
+    tr = {}
+
+    def add(key, v):
+        tr[key] = tr.get(key, 0.0) + v
+    for (r, a, b), t in TRANSFER_II.items():
+        for s in (0, 1):
+            add(((r, 0, 0), (2 * a + s, 2 * b + s)), t)
+            if r:
+                add(((0, r, 0), (2 * a + s, 2 * b + s)), 0.8 * t)
+    for R, lam in LZSZ.items():
+        for s, sz in ((0, 1.0), (1, -1.0)):
+            add((R, (s, 2 + s)), 1j * lam * sz)
+            add((_neg(R), (2 + s, s)), -1j * lam * sz)
+    return tr
+
+
+def _lzsz_grid_tables():
+    """Repulsive-dominant S_z-conserving interactions (norb_phys = 2) on the
+    x bond and the y bond (``0.6 v``): CoulombIntra on site; CoulombInter
+    on every orbital row of both bonds and on the on-site inter-orbital row
+    (0.5); Hund, Ising, Exchange and complex PairHop on the inter-orbital
+    rows at 0.2 times their :data:`BASE` value; Hermitian-closed."""
+    out = {"CoulombIntra": {((0, 0, 0), (0, 0)): BASE["CoulombIntra"],
+                            ((0, 0, 0), (1, 1)): 0.8 * BASE["CoulombIntra"]}}
+    inter = dict(closed_row((0, 0, 0), 0, 1, 0.5))
+    for R, f in (((1, 0, 0), 1.0), ((0, 1, 0), 0.6)):
+        for a in (0, 1):
+            for b in (0, 1):
+                inter.update(closed_row(R, a, b, f * BASE["CoulombInter"]))
+    out["CoulombInter"] = inter
+    for t in ("Hund", "Ising", "Exchange", "PairHop"):
+        out[t] = {**closed_row((1, 0, 0), 0, 1, 0.2 * BASE[t]),
+                  **closed_row((0, 1, 0), 0, 1, 0.12 * BASE[t])}
+    return out
+
+
+#: the 5x3 mesh (norb_phys = 2, B = 5 channels: on site, +-x, +-y) with the
+#: ``i lambda s_z`` inter-orbital hopping, a repulsive-dominant interaction
+#: of every S_z-conserving type and Zeeman 0.15; the antisymmetric static gap
+#: space splits into the pair-S_z sectors 29 / 60 / 29
+FIXTURE_LZSZ_GRID = FixtureSpec.make((5, 3, 1), 2, 2.0, 0.8, _lzsz_grid_transfer(),
+                                     _lzsz_grid_tables(), zeeman=0.15)
+
+#: the S_z-conserving fixtures
+ALL_CONSERVING_FIXTURES = (FIXTURE_SZ_RING, FIXTURE_SZ_GRID, FIXTURE_LZSZ)
+
+
+# ---------------------------------------------------------------------------
+# S_z sectors of the code slots and of the gap pairs (spin-block modes)
+# ---------------------------------------------------------------------------
+
+#: the ph sectors in storage order and the pp sectors in tie-break order
+PH_SIGMAS = (0, +1, -1)
+PP_ORDER = (+1, 0, -1)
+
+
+def sz_of_mode(X, norb_phys):
+    """``S_z`` of the spin-block mode ``X = s * norb_phys + a``: ``+1/2``
+    for ``s = 0`` (up), ``-1/2`` for ``s = 1``."""
+    return 0.5 if int(X) < int(norb_phys) else -0.5
+
+
+def ph_sector_lists(B, nd):
+    """The dense code slots ``I = m * nd**2 + p * nd + p'`` of each ph sector
+    ``sigma = S_z(p) - S_z(p')`` in the order ``(0, +1, -1)``, ascending."""
+    norb = nd // 2
+    out = {s: [] for s in PH_SIGMAS}
+    for m in range(B):
+        for p in range(nd):
+            for p2 in range(nd):
+                sigma = int(round(sz_of_mode(p, norb) - sz_of_mode(p2, norb)))
+                out[sigma].append(m * nd * nd + p * nd + p2)
+    return [np.array(out[s], dtype=np.int64) for s in PH_SIGMAS]
+
+
+def pp_sector_lists(nd):
+    """The flat gap pairs ``b * nd + c`` of each pp sector
+    ``p = S_z(b) + S_z(c)`` in the order ``(+1, 0, -1)``, ascending."""
+    norb = nd // 2
+    out = {p: [] for p in PP_ORDER}
+    for b in range(nd):
+        for c in range(nd):
+            p = int(round(sz_of_mode(b, norb) + sz_of_mode(c, norb)))
+            out[p].append(b * nd + c)
+    return [np.array(out[p], dtype=np.int64) for p in PP_ORDER]
+
+
+def restrict(M, lists):
+    """The diagonal sector blocks ``M[..., l, l]`` of a dense code-slot
+    array, one per index list."""
+    M = np.asarray(M)
+    return [M[..., l[:, None], l] for l in lists]
+
+
+# ---------------------------------------------------------------------------
+# The second-order functional and its gradient
+# ---------------------------------------------------------------------------
+
+def _lindhard_batch(green, beta, geom):
+    """:func:`lindhard_discrete` of a stack of Green functions ``(S, nmat,
+    nvol, nd, nd)``, the same arithmetic with a leading batch axis; returns
+    ``(S, nmat, nvol, NL, NL)``."""
+    S, nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    D = np.asarray(geom.delta_r, dtype=np.int64)
+    NL = D.shape[0] * nd * nd
+    pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))       # (k, a)
+    add = mesh_add(shape)                                              # (q, k) -> k + q
+    pkq = pk[add]                                                      # (q, k, b)
+    first = pk[None, None, :, :, None, None] * green[:, :, :, None, :, :]
+    out = np.empty((S, nmat, nvol, NL, NL), dtype=np.complex128)
+    for l in range(nmat):
+        shifted = green[:, (np.arange(nmat) - l + nmat // 2) % nmat]   # (s, n, k, w, x)
+        second = (pkq[None, None, :, :, :, None, None]
+                  * shifted[:, :, add][:, :, :, :, None, :, :])
+        t = np.einsum("snkayz,snqkbwx->sqaxybzw", first, second, optimize=True)
+        out[:, l] = (-(1.0 / beta) / nvol) * t.reshape(S, nvol, NL, NL)
+    return out
+
+
+def phi2_gradient(green, beta, gamma_label, geom, *, nodes=8, radius=0.3, chunk=160):
+    """``Sigma[n, k, a, b] = beta dPhi_2/dG_ba(k, i w_n)`` of the
+    second-order functional of the label vertex
+
+    ``Phi_2[G] = -(T/8) sum_{l, q} Tr[(chibar(q, i nu_l) Gamma(-q))**2]``,
+
+    ``chibar`` the label bubble of :func:`lindhard_discrete` on the
+    production grid (every bosonic slice ``l``, wrapped second leg) and
+    ``Gamma(-q)`` read at the grid index of ``-q`` (:func:`mesh_negate`).
+    The derivative with respect to each entry of ``G`` is taken by the
+    ``nodes``-point circle stencil ``f'(0) = (1/(M r)) sum_j f(r w^j)
+    w^{-j}`` (``w = e^{2 pi i/M}``, ``M = nodes``, ``r = radius``), which is
+    exact for a polynomial of degree below ``M``; ``Phi_2`` is quartic in
+    ``G``. Every stencil node is one Green function of a single stacked
+    array, evaluated ``chunk`` at a time.
+
+    Parameters
+    ----------
+    green : ndarray (nmat, nvol, nd, nd)
+        No block axis.
+    beta : float
+    gamma_label : ndarray (nvol, NL, NL)
+        The label vertex ``Gamma(q)`` (:func:`file_gamma_label`) on the
+        labels of ``geom``.
+    geom : object with ``delta_r`` and ``spatial_shape``
+    nodes, radius : int, float
+        The circle stencil (``M`` points of radius ``r``).
+    chunk : int
+        Stencil nodes evaluated per stacked batch (memory only; the
+        result does not depend on it).
+
+    Returns
+    -------
+    ndarray complex128 (nmat, nvol, nd, nd)
+    """
+    green = np.asarray(green, dtype=np.complex128)
+    nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    gamma = np.asarray(gamma_label, dtype=np.complex128)
+    NL = np.asarray(geom.delta_r).reshape(-1, 3).shape[0] * nd * nd
+    if int(np.prod(shape)) != nvol or gamma.shape != (nvol, NL, NL):
+        raise ValueError("phi2_gradient: green {} and Gamma {} do not share the labels and the "
+                         "mesh {}".format(green.shape, gamma.shape, shape))
+    gamma_mq = gamma[mesh_negate(shape)]
+    M = int(nodes)
+    w = np.exp(2j * np.pi * np.arange(M) / M)
+    entries = np.array(list(np.ndindex(nmat, nvol, nd, nd)))
+    stack = np.repeat(green[None], len(entries) * M, axis=0)
+    owner = np.repeat(np.arange(len(entries)), M)
+    e = entries[owner]
+    stack[np.arange(len(owner)), e[:, 0], e[:, 1], e[:, 2], e[:, 3]] += radius * np.tile(w, len(entries))
+    vals = np.empty(len(stack), dtype=np.complex128)
+    for s0 in range(0, len(stack), chunk):
+        A = _lindhard_batch(stack[s0:s0 + chunk], beta, geom) @ gamma_mq[None, None]
+        vals[s0:s0 + chunk] = (-(1.0 / beta) / 8.0) * np.einsum("slqij,slqji->s", A, A)
+    grad = (vals.reshape(len(entries), M) * w.conj()[None]).sum(axis=1) / (M * radius)
+    return beta * grad.reshape(nmat, nvol, nd, nd).transpose(0, 1, 3, 2)

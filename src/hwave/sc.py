@@ -16,6 +16,7 @@ import os
 import sys
 import logging
 import zipfile
+from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
@@ -9487,6 +9488,78 @@ class _SOAntisymmetricBasis:
         self.n = n
         self.dim = len(self.rep)
 
+    #: the full flat gap indices a subset basis acts on (:meth:`from_subset`);
+    #: ``None`` for the basis of the whole gap
+    indices = None
+
+    @classmethod
+    def from_subset(cls, shape, indices, reverse=None):
+        """The basis restricted to the flat gap indices ``indices`` of
+        ``shape`` (strictly ascending, closed under the involution ``R``).
+
+        The sector vector is ``v = g[indices]`` of a flat gap ``g``;
+        :meth:`to_full`, :meth:`to_reduced` and :meth:`reduce` act on sector
+        vectors (length ``n = len(indices)``) and :meth:`scatter` places one
+        in the full flat gap. Because the subset is closed, every orbit
+        ``{i, R i}`` lies inside or outside it, and the coordinates are those
+        of the full basis on the orbits inside (same representative, same
+        sign). A subset that is not closed is refused (``ValueError`` naming
+        the first index whose partner is missing).
+
+        ``shape`` stays the FULL gap shape, so a sector vector cannot be
+        reshaped to it: with a subset basis call
+        :func:`_so_solve_eigenvalue` with ``map_back = False`` and place each
+        vector with ``scatter(to_full(c))`` (never :func:`_so_solve_iteration`,
+        which maps back by reshaping)."""
+        shape = tuple(int(x) for x in shape)
+        n_full = int(np.prod(shape))
+        idx = np.asarray(indices)
+        if idx.ndim != 1 or not (idx.size == 0 or np.issubdtype(idx.dtype, np.integer)):
+            raise ValueError("the subset of the antisymmetric basis must be a one-dimensional "
+                             "integer index array")
+        idx = idx.astype(np.int64)
+        if idx.size and (idx[0] < 0 or idx[-1] >= n_full or np.any(np.diff(idx) <= 0)):
+            raise ValueError("the subset of the antisymmetric basis must be strictly ascending "
+                             "flat gap indices in [0, {})".format(n_full))
+        rev = _reverse_k_and_orbital if reverse is None else reverse
+        partner = np.ascontiguousarray(
+            rev(np.arange(n_full).reshape(shape))).ravel()
+        if partner.shape != (n_full,) or not np.array_equal(
+                partner[partner], np.arange(n_full)):
+            raise ValueError("the reverse map of the antisymmetric basis must "
+                             "be an involution of the flat gap index")
+        pos = np.full(n_full, -1, dtype=np.int64)
+        pos[idx] = np.arange(idx.size)
+        local = pos[partner[idx]]
+        missing = np.flatnonzero(local < 0)
+        if missing.size:
+            i = int(idx[missing[0]])
+            raise ValueError("the subset of the antisymmetric basis is not closed under the "
+                             "involution (index {} maps to {})".format(i, int(partner[i])))
+        del pos, partner
+        self = cls.__new__(cls)
+        self.shape = shape
+        idx.flags.writeable = False
+        self.indices = idx
+        self.partner = local
+        flat = np.arange(idx.size)
+        self.rep = flat[flat < local]
+        self.rep_partner = local[self.rep]
+        self.n_self = int(np.sum(flat == local))
+        self.n = int(idx.size)
+        self.dim = len(self.rep)
+        return self
+
+    def scatter(self, v):
+        """A sector vector ``(n,)`` / ``(n, k)`` placed in the full flat gap
+        (zeros elsewhere; a copy for the basis of the whole gap)."""
+        v = np.asarray(v)
+        if self.indices is None:
+            return np.array(v, dtype=complex)
+        out = np.zeros((int(np.prod(self.shape)),) + v.shape[1:], dtype=complex)
+        out[self.indices] = v
+        return out
+
     def to_full(self, c):
         """``E c``: reduced coordinates ``(dim,)`` or ``(dim, k)`` -> flat
         antisymmetric gaps ``(n,)`` / ``(n, k)``."""
@@ -9503,9 +9576,13 @@ class _SOAntisymmetricBasis:
         v = np.asarray(v)
         return (v[self.rep] - v[self.rep_partner]) / np.sqrt(2.0)
 
-    def reduce(self, A):
+    def reduce(self, A, *, adjoint=False):
         """``E^dagger K E`` of the flat kernel operator ``A`` (``E^dagger P
-        = E^dagger``, so this is also ``E^dagger (P K) E``)."""
+        = E^dagger``, so this is also ``E^dagger (P K) E``).
+
+        ``adjoint=True`` also attaches ``rmatvec = E^dagger K^dagger E``
+        (``A`` must provide ``rmatvec``); by default the operator has the
+        forward product only."""
         def matvec(c):
             v = self.to_full(np.asarray(c).ravel())
             return self.to_reduced(np.asarray(A.matvec(v)).ravel())
@@ -9515,8 +9592,28 @@ class _SOAntisymmetricBasis:
             if C.ndim == 1:
                 return matvec(C)
             return self.to_reduced(np.asarray(A.matmat(self.to_full(C))))
+        if not adjoint:
+            return LinearOperator((self.dim, self.dim), matvec=matvec,
+                                  matmat=matmat, dtype=complex)
+
+        def rmatvec(c):
+            v = self.to_full(np.asarray(c).ravel())
+            return self.to_reduced(np.asarray(A.rmatvec(v)).ravel())
         return LinearOperator((self.dim, self.dim), matvec=matvec,
-                              matmat=matmat, dtype=complex)
+                              matmat=matmat, rmatvec=rmatvec, dtype=complex)
+
+
+class SectorOp(NamedTuple):
+    """One pair-S_z sector of the spin-orbital pairing kernel.
+
+    ``operator`` acts on the sector vector of ``basis`` (a
+    :meth:`_SOAntisymmetricBasis.from_subset` basis); ``has_adjoint = True``
+    promises a working ``operator.rmatvec``, and a solver then reduces it
+    with ``basis.reduce(operator, adjoint=True)``."""
+    pp_sector: int
+    operator: object
+    basis: object
+    has_adjoint: bool
 
 
 def _so_antisymmetry_residual(gap):
@@ -9553,6 +9650,27 @@ def _so_solve_iteration(A, basis, sigma_init, max_iter, alpha, tol,
         info_out.update(info)
     gap = basis.to_full(c).reshape(basis.shape)
     return gap, eigenvalue, info["converged"], info["n_iter"]
+
+
+def _so_dense_reduced_eigen(red, dim, num_eigenvalues, seed_vec=None):
+    """The dense diagonalization of the reduced operator ``red`` (``dim x
+    dim``): ``min(max(1, num_eigenvalues), dim)`` eigenpairs selected by the
+    largest real part, ordered by descending real part (by the overlap with
+    ``seed_vec`` when given). Returns ``(vals, vecs, M)`` with the
+    eigenvectors as columns and ``M`` the dense reduced matrix. Logs
+    nothing (the dense branch of :func:`_so_solve_eigenvalue`)."""
+    dense = np.asarray(red.matmat(np.eye(dim, dtype=complex)))
+    vals, vecs = np.linalg.eig(dense)
+    n_keep = min(max(1, int(num_eigenvalues)), dim)
+    # the dense spectrum is complete, so select by the largest REAL part
+    # (the physical leading eigenvalue) whether or not a spectral_shift
+    # was given; a largest-magnitude cut could drop it behind repulsive
+    # modes
+    sel = np.argsort(-vals.real, kind="stable")[:n_keep]
+    vals, vecs = _order_eigenpairs(vals[sel], vecs[:, sel])
+    if seed_vec is not None:
+        vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
+    return vals, vecs, dense
 
 
 def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
@@ -9595,17 +9713,9 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
                 "[eliashberg] sigma_shift is ignored for eigenvalue_method="
                 "'arnoldi' (it targets the shift-invert methods); use "
                 "spectral_shift to bias the arnoldi selection.")
-        dense = np.asarray(red.matmat(np.eye(dim, dtype=complex)))
-        vals, vecs = np.linalg.eig(dense)
-        n_keep = min(max(1, int(num_eigenvalues)), dim)
-        # the dense spectrum is complete, so select by the largest REAL part
-        # (the physical leading eigenvalue) whether or not a spectral_shift
-        # was given; a largest-magnitude cut could drop it behind repulsive
-        # modes
-        sel = np.argsort(-vals.real, kind="stable")[:n_keep]
-        vals, vecs = _order_eigenpairs(vals[sel], vecs[:, sel])
-        if seed_vec is not None:
-            vals, vecs = _order_by_seed_overlap(vals, vecs, seed_vec)
+        vals, vecs, _ = _so_dense_reduced_eigen(red, dim, num_eigenvalues,
+                                                seed_vec)
+        n_keep = len(vals)
         logger.info("spin-orbital: num_eigenvalues = %d >= dim - 1 = %d of the "
                     "antisymmetric space; dense diagonalization, %d eigenpairs.",
                     num_eigenvalues, dim - 1, n_keep)
@@ -9624,6 +9734,729 @@ def _so_solve_eigenvalue(A, basis, num_eigenvalues, method, sigma_shift=None,
     gaps = np.array([basis.to_full(vecs[:, i]).reshape(basis.shape)
                      for i in range(len(vals))])
     return vals, gaps
+
+
+# --- the per-sector solvers of the S_z-packed spin-orbital kernel -------------------
+#
+# With S_z conservation the pairing kernel is block-diagonal in the pair-S_z
+# sector p = S_z(B) + S_z(C) of a gap component Delta_BC (p in +1, 0, -1). Each
+# sector is a SectorOp: an operator on the sector vector and the subset basis
+# of its antisymmetric coordinates. The solvers below work sector by sector and
+# merge the results; the dense layout keeps _so_solve_eigenvalue /
+# _so_solve_iteration, and both layouts meet in the one report
+# (_so_bond_report).
+
+#: pair-S_z sectors in their tie-break order
+_SO_PP_ORDER = (1, 0, -1)
+#: per-pair residual bound ||K v - lambda v|| <= tol * n_K * ||v||
+_SO_SECTOR_RESIDUAL_TOL = 1.0e-10
+#: eigenvalues closer than this (relative, floor 1) form one tie cluster
+_SO_SECTOR_TIE_TOL = 1.0e-12
+#: a sector part of the seed at most this fraction of the seed (2-norm) is
+#: round-off: the sector is solved unseeded
+_SO_SEED_PART_RTOL = 1.0e-8
+#: the seeded union warns when no selected pair overlaps the seed this much
+_SO_SEED_OVERLAP_WARN = 0.5
+#: steps and relative-change stop of the operator-norm power estimate
+_SO_NORM_STEPS = 30
+_SO_NORM_RTOL = 1.0e-3
+#: pp_sector of a result that is not sector-resolved (dense layout, or none)
+_SO_PP_DENSE = 2
+
+
+def _pp_label(p):
+    return "+1" if p == 1 else str(int(p))
+
+
+class SectorLeader(NamedTuple):
+    """The eigen solve of one pair-S_z sector.
+
+    ``value``: the largest real part among the returned eigenvalues (``0``
+    for a null sector, NaN when the sector is empty or did not converge).
+    ``selection``: ``"LM"``, ``"LR_retry"``, ``"LR"`` (a user
+    ``spectral_shift``), ``"dense-LR"``, ``"null-operator"``,
+    ``"not-converged"``, ``"residual-failed"`` or ``"empty"``.
+    ``residual``: the largest ``||K v - lambda v|| / (n_K ||v||)`` over the
+    returned pairs (certified when ``<= 1e-10``). ``norm_estimate`` /
+    ``norm_kind``: the operator-norm scale of ``n_K`` -- ``"exact"`` (the
+    2-norm of the dense matrix), ``"adjoint"`` (power iteration on ``K^dagger
+    K``) or ``"forward"`` (power iteration on ``K``, a lower bound).
+    ``n_returned``: the number of pairs the sector solve returned."""
+    pp_sector: int
+    dim: int
+    value: complex
+    selection: str
+    certified: bool
+    residual: float
+    norm_estimate: float
+    norm_kind: str
+    n_returned: int
+
+
+@dataclass(frozen=True)
+class SectorSolve:
+    """The union of the sector eigen solves.
+
+    ``vals (n,)``, ``gaps (n,) + gap_shape`` and ``pp_sector (n,) int8``:
+    the certified pairs of the sectors that did not fail, at most ``k`` of
+    them, ordered by descending real part (ties: see
+    :func:`_so_solve_sectors`; by the seed overlap in a seeded solve).
+    ``leaders``: one :class:`SectorLeader` per given sector, in the order
+    ``(+1, 0, -1)``. ``failed_sectors``: the
+    sectors whose solve did not converge or returned a pair that failed the
+    residual check. ``converged``: no failed sector and at least one pair;
+    ``leading`` is then ``vals[0]``, else NaN. ``selection``: the per-sector
+    selections, e.g. ``"+1:dense-LR;0:LR;-1:null-operator"``."""
+    vals: np.ndarray
+    gaps: np.ndarray
+    pp_sector: np.ndarray
+    leaders: tuple
+    failed_sectors: tuple
+    converged: bool
+    leading: complex
+    selection: str
+
+
+class IterationLeader(NamedTuple):
+    """The power iteration of one pair-S_z sector.
+
+    ===============  ===================  ==========================  =========
+    status           value                gap                         n_iter
+    ===============  ===================  ==========================  =========
+    ``"empty"``      NaN                  ``None``                    0
+    ``"null"``       0.0                  the first lifted unit       0
+                                          vector ``e_0``
+    ``"converged"``  the signed Rayleigh  the converged iterate       the steps
+                     eigenvalue
+    ``"failed"``     NaN                  the last iterate            the steps
+    ===============  ===================  ==========================  =========
+
+    A one-dimensional sector is solved exactly (``"converged"``, its single
+    matrix element, ``n_iter = 0``; ``"failed"`` when that element is not
+    finite). A run that reports convergence with a non-finite value is
+    ``"failed"`` too. ``gap`` is lifted to the full gap shape."""
+    pp_sector: int
+    status: str
+    value: object
+    gap: object
+    n_iter: int
+
+
+@dataclass(frozen=True)
+class SectorIteration:
+    """The reduction of the sector power iterations.
+
+    Without a failed sector the leader is the largest real part over the
+    non-empty sectors (null sectors at 0; ties as in
+    :func:`_so_solve_sectors`) and ``value``, ``gap``, ``pp_sector`` are its.
+    With a failed sector ``value`` is NaN, ``converged`` false, and ``gap`` /
+    ``pp_sector`` are the last iterate of the first failed sector in the
+    order ``(+1, 0, -1)``. With every sector empty ``value`` is NaN, ``gap``
+    ``None`` and ``pp_sector`` 2. ``n_iter`` is the largest sector step
+    count; ``n_iter_per_sector`` lists them in sector order (0 for empty,
+    null and exactly solved sectors). ``selection`` is ``"null-operator"``
+    when the leader is a null sector, else ``"iteration"``."""
+    value: object
+    gap: object
+    pp_sector: int
+    leaders: tuple
+    failed_sectors: tuple
+    converged: bool
+    n_iter: int
+    n_iter_per_sector: tuple
+    selection: str
+
+
+class EigenLeg(NamedTuple):
+    """The eigenvalue leg of a spin-orbital run, in either layout."""
+    vals: np.ndarray
+    gaps: np.ndarray
+    pp_sector: np.ndarray
+    converged: bool
+    leading: complex
+    selection: str
+    failed_sectors: tuple
+
+    @classmethod
+    def from_dense(cls, vals, gaps, *, selection):
+        """The result of :func:`_so_solve_eigenvalue` (the arrays are passed
+        through, not copied); converged when the first eigenvalue is finite."""
+        converged = bool(len(vals) > 0 and np.isfinite(vals[0]))
+        leading = complex(vals[0]) if len(vals) else complex(np.nan)
+        return cls(vals, gaps, np.full(len(vals), _SO_PP_DENSE, dtype=np.int8),
+                   converged, leading, selection, ())
+
+    @classmethod
+    def from_sectors(cls, solve):
+        return cls(solve.vals, solve.gaps, solve.pp_sector, solve.converged,
+                   solve.leading, solve.selection, solve.failed_sectors)
+
+
+class IterationLeg(NamedTuple):
+    """The power-iteration leg of a spin-orbital run, in either layout."""
+    value: object
+    gap: object
+    pp_sector: int
+    converged: bool
+    n_iter: int
+    failed_sectors: tuple
+    selection: str
+
+    @classmethod
+    def from_dense(cls, gap, value, converged, n_iter, info):
+        """The result of :func:`_so_solve_iteration` (``info`` is its
+        ``info_out`` record, accepted for the call's symmetry)."""
+        return cls(value, gap, _SO_PP_DENSE, bool(converged), int(n_iter), (),
+                   "iteration")
+
+    @classmethod
+    def from_sectors(cls, iteration):
+        return cls(iteration.value, iteration.gap, iteration.pp_sector,
+                   iteration.converged, iteration.n_iter,
+                   iteration.failed_sectors, iteration.selection)
+
+
+class SectorReport(NamedTuple):
+    """What a spin-orbital run reports, one schema for both layouts.
+
+    ``reported``: the reported eigenvalue (NaN when not certified).
+    ``gap`` (``gap_shape``) with ``gap_status``: ``"certified"`` (the gap of
+    the certified leader; exactly when ``reported`` is finite),
+    ``"uncertified"`` (a real candidate -- a listed pair or the last iterate
+    -- written while the result is not certified) or ``"none"`` (no candidate
+    exists; a zero array). ``pp_sector``: the sector of the written gap (2
+    when not sector-resolved or none). ``eigen_converged``;
+    ``iteration_converged`` (only in ``"both"``); ``selection``; the listing
+    ``vals``, ``gaps``, ``pp_sectors`` (empty in ``"iteration"``);
+    ``failed_sectors`` (of the authoritative leg) and
+    ``iteration_failed_sectors`` (the iteration leg's, whenever it ran)."""
+    reported: float
+    gap: np.ndarray
+    gap_status: str
+    pp_sector: int
+    eigen_converged: bool
+    iteration_converged: object
+    selection: str
+    vals: np.ndarray
+    gaps: np.ndarray
+    pp_sectors: np.ndarray
+    failed_sectors: tuple
+    iteration_failed_sectors: object
+
+
+def _so_canonical_sector_ops(sector_ops, solver):
+    """``sector_ops`` validated (each pp_sector +1, 0 or -1, none twice) and
+    put in the order ``(+1, 0, -1)``."""
+    seen = {}
+    for op in sector_ops:
+        p = op.pp_sector
+        if (isinstance(p, (bool, np.bool_))
+                or not isinstance(p, (int, np.integer)) or p not in _SO_PP_ORDER):
+            raise ValueError("{}: pp_sector must be +1, 0 or -1, got {}"
+                             .format(solver, p))
+        if int(p) in seen:
+            raise ValueError("{}: pp_sector {} appears twice".format(solver, p))
+        seen[int(p)] = op
+    return tuple(seen[p] for p in _SO_PP_ORDER if p in seen)
+
+
+def _so_check_sector_op(op, gap_shape, solver):
+    basis = op.basis
+    if tuple(int(x) for x in basis.shape) != tuple(gap_shape):
+        raise ValueError("{}: the basis of sector {} lives on a gap of shape {}, "
+                         "not {}".format(solver, _pp_label(op.pp_sector),
+                                         tuple(basis.shape), tuple(gap_shape)))
+    if tuple(op.operator.shape) != (basis.n, basis.n):
+        raise ValueError("{}: the operator of sector {} has shape {}, its basis "
+                         "acts on vectors of length {}".format(
+                             solver, _pp_label(op.pp_sector),
+                             tuple(op.operator.shape), basis.n))
+
+
+def _so_lifted_unit_gaps(basis, count, gap_shape):
+    """The first ``count`` reduced unit vectors lifted to full gaps of
+    ``gap_shape``, each normalized to unit 2-norm."""
+    out = np.zeros((count,) + tuple(gap_shape), dtype=complex)
+    for i in range(count):
+        e = np.zeros(basis.dim, dtype=complex)
+        e[i] = 1.0
+        g = basis.scatter(basis.to_full(e))
+        g /= np.linalg.norm(g)
+        out[i] = g.reshape(gap_shape)
+    return out
+
+
+def _so_sector_norm_estimate(red, dim, adjoint):
+    """Fixed-seed power estimate of ``||red||_2``.
+
+    ``adjoint``: ``x_0`` from ``default_rng(0)``, normalized; ``y = K x_j``,
+    ``z = K^dagger y``, ``mu_j = ||z||``, ``x_{j+1} = z / ||z||``; stop after
+    30 steps or when ``|mu_j - mu_{j-1}| < 1e-3 mu_j``; the estimate is
+    ``sqrt(mu_last)``. Without an adjoint: ``r_j = ||K x_j||`` over the
+    normalized steps ``x_{j+1} = K x_j / ||K x_j||`` with the same stop, the
+    estimate ``max_j r_j`` (a lower bound). A zero image at step 0 redraws
+    ``x_0`` once; a second zero gives 0. Returns ``(estimate, steps,
+    relative change, converged)``."""
+    rng = np.random.default_rng(0)
+
+    def draw():
+        x = rng.standard_normal(dim) + 1j * rng.standard_normal(dim)
+        return x / np.linalg.norm(x)
+
+    def image(x):
+        y = np.asarray(red.matvec(x)).ravel()
+        if adjoint:
+            y = np.asarray(red.rmatvec(y)).ravel()
+        return y
+
+    x = draw()
+    z = image(x)
+    if not np.any(z):
+        x = draw()
+        z = image(x)
+        if not np.any(z):
+            return 0.0, 1, 0.0, True
+    mu_prev = None
+    best = 0.0
+    change = float("inf")
+    steps = 0
+    converged = False
+    for j in range(_SO_NORM_STEPS):
+        if j > 0:
+            z = image(x)
+        mu = float(np.linalg.norm(z))
+        steps = j + 1
+        best = max(best, mu)
+        if mu == 0.0:
+            break
+        if mu_prev is not None:
+            change = abs(mu - mu_prev) / mu
+            if change < _SO_NORM_RTOL:
+                converged = True
+                break
+        mu_prev = mu
+        x = z / mu
+    if adjoint:
+        est = float(np.sqrt(mu))
+    else:
+        est = float(best)
+    return est, steps, change, converged
+
+
+def _so_union(cands, num_eigenvalues):
+    """Order the candidate pairs ``(value, rank, in-sector index, gap,
+    pp_sector)``: tie clusters by single linkage (``|l_i - l_j| <= 1e-12
+    max(1, |l_i|, |l_j|)``) ordered by descending largest real part, then
+    descending largest imaginary part, then the smallest sector rank of a
+    member; inside a cluster by sector rank, then in-sector index. Returns
+    the first ``num_eigenvalues``."""
+    n = len(cands)
+    parent = list(range(n))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    vals = [complex(c[0]) for c in cands]
+    for i in range(n):
+        for j in range(i + 1, n):
+            tol = _SO_SECTOR_TIE_TOL * max(1.0, abs(vals[i]), abs(vals[j]))
+            if abs(vals[i] - vals[j]) <= tol:
+                parent[root(i)] = root(j)
+    clusters = {}
+    for i in range(n):
+        clusters.setdefault(root(i), []).append(i)
+    groups = sorted(
+        clusters.values(),
+        key=lambda m: (-max(vals[i].real for i in m),
+                       -max(vals[i].imag for i in m),
+                       min(cands[i][1] for i in m)))
+    order = [i for m in groups
+             for i in sorted(m, key=lambda i: (cands[i][1], cands[i][2]))]
+    return [cands[i] for i in order[:num_eigenvalues]]
+
+
+def _so_order_by_seed(kept, seed_unit):
+    """Order the kept union pairs ``(value, rank, index, gap, pp_sector)``
+    by descending normalized overlap ``|<seed, gap>| / ||gap||`` with the
+    unit full seed, then descending real part, then sector rank (the
+    sector form of :func:`_order_by_seed_overlap`). Logs a WARNING when
+    the best overlap is below 0.5: the seed's branch is then not among the
+    selected pairs."""
+    ov = [abs(np.vdot(seed_unit, np.ravel(c[3])))
+          / (float(np.linalg.norm(c[3])) + 1.0e-300) for c in kept]
+    order = sorted(range(len(kept)),
+                   key=lambda i: (-ov[i], -complex(kept[i][0]).real, kept[i][1]))
+    best = ov[order[0]]
+    if best < _SO_SEED_OVERLAP_WARN:
+        logger.warning("spin-orbital: the largest overlap of a selected eigenvector with "
+                       "the seed is %.3f (< %.1f); the seed's branch is not among the "
+                       "selected eigenpairs.", best, _SO_SEED_OVERLAP_WARN)
+    return [kept[i] for i in order]
+
+
+def _so_solve_sectors(sector_ops, num_eigenvalues, method, *, gap_shape,
+                      spectral_shift=None, seed_vec=None):
+    """The eigen solve of the spin-orbital kernel sector by sector.
+
+    ``sector_ops``: :class:`SectorOp` per pair-S_z sector (any subset of
+    ``+1, 0, -1``, each at most once; taken in that order). Per sector, with
+    ``k = num_eigenvalues`` and ``dim`` its antisymmetric dimension:
+
+    * ``dim = 0``: ``"empty"``, no pairs, certified;
+    * an exactly zero reduced operator (:func:`_operator_is_exactly_zero`):
+      ``"null-operator"``, ``min(k, dim)`` eigenvalues 0 with the first
+      reduced unit vectors as gaps (lifted, unit 2-norm), certified;
+    * ``dim <= max(2k + 1, 20)``: dense diagonalization (``"dense-LR"``);
+    * else :func:`_so_solve_eigenvalue` on the sector (ARPACK, ``"LM"`` /
+      ``"LR_retry"`` / ``"LR"``).
+
+    The seed ``seed_vec`` (a full gap, optional) is split per sector into
+    reduced coordinates; a part with ``||seed_p||_2 <= 1e-8 ||seed||_2``
+    means no seed for that sector (an INFO line when it is not exactly
+    zero). With a nonzero seed the kept pairs are then ordered by their
+    normalized overlap with the seed, then real part, then sector rank, as
+    the dense layout orders a seeded solve (:func:`_so_order_by_seed`); the
+    selection of the ``k`` pairs is unchanged. Every returned pair must
+    satisfy ``||K v - lambda v|| <= 1e-10 n_K ||v||`` with ``n_K = max(1,
+    |lambda|, est)``, ``est`` the operator-norm estimate
+    (:func:`_so_sector_norm_estimate`; exact on the dense branch), else the
+    whole sector is ``"residual-failed"``. A ``"not-converged"`` or
+    ``"residual-failed"`` sector is failed: its pairs are not listed and the
+    result is not converged (``leading = NaN``). The certified pairs are
+    merged by :func:`_so_union` and the first ``k`` kept, their gaps placed
+    in full gaps of ``gap_shape``. Only ``method = "arnoldi"`` is
+    supported."""
+    solver = "_so_solve_sectors"
+    if method != "arnoldi":
+        raise ValueError(
+            "{}: the per-sector solve supports eigenvalue_method = \"arnoldi\" "
+            "only, got {}".format(solver, method))
+    ops = _so_canonical_sector_ops(sector_ops, solver)
+    spectral_shift = _normalize_spectral_shift(spectral_shift)
+    _validate_spectral_shift(spectral_shift, method)
+    if (isinstance(num_eigenvalues, (bool, np.bool_))
+            or not isinstance(num_eigenvalues, (int, np.integer))
+            or num_eigenvalues < 1):
+        raise ValueError("{}: num_eigenvalues must be a positive integer, got {}"
+                         .format(solver, num_eigenvalues))
+    k = int(num_eigenvalues)
+    gap_shape = tuple(int(x) for x in gap_shape)
+    for op in ops:
+        _so_check_sector_op(op, gap_shape, solver)
+    seed_flat = None if seed_vec is None else np.asarray(seed_vec).ravel()
+    if seed_flat is not None and seed_flat.size != int(np.prod(gap_shape)):
+        raise ValueError("{}: seed_vec has {} entries, the gap {} has {}".format(
+            solver, seed_flat.size, gap_shape, int(np.prod(gap_shape))))
+    if seed_flat is not None and not np.all(np.isfinite(seed_flat)):
+        raise ValueError("{}: seed_vec has non-finite entries".format(solver))
+    seed_norm = 0.0 if seed_flat is None else float(np.linalg.norm(seed_flat))
+    if seed_norm == 0.0:
+        seed_flat = None                    # a zero seed is no seed
+
+    leaders = []
+    cands = []          # (value, rank, index, gap, pp_sector)
+    failed = []
+    for op in ops:
+        p = int(op.pp_sector)
+        rank = _SO_PP_ORDER.index(p)
+        basis = op.basis
+        dim = int(basis.dim)
+        if dim == 0:
+            leaders.append(SectorLeader(p, 0, complex(np.nan), "empty", True,
+                                        0.0, 0.0, "exact", 0))
+            continue
+        red = basis.reduce(op.operator, adjoint=bool(op.has_adjoint))
+        n_ret = min(k, dim)
+        if _operator_is_exactly_zero(red, dim):
+            gaps = _so_lifted_unit_gaps(basis, n_ret, gap_shape)
+            for i in range(n_ret):
+                cands.append((0j, rank, i, gaps[i], p))
+            leaders.append(SectorLeader(p, dim, 0j, "null-operator", True, 0.0,
+                                        0.0, "exact", n_ret))
+            continue
+        seed = None
+        if seed_flat is not None:
+            part = basis.to_reduced(seed_flat[basis.indices]
+                                    if basis.indices is not None else seed_flat)
+            part_norm = float(np.linalg.norm(part))
+            if part_norm > _SO_SEED_PART_RTOL * seed_norm:
+                seed = part
+            elif part_norm > 0.0:
+                logger.info("spin-orbital sector %s: the seed part (norm %.3e, %.3e of "
+                            "the seed) is round-off; the sector is solved unseeded.",
+                            _pp_label(p), part_norm, part_norm / seed_norm)
+        M = None
+        if dim <= max(2 * k + 1, 20):
+            try:
+                vals, vecs, M = _so_dense_reduced_eigen(red, dim, k, seed)
+                selection = "dense-LR"
+            except np.linalg.LinAlgError as exc:
+                logger.warning("spin-orbital sector %s: the dense "
+                               "diagonalization failed (%s).", _pp_label(p), exc)
+                vals = np.full(n_ret, np.nan + 0j)
+                vecs = np.zeros((dim, n_ret), dtype=complex)
+                selection = "not-converged"
+        else:
+            info = {}
+            vals, vecs = _so_solve_eigenvalue(
+                op.operator, basis, k, method, spectral_shift=spectral_shift,
+                seed_vec=seed, map_back=False, info_out=info)
+            selection = info.get("selection")
+            if selection == "not-converged" or not np.all(np.isfinite(vals)):
+                selection = "not-converged"
+        vals = np.asarray(vals)
+        vecs = np.asarray(vecs)
+        kind = ("exact" if dim <= max(2 * k + 1, 20)
+                else "adjoint" if op.has_adjoint else "forward")
+        if selection == "not-converged":
+            logger.warning("spin-orbital sector %s: the eigen solve did not "
+                           "converge; the sector is failed.", _pp_label(p))
+            leaders.append(SectorLeader(p, dim, complex(np.nan), selection,
+                                        False, float("inf"), float("nan"),
+                                        kind, len(vals)))
+            failed.append(p)
+            continue
+        if kind == "exact":
+            est = float(np.linalg.norm(M, 2))
+            images = M @ vecs
+        else:
+            est, steps, change, conv = _so_sector_norm_estimate(
+                red, dim, op.has_adjoint)
+            images = np.asarray(red.matmat(vecs))
+        scale = max(1.0, float(np.max(np.abs(vals))), est)
+        if kind == "forward" or (kind == "adjoint" and not conv):
+            logger.info(
+                "spin-orbital sector %s: operator-norm estimate %s after %d "
+                "steps (relative change %.2e); residual scale %.6e",
+                _pp_label(p), kind, steps, change, scale)
+        resid = 0.0
+        for i in range(len(vals)):
+            v = vecs[:, i]
+            n_k = max(1.0, abs(vals[i]), est)
+            r = (float(np.linalg.norm(images[:, i] - vals[i] * v))
+                 / (n_k * float(np.linalg.norm(v))))
+            resid = max(resid, r) if np.isfinite(r) else float("inf")
+        certified = bool(resid <= _SO_SECTOR_RESIDUAL_TOL)
+        lead_value = complex(vals[np.argmax(vals.real)]) if len(vals) else complex(np.nan)
+        if not certified:
+            logger.warning(
+                "spin-orbital sector %s: a returned eigenpair fails the "
+                "residual check (%.3e > %.0e relative to the scale %.6e); "
+                "the sector is failed.", _pp_label(p), resid,
+                _SO_SECTOR_RESIDUAL_TOL, scale)
+            leaders.append(SectorLeader(p, dim, lead_value, "residual-failed",
+                                        False, resid, est, kind, len(vals)))
+            failed.append(p)
+            continue
+        leaders.append(SectorLeader(p, dim, lead_value, selection, True, resid,
+                                    est, kind, len(vals)))
+        for i in range(len(vals)):
+            g = basis.scatter(basis.to_full(vecs[:, i])).reshape(gap_shape)
+            cands.append((complex(vals[i]), rank, i, g, p))
+
+    if all(lead.dim == 0 for lead in leaders):
+        logger.warning("spin-orbital: the antisymmetric gap space is empty on "
+                       "this grid; no eigenvalue is reported")
+    kept = _so_union(cands, k)
+    if seed_flat is not None and kept:
+        kept = _so_order_by_seed(kept, seed_flat / seed_norm)
+    vals = np.array([c[0] for c in kept], dtype=complex)
+    gaps = (np.array([c[3] for c in kept], dtype=complex) if kept
+            else np.zeros((0,) + gap_shape, dtype=complex))
+    pp = np.array([c[4] for c in kept], dtype=np.int8)
+    converged = bool(not failed and len(kept) > 0)
+    leading = complex(vals[0]) if converged else complex(np.nan)
+    selection = ";".join("{}:{}".format(_pp_label(lead.pp_sector), lead.selection)
+                         for lead in leaders)
+    return SectorSolve(vals, gaps, pp, tuple(leaders), tuple(failed), converged,
+                       leading, selection)
+
+
+def _so_iterate_sectors(sector_ops, sigma_init, *, gap_shape, max_iter, alpha,
+                        tol, spectral_shift=None):
+    """The power iteration of the spin-orbital kernel sector by sector.
+
+    Per sector (order ``+1, 0, -1``): ``dim = 0`` is skipped (``"empty"``);
+    an exactly zero reduced operator is ``"null"`` (``lambda = 0``, the first
+    lifted unit vector, not iterated); ``dim = 1`` is solved exactly;
+    otherwise ``_solve_leading(..., "iteration")`` runs on the reduced sector
+    operator from the sector's part of ``sigma_init`` (a zero part starts
+    from the complex ``default_rng(0)`` vector of the reduced space), and a
+    sector whose run did not converge is failed. The reduction is
+    :class:`SectorIteration`'s."""
+    solver = "_so_iterate_sectors"
+    ops = _so_canonical_sector_ops(sector_ops, solver)
+    spectral_shift = _normalize_spectral_shift(spectral_shift)
+    _validate_spectral_shift(spectral_shift, "iteration")
+    gap_shape = tuple(int(x) for x in gap_shape)
+    for op in ops:
+        _so_check_sector_op(op, gap_shape, solver)
+    init_flat = np.asarray(sigma_init).ravel()
+    if init_flat.size != int(np.prod(gap_shape)):
+        raise ValueError("{}: sigma_init has {} entries, the gap {} has {}".format(
+            solver, init_flat.size, gap_shape, int(np.prod(gap_shape))))
+
+    leaders = []
+    for op in ops:
+        p = int(op.pp_sector)
+        basis = op.basis
+        dim = int(basis.dim)
+        if dim == 0:
+            leaders.append(IterationLeader(p, "empty", float("nan"), None, 0))
+            continue
+        red = basis.reduce(op.operator)
+        if _operator_is_exactly_zero(red, dim):
+            gap = _so_lifted_unit_gaps(basis, 1, gap_shape)[0]
+            leaders.append(IterationLeader(p, "null", 0.0, gap, 0))
+            continue
+        if dim == 1:
+            # a one-dimensional sector: its single element is the eigenvalue
+            lam = complex(np.asarray(red.matvec(np.ones(1, dtype=complex))).ravel()[0])
+            gap = _so_lifted_unit_gaps(basis, 1, gap_shape)[0]
+            if np.isfinite(lam):
+                leaders.append(IterationLeader(p, "converged", lam, gap, 0))
+            else:
+                logger.warning("spin-orbital sector %s: the matrix element of the "
+                               "one-dimensional sector is not finite (%s); the sector "
+                               "is failed.", _pp_label(p), lam)
+                leaders.append(IterationLeader(p, "failed", float("nan"), gap, 0))
+            continue
+        part = basis.to_reduced(init_flat[basis.indices]
+                                if basis.indices is not None else init_flat)
+        if not np.any(part != 0):
+            rng = np.random.default_rng(0)
+            part = rng.standard_normal(dim) + 1j * rng.standard_normal(dim)
+        value, vec, info = _solve_leading(
+            lambda: (red, dim), dim, "iteration", max_iter=max_iter,
+            convergence_tol=tol, init_vec=part, alpha=alpha,
+            spectral_shift=spectral_shift)
+        gap = basis.scatter(basis.to_full(np.asarray(vec).ravel())).reshape(gap_shape)
+        n_iter = int(info.get("n_iter", 0))
+        if info.get("converged") and np.isfinite(value):
+            leaders.append(IterationLeader(p, "converged", value, gap, n_iter))
+        else:
+            leaders.append(IterationLeader(p, "failed", float("nan"), gap, n_iter))
+
+    leaders = tuple(leaders)
+    per_sector = tuple(lead.n_iter for lead in leaders)
+    n_iter = max(per_sector) if per_sector else 0
+    failed = tuple(lead.pp_sector for lead in leaders if lead.status == "failed")
+    if failed:
+        first = next(lead for lead in leaders if lead.status == "failed")
+        return SectorIteration(float("nan"), first.gap, first.pp_sector, leaders,
+                               failed, False, n_iter, per_sector, "iteration")
+    live = [lead for lead in leaders if lead.status != "empty"]
+    if not live:
+        # the empty-space WARNING is the eigen leg's (one per run)
+        return SectorIteration(float("nan"), None, _SO_PP_DENSE, leaders, (),
+                               False, n_iter, per_sector, "iteration")
+    best = _so_union([(complex(lead.value), _SO_PP_ORDER.index(lead.pp_sector), 0,
+                       None, lead.pp_sector) for lead in live], 1)[0]
+    lead = next(x for x in live if x.pp_sector == best[4])
+    selection = "null-operator" if lead.status == "null" else "iteration"
+    return SectorIteration(lead.value, lead.gap, lead.pp_sector, leaders, (),
+                           True, n_iter, per_sector, selection)
+
+
+def _so_bond_report(solver_mode, eigen, iteration, *, gap_shape):
+    """The one report of a spin-orbital run (:class:`SectorReport`) from its
+    legs (:class:`EigenLeg` for ``"eigenvalue"`` and ``"both"``,
+    :class:`IterationLeg` for ``"iteration"`` and ``"both"``; the other
+    ``None``).
+
+    * ``"eigenvalue"``: the eigen leg's leader (``reported = Re leading``,
+      NaN if not converged); the gap of the leader, else of the first listed
+      pair (``"uncertified"``), else zeros (``"none"``).
+    * ``"iteration"``: the iteration value and gap (``eigen_converged`` is the
+      iteration's convergence, which needs a finite value); zeros and
+      ``"none"`` when it has no gap.
+    * ``"both"``: the eigen leg decides ``reported``, ``eigen_converged``,
+      the listing and ``failed_sectors``; the gap is the eigen leader's when
+      the eigen leg converged, else the iteration's (``"uncertified"``),
+      else zeros; ``iteration_converged`` is the iteration's convergence
+      (again with a finite value).
+
+    A listing whose first value is NaN (the failed-solve sentinel of the
+    dense layout) holds no candidate: in ``"eigenvalue"`` mode its gap is
+    zeros with ``"none"``.
+
+    ``gap_status`` is ``"certified"`` exactly when ``reported`` is finite."""
+    if solver_mode not in ("eigenvalue", "iteration", "both"):
+        raise ValueError("_so_bond_report: solver_mode must be \"eigenvalue\", "
+                         "\"iteration\" or \"both\", got {!r}".format(solver_mode))
+    if solver_mode in ("eigenvalue", "both") and eigen is None:
+        raise ValueError("_so_bond_report: solver_mode {!r} needs the eigenvalue "
+                         "leg".format(solver_mode))
+    if solver_mode in ("iteration", "both") and iteration is None:
+        raise ValueError("_so_bond_report: solver_mode {!r} needs the iteration "
+                         "leg".format(solver_mode))
+    gap_shape = tuple(int(x) for x in gap_shape)
+
+    def zeros():
+        return np.zeros(gap_shape, dtype=complex)
+
+    def shaped(g):
+        g = np.asarray(g)
+        return g if g.shape == gap_shape else g.reshape(gap_shape)
+
+    nan = float("nan")
+    iteration_converged = None
+    iteration_failed = None
+    def iteration_ok():
+        # convergence of the iteration leg needs a finite value
+        return bool(iteration.converged) and bool(np.isfinite(iteration.value))
+
+    if solver_mode == "iteration":
+        converged = iteration_ok()
+        reported = float(np.real(iteration.value)) if converged else nan
+        if iteration.gap is None:
+            gap, pp = zeros(), _SO_PP_DENSE
+        else:
+            gap, pp = shaped(iteration.gap), int(iteration.pp_sector)
+        selection = iteration.selection
+        vals = np.zeros(0, dtype=complex)
+        gaps = np.zeros((0,) + gap_shape, dtype=complex)
+        pps = np.zeros(0, dtype=np.int8)
+        failed = tuple(iteration.failed_sectors)
+        iteration_failed = failed
+        has_candidate = iteration.gap is not None
+    else:
+        converged = bool(eigen.converged)
+        reported = float(np.real(eigen.leading)) if converged else nan
+        if not np.isfinite(reported):
+            converged = False
+        n = len(eigen.vals)
+        if converged:
+            gap, pp = shaped(eigen.gaps[0]), int(eigen.pp_sector[0])
+            has_candidate = True
+        elif solver_mode == "both":
+            has_candidate = iteration.gap is not None
+            gap, pp = ((shaped(iteration.gap), int(iteration.pp_sector))
+                       if has_candidate else (zeros(), _SO_PP_DENSE))
+        else:
+            # a NaN-valued listing (the failed-solve sentinel of the dense
+            # layout) holds placeholders, not candidates
+            has_candidate = n > 0 and bool(np.isfinite(eigen.vals[0]))
+            gap, pp = ((shaped(eigen.gaps[0]), int(eigen.pp_sector[0]))
+                       if has_candidate else (zeros(), _SO_PP_DENSE))
+        if solver_mode == "both":
+            iteration_converged = iteration_ok()
+            iteration_failed = tuple(iteration.failed_sectors)
+        selection = eigen.selection
+        vals, gaps, pps = eigen.vals, eigen.gaps, eigen.pp_sector
+        failed = tuple(eigen.failed_sectors)
+    if np.isfinite(reported):
+        status = "certified"
+    elif has_candidate:
+        status = "uncertified"
+    else:
+        status = "none"
+    return SectorReport(reported, gap, status, pp,
+                        bool(converged), iteration_converged, selection, vals,
+                        gaps, pps, failed, iteration_failed)
 
 
 def _so_check_antisymmetric_eigenpairs(vals, match):
