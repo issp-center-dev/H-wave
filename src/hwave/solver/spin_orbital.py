@@ -207,6 +207,44 @@ def check_spin_resolved_clash(param_ham, enable_spin_orbital):
         .format(name, tag))
 
 
+def spinful_one_body(ham_info):
+    """Whether the one-body term of ``ham_info`` carries a spin index (is
+    held as nd x nd): spin-orbital mode or a spin-resolved Transfer.
+
+    The one accessor every consumer uses, so an Interaction-like object
+    that predates ``spinful_one_body`` (a test stub, an external caller)
+    falls back to its ``enable_spin_orbital`` instead of silently losing
+    the spin-orbital gates or raising AttributeError."""
+    value = getattr(ham_info, "spinful_one_body", None)
+    if value is not None:
+        return bool(value)
+    return bool(getattr(ham_info, "enable_spin_orbital", False))
+
+
+def spin_resolved_one_body(ham_info):
+    """Whether ``ham_info``'s Transfer came from a spin-resolved (9-column)
+    file; False for an Interaction-like object that predates the
+    attribute."""
+    return bool(getattr(ham_info, "spin_resolved_transfer", False))
+
+
+def spinful_label(ham_info):
+    """How the spinful one-body term was declared, for messages: the
+    spin-orbital switch or a spin-resolved (9-column) Transfer (#323)."""
+    if getattr(ham_info, "enable_spin_orbital", False):
+        return "[mode] enable_spin_orbital = true"
+    return "a spin-resolved (9-column) Transfer"
+
+
+def spinful_term(ham_info):
+    """Short form of :func:`spinful_label` for "... does not support X"
+    messages; the spin-orbital wording is the historical one the
+    equivalence-table reject fragments pin."""
+    if getattr(ham_info, "enable_spin_orbital", False):
+        return "enable_spin_orbital"
+    return "a spin-resolved (9-column) Transfer"
+
+
 def reject_spin_resolved_transfer(param_ham, solver, enable_spin_orbital):
     """Refuse a spin-resolved (9-column) Transfer table a solver does not
     consume yet, and -- always -- its combination with spin-orbital mode.

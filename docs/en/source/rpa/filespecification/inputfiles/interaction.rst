@@ -245,6 +245,27 @@ Usage rules
       spin-orbital count (= 2 × physical orbitals); double any pre-existing RPA
       spin-orbital ``geom.dat`` ``Norbit``.
 
+-  **Spin-resolved (9-column) Transfer.** A Transfer file whose line 1 contains
+   ``w90spin/1`` and whose rows are ``Rx Ry Rz a b s t Re Im`` (``a``, ``b``
+   1-based physical orbitals, ``s``, ``t`` 0-based spins) is accepted as well
+   (the format rules are on the UHFk interaction-file page). The geometry
+   ``norb`` and the interaction definition files keep their physical indices,
+   and combining it with ``mode.enable_spin_orbital = true`` is an error.
+   Internally the one-body term is held as a
+   :math:`2N_\text{orbital} \times 2N_\text{orbital}` matrix in spin-block
+   order and its spin structure is judged from the matrix: spin-independent
+   -> spin-free (the 7-column path), spin-diagonal but asymmetric ->
+   spin-diag, with spin-off-diagonal (:math:`s \ne t`) entries -> spinful
+   (FLEX then imposes the same conditions as spin-orbital mode, e.g.
+   ``flex_hartree_fock = true``). ``calc_scheme = "auto"`` applies the same
+   rule as for a 7-column file and spin-orbital mode: an inter-orbital
+   hopping or a spin flip promotes to general. Extern stays in physical orbital indices
+   and enters as :math:`h\sigma^z` (it adds to a spin-asymmetric on-site term
+   already present in the Transfer file). hwave_sc does not accept this format
+   yet. The chi0q / chiq computed from this format carry a ``spin_resolved =
+   True`` marker, and a ``chi0q_init`` mix-up (a spin-free model with 2N
+   orbitals has the same shape) is refused.
+
 -  **Extern in spin-orbital mode.** With ``mode.enable_spin_orbital = true``
    the Extern file keeps the **physical** orbital indices: an
    :math:`N_\text{orbital} \times N_\text{orbital}` matrix per :math:`R`,

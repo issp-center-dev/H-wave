@@ -1873,6 +1873,12 @@ def _calc_chi0q_internal(input_dict, chi0q_tensor="auto",
     # Read input files via QLMSkInput
     read_io = read_input_k.QLMSkInput(info_inputfile)
     ham_info = read_io.get_param("ham")
+    # hwave_sc builds its bare band from its own read of the Transfer file
+    # as well; until that path consumes the spin-resolved (9-column)
+    # format (#323 phase 4) the whole run refuses it here
+    from hwave.solver import spin_orbital as _spin_orbital
+    _spin_orbital.reject_spin_resolved_transfer(
+        ham_info, "hwave_sc", info_mode_rpa["enable_spin_orbital"])
 
     # Create RPA solver (sets up Lattice, Interaction, parameters)
     solver = sol_rpa.RPA(ham_info, info_log, info_mode_rpa)

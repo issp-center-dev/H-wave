@@ -218,12 +218,28 @@ class TestInputReaderAndSolverRefusal(unittest.TestCase):
         self.assertEqual(solver.norb_orig, 1)
         self.assertFalse(solver.enable_spin_orbital)
 
-    def test_rpa_refuses_until_enabled(self):
+    def test_rpa_consumes_spin_resolved_table(self):
         import hwave.solver.rpa as rpa_module
         _write_chain(self.d, _SPIN_CHAIN)
         info_mode = {'mode': 'RPA', 'calc_scheme': 'reduced', 'param': {
-            'T': 0.5, 'Ncond': 1, 'CellShape': [4, 1, 1], 'Nmat': 16}}
-        with self.assertRaisesRegex(ValueError, "not yet consumed by the RPA"):
+            'T': 0.5, 'Ncond': 1, 'CellShape': [4, 1, 1],
+            'SubShape': [1, 1, 1], 'Nmat': 16}}
+        solver = rpa_module.RPA(self._input().get_param("ham"),
+                                {"print_level": 0, "print_step": 100}, info_mode)
+        self.assertTrue(solver.ham_info.spin_resolved_transfer)
+        self.assertTrue(solver.ham_info.spinful_one_body)
+        self.assertFalse(solver.ham_info.enable_spin_orbital)
+        # nd x nd in spin-block order, both spins carrying the -t chain
+        self.assertEqual(solver.ham_info.ham_trans_q.shape, (4, 2, 2))
+
+    def test_rpa_refuses_clash_with_enable_spin_orbital(self):
+        import hwave.solver.rpa as rpa_module
+        _write_chain(self.d, _SPIN_CHAIN)
+        info_mode = {'mode': 'RPA', 'calc_scheme': 'general',
+                     'enable_spin_orbital': True, 'param': {
+                         'T': 0.5, 'Ncond': 1, 'CellShape': [4, 1, 1],
+                         'SubShape': [1, 1, 1], 'Nmat': 16}}
+        with self.assertRaisesRegex(ValueError, "enable_spin_orbital = true"):
             rpa_module.RPA(self._input().get_param("ham"),
                            {"print_level": 0, "print_step": 100}, info_mode)
 

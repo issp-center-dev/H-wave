@@ -331,6 +331,48 @@ def _so_source_marker(present, value, source):
     return True
 
 
+def _spin_resolved_source_marker(present, value, source, run_spin_resolved):
+    """Spin-resolved provenance of a chi0q this run did NOT compute (a
+    chi0q_init file or an in-memory green_info reuse), issue #323.
+
+    A bubble computed from a spin-resolved (9-column) Transfer is written
+    with ``spin_resolved = True``. Its shape is that of a spin-free bubble
+    of a model with twice the orbitals, so the marker is what tells the two
+    apart: a spin-resolved run requires ``True`` (absent included -- the
+    format is newer than the marker, so there is no legacy file to admit),
+    and any other run refuses ``True``. Returns the marker value to carry
+    (``True``, ``False`` or ``None`` for absent); a present key must hold a
+    scalar boolean.
+    """
+    if not present:
+        if run_spin_resolved:
+            raise ValueError(
+                "chi0q from {} carries no spin_resolved marker: it was not "
+                "produced by a run on a spin-resolved (9-column) Transfer "
+                "(a spin-free bubble of a model with twice the orbitals has "
+                "the same shape). Drop it and let the run compute chi0q."
+                .format(source))
+        return None
+    val = np.asarray(value)
+    if val.ndim != 0 or val.dtype != np.bool_:
+        raise ValueError(
+            "chi0q from {}: malformed spin_resolved marker ({!r}); expected a "
+            "boolean.".format(source, value))
+    flag = bool(val[()])
+    if flag and not run_spin_resolved:
+        raise ValueError(
+            "chi0q from {} records spin_resolved = True: it was produced by a "
+            "run on a spin-resolved (9-column) Transfer and cannot be used "
+            "by this run (its one-body term is not spin-resolved). Drop it "
+            "and let the run compute chi0q.".format(source))
+    if not flag and run_spin_resolved:
+        raise ValueError(
+            "chi0q from {} records spin_resolved = False: it was not produced "
+            "by a run on a spin-resolved (9-column) Transfer. Drop it and let "
+            "the run compute chi0q.".format(source))
+    return flag
+
+
 def _validate_chi0q_provenance(meta, nfreq, source):
     """Validate and NORMALIZE a chi0q provenance mapping.
 
@@ -690,6 +732,20 @@ class Interaction:
     ham_spinful_exchange = None
     _spinful_exchange_built = False
     _onsite_direct_calls = ()
+    #: Whether the Transfer came from a spin-resolved (9-column) file
+    #: (#323). Set in __init__; the class default serves a stub built
+    #: without it (tests construct Interaction through object.__new__).
+    spin_resolved_transfer = False
+
+    @property
+    def spinful_one_body(self):
+        """The one-body term carries a spin index (is held as nd x nd):
+        spin-orbital mode or a spin-resolved Transfer. The FILE conventions
+        (interleaved order, Geometry norb = 2 * physical, the Extern header
+        check, the spin-orbital provenance of the archives) stay keyed on
+        ``enable_spin_orbital``; the internal nd x nd structure on this."""
+        return bool(getattr(self, "enable_spin_orbital", False)
+                    or self.spin_resolved_transfer)
 
     def __init__(self, lattice, param_ham, info_mode):
         logger.debug(">>> Interaction.__init__")
@@ -706,10 +762,14 @@ class Interaction:
         # mode options
         self.enable_spin_orbital = spin_orbital.resolve_flag(info_mode)
 
-        # a spin-resolved (9-column) Transfer is read but not yet consumed
-        # by RPA / FLEX (issue #323)
-        spin_orbital.reject_spin_resolved_transfer(
-            param_ham, "RPA/FLEX", self.enable_spin_orbital)
+        # A spin-resolved (9-column) Transfer (issue #323) is consumed like
+        # the spin-orbital one: the reader folds it to spin-block keys
+        # s*norb + a, RPA's own internal order, and norb stays physical. It
+        # contradicts spin-orbital mode (Geometry norb = 2 * physical).
+        self.spin_resolved_transfer = (
+            spin_orbital.spin_resolved_transfer_format(param_ham) is not None)
+        spin_orbital.check_spin_resolved_clash(param_ham, self.enable_spin_orbital)
+        # self.spinful_one_body (property) now reads True for either route
 
         # Normal mode: a spin-orbital-format one-body file carries its spin
         # block as orbital indices >= norb. Drop it once here, with one
@@ -721,7 +781,11 @@ class Interaction:
         # normalised table and no further warning.
         if not self.enable_spin_orbital:
             _norb_phys = param_ham["Geometry"]["norb"]
-            for _key in ("Transfer", "Extern"):
+            # a spin-resolved Transfer carries both spins as indices up to
+            # 2 * norb by design: nothing to drop there
+            _keys = (("Extern",) if self.spin_resolved_transfer
+                     else ("Transfer", "Extern"))
+            for _key in _keys:
                 if _key in param_ham:
                     _tbl, _dropped = hamiltonian_k.drop_spin_block(
                         param_ham[_key], _norb_phys, label=_key)
@@ -824,9 +888,11 @@ class Interaction:
                 elif type.lower() == "transfer":
                     # the spin block of a normal-mode table was dropped at
                     # the boundary (__init__), so the fold raises on any
-                    # leftover instead of dropping
+                    # leftover instead of dropping. A spin-resolved table
+                    # folds with the spin stride like a spin-orbital one
+                    # (s*norb + a -> s*(norb*subvol) + a').
                     tbl = self._reshape_interaction(
-                        self.param_ham[type], self.enable_spin_orbital)
+                        self.param_ham[type], self.spinful_one_body)
                     self.param_ham[type] = tbl
                 else:
                     # Extern is one-body and physical-indexed in every mode
@@ -873,9 +939,19 @@ class Interaction:
         rshape = [ max_r[i]-min_r[i]+1 for i in range(3) ]
         rsize = rshape[0] * rshape[1] * rshape[2]
 
+        # a spin-resolved Transfer is written back in its own 9-column
+        # format (line-1 marker, physical orbitals, explicit spins) so the
+        # reader round-trips it; the folded table is spin-block keyed over
+        # the folded orbital count self.norb
+        spin_resolved = (type.lower() == "transfer"
+                         and getattr(self, "spin_resolved_transfer", False))
+        marker = (" {}/{}".format(wan90.SPIN_COLUMN_FORMAT,
+                                  wan90.SPIN_COLUMN_VERSION)
+                  if spin_resolved else "")
+
         with open(file_name, "w") as fw:
             # write header
-            fw.write("{} with sublattice for uhfk\n".format(type))
+            fw.write("{} with sublattice for uhfk{}\n".format(type, marker))
             # write number of orbitals
             fw.write("{}\n".format(self.norb))
             # write number of points of box enclosing transport vectors
@@ -888,7 +964,14 @@ class Interaction:
             fw.write("\n")
             # write index and elements
             for (irvec,orbvec), v in self.param_ham[type].items():
-                if (abs(v) > 1.0e-12):
+                if not (abs(v) > 1.0e-12):
+                    continue
+                if spin_resolved:
+                    (a, s), (b, t) = (spin_orbital.spinblock_split(int(i), self.norb)
+                                      for i in orbvec)
+                    fw.write("{:3} {:3} {:3} {:3} {:3} {:3} {:3}  {:.12f} {:.12f}\n".format(
+                        *irvec, a + 1, b + 1, s, t, v.real, v.imag))
+                else:
                     fw.write("{:3} {:3} {:3} {:3} {:3}  {:.12f} {:.12f}\n".format(
                         *irvec, orbvec[0]+1, orbvec[1]+1, v.real, v.imag
                     ))
@@ -911,17 +994,18 @@ class Interaction:
 
         table = self.param_ham["Transfer"]
         shape = self.lattice.shape
-        if self.enable_spin_orbital:
-            # The SO transfer file uses the interleaved convention
-            # (index = 2*orb + spin, matching UHFk and the docs), while RPA
-            # works internally in spin-block order (index = spin*norb + orb):
-            # build in the file's order, then reorder both orbital axes so
-            # the (spin, orbital) reshapes downstream are correct. For
-            # norb_phys = 1 this is the identity. An index outside
-            # [0, nd) (the geometry's spin-orbital count) raises.
-            tab_r = spin_orbital.interleaved_to_spinblock(
-                hamiltonian_k.dense_table(table, shape, nd, label="Transfer"),
-                norb)
+        if self.spinful_one_body:
+            # nd x nd. An index outside [0, nd) raises.
+            tab_r = hamiltonian_k.dense_table(table, shape, nd, label="Transfer")
+            if self.enable_spin_orbital:
+                # The SO transfer file uses the interleaved convention
+                # (index = 2*orb + spin, matching UHFk and the docs), while
+                # RPA works internally in spin-block order (index =
+                # spin*norb + orb): reorder both orbital axes so the (spin,
+                # orbital) reshapes downstream are correct. For norb_phys =
+                # 1 this is the identity. A spin-resolved Transfer is
+                # already in spin-block order.
+                tab_r = spin_orbital.interleaved_to_spinblock(tab_r, norb)
         else:
             # physical orbital indices; the spin block of a spin-orbital-
             # format file was dropped at the boundary (__init__), so an
@@ -1630,7 +1714,8 @@ class RPA:
             coeff_extern=self.ext,
             trans_mod_present=bool(trans_mod_present),
             green_init_present=bool(green_init_present),
-            enable_spin_orbital=self.ham_info.enable_spin_orbital)
+            enable_spin_orbital=self.ham_info.enable_spin_orbital,
+            spin_resolved=spin_orbital.spin_resolved_one_body(self.ham_info))
         chosen, token = _scheme.resolve_rpa(
             types, self.calc_type, conserved=conserved, cause=cause,
             has_sublattice=bool(getattr(self.lattice, "has_sublattice", False)))
@@ -1749,7 +1834,8 @@ class RPA:
                 self._scheme_source_tables(), norb_phys=self.ham_info.norb_orig,
                 coeff_extern=self.ext, trans_mod_present=trans_mod_present,
                 green_init_present=green_init_present,
-                enable_spin_orbital=self.ham_info.enable_spin_orbital)
+                enable_spin_orbital=self.ham_info.enable_spin_orbital,
+                spin_resolved=spin_orbital.spin_resolved_one_body(self.ham_info))
         except ValueError as exc:
             logger.debug("reduced-exactness diagnostic skipped: %s", exc)
             return
@@ -2248,6 +2334,8 @@ class RPA:
         logger.info("    freq_range      = {}".format(self.freq_range))
         logger.info("    calc_chiq       = {}".format(self.calc_chiq))
         logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
+        logger.info("    spin-resolved Transfer = {}".format(
+            spin_orbital.spin_resolved_one_body(self.ham_info)))
         logger.info("    calc_scheme     = {}".format(
             "auto (resolved at read_init/solve)"
             if self._scheme_resolution is None else self.calc_scheme))
@@ -2473,6 +2561,14 @@ class RPA:
                 else:
                     self._chi0q_init_meta["spin_orbital"] = mem_meta.get(
                         "spin_orbital")
+                # spin-resolved provenance (#323): required by a
+                # spin-resolved run, refused by any other
+                self._chi0q_init_meta["spin_resolved"] = \
+                    _spin_resolved_source_marker(
+                        "spin_resolved" in mem_meta,
+                        mem_meta.get("spin_resolved"),
+                        "green_info chi0q_freq_meta",
+                        bool(spin_orbital.spin_resolved_one_body(self.ham_info)))
             elif getattr(self, "_chi0q_init_meta", None) is not None:
                 # metadata set by the chi0q_init file reader on this
                 # instance: verify it still describes THIS array before
@@ -2519,6 +2615,9 @@ class RPA:
                 if eff.get("spin_orbital") is not None:
                     green_info["chi0q_freq_meta"]["spin_orbital"] = \
                         eff["spin_orbital"]
+                if eff.get("spin_resolved") is not None:
+                    green_info["chi0q_freq_meta"]["spin_resolved"] = \
+                        eff["spin_resolved"]
             # must_fix 6 guard state: the spin-diag transverse channel needs
             # Green functions bound to THIS bubble; an externally supplied
             # chi0q has none (a same-instance green0 may belong to an older
@@ -2657,6 +2756,8 @@ class RPA:
                 "fingerprint": _chi0q_fingerprint(green_info["chi0q"]),
                 # spin-orbital provenance of this computed bubble (#83)
                 "spin_orbital": bool(self.ham_info.enable_spin_orbital),
+                # spin-resolved (9-column Transfer) provenance (#323)
+                "spin_resolved": bool(spin_orbital.spin_resolved_one_body(self.ham_info)),
             }
 
         if self.calc_chiq:
@@ -3077,7 +3178,25 @@ class RPA:
                 return {}
             return {"spin_orbital": True}
 
+        def _spin_resolved_stamp():
+            # same propagation rule as the spin-orbital marker (#323): the
+            # marker goes on only when solve() established it for THIS
+            # array -- computed here from a spin-resolved Transfer, or
+            # carried from a source that itself was so marked
+            ham_info = getattr(self, "ham_info", None)
+            if not bool(getattr(ham_info, "spin_resolved_transfer", False)):
+                return {}
+            meta = green_info.get("chi0q_freq_meta")
+            from collections.abc import Mapping
+            if not isinstance(meta, Mapping) or meta.get("spin_resolved") is not True:
+                return {}
+            chi0q = green_info.get("chi0q")
+            if chi0q is None or meta.get("fingerprint") != _chi0q_fingerprint(chi0q):
+                return {}
+            return {"spin_resolved": True}
+
         so_stamp = _spin_orbital_stamp()
+        sr_stamp = _spin_resolved_stamp()
         # #88: the version-1 fingerprint and state members, built once and
         # written beside the spin_orbital marker into chi0q and chiq
         so_prov = {}
@@ -3116,6 +3235,7 @@ class RPA:
                     **_freq_meta_kwargs(green_info["chiq"]),
                     **_scheme_stamp(),
                     **so_stamp,
+                    **sr_stamp,
                     **so_prov,
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
@@ -3176,6 +3296,7 @@ class RPA:
                 **_freq_meta_kwargs(green_info["chi0q"]),
                 **_scheme_stamp(),
                 **so_stamp,
+                **sr_stamp,
                 **so_prov,
             )
             np.savez(file_name, **save_kwargs)
@@ -3519,6 +3640,22 @@ class RPA:
         # axis must not be inherited by the replacement (round-6 review)
         self._chi0q_init_meta["fingerprint"] = _chi0q_fingerprint(chi0q)
         self._chi0q_init_meta["spin_orbital"] = so_source
+        # spin-resolved provenance (#323): a spin-resolved run requires the
+        # marker, any other run refuses it; a spin-resolved run also refuses
+        # a spin-orbital file (its norb is the spin-orbital count)
+        self._chi0q_init_meta["spin_resolved"] = _spin_resolved_source_marker(
+            "spin_resolved" in data,
+            data["spin_resolved"] if "spin_resolved" in data else None,
+            "file '{}'".format(file_name),
+            bool(spin_orbital.spin_resolved_one_body(self.ham_info)))
+        if (spin_orbital.spin_resolved_one_body(self.ham_info) and "spin_orbital" in data
+                and bool(np.asarray(data["spin_orbital"])[()])):
+            raise ValueError(
+                "chi0q from file '{}' records spin_orbital = True: it was "
+                "produced by a spin-orbital run (Geometry norb = spin-orbital "
+                "count) and cannot be used by a run on a spin-resolved "
+                "Transfer (physical norb). Drop it and let the run compute "
+                "chi0q.".format(file_name))
         # The tail correction changes chi0q at O(1); a config whose
         # coeff_tail differs from the file's describes different physics
         # than this chi0q_init actually contains (issue #80).
@@ -3879,8 +4016,9 @@ class RPA:
         gab_r = np.array(gg, dtype=np.complex128).reshape(nvol, 2, norb, 2, norb)
 
         # transfer term T(k), e^{+ikR} (issue #133), consistent with
-        # _make_ham_trans (spin-block order in spin-orbital mode)
-        if self.ham_info.enable_spin_orbital:
+        # _make_ham_trans (nd x nd in spin-block order when the one-body
+        # term carries a spin index)
+        if spin_orbital.spinful_one_body(self.ham_info):
             H0r = np.array(self.ham_info.ham_trans_r, dtype=np.complex128,
                            copy=True).reshape(nvol,nd,nd)
         else:
@@ -3921,18 +4059,21 @@ class RPA:
         if "trans_mod" in green_info:
             logger.debug("calc_epsilon_k: use trans_mod")
             H0 = green_info['trans_mod']
-            do_spin_orbital = True
+            spinful = True
 
         elif "green_init" in green_info:
             logger.debug("calc_epsilon_k: use initial green")
             H0 = self._calc_trans_mod(green_info["green_init"])
-            do_spin_orbital = True
+            spinful = True
 
         else:
             H0 = self.ham_info.ham_trans_q
-            do_spin_orbital = self.ham_info.enable_spin_orbital
+            # nd x nd when the one-body term carries a spin index
+            # (spin-orbital mode or a spin-resolved Transfer); the spin
+            # structure is then judged from H0 itself below
+            spinful = spin_orbital.spinful_one_body(self.ham_info)
 
-        if do_spin_orbital:
+        if spinful:
             # H0(k) = T_{a~b~}(k) + h sigma_z_{ss'} H_{ab}(k)
             #   T_{a~b~} with extended orbital index
             #   H_{ab} with bare orbital index
@@ -5908,8 +6049,9 @@ class RPA:
             raise ValueError(g + " requires calc_type='ring'.")
         if check_spin:
             self._check_longitudinal_bond_spin_mode()
-        if getattr(self.ham_info, "enable_spin_orbital", False):
-            raise ValueError(g + " does not support enable_spin_orbital.")
+        if spin_orbital.spinful_one_body(self.ham_info):
+            raise ValueError(g + " does not support {}.".format(
+                spin_orbital.spinful_term(self.ham_info)))
         if getattr(self, "_chi0q_external", False):
             raise ValueError(
                 g + " cannot be combined with an externally supplied chi0q "

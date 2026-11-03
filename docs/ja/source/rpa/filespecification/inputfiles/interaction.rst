@@ -219,6 +219,23 @@
       **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数（= 物理軌道数 × 2）
       になりました。既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
 
+-  **スピン列つき拡張形式（9 列）の Transfer。** 1 行目に\ ``w90spin/1``\ を含み、各行が
+   ``Rx Ry Rz a b s t Re Im``\ （\ ``a``, ``b``\ は 1 始まりの物理軌道、\ ``s``, ``t``\ は
+   0 始まりのスピン）の Transfer ファイルも受け付けます（形式の規則は UHFk の
+   相互作用ファイルの説明を参照）。幾何ファイルの\ ``norb``\ と相互作用定義ファイルは
+   物理軌道のままで、\ ``mode.enable_spin_orbital = true``\ との併用はエラーです。
+   内部では一体項を\ :math:`2N_\text{orbital} \times 2N_\text{orbital}`\ のスピンブロック順で
+   持ち、スピン構造は行列から判定されます: スピン非依存なら spin-free（7 列と同じ経路）、
+   スピン対角で非対称なら spin-diag、スピン非対角（\ :math:`s \ne t`\ ）成分があれば
+   spinful（FLEX では\ ``flex_hartree_fock = true``\ などスピン軌道モードと同じ条件が
+   課されます）。\ ``calc_scheme = "auto"``\ の判定は 7 列・スピン軌道モードと同じ規則で、
+   軌道間ホッピングまたはスピン反転があれば general に昇格します。
+   Extern はこの形式でも物理軌道インデックスで書き、\ :math:`h\sigma^z`\ として加わります
+   （Transfer ファイル側にスピン非対称なオンサイト項が既にある場合、両者は加算されます）。
+   hwave_sc は現在この形式を受け付けません。この形式から計算した chi0q / chiq には
+   ``spin_resolved = True``\ のマーカーが記録され、\ ``chi0q_init``\ での取り違え
+   （軌道数 2N のスピン非依存模型と同じ形になります）は拒否されます。
+
 -  **スピン軌道モードでの Extern。**\ ``mode.enable_spin_orbital = true``\ の場合も、
    Extern ファイルは\ **物理**\ 軌道インデックスで書きます。各\ :math:`R`\ について
    :math:`N_\text{orbital} \times N_\text{orbital}`\ 行列であり、インデックスは
