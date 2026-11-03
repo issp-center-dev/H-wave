@@ -168,8 +168,12 @@ jobs:
       # suite already walks. Both --cov-fail-under=80 and
       # tests/_coverage_floor.py pass on the fast gate with ~7 points of
       # headroom, so the split costs the coverage gate nothing.
+      #
+      # --durations=30: the 30 slowest tests of the run, printed at the
+      # end, so a run's wall clock can be attributed without reading the
+      # verbose log's timestamps.
       run: |
-        poetry run pytest tests/ -v --cov=src/hwave --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+        poetry run pytest tests/ -v --durations=30 --cov=src/hwave --cov-report=term-missing --cov-report=xml --cov-fail-under=80
         poetry run python tests/_coverage_floor.py coverage.xml 80
 
     - name: Verify the test suite left the tracked tree clean
@@ -332,9 +336,10 @@ jobs:
       # The floor is enforced in both jobs on purpose: the fast gate is
       # where a coverage regression must be caught, and repeating it here
       # keeps the two jobs literally step-for-step identical apart from
-      # HWAVE_FULL_TESTS.
+      # HWAVE_FULL_TESTS. --durations=30 as in the fast job: this is the
+      # run whose wall clock needs attributing (the opt-in tests run here).
       run: |
-        poetry run pytest tests/ -v --cov=src/hwave --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+        poetry run pytest tests/ -v --durations=30 --cov=src/hwave --cov-report=term-missing --cov-report=xml --cov-fail-under=80
         poetry run python tests/_coverage_floor.py coverage.xml 80
 
     - name: Verify the test suite left the tracked tree clean
