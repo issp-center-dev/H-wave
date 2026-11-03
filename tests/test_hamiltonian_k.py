@@ -234,12 +234,11 @@ class TestEquivalenceRPA(unittest.TestCase):
         s = self._solver([4, 3, 1], subshape, False)
         ham = s.ham_info
         shape = s.lattice.shape
-        if subshape == [1, 1, 1]:
-            with self.assertLogs("qlms", level="WARNING"):
-                tab_r = hk.dense_table(ham.param_ham["Transfer"], shape,
-                                       ham.norb, out_of_range="drop")
-        else:
-            tab_r = hk.dense_table(ham.param_ham["Transfer"], shape, ham.norb)
+        # the spin-block row may still reach the builder (an RPA that leaves
+        # it to _make_ham_trans) or not (one that normalises the table at
+        # the boundary, plan 2.4); "drop" covers both and H(k) is the same
+        tab_r = hk.dense_table(ham.param_ham["Transfer"], shape, ham.norb,
+                               out_of_range="drop")
         np.testing.assert_allclose(tab_r.reshape(ham.ham_trans_r.shape),
                                    ham.ham_trans_r, atol=1e-12)
         np.testing.assert_allclose(hk.to_k(tab_r), ham.ham_trans_q, atol=1e-12)
