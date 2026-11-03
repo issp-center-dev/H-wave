@@ -665,6 +665,12 @@ class UHFk(solver_base):
         (the hermiticity check, the sublattice fold, the H(k) builder)
         sees an in-range table and raises on anything else instead of
         guarding for them individually.
+
+        The replacement is made in the ``param_ham`` container the caller
+        passed in (the same container the sublattice fold rewrites), so a
+        second solver built from the same ``QLMSkInput`` result receives
+        the normalised table and no further warning. Build each solver
+        from its own reader result when the original table matters.
         """
         if self.enable_spin_orbital or self.spin_resolved_transfer:
             return
