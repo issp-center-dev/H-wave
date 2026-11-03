@@ -43,6 +43,10 @@ from . import spin_orbital
 from . import fingerprint
 from . import matsubara as _ms
 from . import half_grid as _half_grid
+
+from .spin_orbital import spinful_label as _spinful_label
+from .spin_orbital import spinful_one_body as _spinful_one_body
+from .spin_orbital import spinful_term as _spinful_term
 from . import flex_diagnostics as _diag
 
 
@@ -810,12 +814,14 @@ class FLEX(RPA):
         return static, fluct
 
     def _init_spin_orbital(self):
-        """Admit ``[mode] enable_spin_orbital = true`` (#83): the spinful
-        general FLEX of Hartree-Fock FLEX.
+        """Admit a one-body term that carries a spin index -- ``[mode]
+        enable_spin_orbital = true`` (#83) or a spin-resolved (9-column)
+        Transfer (#323) -- the spinful general FLEX of Hartree-Fock FLEX.
 
-        The spin is folded into the orbital index, so H0 is kept in its full
-        ``nd x nd`` spin-orbital form (``nd = 2 norb``, spin-block order of
-        :mod:`hwave.solver.spin_orbital`) even when it is spin-diagonal, and
+        H0 is kept in its full ``nd x nd`` form (``nd = 2 norb``, spin-block
+        order of :mod:`hwave.solver.spin_orbital`; the spin-orbital file is
+        reordered from its interleaved index, the spin-resolved one arrives
+        in that order) even when it is spin-diagonal, and
         the fluctuation part is built from the antisymmetrized spinful
         vertex (see :meth:`_flex_compute_veff_spinful`). This version takes
         the Hartree-Fock FLEX route only (``flex_hartree_fock = true``,
@@ -823,7 +829,7 @@ class FLEX(RPA):
         term), without the bond channels, with the exact second order
         (``flex_second_order = "local"``) and on-site interactions only
         (checked in :meth:`_validate_phase_b_interactions`)."""
-        g = "[mode] enable_spin_orbital = true (FLEX)"
+        g = "{} (FLEX)".format(_spinful_label(self.ham_info))
         raw = self._phase_b_raw     # installed as attributes only after this init
         if not raw["flex_hartree_fock"]:
             raise ValueError(
@@ -905,16 +911,19 @@ class FLEX(RPA):
         # guard is enforced in solve(), where spin_mode is determined).
         if scheme == "general":
             # FLEX general is the paramagnetic full-vertex path: it sums the
-            # RPA *ring* (bubble) series with the full rank-4 vertex.
-            if getattr(self.ham_info, "enable_spin_orbital", False):
+            # RPA *ring* (bubble) series with the full rank-4 vertex. A
+            # one-body term that carries a spin index (spin-orbital mode or
+            # a spin-resolved Transfer, #323) takes the spinful route.
+            if _spinful_one_body(self.ham_info):
                 self._init_spin_orbital()
             self._flex_general = True
         elif scheme == "reduced":
-            if getattr(self.ham_info, "enable_spin_orbital", False):
+            if _spinful_one_body(self.ham_info):
                 raise ValueError(
                     "calc_scheme='reduced' FLEX does not support "
-                    "enable_spin_orbital; use calc_scheme='general' with "
-                    "[mode.param] flex_hartree_fock = true.")
+                    "{}; use calc_scheme='general' with "
+                    "[mode.param] flex_hartree_fock = true.".format(
+                        _spinful_term(self.ham_info)))
             self._flex_general = False
         else:
             # ring+ladder was already rejected as step 0 above, and 'auto'
@@ -1977,17 +1986,19 @@ class FLEX(RPA):
         from hwave.solver.offsite import split_locality
         g = ("[mode.param] longitudinal_bond_channels=true (FLEX)"
              if self.longitudinal_bond_channels else "[mode.param] flex_hartree_fock=true")
-        if getattr(self.ham_info, "enable_spin_orbital", False) and not self._so_spinful:
-            raise ValueError(g + " does not support enable_spin_orbital.")
+        if _spinful_one_body(self.ham_info) and not self._so_spinful:
+            raise ValueError(g + " does not support {}.".format(
+                _spinful_term(self.ham_info)))
         split = split_locality(self.ham_info, self.lattice)
         if self._so_spinful and split.offsite_types:
             itype = sorted(split.offsite_types)[0]
             (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
             raise ValueError(
-                "[mode] enable_spin_orbital = true (FLEX) supports on-site interactions "
+                "{} (FLEX) supports on-site interactions "
                 "only in this version (the antisymmetrized spinful vertex carries the "
                 "on-site exchange crossing only); the off-site '{}' declaration at "
-                "irvec={}, orbvec={} is refused.".format(itype, tuple(irvec), tuple(orbvec)))
+                "irvec={}, orbvec={} is refused.".format(
+                    _spinful_label(self.ham_info), itype, tuple(irvec), tuple(orbvec)))
         refused = () if self.longitudinal_bond_channels else ("PairHop", "Exchange")
         for itype in refused:
             if itype in split.offsite_types:

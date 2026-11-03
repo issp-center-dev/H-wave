@@ -198,7 +198,7 @@ def _has_nonzero_offdiagonal(tables, lower_name, *, index_limit=None):
 
 def flavour_conserved(tables, *, norb_phys, coeff_extern,
                       trans_mod_present, green_init_present,
-                      enable_spin_orbital=False):
+                      enable_spin_orbital=False, spin_resolved=False):
     """Pre-fold structural flavour-conservation predicate (RPA).
 
     Returns ``(True, "diagonal_transfer")`` when the effective one-body
@@ -217,10 +217,17 @@ def flavour_conserved(tables, *, norb_phys, coeff_extern,
     * Transfer: the normal branch of ``_make_ham_trans`` skips indices
       >= norb ("skip spin dependence"), while the spin-orbital branch
       consumes every index below the geometry norb = ``2*norb_phys``.
+    * A spin-resolved (9-column) Transfer (``spin_resolved``, #323) is
+      keyed on the spin-block composite index ``s*norb_phys + a`` and is
+      consumed whole, so its limit is ``2*norb_phys`` as in spin-orbital
+      mode and ``i == j`` is the same generalized-flavour (orbital and
+      spin) conservation: an inter-orbital hopping or a spin flip promotes.
     """
     if not math.isfinite(float(coeff_extern)):
         raise ValueError("coeff_extern is non-finite: {!r}".format(coeff_extern))
-    transfer_limit = 2 * int(norb_phys) if enable_spin_orbital else int(norb_phys)
+    transfer_limit = (2 * int(norb_phys)
+                      if (enable_spin_orbital or spin_resolved)
+                      else int(norb_phys))
     mixing = {
         "trans_mod": bool(trans_mod_present),
         "green_init": bool(green_init_present),

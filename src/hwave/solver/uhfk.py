@@ -8,6 +8,7 @@ from . import fold
 from .kgrid import reverse_fft_axes
 from . import hartree_fock
 from . import spin_orbital
+from . import hamiltonian_k
 from ..qlmsio import wan90
 
 logger = logging.getLogger("qlms").getChild("uhfk")
@@ -33,6 +34,15 @@ class UHFk(solver_base):
 
         # Initialize solver components
         self._init_mode(info_mode)  # Set solver modes like Fock term
+        # A spin-resolved (9-column) Transfer (issue #323) is consumed in the
+        # normal (ns = 2) mode: the reader folds it to spin-block keys
+        # s*norb + a, which is the spin-major index of this solver's arrays,
+        # so norb, geom.dat and the two-body files keep their physical
+        # indices and the 2Sz structure check applies unchanged. It
+        # contradicts spin-orbital mode (Geometry norb = 2 * physical).
+        self.spin_resolved_transfer = (
+            spin_orbital.spin_resolved_transfer_format(param_ham) is not None)
+        spin_orbital.check_spin_resolved_clash(param_ham, self.enable_spin_orbital)
         self._init_param()          # Initialize parameters
         self._init_lattice()        # Setup lattice geometry
         self._init_orbit()          # Setup orbital structure
@@ -329,6 +339,7 @@ class UHFk(solver_base):
         logger.info("    hermite_tol    = {}".format(self.hermite_tolerance))
 
         logger.info("    spin_orbital   = {}".format(self.enable_spin_orbital))
+        logger.info("    spin-resolved Transfer = {}".format(self.spin_resolved_transfer))
 
     @do_profile
     def _reshape_geometry(self, geom):
@@ -564,9 +575,14 @@ class UHFk(solver_base):
                     tbl = self._reshape_geometry(self.param_ham[type])
                     self.param_ham[type] = tbl
                 elif type in ["Transfer"]:
+                    # The spin block of a normal-mode table was dropped at
+                    # the boundary (_drop_spin_block_transfer), so the fold
+                    # raises on any leftover instead of dropping. A
+                    # spin-resolved table folds with the spin stride like a
+                    # spin-orbital one: s*norb + a -> s*(norb*subvol) + a'.
                     tbl = self._reshape_interaction(
-                        self.param_ham[type], self.enable_spin_orbital,
-                        drop_spin_block=True)
+                        self.param_ham[type],
+                        self.enable_spin_orbital or self.spin_resolved_transfer)
                     self.param_ham[type] = tbl
                 else:
                     tbl = self._reshape_interaction(self.param_ham[type], False)
@@ -635,8 +651,35 @@ class UHFk(solver_base):
         """
         self._check_cellsize()
         self._check_orbital_index()
+        self._drop_spin_block_transfer()
         self._check_hermite()
         self._check_spin_orbital_compatibility()
+
+    def _drop_spin_block_transfer(self):
+        """Normalize a normal-mode Transfer once, at the boundary.
+
+        A spin-orbital-format file read with enable_spin_orbital = False
+        carries its spin block as orbital indices >= norb; the documented
+        behaviour is to ignore those entries with a warning. They are
+        dropped here, right after the index check, so every later consumer
+        (the hermiticity check, the sublattice fold, the H(k) builder)
+        sees an in-range table and raises on anything else instead of
+        guarding for them individually.
+
+        The replacement is made in the ``param_ham`` container the caller
+        passed in (the same container the sublattice fold rewrites), so a
+        second solver built from the same ``QLMSkInput`` result receives
+        the normalised table and no further warning. Build each solver
+        from its own reader result when the original table matters.
+        """
+        if self.enable_spin_orbital or self.spin_resolved_transfer:
+            return
+        if "Transfer" not in self.param_ham:
+            return
+        table, dropped = hamiltonian_k.drop_spin_block(
+            self.param_ham["Transfer"], self.norb_orig, label="Transfer")
+        if dropped:
+            self.param_ham["Transfer"] = table
 
     def _check_spin_orbital_compatibility(self):
         """Check if interaction terms are compatible with spin-orbital mode.
@@ -716,8 +759,10 @@ class UHFk(solver_base):
             elif k == "Transfer":
                 # In spin-orbital mode the Geometry norb already includes spin
                 # (norb = nd), so valid Transfer indices are [0, norb). In normal
-                # mode the file may carry spin indices up to 2*norb (the spin
-                # block, which _make_ham_trans then drops).
+                # mode the file may carry indices up to 2*norb: the spin block
+                # of a spin-orbital-format file (dropped at the boundary by
+                # _drop_spin_block_transfer), or the spin-block keys s*norb + a
+                # of a spin-resolved Transfer (all of them consumed).
                 trans_max = norb if self.enable_spin_orbital else norb * 2
                 fail = 0
                 for (irvec,orbvec), v in self.param_ham[k].items():
@@ -763,16 +808,12 @@ class UHFk(solver_base):
             # this check runs before the sublattice reshape, so Transfer still
             # carries the original-geometry orbital indices
             norb = self.norb_orig
-
-            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                if orbvec[0] >= norb or orbvec[1] >= norb:
-                    # spin-block entries of a spin-orbital-format file in
-                    # normal mode; _make_ham_trans drops them (with a
-                    # warning), so they are not part of the Hamiltonian this
-                    # check guards
-                    continue
-                tab_r[(*irvec, *orbvec)] += v
+            # a spin-resolved table carries both spins (s*norb + a); the
+            # spin block of a normal-mode table was dropped at the boundary,
+            # so an out-of-range entry here is a defect and raises
+            dim = 2 * norb if self.spin_resolved_transfer else norb
+            tab_r = hamiltonian_k.dense_table(
+                self.param_ham["Transfer"], (nx, ny, nz), dim)
 
             t = np.conjugate(
                     np.transpose(
@@ -787,7 +828,16 @@ class UHFk(solver_base):
                     logger.error(msg)
                     errlist = np.array(np.nonzero(~np.isclose(t, tab_r, atol=self.hermite_tolerance, rtol=0.0))).transpose()
                     for idx in errlist[:max_print]:
-                        logger.error("    index={}, T_ab={}, T_ba^*={}".format(idx, tab_r[tuple(idx)], t[tuple(idx)]))
+                        note = ""
+                        if self.spin_resolved_transfer:
+                            # decode the spin-block composite indices
+                            (a, s), (b, t_) = (
+                                spin_orbital.spinblock_split(int(i), norb)
+                                for i in idx[3:5])
+                            note = " [(orbital, spin) = ({}, {}), ({}, {}); 1-based orbitals]".format(
+                                a + 1, s, b + 1, t_)
+                        logger.error("    index={}{}, T_ab={}, T_ba^*={}".format(
+                            idx, note, tab_r[tuple(idx)], t[tuple(idx)]))
                     if len(errlist) > max_print:
                         logger.error("    ...")
                     logger.error("{} entries".format(len(errlist)))
@@ -1003,50 +1053,19 @@ class UHFk(solver_base):
     def _make_ham_trans(self):
         logger.debug(">>> _make_ham_trans")
 
-        nx,ny,nz = self.shape
-        nvol     = self.nvol
-        norb     = self.norb
-        nd       = self.nd
-
-        if self.enable_spin_orbital == True:
-            tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                tab_r[(*irvec, *orbvec)] += v
-
-            # fourier transform
-            tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
-
-            # Reshape from (nx,ny,nz,nd,nd) to (nvol,nd,nd)
-            ham = tab_k.reshape(nvol, nd, nd)
-
+        table = self.param_ham["Transfer"]
+        if self.enable_spin_orbital or self.spin_resolved_transfer:
+            # the table's indices already carry the spin: interleaved
+            # 2*orb + spin (kept in this solver's order) or the spin-block
+            # s*norb + a of a spin-resolved Transfer -- both (nd, nd)
+            ham = hamiltonian_k.one_body_k(table, self.shape, self.nd)
         else:
-            # data structure of T_ab(r): T(rx,ry,rz,a,b)
-            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            has_spin_dep = False
-            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                if orbvec[0] < norb and orbvec[1] < norb:
-                    tab_r[(*irvec, *orbvec)] += v
-                else:
-                    has_spin_dep = True
-            if has_spin_dep:
-                logger.warning(
-                    "Transfer has orbital indices >= norb (spin-dependent terms) "
-                    "but enable_spin_orbital is False. "
-                    "These terms are ignored. Set enable_spin_orbital = true to use them."
-                )
-
-            # fourier transform
-            tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
-
-            # 2x2 unit matrix to introduce spin index
-            spin = np.eye(2)
-
-            # T_{a,si,b,sj}(k)
-            ham = np.einsum(
-                'kab, st -> ksatb', tab_k.reshape(nvol,norb,norb), spin
-            ).reshape(nvol,nd,nd)
+            # physical orbitals, spin-independent: embed over the spin axis.
+            # The spin block of a spin-orbital-format file was dropped at
+            # the boundary (_drop_spin_block_transfer), so anything out of
+            # range here raises.
+            ham = hamiltonian_k.one_body_k(table, self.shape, self.norb,
+                                           spin_embed=True)
 
         # store
         self.ham_trans = ham
