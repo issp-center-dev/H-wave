@@ -180,16 +180,11 @@ class TestEquivalenceUHFk(unittest.TestCase):
         # a spin-block row (index 3 > norb) that normal mode drops
         _write_transfer(self.d, norb, tbl, extra_rows=["0 0 0 3 3 0.7 0.0"])
         s = self._solver([4, 3, 1], subshape, False)
-        # unfolded: the spin-block row reaches the builder and is dropped
-        # with the one warning; folded: fold.reshape_interaction already
-        # dropped it (and warned), so the builder sees an in-range table
-        if subshape == [1, 1, 1]:
-            with self.assertLogs("qlms", level="WARNING"):
-                got = hk.one_body_k(s.param_ham["Transfer"], s.shape, s.norb,
-                                    spin_embed=True, out_of_range="drop")
-        else:
-            got = hk.one_body_k(s.param_ham["Transfer"], s.shape, s.norb,
-                                spin_embed=True)
+        # the spin-block row may still reach the builder (a UHFk that leaves
+        # it to _make_ham_trans) or not (one that normalises the table at
+        # the boundary, plan 2.2); "drop" covers both and H(k) is the same
+        got = hk.one_body_k(s.param_ham["Transfer"], s.shape, s.norb,
+                            spin_embed=True, out_of_range="drop")
         np.testing.assert_allclose(got, s.ham_trans, atol=1e-12)
 
     def test_normal_mode_no_fold(self):
