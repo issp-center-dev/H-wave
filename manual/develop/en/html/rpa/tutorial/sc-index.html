@@ -443,13 +443,14 @@ weakly-pairing systems (low pressure, quasi-1D). Note this differs from
 dynamic path (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>) the largest-real selection is applied
 automatically for the channel (issue #202): when the kernel conserves the
 channel’s even-frequency sector, the leading eigenvalue comes from a
-symmetry-valid solve restricted to that sector (<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span>
+symmetry-valid solve on that sector’s own coordinates (<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span>
 <span class="pre">&quot;LR_projected&quot;</span></code>), whose largest-real eigenvalue is num_eigenvalues-
 independent; when it does not conserve the sector and a plain <code class="docutils literal notranslate"><span class="pre">arnoldi</span></code> set
 holds no positive channel eigenvalue, the solver instead re-solves once with
 <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code>). Both are recorded in
-<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code> (see below). A user-supplied <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> still
-applies to the unprojected path; a seeded (eigenvector-continuation) run is
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code> (see below). A user-supplied <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>
+applies to the projected and the unprojected solve alike; a seeded
+(eigenvector-continuation) run is
 never re-solved, so a repulsive-dominant temperature scan should set
 <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> for every point to keep the seeded continuation
 consistent with the leading value.</p></li>
@@ -775,12 +776,19 @@ shift probe – an operator of dimension at most 2000 is diagonalized
 densely (<code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code>); a larger one reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> with
 <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> and <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span> <span class="pre">&quot;not-converged&quot;</span></code>
 – the largest-magnitude value is never passed off as the leading one. The
-scale probe of the dynamic projected channel solve has its own contract:
-it has no dense fallback, so a failed probe reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> /
-<code class="docutils literal notranslate"><span class="pre">&quot;not-converged&quot;</span></code> at any dimension; the one exception is a kernel that
-is exactly zero (ARPACK’s “starting vector is zero” error, confirmed by
-three independent probes whose images are exactly zero), which is solved
-as such. On
+dynamic projected channel solve follows the same contract on the channel
+sector’s own coordinates (the dense fallback diagonalizes the sector, whose
+dimension is about a quarter of the full one). An exactly zero kernel is not a
+failure: when ARPACK stops with its “starting vector is zero” error and
+three independent random vectors all have exactly zero images, the static,
+spin-orbital and projected dynamic solvers report every eigenvalue as 0 and
+converged at any dimension, with the selection <code class="docutils literal notranslate"><span class="pre">&quot;null-operator&quot;</span></code> (a
+projected dynamic run keeps <code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code> and says so in its
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue</span> <span class="pre">listing</span></code> line). An unseeded unprojected dynamic run
+(shift-invert) on such a kernel still reports <code class="docutils literal notranslate"><span class="pre">NaN</span></code> with
+<code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;not-converged&quot;</span></code> when its placeholder
+vectors carry no channel parity; a seeded run reports 0 as an uncertified
+continuation (<code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code>). On
 the static non-spin-orbital path with a parity-commuting kernel a failed
 global solve only empties the listing: the leader still comes from the
 parity-sector solve. A seeded run (<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>) follows its continuation branch by
@@ -1050,6 +1058,18 @@ eigenpair passed the requested channel match (<code class="docutils literal notr
 <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>, or check that the kernel conserves the channel’s
 parity – more eigenvalues do not help a parity-mixing kernel (see
 <a class="reference internal" href="#sc-dynamic-channels"><span class="std std-ref">Pairing channels of the dynamic solver</span></a>).</p>
+<p><strong>Dynamic projected listing.</strong> For dynamic runs with <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span>
+<span class="pre">=</span> <span class="pre">&quot;LR_projected&quot;</span></code>, no <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> and no automatic re-solve (the
+largest-magnitude set is re-solved for the largest real parts when its
+largest real part is below its smallest magnitude), the rows of the
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> listing are now the <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>
+largest-magnitude eigenvalues of the channel sector (ordered by real
+part); earlier versions listed its <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> largest real parts,
+so rows after the leader can differ (for example a negative channel
+eigenvalue of large magnitude now appears). The leading eigenvalue and the
+gap are unchanged. A comment line <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue</span> <span class="pre">listing:</span> <span class="pre">...</span></code> in
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> names the set each run listed. Set <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span>
+<span class="pre">&quot;auto&quot;</span></code> to list the largest real parts.</p>
 <p><strong>Python API.</strong> <code class="docutils literal notranslate"><span class="pre">hwave.sc.calc_eliashberg</span></code> now returns the reported
 leading eigenvalue on the static path as well (it returned <code class="docutils literal notranslate"><span class="pre">None</span></code>
 there before). The value can be <code class="docutils literal notranslate"><span class="pre">NaN</span></code>: test it with <code class="docutils literal notranslate"><span class="pre">math.isnan</span></code> or
@@ -1377,10 +1397,19 @@ absent from a short list dominated by larger-real opposite-sector or repulsive
 modes – and the reported leading value would then depend on
 <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>. When the kernel conserves the channel’s even-frequency
 sector, the dynamic solver instead solves the kernel <em>restricted to that
-sector</em> (the same projector the power iteration uses), whose largest-real
-eigenvalue is the channel’s Tc eigenvalue independent of <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>;
-if that sector is repulsive the answer is its least-repulsive (largest-real)
-eigenvalue. When the kernel does not conserve the sector, an unprojected
+sector</em> (the sector of the projector the power iteration uses), in the
+sector’s own orthonormal coordinates, with the shared largest-real-part
+driver: the reported leader is the sector’s largest real part (without a
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>, a largest-magnitude set whose largest real part is
+below its smallest magnitude is re-solved for the largest real parts, as
+described under <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>), the channel’s Tc eigenvalue
+independent of <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>; if that sector is repulsive the answer
+is its least-repulsive (largest-real) eigenvalue. The listing of
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> holds the <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> largest-magnitude
+eigenvalues of the sector, ordered by real part (the largest real parts
+instead with a <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>, after the re-solve, or from a dense
+diagonalization), as on the static sector solve; the comment line
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue</span> <span class="pre">listing:</span> <span class="pre">...</span></code> above the listing names which set it is. When the kernel does not conserve the sector, an unprojected
 <code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code> set holding no positive channel eigenvalue is re-solved <strong>once</strong> with
 <code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> (largest real part) as a best effort. Which
 criterion was used is recorded as <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code> –

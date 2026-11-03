@@ -422,13 +422,13 @@ SC固有値）を直接求めます。シフトは内部で差し引かれるの
 （shift-invert のターゲット）とは別物である点に注意してください。動的経路
 （<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）では、チャネルについて実部最大の選択が自動で
 適用されます（issue #202）。カーネルがチャネルの偶振動数セクターを保存する
-場合、主固有値はそのセクターに制限した対称性整合な解（<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span>
+場合、主固有値はそのセクター自身の座標で解いた対称性整合な解（<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span>
 <span class="pre">=</span> <span class="pre">&quot;LR_projected&quot;</span></code>）から取られ、その実部最大の固有値は<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>
 に依存しません。セクターを保存せず、かつ素の<code class="docutils literal notranslate"><span class="pre">arnoldi</span></code>の集合に正のチャネル
 固有値が含まれない場合は、代わりに<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>で一度だけ
 解き直します（<code class="docutils literal notranslate"><span class="pre">&quot;LR_retry&quot;</span></code>）。いずれも<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code>に記録
-されます（下記参照）。利用者が指定した<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>は非射影の経路に
-適用されます。シード（固有ベクトル継続）付きの実行は解き直されないため、斥力
+されます（下記参照）。利用者が指定した<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>は射影の求解にも
+非射影の求解にも適用されます。シード（固有ベクトル継続）付きの実行は解き直されないため、斥力
 優勢な温度スキャンでは各点で<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を指定して、シード
 継続を主固有値と一致させてください。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span></code>: <code class="docutils literal notranslate"><span class="pre">true</span></code>でカーネル適用（matvec/matmat、FFT 畳み込み）を GPU（CuPy）で
@@ -740,11 +740,17 @@ ARPACK の求解（最初の絶対値最大の求解、shift-invert の予備求
 密行列として対角化し（<code class="docutils literal notranslate"><span class="pre">&quot;dense-LR&quot;</span></code>）、それより大きい演算子では<code class="docutils literal notranslate"><span class="pre">NaN</span></code>、
 <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>、<code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span> <span class="pre">&quot;not-converged&quot;</span></code>を
 報告します。絶対値最大の値を主固有値として報告することはありません。動的な
-射影チャネル求解のスケール推定は別の規則に従います。密行列フォールバックはなく、
-推定に失敗すると次元によらず<code class="docutils literal notranslate"><span class="pre">NaN</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;not-converged&quot;</span></code>を報告します。唯一の
-例外は厳密にゼロのカーネル（ARPACK の「開始ベクトルがゼロ」エラーで、独立な 3 本の
-試行ベクトルの像がすべて厳密にゼロであることを確認した場合）で、その場合はゼロの
-カーネルとして解きます。静的な
+射影チャネル求解も、チャネルセクター自身の座標で同じ規則に従います（密行列
+フォールバックはセクターを対角化し、その次元は全体のおよそ 4 分の 1 です）。厳密に
+ゼロのカーネルは失敗とみなしません。ARPACK が「開始ベクトルがゼロ」エラーで停止し、
+かつ独立な 3 本の乱数ベクトルの像がすべて厳密にゼロである場合、静的・スピン軌道・
+射影した動的の各ソルバーは次元によらず全ての固有値を 0 として収束扱いで報告し、
+選択基準は<code class="docutils literal notranslate"><span class="pre">&quot;null-operator&quot;</span></code>となります（射影した動的実行では
+<code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code>のままで、<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue</span> <span class="pre">listing</span></code>の行にその旨を記します）。
+シードなしの射影しない動的実行（shift-invert）では、仮のベクトルがチャネルの
+パリティを持たない場合、引き続き<code class="docutils literal notranslate"><span class="pre">NaN</span></code>・<code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>・
+<code class="docutils literal notranslate"><span class="pre">&quot;not-converged&quot;</span></code>を報告します。シード付き実行は 0 を保証のない継続
+（<code class="docutils literal notranslate"><span class="pre">sector_selection</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code>）として報告します。静的な
 非スピン軌道経路でカーネルがパリティと可換な場合、全体の求解の失敗は一覧を空に
 するだけで、主固有値は引き続きパリティセクターの求解から得られます。シード付き実行（<code class="docutils literal notranslate"><span class="pre">seed_eigenvector</span></code>）は意図的に
 継続ブランチを追います。</p></li>
@@ -971,6 +977,17 @@ ARPACK の求解（最初の絶対値最大の求解または実部最大の求�
 終了するようになりました。<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>を増やすか、カーネルがチャネルの
 パリティを保存しているか確認してください。パリティを混ぜるカーネルでは固有値を
 増やしても解決しません（<a class="reference internal" href="#sc-dynamic-channels"><span class="std std-ref">動的ソルバーのペアリングチャネル</span></a>を参照）。</p>
+<p><strong>動的な射影求解の一覧。</strong> <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span> <span class="pre">=</span> <span class="pre">&quot;LR_projected&quot;</span></code>で、
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を指定せず、かつ自動の解き直し（絶対値最大の集合の実部の
+最大値がその絶対値の最小値を下回るとき、実部最大のものを求めて解き直します）が
+起きなかった動的実行では、<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の一覧の各行は
+チャネルセクターの絶対値最大の<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>個の固有値（実部の順）に
+なりました。以前の版はその実部最大の<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>個を並べていたため、
+主固有値より後の行が異なることがあります（例えば絶対値の大きい負のチャネル
+固有値が現れます）。主固有値とギャップは変わりません。各実行がどの集合を
+並べたかは<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>のコメント行<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue</span> <span class="pre">listing:</span> <span class="pre">...</span></code>に
+記録されます。実部最大のものを並べるには
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を指定してください。</p>
 <p><strong>Python API。</strong> <code class="docutils literal notranslate"><span class="pre">hwave.sc.calc_eliashberg</span></code>は静的経路でも報告される主固有値を
 返すようになりました（以前はそこで<code class="docutils literal notranslate"><span class="pre">None</span></code>を返していました）。値は<code class="docutils literal notranslate"><span class="pre">NaN</span></code>の
 ことがあるので、真偽値や<code class="docutils literal notranslate"><span class="pre">is</span> <span class="pre">None</span></code>ではなく<code class="docutils literal notranslate"><span class="pre">math.isnan</span></code>または
@@ -1278,9 +1295,17 @@ bond エントリの<code class="docutils literal notranslate"><span class="pre"
 チャネル固有値が短いリストから欠落することがあり、その場合に報告される主固有値は
 <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>に依存してしまいます。カーネルがチャネルの偶振動数
 セクターを保存する場合、動的ソルバーはそのセクターに制限したカーネル
-（べき乗反復と同じ射影）を解き、その実部最大の固有値はチャネルの Tc 固有値で
-<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>に依存しません。そのセクターが斥力的なら答えは最も斥力の
-弱い（実部最大の）固有値です。セクターを保存しない場合は、非射影の<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>
+（べき乗反復と同じ射影のセクター）を、セクター自身の正規直交座標で、共通の
+実部最大ドライバーにより解きます。報告される主固有値はセクターの実部最大の
+固有値（<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を指定しない場合、絶対値最大の集合の実部の最大値が
+その絶対値の最小値を下回るときは、<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>の項で述べたとおり実部
+最大のものを求めて解き直します）で、チャネルの
+Tc 固有値として<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>に依存しません。そのセクターが斥力的なら
+答えは最も斥力の弱い（実部最大の）固有値です。<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の一覧は、
+静的なセクター求解と同様に、セクターの絶対値最大の<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>個の
+固有値を実部の順に並べたものです（<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を指定した場合、
+解き直した場合、密行列として対角化した場合は実部最大のもの）。どちらの集合かは
+一覧の上のコメント行<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigenvalue</span> <span class="pre">listing:</span> <span class="pre">...</span></code>に記録されます。セクターを保存しない場合は、非射影の<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>
 集合に正のチャネル固有値が無ければ<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>（実部最大）で
 <strong>一度だけ</strong>解き直します（ベストエフォート）。用いた基準は
 <code class="docutils literal notranslate"><span class="pre">eigenvalue_selection</span></code>として記録されます（<code class="docutils literal notranslate"><span class="pre">&quot;LR_projected&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;LM&quot;</span></code>・
