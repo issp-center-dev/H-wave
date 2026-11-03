@@ -85,6 +85,12 @@ class QLMSkInput():
         # spin-orbital Extern check, issue #88) reads it from here.
         self.ham_param.source_files = {}
         self.ham_param.source_dimensions = {}
+        # ... and the body format: the (format, version) marker of a
+        # spin-resolved 9-column Transfer file (issue #323), None for the
+        # 7-column form. Solvers that do not consume the spin-resolved
+        # table refuse it from this record (spin_orbital.
+        # reject_spin_resolved_transfer).
+        self.ham_param.source_formats = {}
         self.green = CaseInsensitiveDict()
 
         # file.input.interaction -- normalized ONCE so every lookup
@@ -117,8 +123,13 @@ class QLMSkInput():
             else:
                 f = os.path.join(interaction_file_dir, v)
                 logger.info("QLMSkInput: read interaction {} from {}".format(k, f))
-                tbl = wan90.read_w90(f)
+                # only the Transfer entry may carry the spin-resolved
+                # 9-column format; read_w90 refuses it everywhere else
+                is_transfer = (k.lower() == "transfer")
+                tbl = wan90.read_w90(f, allow_spin_columns=is_transfer)
                 self.ham_param.source_files[k.lower()] = f
+                self.ham_param.source_formats[k.lower()] = (
+                    wan90.read_w90_header_marker(f) if is_transfer else None)
                 # lenient: a malformed header never fails the read here
                 # (read_w90 ignores line 2, and non-spin-orbital input must
                 # behave as before); the spin-orbital Extern check re-reads
