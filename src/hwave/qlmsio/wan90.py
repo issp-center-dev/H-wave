@@ -18,8 +18,6 @@ read_w90_header_marker(name_in)
 read_w90(name_in, allow_spin_columns=False)
     Read Wannier90 Hamiltonian data from file (7-column, or the
     spin-resolved 9-column Transfer format when allowed).
-read_w90_header_dim(name_in)
-    Read the orbital count declared on line 2 of a Wannier90 file.
 write_w90(name_in, info_int, info_geometry, interact_shape)
     Write Wannier90 Hamiltonian data to file.
 """
@@ -201,8 +199,15 @@ def read_w90_header_dim(name_in):
         If line 2 is missing, blank, not an integer, or not positive.
     """
     with open(name_in, 'r') as f:
-        lines = f.readlines()
-    raw = lines[1].strip() if len(lines) > 1 else None
+        f.readline()
+        raw = f.readline()
+    return _header_dim(name_in, raw.strip() if raw else None)
+
+
+def _header_dim(name_in, raw):
+    """Validate the stripped text of line 2 (``None`` when absent) as the
+    declared orbital count; shared by :func:`read_w90_header_dim` and
+    :func:`read_w90`, which already holds the line."""
     try:
         dim = int(raw)
     except (TypeError, ValueError):
@@ -260,10 +265,12 @@ def _column_count_error(name_in, lineno, found, spin_format):
         name_in, lineno, found, expected))
 
 
-def _fold_spin_columns(name_in, lineno, orbvec, s_str, t_str, norb_phys):
+def _fold_spin_columns(name_in, lineno, orbvec, s_str, t_str, norb_phys,
+                       spinblock_index):
     """Spin-block key ``(s*norb + a, t*norb + b)`` of one spin-resolved row
-    (``orbvec`` already 0-based), validating the ranges."""
-    from hwave.solver.spin_orbital import spinblock_index
+    (``orbvec`` already 0-based), validating the ranges.
+    ``spinblock_index`` is :func:`hwave.solver.spin_orbital.spinblock_index`,
+    resolved once per file by the caller."""
     for idx in orbvec:
         if not 0 <= idx < norb_phys:
             raise ValueError(
@@ -350,10 +357,13 @@ def read_w90(name_in, allow_spin_columns=False):
                 "reads {}/{})".format(name_in, SPIN_COLUMN_FORMAT, version,
                                       SPIN_COLUMN_FORMAT, SPIN_COLUMN_VERSION))
         # the spin-block fold needs the physical orbital count of line 2
-        norb_phys = read_w90_header_dim(name_in)
+        # (already in memory) and the one fold definition the solvers share
+        norb_phys = _header_dim(name_in, l_strip[0] if l_strip else None)
+        from hwave.solver.spin_orbital import spinblock_index
         ncol = _NCOL_SPIN
     else:
         norb_phys = None
+        spinblock_index = None
         ncol = _NCOL_PLAIN
 
     nr = int(l_strip[1])
@@ -411,7 +421,8 @@ def read_w90(name_in, allow_spin_columns=False):
         orbvec = (int(values[3]) - 1, int(values[4]) - 1)
         if marker is not None:
             orbvec = _fold_spin_columns(name_in, body_first_line + i, orbvec,
-                                        values[5], values[6], norb_phys)
+                                        values[5], values[6], norb_phys,
+                                        spinblock_index)
             re_im = (values[7], values[8])
         else:
             re_im = (values[5], values[6])
