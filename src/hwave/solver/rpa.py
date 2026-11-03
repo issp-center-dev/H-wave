@@ -2334,8 +2334,12 @@ class RPA:
         logger.info("    freq_range      = {}".format(self.freq_range))
         logger.info("    calc_chiq       = {}".format(self.calc_chiq))
         logger.info("    spin_orbital    = {}".format(self.ham_info.enable_spin_orbital))
-        logger.info("    spin-resolved Transfer = {}".format(
-            spin_orbital.spin_resolved_one_body(self.ham_info)))
+        # only when the feature is in use: tests/test_flex_hf_scf.py compares
+        # this log line by line with a run of the reference revision, which
+        # cannot write the line, so a run that does not use the format must
+        # log exactly as before
+        if spin_orbital.spin_resolved_one_body(self.ham_info):
+            logger.info("    spin-resolved Transfer = True")
         logger.info("    calc_scheme     = {}".format(
             "auto (resolved at read_init/solve)"
             if self._scheme_resolution is None else self.calc_scheme))
