@@ -161,6 +161,91 @@ def to_spinblock_index(index, norb_phys):
     return (index % 2) * norb_phys + index // 2
 
 
+def spinblock_index(orb, spin, norb_phys):
+    """Spin-block composite index ``spin * norb_phys + orb`` of physical
+    orbital ``orb`` with ``spin``: the flattened ``(s, a)`` index of the
+    normal-mode ``(nvol, ns, norb, ns, norb)`` arrays, and the key the
+    spin-resolved 9-column Transfer reader folds to (issue #323)."""
+    return spin * norb_phys + orb
+
+
+def spinblock_split(index, norb_phys):
+    """``(orb, spin)`` of a spin-block composite index (array-valued too)."""
+    return index % norb_phys, index // norb_phys
+
+
+def spin_resolved_transfer_format(param_ham):
+    """``(format, version)`` when the Transfer table came from a spin-resolved
+    9-column file (``ham_param.source_formats``, recorded by the k-space
+    input reader), else ``None``."""
+    formats = getattr(param_ham, "source_formats", None) or {}
+    return formats.get("transfer")
+
+
+def _spin_resolved_name_tag(param_ham, fmt):
+    files = getattr(param_ham, "source_files", None) or {}
+    return files.get("transfer", "Transfer"), "{}/{}".format(*fmt)
+
+
+def check_spin_resolved_clash(param_ham, enable_spin_orbital):
+    """Refuse a spin-resolved (9-column) Transfer together with spin-orbital
+    mode: the format carries its own spin columns and physical orbital
+    indices (Geometry ``norb`` = physical count), while spin-orbital mode
+    folds the spin into interleaved indices and reads the Geometry ``norb``
+    as the spin-orbital count. A solver that consumes the spin-resolved
+    table (UHFk, issue #323) calls this alone; one that does not yet calls
+    :func:`reject_spin_resolved_transfer`, which includes it."""
+    fmt = spin_resolved_transfer_format(param_ham)
+    if fmt is None or not enable_spin_orbital:
+        return
+    name, tag = _spin_resolved_name_tag(param_ham, fmt)
+    raise ValueError(
+        "{}: the spin-resolved Transfer format ({}) carries its own spin "
+        "columns and physical orbital indices, which contradicts "
+        "[mode] enable_spin_orbital = true (interleaved spin-orbital "
+        "indices, Geometry norb = 2 * physical). Use one or the other."
+        .format(name, tag))
+
+
+def reject_spin_resolved_transfer(param_ham, solver, enable_spin_orbital):
+    """Refuse a spin-resolved (9-column) Transfer table a solver does not
+    consume yet, and -- always -- its combination with spin-orbital mode.
+
+    The spin-resolved format carries explicit spin columns and PHYSICAL
+    orbital indices (Geometry ``norb`` = physical count); spin-orbital mode
+    folds the spin into interleaved indices and reads the Geometry ``norb``
+    as the spin-orbital count. The two disagree on what ``norb`` means, so
+    they are never combined. Until a solver consumes the spin-resolved
+    table (issue #323: UHFk with the H(k) builder switch, RPA / FLEX and
+    hwave_sc afterwards) it refuses the table here, right after reading,
+    rather than dropping half of it in ``_make_ham_trans``.
+
+    Parameters
+    ----------
+    param_ham : Mapping
+        The k-space reader's table container (``source_formats`` /
+        ``source_files`` attributes); a plain dict is treated as 7-column.
+    solver : str
+        Named in the error.
+    enable_spin_orbital : bool
+        The resolved ``[mode] enable_spin_orbital``.
+
+    Raises
+    ------
+    ValueError
+    """
+    fmt = spin_resolved_transfer_format(param_ham)
+    if fmt is None:
+        return
+    check_spin_resolved_clash(param_ham, enable_spin_orbital)
+    name, tag = _spin_resolved_name_tag(param_ham, fmt)
+    raise ValueError(
+        "{}: the spin-resolved Transfer format ({}) is not yet consumed by "
+        "the {} solver (issue #323). Write the Transfer in the 7-column "
+        "form, or fold the spin into the orbital index and set "
+        "[mode] enable_spin_orbital = true.".format(name, tag, solver))
+
+
 def spinblock_order(norb_phys):
     """Gather order ``g`` with ``g[j] =`` the interleaved index of spin-block
     position ``j``: ``M_spinblock = M_interleaved[g][:, g]``."""
