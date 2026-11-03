@@ -676,20 +676,10 @@ class UHFk(solver_base):
             return
         if "Transfer" not in self.param_ham:
             return
-        norb = self.norb_orig
-        table = self.param_ham["Transfer"]
-        dropped = sum(1 for key in table
-                      if key[1][0] >= norb or key[1][1] >= norb)
-        if dropped == 0:
-            return
-        logger.warning(
-            "Transfer has {} entries with orbital indices >= norb "
-            "(spin-dependent terms) but enable_spin_orbital is False. "
-            "These terms are ignored. Set enable_spin_orbital = true to "
-            "use them.".format(dropped))
-        self.param_ham["Transfer"] = {
-            key: v for key, v in table.items()
-            if key[1][0] < norb and key[1][1] < norb}
+        table, dropped = hamiltonian_k.drop_spin_block(
+            self.param_ham["Transfer"], self.norb_orig, label="Transfer")
+        if dropped:
+            self.param_ham["Transfer"] = table
 
     def _check_spin_orbital_compatibility(self):
         """Check if interaction terms are compatible with spin-orbital mode.

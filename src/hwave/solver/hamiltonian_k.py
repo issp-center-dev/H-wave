@@ -86,12 +86,53 @@ def dense_table(table, shape, dim, *, out_of_range="raise", label="Transfer"):
         rx, ry, rz = (int(r) for r in irvec)
         tab[rx % nx, ry % ny, rz % nz, a, b] += v
     if dropped:
-        logger.warning(
-            "{} has {} entries with orbital indices >= {} (spin-dependent "
-            "terms) but enable_spin_orbital is False. These terms are "
-            "ignored. Set enable_spin_orbital = true to use them."
-            .format(label, dropped, dim))
+        _warn_dropped(label, dropped, dim)
     return tab
+
+
+def _warn_dropped(label, dropped, dim):
+    # the one wording of the ignore-warning; tests count it by its
+    # "These terms are ignored" phrase. Only the Transfer can be read as a
+    # spin-orbital table; Extern is physical-indexed in every mode, so its
+    # out-of-range rows are refused there rather than used.
+    if label.lower() == "transfer":
+        hint = "Set enable_spin_orbital = true to use them."
+    else:
+        hint = ("{} uses physical orbital indices in every mode; remove "
+                "these rows.".format(label))
+    logger.warning(
+        "{} has {} entries with orbital indices >= {} (spin-dependent "
+        "terms) but enable_spin_orbital is False. These terms are "
+        "ignored. {}".format(label, dropped, dim, hint))
+
+
+def drop_spin_block(table, dim, *, label="Transfer"):
+    """Normalise a normal-mode one-body table once, at the boundary.
+
+    A spin-orbital-format file read with ``enable_spin_orbital = False``
+    carries its spin block as orbital indices ``>= dim`` (the physical
+    orbital count); the documented behaviour is to ignore those entries
+    with a warning. The solvers call this right after reading, so every
+    later consumer (hermiticity check, sublattice fold, H(k) builder) sees
+    an in-range table and raises on anything else instead of guarding
+    individually.
+
+    Returns
+    -------
+    (table, dropped)
+        The input table itself and 0 when nothing is out of range (no
+        copy); otherwise a new dict without the spin-block entries and
+        their count, after one warning.
+    """
+    dim = int(dim)
+    dropped = sum(1 for key in table
+                  if key[1][0] >= dim or key[1][1] >= dim)
+    if dropped == 0:
+        return table, 0
+    _warn_dropped(label, dropped, dim)
+    kept = {key: v for key, v in table.items()
+            if key[1][0] < dim and key[1][1] < dim}
+    return kept, dropped
 
 
 def to_k(tab_r):

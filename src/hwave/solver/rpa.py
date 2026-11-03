@@ -38,6 +38,7 @@ from . import bond_channels
 from . import bubble
 from . import fold
 from . import green as green_mod
+from . import hamiltonian_k
 from . import spin_orbital
 from . import fingerprint
 from . import threaded as _threaded
@@ -710,11 +711,27 @@ class Interaction:
         spin_orbital.reject_spin_resolved_transfer(
             param_ham, "RPA/FLEX", self.enable_spin_orbital)
 
+        # Normal mode: a spin-orbital-format one-body file carries its spin
+        # block as orbital indices >= norb. Drop it once here, with one
+        # warning, on the pre-fold tables (issue #303; the same boundary
+        # rule as UHFk), so the fold and the H(k) builder see in-range
+        # tables and raise on anything else. The replacement is made in the
+        # param_ham container the caller passed in (as the sublattice fold
+        # does), so a second consumer of the same QLMSkInput result sees the
+        # normalised table and no further warning.
+        if not self.enable_spin_orbital:
+            _norb_phys = param_ham["Geometry"]["norb"]
+            for _key in ("Transfer", "Extern"):
+                if _key in param_ham:
+                    _tbl, _dropped = hamiltonian_k.drop_spin_block(
+                        param_ham[_key], _norb_phys, label=_key)
+                    if _dropped:
+                        param_ham[_key] = _tbl
+
         # issue #88: in spin-orbital mode the Extern file is written in
-        # PHYSICAL orbital indices 1..norb_phys; _make_ham_trans would drop
-        # an out-of-range row without a word, so refuse it here, on the
-        # pre-fold table and header (before _init_interaction folds them).
-        # The non-spin-orbital silent drop is unchanged (issue #303).
+        # PHYSICAL orbital indices 1..norb_phys; an out-of-range row used
+        # to be dropped without a word, so refuse it here, on the pre-fold
+        # table and header (before _init_interaction folds them).
         if self.enable_spin_orbital and "Extern" in param_ham:
             _files = getattr(param_ham, "source_files", {})
             _ext_file = _files.get("extern", "Extern")
@@ -805,17 +822,18 @@ class Interaction:
                     tbl = self._reshape_geometry(self.param_ham[type])
                     self.param_ham[type] = tbl
                 elif type.lower() == "transfer":
+                    # the spin block of a normal-mode table was dropped at
+                    # the boundary (__init__), so the fold raises on any
+                    # leftover instead of dropping
                     tbl = self._reshape_interaction(
-                        self.param_ham[type], self.enable_spin_orbital,
-                        drop_spin_block=True)
+                        self.param_ham[type], self.enable_spin_orbital)
                     self.param_ham[type] = tbl
                 else:
-                    # Extern is one-body (physical-indexed in every mode;
-                    # _make_ham_trans skips its spin block like Transfer's);
-                    # two-body tables must not carry a spin block at all
-                    tbl = self._reshape_interaction(
-                        self.param_ham[type], False,
-                        drop_spin_block=(type.lower() == "extern"))
+                    # Extern is one-body and physical-indexed in every mode
+                    # (its spin block, if any, was dropped at the boundary
+                    # too); two-body tables must not carry a spin block at
+                    # all -- either way an out-of-range index raises here
+                    tbl = self._reshape_interaction(self.param_ham[type], False)
                     self.param_ham[type] = tbl
         pass
 
@@ -878,7 +896,6 @@ class Interaction:
     def _make_ham_trans(self):
         logger.debug(">>> Interaction._make_ham_trans")
 
-        nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
         norb = self.norb
         ns = 2
@@ -892,54 +909,31 @@ class Interaction:
             self.ham_extern_q = None
             return
 
+        table = self.param_ham["Transfer"]
+        shape = self.lattice.shape
         if self.enable_spin_orbital:
             # The SO transfer file uses the interleaved convention
             # (index = 2*orb + spin, matching UHFk and the docs), while RPA
-            # works internally in spin-block order (index = spin*norb + orb).
-            # Remap the row and column orbital indices so the (spin, orbital)
-            # reshapes downstream are correct. For norb_phys = 1 this is the
-            # identity.
-            tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                if not (0 <= orbvec[0] < nd and 0 <= orbvec[1] < nd):
-                    raise ValueError(
-                        "spin-orbital Transfer index {} out of range [0,{}); "
-                        "geom norb (SO count) must cover all transfer indices"
-                        .format(orbvec, nd))
-                a = spin_orbital.to_spinblock_index(orbvec[0], norb)
-                b = spin_orbital.to_spinblock_index(orbvec[1], norb)
-                # accumulate: R and R+-L are distinct bonds that wrap onto
-                # the same array slot when the hopping range reaches the
-                # lattice size (numpy negative indexing)
-                tab_r[(*irvec, a, b)] += v
-
-            # Fourier transform
-            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
-
-            self.ham_trans_r = tab_r.reshape(nvol,nd,nd)
-            self.ham_trans_q = tab_q.reshape(nvol,nd,nd)
-
+            # works internally in spin-block order (index = spin*norb + orb):
+            # build in the file's order, then reorder both orbital axes so
+            # the (spin, orbital) reshapes downstream are correct. For
+            # norb_phys = 1 this is the identity. An index outside
+            # [0, nd) (the geometry's spin-orbital count) raises.
+            tab_r = spin_orbital.interleaved_to_spinblock(
+                hamiltonian_k.dense_table(table, shape, nd, label="Transfer"),
+                norb)
         else:
-            tab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                if orbvec[0] < norb and orbvec[1] < norb:
-                    # accumulate: wrap-around R vectors share the array slot
-                    tab_r[(*irvec,*orbvec)] += v
-                else:
-                    pass  # skip spin dependence
-
-            # Fourier transform: the documented convention (issue #133)
-            # is eps(k) = sum_R e^{+ikR} t(R) -- ifftn * nvol, matching
-            # UHFk and the spin-orbital branch above. The previous fftn
-            # computed eps(-k), i.e. every k/q label of this mode's output
-            # was globally negated for non-centrosymmetric models.
-            tab_q = FFT.ifftn(tab_r, axes=(0,1,2)) * nvol
-
-            # N.B. spin degree of freedom not included
-            self.ham_trans_r = tab_r.reshape(nvol,norb,norb)
-            self.ham_trans_q = tab_q.reshape(nvol,norb,norb)
+            # physical orbital indices; the spin block of a spin-orbital-
+            # format file was dropped at the boundary (__init__), so an
+            # out-of-range index here raises. N.B. no spin axis: the
+            # consumers embed over spin themselves.
+            tab_r = hamiltonian_k.dense_table(table, shape, norb,
+                                              label="Transfer")
+        p = tab_r.shape[-1]
+        self.ham_trans_r = tab_r.reshape(nvol, p, p)
+        # eps(k) = sum_R e^{+ikR} t(R), the documented convention (issue
+        # #133) shared with UHFk through hamiltonian_k.to_k
+        self.ham_trans_q = hamiltonian_k.to_k(tab_r)
 
         logger.debug("ham_trans_r shape={}, size={}, nonzero_count={}".format(
             self.ham_trans_r.shape,
@@ -955,22 +949,15 @@ class Interaction:
         if 'Extern' in self.param_ham.keys():
             logger.info("read External field")
 
-            hab_r = np.zeros((nx,ny,nz,norb,norb), dtype=np.complex128)
-
-            for (irvec,orbvec), v in self.param_ham["Extern"].items():
-                if orbvec[0] < norb and orbvec[1] < norb:
-                    # accumulate: wrap-around R vectors share the array slot
-                    hab_r[(*irvec,*orbvec)] += v
-                else:
-                    pass  # skip spin dependence
-
-            # Fourier transform: e^{+ikR}, same convention as the
-            # transfer term (issue #133)
-            hab_q = FFT.ifftn(hab_r, axes=(0,1,2)) * nvol
-
-            # N.B. spin degree of freedom not included
-            self.ham_extern_r = hab_r.reshape(nvol,norb,norb)
-            self.ham_extern_q = hab_q.reshape(nvol,norb,norb)
+            # physical orbital indices in every mode (the spin sign comes
+            # from sigma^z in _calc_epsilon_k); the spin block of a
+            # spin-orbital-format file was dropped at the boundary and the
+            # spin-orbital mode refused an out-of-range row there, so an
+            # out-of-range index here raises. No spin axis.
+            hab_r = hamiltonian_k.dense_table(self.param_ham["Extern"], shape,
+                                              norb, label="Extern")
+            self.ham_extern_r = hab_r.reshape(nvol, norb, norb)
+            self.ham_extern_q = hamiltonian_k.to_k(hab_r)
         else:
             self.ham_extern_r = None
             self.ham_extern_q = None
