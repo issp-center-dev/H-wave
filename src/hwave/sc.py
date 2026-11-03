@@ -107,35 +107,41 @@ class _NonFiniteEigenvalues(ArithmeticError):
     solve that did not converge."""
 
 
-# Independent probes that establish a NULL operator before ARPACK error -9
-# ("starting vector is zero") is read as "the operator is zero": every image
-# of _NULL_PROBE_COUNT random vectors must be EXACTLY zero, elementwise. They
-# use their own seed, so an operator that happens to annihilate the
-# deterministic ARPACK start vector is not mistaken for a null one, and no
-# tolerance is allowed: a tiny but nonzero operator is not exempt (it is
-# reported as a failed solve, NaN "not-converged").
+# An operator is taken to be exactly zero only when ARPACK stops with error
+# -9 ("starting vector is zero") AND it maps _NULL_PROBE_COUNT independent
+# random vectors (a generator of its own, so an operator that merely
+# annihilates the deterministic ARPACK start vector does not qualify) to
+# exactly zero, elementwise, with no tolerance: a tiny but nonzero operator
+# is a failed solve like any other.
 _NULL_PROBE_SEED = 917253
 _NULL_PROBE_COUNT = 3
 
 
-def _arpack_error_code(exc):
-    """The ARPACK ``info`` code of a scipy ``ArpackError`` (parsed from its
-    message "ARPACK error <code>: ..."), or None."""
+def _is_arpack_zero_start_error(exc):
+    """True for ARPACK error -9 ("starting vector is zero"). The auto
+    shift's radius probe wraps the ARPACK error in _ShiftProbeFailed, whose
+    message is the wrapped error's, so the message test covers it too."""
     import re
     m = re.match(r"ARPACK error (-?\d+)", str(exc))
-    return int(m.group(1)) if m else None
+    return bool(m) and int(m.group(1)) == -9
 
 
-def _operator_is_null(A, n):
-    """True when ``A`` maps _NULL_PROBE_COUNT independent random vectors (a
-    seeded generator of its own) to exactly zero, elementwise."""
+def _null_flag(record):
+    """The ``null_operator`` entry of a failed-solve record, if any."""
+    return ({"null_operator": True} if record.get("null_operator")
+            else {})
+
+
+def _operator_is_exactly_zero(A, n):
+    """True when ``A`` maps _NULL_PROBE_COUNT independent random vectors to
+    exactly zero, elementwise."""
     rng = np.random.default_rng(_NULL_PROBE_SEED)
     for _ in range(_NULL_PROBE_COUNT):
         x = rng.standard_normal(n) + 1j * rng.standard_normal(n)
-        y = np.asarray(A.matvec(x)).ravel()
-        if np.any(y != 0):
+        if np.any(np.asarray(A.matvec(x)).ravel() != 0):
             return False
     return True
+
 
 # Default [eliashberg] solver_mode of hwave_sc (static, dynamic, spin-orbital
 # and the bond file entry) and of the in-process FLEX bond pairing step. Both
@@ -7354,7 +7360,10 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         ``lm_min_abs`` (the bound that triggered the re-solve),
         ``lr_retry_failed``, and ``lm_solve_failed`` (the unshifted or
         preliminary which='LM' solve did not converge; the selection is then
-        ``"dense-LR"`` or the NaN sentinel ``"not-converged"``).
+        ``"dense-LR"`` or the NaN sentinel ``"not-converged"``). An exactly
+        zero operator (ARPACK error -9 confirmed by independent probes)
+        reports eigenvalues 0 with the selection ``"null-operator"`` and
+        ``null_operator = True``.
     """
     # Validate spectral_shift up front -- before any branch, including the
     # iteration loop and the small-dense early return -- so an invalid value or
@@ -7713,7 +7722,26 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         basis = np.eye(vec_size, dtype=complex)
         for j in range(vec_size):
             dense[:, j] = A.matvec(basis[:, j])
-        vals, vecs = np.linalg.eig(dense)
+        try:
+            if not np.all(np.isfinite(dense)):
+                # checked before LAPACK sees the matrix (it would print an
+                # "illegal value" message); the handler below is the backstop
+                raise np.linalg.LinAlgError(
+                    "the operator has non-finite entries")
+            vals, vecs = np.linalg.eig(dense)
+        except np.linalg.LinAlgError as exc:
+            # e.g. an operator that returns NaN: the NaN sentinel of a
+            # failed solve, with a finite placeholder vector
+            logger.warning(
+                "the %d-dimensional operator cannot be diagonalized (%s): no "
+                "leading eigenvalue is reported (NaN, eigen_converged = "
+                "false).", vec_size, exc)
+            n_keep = min(max(1, num_eigenvalues), vec_size)
+            v = np.full(n_keep, np.nan + 0j)
+            w = np.eye(vec_size, n_keep, dtype=complex)
+            return v[0], w[:, 0], {"eigenvalues": v, "eigenvectors": w,
+                                   "sigma_shift": sigma_shift,
+                                   "selection": "not-converged"}
         # Match the ARPACK path below: with a seed eigenvector, track the branch
         # that overlaps it (eigenvector continuation); otherwise order by
         # largest real part (the physical SC eigenvalue), not magnitude.
@@ -7796,6 +7824,11 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             basis_col[j] = 1.0
             dense[:, j] = A.matvec(basis_col)
             basis_col[j] = 0.0
+        if not np.all(np.isfinite(dense)):
+            # never hand LAPACK a non-finite matrix (it would print an
+            # "illegal value" message); the caller's LinAlgError handler
+            # returns the NaN sentinel
+            raise np.linalg.LinAlgError("the operator has non-finite entries")
         dvals, dvecs = np.linalg.eig(dense)
         dvals, dvecs = _order_eigenpairs(dvals, dvecs)
         return dvals[:max_ev], dvecs[:, :max_ev]
@@ -7820,24 +7853,52 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
         """The contract after an ARPACK solve did not converge: a dense
         eigendecomposition (largest real parts first) for vec_size <=
         _DENSE_FALLBACK_MAX, else NaN eigenvalues with finite placeholder
-        vectors and the label "not-converged".
+        vectors and the label "not-converged". The one exception is an
+        operator that is exactly zero (ARPACK error -9 confirmed by
+        _operator_is_exactly_zero): every eigenvalue is 0, reported with
+        orthonormal random vectors and the label "null-operator" at any
+        dimension.
         Returns ``(vals, vecs, label, record)``."""
         from scipy.sparse.linalg import ArpackError
+        if (_is_arpack_zero_start_error(exc)
+                and _operator_is_exactly_zero(A, vec_size)):
+            logger.info(
+                "arnoldi: %s stopped with ARPACK error -9 (starting vector "
+                "is zero) and the operator maps %d independent random vectors "
+                "to exactly zero: it is the zero operator, every eigenvalue "
+                "is 0.", what, _NULL_PROBE_COUNT)
+            rng_null = np.random.default_rng(_SEED_ADMIX_SEED)
+            w, _ = np.linalg.qr(
+                rng_null.standard_normal((vec_size, max_ev))
+                + 1j * rng_null.standard_normal((vec_size, max_ev)))
+            return (np.zeros(max_ev, dtype=complex), w, "null-operator",
+                    {"null_operator": True})
         if vec_size <= _DENSE_FALLBACK_MAX:
             logger.warning(
                 "arnoldi: %s did not converge (%s); the operator "
                 "(dimension %d <= %d) is diagonalized densely instead.",
                 what, exc, vec_size, _DENSE_FALLBACK_MAX)
-            v, w = _dense_largest_real()
-            return v, w, "dense-LR", {"lr_retry_failed": True}
-        logger.warning(
-            "arnoldi: %s did not converge (%s) "
-            "and the operator (dimension %d > %d) is too large to "
-            "diagonalize densely: no leading eigenvalue is reported (NaN, "
-            "eigen_converged = false).%s", what, exc, vec_size,
-            _DENSE_FALLBACK_MAX,
-            "" if solver_mode.startswith("shift-invert") else
-            " Set an explicit spectral_shift or raise num_eigenvalues.")
+            try:
+                v, w = _dense_largest_real()
+                return v, w, "dense-LR", {"lr_retry_failed": True}
+            except np.linalg.LinAlgError as dense_exc:
+                # e.g. an operator that returns NaN: no eigendecomposition
+                # exists, so the NaN sentinel below is the answer
+                logger.warning(
+                    "arnoldi: the dense diagonalization failed as well (%s).",
+                    dense_exc)
+                logger.warning(
+                    "arnoldi: no leading eigenvalue is reported (NaN, "
+                    "eigen_converged = false).")
+        else:
+            logger.warning(
+                "arnoldi: %s did not converge (%s) "
+                "and the operator (dimension %d > %d) is too large to "
+                "diagonalize densely: no leading eigenvalue is reported (NaN, "
+                "eigen_converged = false).%s", what, exc, vec_size,
+                _DENSE_FALLBACK_MAX,
+                "" if solver_mode.startswith("shift-invert") else
+                " Set an explicit spectral_shift or raise num_eigenvalues.")
         # finite placeholder vectors (NOT eigenvectors; the NaN
         # eigenvalues say so): the which='LM' vectors, which every
         # downstream symmetry check accepts (they lie in the operator's
@@ -7851,7 +7912,14 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             # the partially converged vectors of the failed solve
             w = np.asarray(partial)
         else:
+            # after a non-finite result another ARPACK pass on the same
+            # operator would only repeat it: go straight to random vectors
+            cause = exc.args[0] if (isinstance(exc, _ShiftProbeFailed)
+                                    and exc.args) else exc
             try:
+                if isinstance(cause, (_NonFiniteEigenvalues,
+                                      np.linalg.LinAlgError)):
+                    raise _NonFiniteEigenvalues("non-finite operator output")
                 _, w = eigs(A, k=max_ev, which='LM', v0=_arpack_start(A))
                 if not np.all(np.isfinite(w)):
                     raise _NonFiniteEigenvalues("non-finite vectors")
@@ -7895,7 +7963,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                 # fallback, else NaN "not-converged"), never an exception
                 vals, vecs, selection_label, _rec = _failed_solve(
                     exc, "the unshifted solve (which='LM')")
-                retry_record = {"lm_solve_failed": True}
+                retry_record = dict({"lm_solve_failed": True},
+                                    **_null_flag(_rec))
             # The LM set holds every eigenvalue of magnitude above the
             # smallest one it contains, m = min |lambda_i|; any eigenvalue
             # outside it has real part <= m. So the largest real part FOUND
@@ -7952,7 +8021,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                     vals, vecs, selection_label, _rec = _failed_solve(
                         exc, "the preliminary which='LM' solve that sets "
                              "the shift-invert target")
-                    retry_record = {"lm_solve_failed": True}
+                    retry_record = dict({"lm_solve_failed": True},
+                                        **_null_flag(_rec))
                     sigma_shift = None
         if selection_label is None:
             logger.info("Using sigma_shift = {:.6f}".format(sigma_shift))
@@ -7971,7 +8041,8 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
             except (ArpackError, _NonFiniteEigenvalues) as exc:
                 vals, vecs, selection_label, _rec = _failed_solve(
                     exc, "the shift-invert solve")
-                retry_record = {"shift_invert_failed": True}
+                retry_record = dict({"shift_invert_failed": True},
+                                    **_null_flag(_rec))
 
     # With a seed eigenvector, track the branch that overlaps it (eigenvector
     # continuation); otherwise order by largest real part (the physical SC

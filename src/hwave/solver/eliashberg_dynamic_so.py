@@ -850,6 +850,10 @@ def solve_dynamic_so(input_dict):
                     "part; the values below come from a second solve with "
                     "spectral_shift='auto' (largest real part)"
                     .format(num_eigenvalues))
+        elif sel_info.get("selection") == "null-operator":
+            # the kernel is exactly zero on the antisymmetric space: every
+            # eigenvalue is 0 (ARPACK error -9 confirmed by independent probes)
+            selection = "null-operator"
         elif sel_info.get("selection") == "dense-LR" and spectral_shift is None:
             # the complete dense spectrum, selected by the largest real part
             selection = "dense-LR"

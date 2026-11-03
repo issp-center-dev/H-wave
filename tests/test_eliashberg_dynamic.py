@@ -2192,7 +2192,11 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
             self.assertAlmostEqual(lam, 0.15, places=5)
             self.assertEqual(selection, "LR_projected")
             self.assertEqual(sector, "channel")
-            self.assertIsNone(note)
+            # the only note is the listing's: the sector's which='LM' set
+            self.assertTrue(note.startswith(
+                "eigenvalue listing: the {} largest-magnitude eigenvalues of "
+                "the 'singlet' channel sector".format(k)), note)
+            self.assertNotIn("\n", note)
             self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
         self.assertAlmostEqual(results[2], results[6], places=8)
 
@@ -2466,3 +2470,381 @@ def test_tsweep_parser_reads_the_dynamic_leader(tmp_path):
             if l.strip() and not l.startswith("#") and len(l.split()) >= 4]
     assert int(rows[0][0]) == 0
     assert abs(float(rows[0][1]) - lam) <= 1e-7 * max(1.0, abs(lam))
+
+
+# --- issue #318: the projected channel solve in the sector's own coordinates --
+
+def _channel_projector_matrix(shape, pairing_type):
+    """Dense matrix of ``_project_parity_dynamic`` on flat vectors."""
+    from hwave.solver import eliashberg_dynamic as ed
+    n = int(np.prod(shape))
+    eye = np.eye(n, dtype=complex)
+    return np.column_stack([ed._project_parity_dynamic(
+        eye[:, j].reshape(shape), pairing_type).ravel() for j in range(n)])
+
+
+# odd and even k grids, odd and even Nmat, one to three orbitals, grids on
+# which every k is its own inverse (an empty single-orbital triplet sector)
+_SECTOR_SHAPES = ((1, 1, 4, 4, 1, 8), (1, 1, 5, 3, 1, 6), (2, 2, 4, 1, 1, 4),
+                  (2, 2, 3, 2, 1, 2), (1, 1, 2, 1, 1, 4), (3, 3, 2, 2, 1, 4),
+                  (1, 1, 4, 1, 1, 5), (2, 2, 2, 2, 2, 3))
+
+
+class TestChannelSectorBasis(_unittest.TestCase):
+    """``_channel_sector_basis`` is an isometry Q onto the channel's
+    even-frequency sector: Q^H Q = I and Q Q^H = P (the channel projector),
+    with ``to_reduced`` = Q^H."""
+
+    def test_isometry_onto_the_channel_sector(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        rng = np.random.default_rng(318)
+        for shape in _SECTOR_SHAPES:
+            for pairing_type in ("singlet", "triplet"):
+                with self.subTest(shape=shape, pairing_type=pairing_type):
+                    to_full, to_red, dim = ed._channel_sector_basis(
+                        shape, pairing_type)
+                    P = _channel_projector_matrix(shape, pairing_type)
+                    self.assertEqual(dim, int(round(np.trace(P).real)))
+                    n = P.shape[0]
+                    x = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+                    if dim == 0:
+                        self.assertEqual(np.linalg.norm(P), 0.0)
+                        continue
+                    eye = np.eye(dim, dtype=complex)
+                    Q = np.column_stack([np.asarray(to_full(eye[:, j])).ravel()
+                                         for j in range(dim)])
+                    self.assertEqual(Q.shape, (n, dim))
+                    np.testing.assert_allclose(Q.conj().T @ Q, eye,
+                                               atol=1e-14)
+                    np.testing.assert_allclose(Q @ Q.conj().T, P, atol=1e-14)
+                    np.testing.assert_allclose(to_red(x), Q.conj().T @ x,
+                                               atol=1e-14)
+                    np.testing.assert_allclose(to_full(to_red(x)), P @ x,
+                                               atol=1e-14)
+
+
+def _reference_sector_maps(shape, pairing_type):
+    """The sector maps written directly with the channel projector (two
+    applications of ``_project_parity_dynamic`` per round trip): the
+    reference the precomputed gather/scatter maps must reproduce."""
+    from hwave.solver import eliashberg_dynamic as ed
+    n = int(np.prod(shape))
+    flat = np.arange(n)
+    idx = flat.reshape(shape)
+    pk = np.ascontiguousarray(ed._reverse_k_and_orbital_dynamic(idx)).ravel()
+    pw = np.ascontiguousarray(ed._reverse_w_dynamic(idx)).ravel()
+    rep_of = np.minimum(np.minimum(flat, pk), np.minimum(pw, pk[pw]))
+    reps = np.unique(rep_of)
+
+    def P(v):
+        return np.asarray(ed._project_parity_dynamic(
+            np.asarray(v).reshape(shape), pairing_type)).ravel()
+    e = np.zeros(n)
+    e[reps] = 1.0
+    norm2 = np.zeros(n)
+    np.add.at(norm2, rep_of, np.abs(P(e)) ** 2)
+    w = np.sqrt(norm2[reps])
+    keep = w > 1.0e-12
+    reps, w = reps[keep], w[keep]
+
+    def to_full(c):
+        g = np.zeros(n, dtype=complex)
+        g[reps] = np.asarray(c).ravel() / w
+        return P(g)
+
+    def to_red(v):
+        return P(v)[reps] / w
+    return to_full, to_red, int(reps.size)
+
+
+class TestChannelSectorMapsMatchTheProjector(_unittest.TestCase):
+    """The precomputed sector maps equal the projector-based ones to
+    round-off (<= 1e-15 relative), on every shape and channel."""
+
+    def test_maps_equal_the_projector_form(self):
+        from hwave.solver import eliashberg_dynamic as ed
+        rng = np.random.default_rng(3180)
+        for shape in _SECTOR_SHAPES + ((1, 1, 8, 8, 1, 16),
+                                       (2, 2, 6, 4, 1, 10)):
+            for pairing_type in ("singlet", "triplet"):
+                with self.subTest(shape=shape, pairing_type=pairing_type):
+                    f, r, d = ed._channel_sector_basis(shape, pairing_type)
+                    f0, r0, d0 = _reference_sector_maps(shape, pairing_type)
+                    self.assertEqual(d, d0)
+                    n = int(np.prod(shape))
+                    v = rng.standard_normal(n) + 1j * rng.standard_normal(n)
+                    c = rng.standard_normal(d) + 1j * rng.standard_normal(d)
+                    a, b = np.asarray(r(v)), np.asarray(r0(v))
+                    self.assertEqual(a.shape, (d,))
+                    self.assertLessEqual(np.max(np.abs(a - b), initial=0.0),
+                                         1e-15 * np.linalg.norm(v))
+                    a, b = np.asarray(f(c)), np.asarray(f0(c))
+                    self.assertEqual(a.shape, (n,))
+                    self.assertLessEqual(np.max(np.abs(a - b), initial=0.0),
+                                         1e-15 * max(np.linalg.norm(c), 1.0))
+
+
+def _sector_conserving_kernel(shape, pairing_type, sector_block, other_block,
+                              seed=0):
+    """A kernel that conserves the channel sector: ``sector_block`` (a
+    ``(d, d)`` matrix, or a callable ``d -> matrix``) on an orthonormal basis
+    of the sector, ``other_block`` likewise on its complement. Returns the
+    dense matrix and the sector basis."""
+    P = _channel_projector_matrix(shape, pairing_type)
+    U, s, _ = np.linalg.svd(P)
+    r = int((s > 1e-8).sum())
+    B, C = U[:, :r], U[:, r:]
+    A = sector_block(r) if callable(sector_block) else sector_block
+    D = (other_block(C.shape[1]) if callable(other_block)
+         else other_block * np.eye(C.shape[1]))
+    return B @ A @ B.conj().T + C @ D @ C.conj().T, B
+
+
+class TestReducedChannelSolve(_unittest.TestCase):
+    """The projected dynamic solve runs the shared largest-real-part driver on
+    the channel sector's own coordinates (issue #318): the operator has the
+    sector's dimension, the reported leader is the sector's largest real
+    part, and a failed solve follows the shared contract."""
+
+    SHAPE = (1, 1, 4, 4, 1, 4)
+
+    def _run(self, M, pairing_type, shape=None, **eli):
+        from hwave.solver import eliashberg_dynamic as ed
+        shape = shape or self.SHAPE
+        info = {}
+        rng = np.random.default_rng(5)
+        phi0 = ed._project_seed_dynamic(
+            rng.standard_normal(shape) + 1j * rng.standard_normal(shape),
+            pairing_type)
+        eli = dict({"solver_mode": "eigenvalue", "num_eigenvalues": 4}, **eli)
+        out = ed.run_leading_eigenproblem(
+            lambda x: M @ np.asarray(x).ravel(), shape, eli, pairing_type,
+            phi0=phi0, seed_vec=None, use_ir=False, axF=None,
+            nmat=shape[-1], info_out=info)
+        return out, info
+
+    @staticmethod
+    def _random_block(seed, scale=1.0, shift=0.0):
+        def make(d):
+            rng = np.random.default_rng(seed)
+            return (shift * np.eye(d) + scale * (rng.standard_normal((d, d))
+                    + 1j * rng.standard_normal((d, d))) / np.sqrt(d))
+        return make
+
+    def test_solve_runs_on_the_sector_dimension(self):
+        import hwave.sc as sc
+        from hwave.solver import eliashberg_dynamic as ed
+        for pairing_type in ("singlet", "triplet"):
+            with self.subTest(pairing_type=pairing_type):
+                M, _B = _sector_conserving_kernel(
+                    self.SHAPE, pairing_type, self._random_block(1),
+                    self._random_block(2, scale=3.0))
+                sizes = []
+                real_solve = sc._solve_leading
+
+                def spy(make_operator, vec_size, *a, **k):
+                    sizes.append(vec_size)
+                    return real_solve(make_operator, vec_size, *a, **k)
+                with _mock.patch.object(sc, "_solve_leading", side_effect=spy):
+                    out, _info = self._run(M, pairing_type)
+                self.assertEqual(out[8], "LR_projected")
+                _f, _r, dim = ed._channel_sector_basis(self.SHAPE,
+                                                       pairing_type)
+                self.assertEqual(sizes, [dim])
+                self.assertLess(dim, M.shape[0])
+
+    def test_leader_is_the_dense_sector_leader(self):
+        """Non-normal sector blocks under a complement of larger magnitude
+        and larger real part: the reported value is the sector's largest
+        real part to round-off, and the returned gap is its eigenvector."""
+        from hwave.solver import eliashberg_dynamic as ed
+        for pairing_type in ("singlet", "triplet"):
+            for seed in (3, 4):
+                with self.subTest(pairing_type=pairing_type, seed=seed):
+                    M, B = _sector_conserving_kernel(
+                        self.SHAPE, pairing_type, self._random_block(seed),
+                        self._random_block(seed + 10, scale=2.0, shift=2.0))
+                    ev = np.linalg.eigvals(B.conj().T @ M @ B)
+                    lead = ev[np.argmax(ev.real)]
+                    out, info = self._run(M, pairing_type)
+                    self.assertEqual(out[8], "LR_projected")
+                    self.assertEqual(out[7], "channel")
+                    self.assertIs(info["eigen_converged"], True)
+                    self.assertLess(abs(out[0] - lead.real), 1e-10)
+                    g = np.asarray(out[1]).ravel()
+                    g = g / np.linalg.norm(g)
+                    # the gap lies in the channel sector ...
+                    np.testing.assert_allclose(
+                        ed._project_parity_dynamic(g.reshape(self.SHAPE),
+                                                   pairing_type).ravel(),
+                        g, atol=1e-10)
+                    # ... and is the leading eigenvector of the kernel
+                    self.assertLess(np.linalg.norm(M @ g - lead * g), 1e-8)
+
+    def test_repulsive_channel_below_a_large_complement(self):
+        """Channel spectrum {-10, -12} under a complement at +100: the
+        channel's largest real part, -10, is reported."""
+        def block(d):
+            return np.diag([-10.0] + [-12.0] * (d - 1)).astype(complex)
+        for pairing_type in ("singlet", "triplet"):
+            for other in (100.0, 0.5, -50.0):
+                with self.subTest(pairing_type=pairing_type, other=other):
+                    M, _B = _sector_conserving_kernel(
+                        self.SHAPE, pairing_type, block, other)
+                    out, info = self._run(M, pairing_type)
+                    self.assertAlmostEqual(out[0], -10.0, delta=1e-10)
+                    self.assertEqual(out[8], "LR_projected")
+                    self.assertIs(info["eigen_converged"], True)
+
+    def test_failed_sector_solve_follows_the_shared_contract(self):
+        """Every ARPACK call of the sector solve fails (non-convergence,
+        another ARPACK error, non-finite eigenvalues): the sector is
+        diagonalized densely up to _DENSE_FALLBACK_MAX; above it the run
+        reports NaN, "not-converged", eigen_converged = false, with a finite
+        gap in the channel sector."""
+        import hwave.sc as sc
+        import scipy.sparse.linalg as spl
+        from hwave.solver import eliashberg_dynamic as ed
+
+        def no_conv(A, k=6, **kw):
+            raise spl.ArpackNoConvergence("forced", np.array([]),
+                                          np.array([]))
+
+        def other_error(A, k=6, **kw):
+            raise spl.ArpackError(-3)
+
+        def non_finite(A, k=6, **kw):
+            return (np.full(k, np.nan, complex),
+                    np.full((A.shape[0], k), np.nan, complex))
+        for pairing_type in ("singlet", "triplet"):
+            M, B = _sector_conserving_kernel(
+                self.SHAPE, pairing_type, self._random_block(7),
+                self._random_block(8, scale=2.0))
+            ev = np.linalg.eigvals(B.conj().T @ M @ B)
+            lead = float(ev.real.max())
+            for failing in (no_conv, other_error, non_finite):
+                for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
+                    with self.subTest(pairing_type=pairing_type,
+                                      failing=failing.__name__,
+                                      dense_max=dense_max), \
+                            _mock.patch.object(sc, "eigs", failing), \
+                            _mock.patch.object(spl, "eigs", failing), \
+                            _mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                                               dense_max):
+                        out, info = self._run(M, pairing_type)
+                        if dense_max > 1:
+                            self.assertLess(abs(out[0] - lead), 1e-10)
+                            self.assertEqual(out[8], "LR_projected")
+                            self.assertIs(info["eigen_converged"], True)
+                        else:
+                            self.assertTrue(np.isnan(out[0]))
+                            self.assertEqual(out[8], "not-converged")
+                            self.assertIs(info["eigen_converged"], False)
+                            g = np.asarray(out[1]).ravel()
+                            self.assertTrue(np.all(np.isfinite(g)))
+                            self.assertGreater(np.linalg.norm(g), 0.0)
+                            np.testing.assert_allclose(
+                                ed._project_parity_dynamic(
+                                    g.reshape(self.SHAPE),
+                                    pairing_type).ravel(), g, atol=1e-10)
+
+    def test_listing_note_names_the_listed_set(self):
+        """eigenvalue.dat says which set the projected listing holds: the
+        sector's largest magnitudes for a plain solve, its largest real
+        parts after the automatic re-solve or with a user spectral_shift.
+        eigenvalue_selection stays "LR_projected" in every case."""
+        import tempfile
+        from hwave.solver import eliashberg_dynamic as ed
+
+        def repulsive(d):
+            return np.diag([-10.0] + [-12.0] * (d - 1)).astype(complex)
+        cases = (
+            # (sector block, eli overrides, expected listing text)
+            (self._random_block(11, shift=2.0), {},
+             "largest-magnitude eigenvalues of the 'singlet' channel sector "
+             "(which='LM')"),
+            (repulsive, {},
+             "largest-real-part eigenvalues of the 'singlet' channel sector, "
+             "re-solved with spectral_shift='auto'"),
+            (self._random_block(11, shift=2.0), {"spectral_shift": "auto"},
+             "largest-real-part eigenvalues of the 'singlet' channel sector "
+             "(spectral_shift = auto applied)"),
+            (self._random_block(11, shift=2.0), {"spectral_shift": 7.5},
+             "largest-real-part eigenvalues of the 'singlet' channel sector "
+             "(spectral_shift = 7.5 applied)"),
+        )
+        for block, eli, text in cases:
+            with self.subTest(eli=eli, text=text):
+                M, B = _sector_conserving_kernel(self.SHAPE, "singlet", block,
+                                                 0.5)
+                out, info = self._run(M, "singlet", **eli)
+                lam, _g, evs, match, note = out[:5]
+                self.assertEqual(out[8], "LR_projected")
+                self.assertIn("eigenvalue listing: the {} ".format(len(evs))
+                              + text, note)
+                ev = np.linalg.eigvals(B.conj().T @ M @ B)
+                if "largest-magnitude" in text:
+                    want = ev[np.argsort(-np.abs(ev))[:len(evs)]]
+                else:
+                    want = ev[np.argsort(-ev.real)[:len(evs)]]
+                np.testing.assert_allclose(np.sort_complex(np.asarray(evs)),
+                                           np.sort_complex(want), atol=1e-8)
+                tmp = tempfile.mkdtemp()
+                try:
+                    path = _os.path.join(tmp, "eigenvalue.dat")
+                    ed.write_eigenvalue_file(
+                        path, lam, evs, match, note,
+                        eigenvalue_selection=out[8], selection=out[7])
+                    with open(path) as fh:
+                        text_out = fh.read()
+                    self.assertIn("# eigenvalue listing: the {} ".format(
+                        len(evs)) + text, text_out)
+                    self.assertIn("# eigenvalue_selection: LR_projected",
+                                  text_out)
+                finally:
+                    _shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_no_listing_note_without_a_listing(self):
+        """A failed sector solve (NaN, "not-converged") names no set."""
+        import hwave.sc as sc
+        import scipy.sparse.linalg as spl
+        M, _B = _sector_conserving_kernel(self.SHAPE, "singlet",
+                                          self._random_block(12), 0.5)
+
+        def failing(A, k=6, **kw):
+            raise spl.ArpackNoConvergence("forced", np.array([]),
+                                          np.array([]))
+        with _mock.patch.object(sc, "eigs", failing), \
+                _mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+            out, _info = self._run(M, "singlet")
+        self.assertEqual(out[8], "not-converged")
+        self.assertTrue(out[4] is None or "eigenvalue listing" not in out[4])
+        # below the dense limit the same failure is diagonalized densely,
+        # and the listing says so
+        with _mock.patch.object(sc, "eigs", failing):
+            out, _info = self._run(M, "singlet")
+        self.assertEqual(out[8], "LR_projected")
+        self.assertIn("largest-real-part eigenvalues of the 'singlet' channel "
+                      "sector (dense diagonalization of the sector)", out[4])
+
+    def test_user_spectral_shift_reaches_the_sector_solve(self):
+        """The sector solve uses the user's spectral_shift (largest real part
+        of the shifted sector operator), like the static sector solve."""
+        import hwave.sc as sc
+        M, B = _sector_conserving_kernel(
+            self.SHAPE, "singlet", self._random_block(9),
+            self._random_block(10, scale=2.0))
+        ev = np.linalg.eigvals(B.conj().T @ M @ B)
+        for shift in ("auto", 7.5, None):
+            with self.subTest(shift=shift):
+                seen = []
+                real_solve = sc._solve_leading
+
+                def spy(*a, **k):
+                    seen.append(k.get("spectral_shift"))
+                    return real_solve(*a, **k)
+                eli = {} if shift is None else {"spectral_shift": shift}
+                with _mock.patch.object(sc, "_solve_leading", side_effect=spy):
+                    out, _info = self._run(M, "singlet", **eli)
+                self.assertEqual(seen, [shift])
+                self.assertLess(abs(out[0] - ev.real.max()), 1e-10)

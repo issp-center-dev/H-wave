@@ -100,7 +100,8 @@ def _assert_text_close(case, got, want, tag, rtol=1e-9):
     punct = "()[]{},;:"
 
     _NEW_HEADERS = ("# gap_sector_weights", "# sector_selection",
-                    "# eigenvalue_selection", "# eigen_converged")
+                    "# eigenvalue_selection", "# eigen_converged",
+                    "# eigenvalue listing:")
     # the per-eigenvalue match column is now NAMED by the sector that matched;
     # the golden files carry the old unqualified label. Map the new labels back
     # so the label may differ but every ROW must still agree.
@@ -212,7 +213,14 @@ class TestDynamicGolden(unittest.TestCase):
                     # a "none" selection keeps the historical match label
                     self.assertIn("# sector_selection=none", ev_text, tag)
                     self.assertNotIn("even-frequency sector", ev_text, tag)
+                    self.assertNotIn("# eigenvalue listing:", ev_text, tag)
                 else:
+                    # the projected listing names its set: the sector's
+                    # largest-magnitude eigenvalues (no spectral_shift, and
+                    # the set contains the largest real part)
+                    self.assertIn("# eigenvalue listing: the 4 "
+                                  "largest-magnitude eigenvalues of the "
+                                  "'singlet' channel sector", ev_text, tag)
                     self.assertIn("# sector_selection=channel", ev_text, tag)
                     self.assertIn("match(1=channel even-frequency sector)",
                                   ev_text, tag)
@@ -263,9 +271,9 @@ class TestGoldenFixtures(unittest.TestCase):
         cap = {}
         real = ed._solve_channel_projected
 
-        def spy(make_operator, matvec, vec_size, gap_shape, *a, **k):
+        def spy(matvec, vec_size, gap_shape, *a, **k):
             cap.update(matvec=matvec, n=vec_size, shape=gap_shape)
-            return real(make_operator, matvec, vec_size, gap_shape, *a, **k)
+            return real(matvec, vec_size, gap_shape, *a, **k)
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         with mock.patch.object(ed, "_solve_channel_projected", spy):

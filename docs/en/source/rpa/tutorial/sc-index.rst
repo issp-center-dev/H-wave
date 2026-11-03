@@ -397,13 +397,14 @@ This section controls the Eliashberg solver. Key parameters:
   dynamic path (``frequency = "dynamic"``) the largest-real selection is applied
   automatically for the channel (issue #202): when the kernel conserves the
   channel's even-frequency sector, the leading eigenvalue comes from a
-  symmetry-valid solve restricted to that sector (``eigenvalue_selection =
+  symmetry-valid solve on that sector's own coordinates (``eigenvalue_selection =
   "LR_projected"``), whose largest-real eigenvalue is num_eigenvalues-
   independent; when it does not conserve the sector and a plain ``arnoldi`` set
   holds no positive channel eigenvalue, the solver instead re-solves once with
   ``spectral_shift = "auto"`` (``"LR_retry"``). Both are recorded in
-  ``eigenvalue_selection`` (see below). A user-supplied ``spectral_shift`` still
-  applies to the unprojected path; a seeded (eigenvector-continuation) run is
+  ``eigenvalue_selection`` (see below). A user-supplied ``spectral_shift``
+  applies to the projected and the unprojected solve alike; a seeded
+  (eigenvector-continuation) run is
   never re-solved, so a repulsive-dominant temperature scan should set
   ``spectral_shift = "auto"`` for every point to keep the seeded continuation
   consistent with the leading value.
@@ -725,12 +726,19 @@ contract.
   densely (``"dense-LR"``); a larger one reports ``NaN`` with
   ``eigen_converged = false`` and ``eigenvalue_selection = "not-converged"``
   -- the largest-magnitude value is never passed off as the leading one. The
-  scale probe of the dynamic projected channel solve has its own contract:
-  it has no dense fallback, so a failed probe reports ``NaN`` /
-  ``"not-converged"`` at any dimension; the one exception is a kernel that
-  is exactly zero (ARPACK's "starting vector is zero" error, confirmed by
-  three independent probes whose images are exactly zero), which is solved
-  as such. On
+  dynamic projected channel solve follows the same contract on the channel
+  sector's own coordinates (the dense fallback diagonalizes the sector, whose
+  dimension is about a quarter of the full one). An exactly zero kernel is not a
+  failure: when ARPACK stops with its "starting vector is zero" error and
+  three independent random vectors all have exactly zero images, the static,
+  spin-orbital and projected dynamic solvers report every eigenvalue as 0 and
+  converged at any dimension, with the selection ``"null-operator"`` (a
+  projected dynamic run keeps ``"LR_projected"`` and says so in its
+  ``# eigenvalue listing`` line). An unseeded unprojected dynamic run
+  (shift-invert) on such a kernel still reports ``NaN`` with
+  ``eigen_converged = false`` and ``"not-converged"`` when its placeholder
+  vectors carry no channel parity; a seeded run reports 0 as an uncertified
+  continuation (``sector_selection = "none"``). On
   the static non-spin-orbital path with a parity-commuting kernel a failed
   global solve only empties the listing: the leader still comes from the
   parity-sector solve. A seeded run (``seed_eigenvector``) follows its continuation branch by
@@ -1014,6 +1022,19 @@ table only for the eigenvalue solver.
    ``num_eigenvalues``, or check that the kernel conserves the channel's
    parity -- more eigenvalues do not help a parity-mixing kernel (see
    :ref:`sc_dynamic_channels`).
+
+   **Dynamic projected listing.** For dynamic runs with ``eigenvalue_selection
+   = "LR_projected"``, no ``spectral_shift`` and no automatic re-solve (the
+   largest-magnitude set is re-solved for the largest real parts when its
+   largest real part is below its smallest magnitude), the rows of the
+   ``eigenvalue.dat`` listing are now the ``num_eigenvalues``
+   largest-magnitude eigenvalues of the channel sector (ordered by real
+   part); earlier versions listed its ``num_eigenvalues`` largest real parts,
+   so rows after the leader can differ (for example a negative channel
+   eigenvalue of large magnitude now appears). The leading eigenvalue and the
+   gap are unchanged. A comment line ``# eigenvalue listing: ...`` in
+   ``eigenvalue.dat`` names the set each run listed. Set ``spectral_shift =
+   "auto"`` to list the largest real parts.
 
    **Python API.** ``hwave.sc.calc_eliashberg`` now returns the reported
    leading eigenvalue on the static path as well (it returned ``None``
@@ -1367,10 +1388,19 @@ the requested channel, and the weights say what it is instead.
    modes -- and the reported leading value would then depend on
    ``num_eigenvalues``. When the kernel conserves the channel's even-frequency
    sector, the dynamic solver instead solves the kernel *restricted to that
-   sector* (the same projector the power iteration uses), whose largest-real
-   eigenvalue is the channel's Tc eigenvalue independent of ``num_eigenvalues``;
-   if that sector is repulsive the answer is its least-repulsive (largest-real)
-   eigenvalue. When the kernel does not conserve the sector, an unprojected
+   sector* (the sector of the projector the power iteration uses), in the
+   sector's own orthonormal coordinates, with the shared largest-real-part
+   driver: the reported leader is the sector's largest real part (without a
+   ``spectral_shift``, a largest-magnitude set whose largest real part is
+   below its smallest magnitude is re-solved for the largest real parts, as
+   described under ``spectral_shift``), the channel's Tc eigenvalue
+   independent of ``num_eigenvalues``; if that sector is repulsive the answer
+   is its least-repulsive (largest-real) eigenvalue. The listing of
+   ``eigenvalue.dat`` holds the ``num_eigenvalues`` largest-magnitude
+   eigenvalues of the sector, ordered by real part (the largest real parts
+   instead with a ``spectral_shift``, after the re-solve, or from a dense
+   diagonalization), as on the static sector solve; the comment line
+   ``# eigenvalue listing: ...`` above the listing names which set it is. When the kernel does not conserve the sector, an unprojected
    ``"LM"`` set holding no positive channel eigenvalue is re-solved **once** with
    ``spectral_shift = "auto"`` (largest real part) as a best effort. Which
    criterion was used is recorded as ``eigenvalue_selection`` --
