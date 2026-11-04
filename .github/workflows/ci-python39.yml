@@ -3,29 +3,33 @@ name: CI Python 3.10+
 # The suite runs in two shapes (see tests/heavy_tests.py for the registry
 # and the selection rule):
 #
-#   test       -- the FAST gate. HWAVE_FULL_TESTS is NOT set, so the 18
-#                 opt-in exact-diagonalization tests are skipped.
-#   test-full  -- the FULL suite, HWAVE_FULL_TESTS=1: nothing is skipped.
+#   test       -- the FAST gate. HWAVE_FULL_TESTS is NOT set, so the
+#                 opt-in exact-diagonalization tests are skipped. Runs
+#                 the whole suite (unittest, then pytest with the
+#                 coverage floor).
+#   test-full  -- the FULL-ONLY tests, HWAVE_FULL_TESTS=1: only the test
+#                 files that contain a test gated on that switch, run
+#                 once with pytest and without coverage. Everything else
+#                 is the fast gate's job and is not repeated here.
 #
 # Both jobs are driven by the single `on:` block below, so BOTH run on
 # push AND on pull_request. That is deliberate and is the decision on
 # record: the ED assets must run BEFORE a merge, not after it. test-full
 # is not a nightly and is not `if:`-gated to pushes.
 #
-# MEASURED on this tree (macOS, CPython 3.13, numpy 2.4.6), wall clock:
+# MEASURED on GitHub's ubuntu runner (PR #327, Python 3.12, 2026-11-04),
+# when test-full still repeated the whole suite twice -- wall clock:
 #
-#            unittest discover   pytest -q --cov
-#   fast          308 s              390 s     (2234 passed, 57 skipped)
-#   full          798 s              925 s     (2252 passed, 39 skipped)
+#            unittest discover   pytest -v --cov
+#   fast         1116 s            (~40 min)      (3938 tests)
+#   full         4842 s             5947 s        (same, opt-in on)
 #
-# i.e. the split takes ~8 minutes off every push under each runner, and
-# ~16 minutes off a push once both runners are counted -- times four
-# Python versions in the matrix.
-#
-# Those counts were measured BEFORE the "Provision the reference revision"
-# step below. Whenever that step succeeds the develop-comparison harnesses
-# run instead of skipping, so both the skip counts and the wall clock are
-# higher here than the table says; re-measure them when a run is at hand.
+# of which the 28 files holding a HWAVE_FULL_TESTS-gated test took
+# 4086 s / 4698 s and the other 177 files 756 s / 1248 s; coverage added
+# 23%. So the full job's unique work -- the gated files, once, without
+# coverage -- is about an hour, against three hours for the old shape.
+# Coverage is NOT lost: the full suite's coverage.xml was byte-identical
+# to the fast gate's (see the coverage step of `test`).
 
 on:
   push:
@@ -209,14 +213,17 @@ jobs:
 
 
   # ---------------------------------------------------------------------
-  # FULL suite: the same matrix and the same steps as `test`, with
-  # HWAVE_FULL_TESTS=1 so the opt-in exact-diagonalization tests run too.
-  # Triggered on pull_request as well as push (see the note at the top).
+  # FULL-ONLY tests: the same matrix and the same provisioning as `test`,
+  # with HWAVE_FULL_TESTS=1 so the opt-in exact-diagonalization tests run,
+  # restricted to the test files that contain such a test and run once,
+  # with pytest, without coverage (see the note at the top for the
+  # measurements behind this shape). Triggered on pull_request as well as
+  # push.
   # ---------------------------------------------------------------------
   test-full:
     runs-on: ubuntu-latest
-    # The one difference from `test`: this switches the opt-in
-    # exact-diagonalization tests ON for every step below.
+    # This switches the opt-in exact-diagonalization tests ON for every
+    # step below.
     env:
       HWAVE_FULL_TESTS: "1"
     strategy:
@@ -327,20 +334,27 @@ jobs:
         poetry run python -c "import scipy; print('scipy version:', scipy.__version__)"
         poetry run python -c "import hwave; print('hwave imported successfully')"
 
-    - name: Run tests with unittest
+    - name: Run the full-only tests with pytest
+      # Only the test files that contain a test gated on HWAVE_FULL_TESTS
+      # -- through the opt-in registry of tests/heavy_tests.py (`from
+      # tests.heavy_tests import heavy`) or a class-level
+      # full_suite_enabled() check. The files are selected at run time so
+      # the list cannot go stale; their fast tests ride along (a few
+      # minutes). Everything else is the fast gate's job (`test` above)
+      # and is not repeated here, and neither is the unittest pass: pytest
+      # runs every unittest-style test. No coverage either -- the full
+      # suite's coverage was byte-identical to the fast gate's, and the
+      # fast gate keeps the floor. --durations=30: the 30 slowest tests of
+      # the run, printed at the end.
       run: |
-        poetry run python -m unittest discover tests/ -v
-
-    - name: Run tests with pytest and coverage
-      # Same gate as the fast job, re-run with the opt-in tests included.
-      # The floor is enforced in both jobs on purpose: the fast gate is
-      # where a coverage regression must be caught, and repeating it here
-      # keeps the two jobs literally step-for-step identical apart from
-      # HWAVE_FULL_TESTS. --durations=30 as in the fast job: this is the
-      # run whose wall clock needs attributing (the opt-in tests run here).
-      run: |
-        poetry run pytest tests/ -v --durations=30 --cov=src/hwave --cov-report=term-missing --cov-report=xml --cov-fail-under=80
-        poetry run python tests/_coverage_floor.py coverage.xml 80
+        gated="$(grep -l -E 'full_suite_enabled|heavy_tests import|HWAVE_FULL_TESTS' tests/test_*.py | sort)"
+        if [ -z "$gated" ]; then
+          echo "::error::no test file is gated on HWAVE_FULL_TESTS; the selection rule above no longer matches the suite";
+          exit 1;
+        fi
+        echo "full-only test files ($(echo "$gated" | wc -l | tr -d ' ')):"
+        echo "$gated"
+        poetry run pytest $gated -v --durations=30
 
     - name: Verify the test suite left the tracked tree clean
       # !cancelled(): report isolation defects even when the gating test
@@ -364,14 +378,6 @@ jobs:
           echo "$stray";
           exit 1;
         fi
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: fulltests
-        name: codecov-full-suite
-        fail_ci_if_error: false
 
   lint:
     runs-on: ubuntu-latest
