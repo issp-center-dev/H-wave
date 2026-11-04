@@ -228,6 +228,18 @@ FLEX の<code class="docutils literal notranslate"><span class="pre">sigma_init<
 になりました。既存の RPA スピン軌道計算の<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>は2倍にしてください。</p>
 </div>
 </li>
+<li><p><strong>スピン軌道モードでの複素係数。</strong> <code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>では、
+すべてのソルバー（RPA、FLEX、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）が、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の行の<code class="docutils literal notranslate"><span class="pre">[J.imag]</span></code>（<code class="docutils literal notranslate"><span class="pre">[V.imag]</span></code>）が
+ゼロでないものを、計算の前に拒否します。判定は、読み込んだ係数に対する
+<span class="math notranslate nohighlight">\(|\mathrm{Im}\,X| &gt; 10^{-10} + 10^{-8}|X|\)</span>です。H-wave の宣言規約では
+行とその相手<span class="math notranslate nohighlight">\((-R, \beta, \alpha)\)</span>は同じ演算子にかかるため、虚部は
+演算子としての内容をもたず、以前は黙って畳み込まれていました。メッセージは
+<code class="docutils literal notranslate"><span class="pre">&lt;type&gt;</span> <span class="pre">coefficient</span> <span class="pre">at</span> <span class="pre">R=...</span> <span class="pre">orbitals</span> <span class="pre">(a,</span> <span class="pre">b)</span> <span class="pre">has</span> <span class="pre">an</span> <span class="pre">imaginary</span> <span class="pre">part</span> <span class="pre">(...)</span></code>で、
+虚部を取り除くよう伝えます。<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>では相手が Hermite 共役にかかるため、
+虚部は Dzyaloshinskii-Moriya 型の項になります。この拡張は issue #302 で扱っています。
+物理的な複素位相をもつのは<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>だけで、虚部があっても受け入れられます。
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない場合の動作は変わりません。</p></li>
 <li><p><strong>スピン軌道モードでの Extern。</strong><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合も、
 Extern ファイルは<strong>物理</strong>軌道インデックスで書きます。各<span class="math notranslate nohighlight">\(R\)</span>について
 <span class="math notranslate nohighlight">\(N_\text{orbital} \times N_\text{orbital}\)</span>行列であり、インデックスは

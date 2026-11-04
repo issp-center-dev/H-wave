@@ -2014,7 +2014,7 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
      - 偏極した一体ハミルトニアンでは general は例外
    * - ``enable_spin_orbital``
      - 拒否
-     - ``flex_hartree_fock = true``\ で受け付ける（オンサイト相互作用のみ）
+     - ``flex_hartree_fock = true``\ で受け付ける（オンサイトおよびセル内の相互作用のみ）
      - 静的な\ ``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこの出力を読みます。
        :ref:`sc_spin_orbital`\ を参照
    * - 保存される感受率
@@ -2065,6 +2065,44 @@ Eliashberg 頂点に入る相互作用
 
 ``PairLift``\ は粒子‐正孔頂点に\ ``S = C = 0``\ しか寄与しないため、どの経路でも
 無効です（警告のうえ無視されます）。
+
+スピン軌道モード（\ ``enable_spin_orbital = true``\ ）での相互作用の行
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 24 24 24
+
+   * - 相互作用の行
+     - RPA
+     - FLEX（\ ``general``\ 、\ ``flex_hartree_fock = true``\ ）
+     - ``hwave_sc``\ （静的・動的）
+   * - オンサイトの行、およびセル内（\ :math:`\mathbf{R} = 0`\ ）の異なる軌道間の行
+       （\ ``orbital_site``\ によらない）
+     - 受け入れ。直接項と交換交差を厳密に
+     - 受け入れ。直接項と交換交差を厳密に
+     - 受け入れ。直接項と交換交差を厳密に
+   * - ``[mode.param] orbital_site``
+     - 無視。計算ごとに WARNING が 1 回
+     - 無視。計算ごとに WARNING が 1 回
+     - 無視。計算ごとに WARNING が 1 回
+   * - オフサイトの行（\ :math:`\mathbf{R} \neq 0`\ ）
+     - 直接（Hartree 型）部分のみで受け入れ。INFO の行が種類を示す
+       （\ :ref:`スピン軌道 RPA のオフサイトの行 <rpa_so_offsite>`\ を参照）
+     - 拒否
+     - 拒否。メッセージはオフサイトの行を取り除くよう伝える
+   * - ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・
+       ``PairLift``\ の係数の虚部
+     - 拒否
+     - 拒否
+     - 拒否
+   * - ``PairHop``\ の係数の虚部
+     - この検査では拒否しない
+     - RPA と同じ
+     - RPA と同じ
+
+スピン軌道の FLEX と\ ``hwave_sc``\ は、このバージョンではボンド分解チャネル
+（\ ``longitudinal_bond_channels``\ 、\ ``bond_channels``\ ）を拒否します。上のオフサイトの
+拒否メッセージはそれらを案内しません。
 
 
 スピン構造の取り扱い
@@ -2127,12 +2165,38 @@ pairing vertex と、reduced スキームが保存していない横成分感受
 扱います。Transfer ファイル中のスピン軌道相互作用などのスピン混成一体項は厳密に
 取り込まれ、ギャップの一重項成分と三重項成分は模型に応じて混ざります。
 
+.. important::
+
+   **リリース・移行上の注意: スピン軌道モード。** スピン軌道モードでは次のとおりです。
+
+   (1) ``[mode.param] orbital_site``\ は無視されます。異なるサイトの軌道とラベル
+       付けされた軌道間の行も含め、すべての R = 0 の行の交換が厳密に
+       取り込まれます。\ ``orbital_site``\ とそのような行を併用する入力では、
+       SO RPA、SO FLEX、SO hwave_sc の結果が変わります。そのような行を含まない
+       入力では、数値は以前と同じです。入力から\ ``orbital_site``\ を削除すると、
+       下記の WARNING は出なくなります。
+   (2) PairHop 以外の係数に虚部があると拒否されます（以前は虚部が黙って畳み込まれて
+       いました。複素 Exchange は issue #302 を参照）。
+   (3) このバージョンより前に書かれたスピン軌道のアーカイブ（fingerprint version 1
+       またはなし）は作り直す必要があります（どのコマンドがどのファイルを書くかは
+       :ref:`sc_so_archive_checks`\ を参照）。
+
+   以前の結果を再現するには、該当する行や虚部を取り除くか、非スピン軌道の
+   ソルバーを使ってください。
+
+   スピン軌道モードでは\ ``orbital_site``\ の値は読まれず、不正な値も無視されます。
+   キーが指定されていると、計算ごとに WARNING が 1 回出ます: ``orbital_site is
+   ignored in spin-orbital mode; all R=0 rows are treated exactly (see migration
+   note)``
+
 適用範囲
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 - ``frequency = "static"``\ （既定値。この節）または\ ``"dynamic"``\ （振動数に
   依存するギャップ。\ :ref:`sc_spin_orbital_dynamic`\ を参照）;
-- オンサイトの2体相互作用のみ;
+- オンサイトおよびセル内（\ :math:`\mathbf{R} = 0`\ ）の2体相互作用: セル内の異なる
+  軌道間の行は、\ ``orbital_site``\ によらず、交換交差も含めて厳密に扱われます。
+  オフサイトの行（\ :math:`\mathbf{R} \neq 0`\ ）は拒否されます（「拒否される組み合わせ」を参照）;
 - ボンド分解チャネルなし（\ ``bond_channels = false``\ 、既定値）;
 - ``chi0q_mode = "calc"``\ （スピンフルな\ :math:`\chi_0`\ を内部計算）、
   ``"load"``\ （スピン軌道 RPA が出力した一般の4添字 chi0q。**静的のみ**）、または
@@ -2281,14 +2345,22 @@ FLEX の4つのアーカイブを\ ``[file.input] path_to_flex_output``\ （な�
 - ``[eliashberg] flex_chi0q``\ （既定値\ ``"chi0q.npz"``\ ）: FLEX の\ :math:`\chi_0`\ 。
   **必須**\ です。FLEX の実行で\ ``[file.output] chi0q``\ を指定して出力してください。
   この入力の頂点が保存された\ :math:`\chi`\ を再現すること
-  :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ の確認に使い、一致しない場合（たとえば
-  相互作用ファイルを変更した場合）は拒否します;
+  :math:`(1 + \chi_0\Gamma)\chi = \chi_0`\ の確認に使い、一致しない場合は拒否します
+  （相互作用ファイルの変更は、その前に\ :ref:`sc_so_archive_checks`\ の相互作用の検査で
+  見つかります）;
 - ``[eliashberg] flex_green``\ （既定値\ ``"green.npz"``\ ）: 繰り込まれた Green 関数。
-  これも必須です。FLEX は\ ``[file.output] green``\ を指定したときだけ出力します;
+  これも必須です。FLEX は\ ``[file.output] green``\ を指定したときだけ出力します。
+  スピン軌道の FLEX 計算はここに\ ``green_layout = "b_f_k_o_o_v1"``\ と
+  ``spin_orbital = True``\ を記録します;
 - ``[eliashberg] flex_sigma``\ （既定値\ ``"sigma.npz"``\ ）: 同じ FLEX 計算の自己
-  エネルギー。これも必須です（\ ``[file.output] sigma``\ で出力してください）。その
+  エネルギー。これも必須です（\ ``[file.output] sigma``\ で出力してください。
+  ``spin_orbital = True``\ を持ちます）。その
   静的部分から借りた Green 関数の閉包密度を求め、ギャップのアーカイブに記録します
   （\ :ref:`sc_so_archive_checks`\ を参照）。
+
+4つのアーカイブはすべてこのバージョン（fingerprint version 2）の計算で書かれたもので
+なければなりません。古いものは、作り直すよう指示するメッセージで拒否されます
+（\ :ref:`sc_so_archive_checks`\ を参照）。
 
 ``flex_chiq``\ 、\ ``flex_chi0q``\ 、\ ``flex_sigma``\ はスピン軌道モードでのみ使われ、
 キーの大文字・小文字は区別しません。\ ``flex_chi_s``\ と\ ``flex_chi_c``\ は拒否します。スピン軌道
@@ -2416,60 +2488,167 @@ Transfer・Extern のテーブルと\ ``coeff_extern``\ を比較するので、
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **アーカイブは同一の状態点でのみ再利用されます。**\ 掃引の初期値（ウォーム
-スタート）には使えません。別の磁場・フィリング・温度・バンドで出力された chi0q、
-chiq、green、sigma のアーカイブは拒否されるので、この入力で出力側の計算を
+スタート）には使えません。別の磁場・フィリング・温度・バンド・相互作用で出力された
+chi0q、chiq、green、sigma のアーカイブは拒否されるので、この入力で出力側の計算を
 実行し直してください。唯一の例外は\ ``chi0q_mode = "load"``\ での\ ``Nmat``\ です
-（下の 3 項）。この場合、別の\ ``Nmat``\ の chi0q アーカイブは WARNING を出して
+（下の「状態」の検査）。この場合、別の\ ``Nmat``\ の chi0q アーカイブは WARNING を出して
 受け入れます。
 
-スピン軌道モードの RPA と FLEX は、アーカイブに version 1 の来歴メンバーを書き込み
-ます（\ ``fingerprint_version = 1``\ 、\ ``producer_stage``\ 、\ ``producer_label``\ 、
-バンドのダイジェスト\ ``fp_transfer``\ 、\ ``fp_extern``\ 、\ ``fp_meta``\ 、
-``fp_band``\ 、Green 関数のダイジェスト\ ``fp_green``\ 、バンド入力の写し
-``prov_*``\ 、実現した状態\ ``state_*``\ ）。\ ``chi0q_mode = "load"``\ と\ ``"flex"``\ では、
-スピン軌道モードの\ ``hwave_sc``\ は読み込む各アーカイブを、大きな配列を読む前に
-自身の入力と照合します。
+スピン軌道のアーカイブはすべて version 2 の来歴メンバーを付けて書き出されます。
+``chi0q.npz``\ と\ ``chiq.npz``\ はスピン軌道の RPA と FLEX が、
+``green.npz``\ と\ ``sigma.npz``\ はスピン軌道の FLEX が、
+``gap.npz``\ ・\ ``gap_dynamic.npz``\ は\ ``hwave_sc``\ が書き出します。メンバーは次のとおりです。
 
-1. **構造。**\ version が 1 であること、\ ``producer_stage``\ が既知の段階であること、
-   すべてのメンバーが正確な dtype（\ ``int64``\ 、\ ``float64``\ 、\ ``complex128``\ 、
-   ``bool``\ のいずれか、バイト順はどちらでもよい。文字列は任意の幅）と次元で存在すること、重複するフィールドが一致する
-   こと（\ ``beta`` = ``state_beta``\ 、\ ``nmat`` = ``state_nmat``\ ）、\ ``prov_*``\ から
-   再計算したバンドのダイジェストが保存値と等しいこと、記録された密度の残差が
-   整合し、1セルあたり\ :math:`10^{-8}\max(1, |t|)`\ 電子以下であること
-   （\ :math:`t`\ は目標値）。
-2. **バンド。**\ Transfer テーブル、Extern テーブル（とその有無）、メタデータ
-   （\ ``coeff_extern``\ 、添字の規約、軌道数、\ ``CellShape``\ 、\ ``SubShape``\ ）が同一で
-   なければなりません。メッセージは各差分を示します。例:
-   ``coeff_extern: file 0.0, run 0.1``\ 、\ ``Transfer: file 12 rows, run 12 rows;
-   first differing row (R=(1, 0, 0), a=1, b=2): file (0.1+0j), run (0.11+0j)``
-   （軌道は1始まり）。
-3. **状態。**\ :math:`\beta`\ （相対\ :math:`10^{-12}`\ ）、μ の探索の有無
-   （\ ``hwave_sc``\ はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
-   目標値\ ``filling * 2N``\ （1セルあたりの電子数、相対\ :math:`10^{-12}`\ ）、その目標値に
-   対する出力側の閉包密度（許容幅\ :math:`\max(10^{-8}\max(1,|t|), 10\,r)`\ 、
-   :math:`r`\ はファイルの残差）、Green 関数を借りる場合（\ ``"flex"``\ ）は\ ``Nmat``\ の
-   完全一致。\ ``"load"``\ では\ ``Nmat``\ は異なってもかまいません。従来の規則が
-   ファイルの\ ``nmat``\ からボソン振動数ゼロの位置を決めます。このとき読み込んだ
-   :math:`\chi_0`\ は別の松原格子で和をとったもので、振動数の打ち切りがこの計算と
-   異なる（差は\ ``Nmat``\ とともに小さくなりますが、% のオーダーに達することがあります）ため、
-   WARNING を出します。出力側と同じ\ ``Nmat``\ にすれば再現します。μ 自体は比較しません。
-   バンドが同一なら密度で判定できるためです。
-4. **Green 関数。**\ ``"flex"``\ では、読み込んだ Green 関数のダイジェストが chiq
-   アーカイブ（および chiq と同様に検査する chi0q のアーカイブ）の\ ``fp_green``\ と
-   等しく、sigma のアーカイブも同じ\ ``fp_green``\ を記録していなければなりません。
-   chiq と chi0q のアーカイブは、両方が\ ``fingerprint_version``\ をもつか、両方とも
-   もたないかのどちらかでなければなりません。
-   ``green.npz``\ 自体はこのダイジェストで検証し、それ自身の来歴メンバーでは検証
-   しません。\ ``"load"``\ では Green 関数を借りないので、アーカイブの
-   ``fp_green``\ は出力側の主張として INFO で記録されます。
+- ``fingerprint_version = 2``\ 、\ ``producer_stage``\ 、\ ``producer_label``\ 、
+  ``producer_version``;
+- バンドのダイジェスト\ ``fp_transfer``\ 、\ ``fp_extern``\ 、\ ``fp_meta``\ 、
+  ``fp_band``\ と、Green 関数のダイジェスト\ ``fp_green``;
+- 相互作用のダイジェスト\ ``fp_interaction``\ （入力の相互作用の行を演算子項に
+  コンパイルしたものに対するもの）と、トポロジーのダイジェスト\ ``fp_topology``
+  （それらの行の宣言された変位に対するもの）;
+- ``fp_capability``\ （\ ``"so_onsite"``\ : アーカイブはボンド分解チャネルを含まない）と
+  ``fp_resolved_topology``\ （リテラル\ ``"none:onsite"``\ ）;
+- バンドと相互作用の入力の写し\ ``prov_*``\ と、実現した状態\ ``state_*``\ 。
 
-``fingerprint_version``\ のないアーカイブ（このバージョンより前に書かれたもの、または
-version 1 のダイジェストが扱わないバンドの計算、すなわち\ ``trans_mod``\ ・
-``green_init``\ やメモリ上で与えた chi0q の計算で書かれたもの）は検査できません。
-この計算に Extern 場があれば拒否し、なければ WARNING を出して受け入れます。
+``chi0q_mode = "load"``\ と\ ``"flex"``\ では、スピン軌道モードの\ ``hwave_sc``\ は
+読み込む各アーカイブを、大きな配列を読む前に自身の入力と照合します。\ ``prov_*``\ の
+写しはメッセージで差分を示すためだけに使われ、そこからダイジェストを再計算する
+ことはありません。保存されたダイジェストは、**この計算自身の** Transfer・Extern・
+相互作用の入力から求めたダイジェストと比較されます。
+
+**バージョン。**\ この検査の中では最初に version を読みます（\ ``chi_convention``\ や
+``spin_orbital``\ マーカーなど、読み込み側のタグの検査は、これより前にファイルを
+拒否することがあります）。\ ``fingerprint_version``\ は 2 でなければ
+なりません。version 1 のアーカイブと\ ``fingerprint_version``\ のないアーカイブは、
+作り直すよう指示するメッセージで拒否され（下の表を参照）、不正なファイルとしては
+扱われません。変換も再計算もありません。このバージョンの出力側で書き直す
+必要があります。
+
+**アーカイブの作り直し。** version 1 または version のないアーカイブは変換できません。
+それを書き出す計算を、このバージョンで、同じ入力のまま、そのファイルを書き出す
+``[file.output]``\ のキー（または\ ``[eliashberg]``\ のキー）を指定して実行し直して
+ください。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 46 30
+
+   * - アーカイブ
+     - 作り直すコマンド
+     - 書き出すキー
+   * - ``chi0q.npz``\ 、\ ``chiq.npz``
+     - ``hwave <input.toml>``\ （スピン軌道の RPA または FLEX。
+       ``enable_spin_orbital = true``\ ）
+     - ``[file.output] chi0q``\ 、\ ``chiq``
+   * - ``green.npz``\ 、\ ``sigma.npz``
+     - ``hwave <input.toml>``\ （スピン軌道の FLEX）
+     - ``[file.output] green``\ 、\ ``sigma``
+   * - ``gap.npz``\ 、\ ``gap_dynamic.npz``
+     - ``hwave_sc <input.toml>``
+     - ``[eliashberg] output_gap``\ （アーカイブ名はギャップのファイル名の拡張子を
+       ``.npz``\ にしたもの）
+
+下の表のメッセージにある\ ``<producer>``\ は、ここに挙げた計算を指します。
+
+検査はそのあと 2 段階で行われます。
+
+1. **構造。**\ 3 つの条件があり、どれも配列本体は読みません。
+
+   - *来歴メンバー。*\ ``producer_stage``\ がその種類のアーカイブを書く段階であること、
+     すべてのメンバーが正確な dtype（\ ``int64``\ 、\ ``float64``\ 、\ ``complex128``\ 、
+     ``bool``\ のいずれか、バイト順はどちらでもよい。文字列は任意の幅）と形状で
+     存在すること、ダイジェストが 64 文字の小文字 16 進数であること、
+     ``fp_capability``\ と\ ``fp_resolved_topology``\ が段階と一致すること、重複する
+     フィールドが一致すること（\ ``beta`` = ``state_beta``\ 、\ ``nmat`` =
+     ``state_nmat``\ ）、記録された密度の残差が整合し、1セルあたり
+     :math:`10^{-8}\max(1, |t|)`\ 電子以下であること（\ :math:`t`\ は目標値）。
+   - *本体のメンバーとマーカー。*\ その種類の本体（下の表）が、マーカー
+     ``index_convention``\ と\ ``spin_orbital = True``\ とともに存在すること。
+     ``green.npz``\ はさらに\ ``green_layout = "b_f_k_o_o_v1"``\ を持ちます。
+   - *本体のヘッダー。*\ 各本体メンバーの npy ヘッダーが\ ``complex128``\ 、C 順、
+     その種類で許される次元であること。さらに、メンバーの格納サイズが、ヘッダーと
+     ヘッダーが宣言するデータの大きさの和に等しいこと（途中で切れたメンバーは拒否
+     されます）。読むのはヘッダーと zip のディレクトリだけです。
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 20 40 40
+
+      * - アーカイブ
+        - 書き出す\ ``producer_stage``
+        - 本体のメンバー
+      * - ``chi0q.npz``
+        - ``rpa_so``\ 、\ ``flex_so_onsite``
+        - ``chi0q``
+      * - ``chiq.npz``
+        - ``rpa_so``\ 、\ ``flex_so_onsite``
+        - ``chiq``
+      * - ``green.npz``
+        - ``flex_so_onsite``
+        - ``green``\ 、\ ``green_layout``
+      * - ``sigma.npz``
+        - ``flex_so_onsite``
+        - ``sigma_static``
+      * - ``gap.npz``\ 、\ ``gap_dynamic.npz``
+        - ``sc_so_static``\ 、\ ``sc_so_dynamic``\ （\ ``sc_so_bond_static``\ は認識のみ）
+        - ``gap``
+
+   段階\ ``sc_so_bond_dynamic``\ と\ ``flex_so_bond``\ は認識されますが、まだ
+   読み込めません。専用のメッセージで拒否されます（下の表を参照）。
+
+2. **この計算との整合。**\ 次の順に検査し、最初の差分を報告します。
+
+   1. *バンド。*\ Transfer テーブル、Extern テーブル（とその有無）、メタデータ
+      （\ ``coeff_extern``\ 、添字の規約、軌道数、\ ``CellShape``\ 、\ ``SubShape``\ ）が
+      同一でなければなりません。メッセージは各差分を示します。例:
+      ``coeff_extern: file 0.0, run 0.1``\ 、\ ``Transfer: file 12 rows, run 12
+      rows; first differing row (R=(1, 0, 0), a=1, b=2): file (0.1+0j), run
+      (0.11+0j)``\ （軌道は1始まり）。
+   2. *相互作用。*\ 相互作用の行が同一でなければなりません。副格子の折り畳み
+      の前の入力で比較します。メッセージは行数と最初に異なる行を示します。例:
+      ``file 3 records, run 4 records; first differing record CoulombIntra modes
+      (...) cells (...): file ..., run ...``\ 。
+   3. *機能。*\ アーカイブの\ ``fp_capability``\ が、この計算が使う機能と等しくなければ
+      なりません。このバージョンのスピン軌道の経路はすべてボンド分解チャネルなしで
+      動作し、\ ``"so_onsite"``\ のアーカイブを使います。ボンド分解チャネルを含む
+      アーカイブ（\ ``"so_bond"``\ ）は拒否されます。宣言されたボンドトポロジーと
+      解決されたボンドトポロジーはボンド分解を使う側だけが比較しますが、
+      このバージョンにはそのような経路はありません。
+   4. *状態。*\ :math:`\beta`\ （相対\ :math:`10^{-12}`\ ）、μ の探索の有無
+      （\ ``hwave_sc``\ はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
+      目標値\ ``filling * 2N``\ （1セルあたりの電子数、相対\ :math:`10^{-12}`\ ）、その目標値に
+      対する出力側の閉包密度（許容幅\ :math:`\max(10^{-8}\max(1,|t|), 10\,r)`\ 、
+      :math:`r`\ はファイルの残差）、Green 関数を借りる場合（\ ``"flex"``\ ）は\ ``Nmat``\ の
+      完全一致。\ ``"load"``\ では\ ``Nmat``\ は異なってもかまいません。従来の規則が
+      ファイルの\ ``nmat``\ からボソン振動数ゼロの位置を決めます。このとき読み込んだ
+      :math:`\chi_0`\ は別の松原格子で和をとったもので、振動数の打ち切りがこの計算と
+      異なる（差は\ ``Nmat``\ とともに小さくなりますが、% のオーダーに達することがあります）ため、
+      WARNING を出します。出力側と同じ\ ``Nmat``\ にすれば再現します。μ 自体は比較しません。
+      バンドが同一なら密度で判定できるためです。
+   5. *Green 関数。*\ ``"flex"``\ では、読み込んだ Green 関数のダイジェストが chiq
+      アーカイブ（および chiq と同様に検査する chi0q のアーカイブ）の\ ``fp_green``\ と
+      等しく、sigma のアーカイブも同じ\ ``fp_green``\ を記録していなければなりません。
+      ``green.npz``\ と\ ``sigma.npz``\ は、配列を読む前に検査全体（構造・バンド・
+      相互作用・capability・状態）を受けます。Green 関数を読み込んだ後は、
+      ``green.npz``\ の\ ``fp_green``\ もそのダイジェストと等しくなければなりません。
+      ``"load"``\ では Green 関数を借りないので、アーカイブの\ ``fp_green``\ は出力側の
+      主張として INFO で記録されます。
+
+**読み込めない出力。**\ スピン軌道の RPA は、一体バンドに\ ``[file.input]``\ の
+``trans_mod``\ または\ ``green_init``\ が含まれる場合（ダイジェストがこれらを扱わないため）、
+または自分で作っていないバンドの chi0q（\ ``chi0q_init``\ やメモリ上の chi0q）を
+与えられた場合、fingerprint のメンバーを書き込みません。その旨を INFO で
+記録します。出力されたアーカイブは version なしになり、スピン軌道モードの
+``hwave_sc``\ は、計算に Extern 場があるかどうかによらず、下の表の
+「no fingerprint_version」のメッセージで拒否します。（chi0q を与えた計算は
+マーカー\ ``spin_orbital = True``\ も持たないので、\ ``hwave_sc``\ はまずそちらを
+拒否します。）そのような計算の感受率を使うには、Transfer と Extern の入力だけで
+スピン軌道の RPA を実行し直してください。以前のバージョンでは、version なしの
+アーカイブは計算に Extern 場がなければ WARNING を出して受け入れていましたが、
+いまは常に拒否されます。
 
 **ギャップのアーカイブに記録される内容。**\ ``gap.npz``\ （\ ``producer_stage =
-"sc_so_static"``\ ）と\ ``gap_dynamic.npz``\ （\ ``"sc_so_dynamic"``\ ）は同じ version 1 の
+"sc_so_static"``\ ）と\ ``gap_dynamic.npz``\ （\ ``"sc_so_dynamic"``\ ）は同じ version 2 の
 メンバーをもち、\ *この*\ 計算のカーネルが実際に使ったものを記録します。出力側の
 値を写すことはありません。
 
@@ -2479,14 +2658,13 @@ version 1 のダイジェストが扱わないバンドの計算、すなわち\
 - ``"flex"``\ : ``fp_green``\ は消費した借用 Green 関数のダイジェスト、\ ``state_mu``\ は
   それを作った FLEX の μ、\ ``state_density``\ はその閉包密度で、FLEX と同じ手続き
   （\ ``flex_sigma``\ の静的自己エネルギー、この計算のバンド）で求めます。
-  ``fingerprint_version``\ のないアーカイブでは Green 関数の μ がわからないため、
-  ギャップのアーカイブには来歴メンバーを書き込みません（INFO で通知します）。
 
-スカラーのメンバーは\ ``eigenvalue.dat``\ にも\ ``# key = value``\ の行として出力されます。
-version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_green``\ によってのみ Green 関数と
-結び付けられます。出力側は密度を1セルあたり\ :math:`10^{-8}\max(1,|t|)`\ 電子まで
-閉じる必要があります（FLEX の閉包検査\ :math:`10^{-10}`\ と RPA の μ 探索はどちらも
-満たします）。
+相互作用のダイジェスト（\ ``fp_interaction``\ 、\ ``fp_topology``\ ）はこの計算の入力の
+ものです。スカラーのメンバーは\ ``eigenvalue.dat``\ にも\ ``# key = value``\ の行として
+出力されます。受け入れている制約: sigma のアーカイブは\ ``fp_green``\ によってのみ
+Green 関数と結び付けられます。出力側は密度を1セルあたり
+:math:`10^{-8}\max(1,|t|)`\ 電子まで閉じる必要があります（FLEX の閉包検査
+:math:`10^{-10}`\ と RPA の μ 探索はどちらも満たします）。
 
 **トラブルシューティング。**\ どの拒否もファイルと出力側の計算を示す1行の
 メッセージです。
@@ -2498,6 +2676,29 @@ version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_gree
    * - メッセージ
      - 原因と対処
      - 揃える・作り直すキー
+   * - ``'<file>' carries fingerprint_version 1 (written before interaction
+       fingerprints existed); this version requires fingerprint_version 2.
+       Regenerate it by re-running <producer> with this version (the run
+       and the [file.output] key that write each archive are listed under
+       'Archive checks' in the hwave_sc documentation).``
+     - 以前のバージョンで書かれたスピン軌道のアーカイブです。変換はできません。
+       このバージョンで出力側を実行し直してください。メッセージ中の
+       'Archive checks' はこの節（\ :ref:`sc_so_archive_checks`\ ）の作り直しの表です。
+     - 出力側の\ ``[file.output]``\ のアーカイブ
+   * - ``'<file>' has no fingerprint_version (written before this version, or
+       by a run whose band the fingerprints do not cover: trans_mod,
+       green_init or a supplied chi0q; such outputs cannot be read by a
+       spin-orbital consumer); this version requires fingerprint_version 2.
+       Regenerate it by re-running <producer> with this version, from the
+       Transfer/Extern input (the run and the [file.output] key that write
+       each archive are listed under 'Archive checks' in the hwave_sc
+       documentation).``
+     - このバージョンより前に書かれたアーカイブか、\ ``trans_mod``\ ・
+       ``green_init``\ ・与えた chi0q を使ったスピン軌道 RPA の出力です。
+       このバージョンで出力側を実行し直してください。RPA ではこれらの入力を
+       使わないでください。
+     - 出力側の\ ``[file.output]``\ のアーカイブ。RPA の\ ``[file.input]``\ から
+       ``trans_mod``\ ・\ ``green_init``\ ・\ ``chi0q_init``\ を削除
    * - ``... does not match this run: band differs: coeff_extern: file 0.0,
        run 0.1 ... Archives are reused only at the identical state point``
      - 別のバンド（別の磁場、Transfer、Extern テーブル）のアーカイブです。または
@@ -2506,14 +2707,31 @@ version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_gree
        この入力と同じ方法により出力側の計算を実行し直してください。
      - ``Transfer``\ 、\ ``Extern``\ 、\ ``[mode.param] coeff_extern``\ （\ ``CellShape``\ 、
        ``SubShape``\ も）
+   * - ``... does not match this run: interaction differs: file 3 records,
+       run 4 records; first differing record ... Archives are reused only at
+       the identical state point ...``
+     - 出力側が別の相互作用の定義を使っています（どの相互作用ファイルでも、
+       行の追加・削除・変更）。この入力の相互作用ファイルで出力側の計算を
+       実行し直してください。
+     - 相互作用ファイル（\ ``CoulombIntra``\ 、\ ``CoulombInter``\ 、
+       ``Hund``\ 、\ ``Ising``\ 、\ ``Exchange``\ 、\ ``PairLift``\ 、\ ``PairHop``\ 、
+       ``Coulomb``\ ）
+   * - ``<file> was produced by <producer> (so_bond), but this run needs a
+       so_onsite artifact``
+     - アーカイブはボンド分解チャネルを含みますが、この計算は使いません。
+       このバージョンのスピン軌道のアーカイブはすべて\ ``so_onsite``\ なので、
+       このバージョンで書かれたアーカイブではこのメッセージは出ません。
+     - 出力側の\ ``[file.output]``\ のアーカイブ
    * - ``state differs: calc_mu: file False, run True``
-     - 出力側は μ 固定で実行されています。\ ``hwave_sc``\ はつねに\ ``filling``\ から
-       μ を探索します。\ ``mu``\ の代わりに\ ``filling``\ で実行し直してください。
+     - 出力側は μ 固定で実行されています（固定 μ の不一致）。\ ``hwave_sc``\ は
+       つねに\ ``filling``\ から μ を探索します。\ ``mu``\ の代わりに\ ``filling``\ で
+       実行し直してください。
      - ``[mode.param] filling``\ （\ ``mu``\ を削除）
    * - ``state differs: target ... (file) vs ... (run) ...; density ...
        (file) vs target ... (run, tol ...)``
-     - FLEX（または RPA）が別のフィリングで実行されています。このフィリングで
-       実行し直してください。
+     - FLEX（または RPA）が別のフィリングで実行されているか、密度がフィリングに
+       達していません（FLEX の密度の不一致）。このフィリングで実行し直して
+       ください。
      - ``[mode.param] filling``
    * - ``state differs: beta ... (file) vs ... (run)``
      - 別の温度です（相対許容幅\ :math:`10^{-12}`\ ）。この\ ``T``\ で実行し直して
@@ -2527,22 +2745,20 @@ version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_gree
      - chi0q のアーカイブは別の松原格子で和をとったものです。使用はされますが、
        振動数の打ち切りが異なります。再現するには\ ``Nmat``\ を出力側の値にしてください。
      - ``[mode.param] Nmat``
-   * - ``FLEX archives '...chiq.npz' (unversioned) and '...chi0q.npz'
-       (versioned) disagree on fingerprint_version``\ （またはその逆）
-     - chiq と chi0q のアーカイブが別々の FLEX 計算のものです。ひとつの FLEX
-       計算から両方を作り直してください。
-     - ``[eliashberg] flex_chiq``\ 、\ ``flex_chi0q``\ 、FLEX の\ ``[file.output] chi0q``
    * - ``fp_green mismatch``\ ／\ ``sigma.npz and green.npz come from different
        runs``
      - Green 関数（または自己エネルギー）が chiq の計算に使われたものではありません
        （変更された、または取り違えたファイル）。ひとつの FLEX 計算のアーカイブを
        使うか、実行し直してください。
      - ``[eliashberg] flex_green``\ 、\ ``flex_sigma``\ 、\ ``flex_chiq``
-   * - ``... has no fingerprint_version (...); the run has an Extern field,
-       so its band cannot be verified. Regenerate it.``
-     - バージョンのないアーカイブを磁場のある計算で読もうとしています。この
-       バージョンで出力側を実行し直してください（Extern がなければ WARNING のみ）。
-     - 出力側の\ ``[file.output]``\ のアーカイブ
+   * - ``'<file>' was written by producer_stage 'sc_so_bond_dynamic', which
+       this version does not read yet (the dynamic spin-orbital bond path
+       arrives in a later version).``\ （\ ``'flex_so_bond'``\ 、"the
+       spin-orbital bond FLEX" も）
+     - ボンド分解のスピン軌道経路のアーカイブで、このバージョンは認識するだけです。
+       ``rpa_so``\ または\ ``flex_so_onsite``\ のアーカイブを使ってください。
+     - ``[eliashberg] flex_chiq``\ 、\ ``flex_chi0q``\ 、\ ``flex_green``\ 、
+       ``flex_sigma``
    * - ``... needs the general (4-index) spinful chi0q ...``\ （load モード、
        スピン混成のホッピングのない Zeeman 場）
      - スピン軌道 RPA は Zeeman 項だけの模型をスピン対角の形に簡約します。
@@ -2563,9 +2779,16 @@ version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_gree
 - ``"static"``\ ・\ ``"dynamic"``\ 以外の\ ``frequency``\ （\ ``"dynamic"``\ に固有の
   拒否は\ :ref:`sc_spin_orbital_dynamic`\ にまとめています）;
 - ``bond_channels = true``;
-- オフサイトの2体項の行（\ :math:`\mathbf{R} \neq 0`\ ）、\ ``[mode.param]
-  orbital_site``\ のもとで異なるサイトの軌道間の\ :math:`\mathbf{R} = 0`\ の行、
-  ``Coulomb``\ 集約ファイル中のオフサイトの行;
+- オフサイトの2体項の行（\ :math:`\mathbf{R} \neq 0`\ ）。\ ``Coulomb``\ 集約ファイル中の
+  オフサイトの行も含みます。メッセージはその行を示し、スピン軌道の対形成頂点は
+  オンサイトおよびセル内（\ :math:`\mathbf{R} = 0`\ ）の相互作用のみを扱うこと、
+  オフサイトの行を取り除くことを伝えます。\ :math:`\mathbf{R} = 0`\ の行はすべて
+  受け入れられ、\ ``orbital_site``\ なら別のサイトとみなされる軌道間の行も同様です
+  （スピン軌道モードでは\ ``orbital_site``\ は無視されます）;
+- ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairLift``\ の
+  係数の虚部。スピン軌道のすべての経路（RPA・FLEX・\ ``hwave_sc``\ ）で拒否されます。
+  複素の\ ``PairHop``\ は受け入れられます。メッセージはその行を示して虚部を取り除く
+  ように伝え、\ ``Exchange``\ では issue #302 を案内します;
 - 軌道添字が\ :math:`1 \ldots N`\ の範囲外の相互作用ファイル（\ :math:`N`\ を
   超える添字はスピン軌道添字で書かれたファイルを意味します。添字 0 はつねに不正です）;
 - ``"auto"``\ ・\ ``"general"``\ 以外の\ ``chi0q_tensor``\ 、reduced（2添字）の
@@ -2745,7 +2968,7 @@ version 1 で受け入れている制約: sigma のアーカイブは\ ``fp_gree
   確認は\ :math:`\nu = 0`\ だけでなく\ **すべての**\ ボソン振動数で行います;
 - ``chi0q_mode = "calc"``: 裸の Green 関数のスピンフルなバブルをすべてのボソン
   振動数で計算し、\ :math:`\chi = [1 + \chi_0\Gamma]^{-1}\chi_0`\ とします;
-- オンサイト相互作用のみ、ボンドチャネルなし（静的な場合と同じ）;
+- オンサイトおよびセル内の相互作用のみ、ボンドチャネルなし（静的な場合と同じ）;
 - 両方のモードで\ ``[mode.param] filling``\ が必要（アーカイブの検査がフィリングの
   目標値を比較するため）;
 - 偶数の\ ``Nmat``;

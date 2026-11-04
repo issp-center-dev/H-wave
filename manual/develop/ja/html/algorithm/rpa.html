@@ -582,7 +582,9 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
 <li><p>ハミルトニアンはスピン保存を仮定せず、
 完全な<span class="math notranslate nohighlight">\(2n_{\rm orb} \times 2n_{\rm orb}\)</span>空間で構成されます。</p></li>
 <li><p>全ての相互作用型（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、
-<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>）がサポートされます。</p></li>
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>）がサポートされます。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の係数に虚部があると拒否されます
+（複素の<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は受け入れられます）。</p></li>
 <li><p>可能な場合、ブロック分解が自動的に適用されます。</p></li>
 <li><p>RPA では<code class="docutils literal notranslate"><span class="pre">reduced</span></code>と<code class="docutils literal notranslate"><span class="pre">general</span></code>の両計算スキームがスピン軌道系で利用可能です。
 FLEX がスピン軌道モードに対応するのは<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の
@@ -595,6 +597,42 @@ FLEX がスピン軌道モードに対応するのは<code class="docutils liter
 <p><strong>移行上の注意（RPA）：</strong> スピン軌道入力の幾何<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>はスピン軌道数になりました。
 既存の RPA スピン軌道計算の<code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">Norbit</span></code>は2倍にしてください。</p>
 </div>
+<div class="admonition important" id="so-migration-note">
+<p class="admonition-title">重要</p>
+<p><strong>リリース・移行上の注意: スピン軌道モード。</strong> スピン軌道モードでは次のとおりです。</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>は無視されます。異なるサイトの軌道とラベル
+付けされた軌道間の行も含め、すべての R = 0 の行の交換が厳密に
+取り込まれます。<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>とそのような行を併用する入力では、
+SO RPA、SO FLEX、SO hwave_sc の結果が変わります。</p></li>
+<li><p>PairHop 以外の係数に虚部があると拒否されます（以前は虚部が黙って畳み込まれて
+いました。複素 Exchange は issue #302 を参照）。</p></li>
+<li><p>このバージョンより前に書かれたスピン軌道のアーカイブ（fingerprint version 1
+またはなし）は作り直す必要があります（どのコマンドがどのファイルを書くかは
+<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照）。</p></li>
+</ol>
+<p>以前の結果を再現するには、該当する行や虚部を取り除くか、非スピン軌道の
+ソルバーを使ってください。</p>
+<p>スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>の値は読まれず、不正な値も無視されます。
+キーが指定されていると、計算ごとに WARNING が 1 回出ます: <code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">is</span>
+<span class="pre">ignored</span> <span class="pre">in</span> <span class="pre">spin-orbital</span> <span class="pre">mode;</span> <span class="pre">all</span> <span class="pre">R=0</span> <span class="pre">rows</span> <span class="pre">are</span> <span class="pre">treated</span> <span class="pre">exactly</span> <span class="pre">(see</span> <span class="pre">migration</span>
+<span class="pre">note)</span></code></p>
+</div>
+<p id="rpa-so-offsite"><strong>スピン軌道 RPA のオフサイトの行。</strong> RPA のリング和のスピンフル頂点は反対称化した
+頂点、すなわち直接項にその交換交差を加えたものです。オンサイトの行と、セル内
+（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の異なる軌道間の行では、交換交差を厳密に含めます。
+オフサイトの行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）の交換交差は 2 つのフェルミオン
+運動量の両方に依存し、移行運動量<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>だけの関数としては書けないため、
+オフサイトの行は非スピン軌道の RPA と同じく、直接（Hartree 型）部分
+<span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span>だけでリング和に入ります。入力にオフサイトの行があると、
+スピン軌道 RPA は 1 回の計算につき 1 回、INFO レベルで次の行を記録します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>enable_spin_orbital: the off-site rows of &lt;types&gt; enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included.
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">&lt;types&gt;</span></code>は、オフサイトの行がゼロでない相互作用の種類を、並べ替えてコンマで
+区切ったリストです。<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>はこのリストには挙がりません。この行は FLEX
+（スピン軌道モードではオフサイトの行を拒否します）と、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が内部で実行する
+RPA では記録されません。</p>
 <section id="flex-2">
 <span id="flex-second-order-kernel"></span><h3>一般 FLEX 経路の2次<a class="headerlink" href="#flex-2" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>では、ゆらぎ
@@ -970,8 +1008,11 @@ SU(2) 対称な相互作用の場合だけです。一方<span class="math notra
 <p>この版の適用範囲:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の一般スキーム（このスイッチのその他の条件も適用）</p></li>
-<li><p>オンサイト相互作用のみ（オフサイト相互作用の交換交差は<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>のみの
-頂点では表せないため）</p></li>
+<li><p>オンサイトおよびセル内（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の相互作用のみ（オフサイト
+相互作用の交換交差は<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>のみの頂点では表せないため。オフサイトの
+行は拒否されます）</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の
+係数の虚部は拒否されます</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>で、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>はなし</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>・<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・<code class="docutils literal notranslate"><span class="pre">green_init</span></code>はなし（計算は裸の
 Hartree-Fock 状態から始まります）</p></li>

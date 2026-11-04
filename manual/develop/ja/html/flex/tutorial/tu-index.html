@@ -1441,6 +1441,27 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 </section>
 <section id="id31">
 <h3>スピン軌道計算<a class="headerlink" href="#id31" title="Link to this heading">¶</a></h3>
+<div class="admonition important">
+<p class="admonition-title">重要</p>
+<p><strong>リリース・移行上の注意: スピン軌道モード。</strong> スピン軌道モードでは次のとおりです。</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>は無視されます。異なるサイトの軌道とラベル
+付けされた軌道間の行も含め、すべての R = 0 の行の交換が厳密に
+取り込まれます。<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>とそのような行を併用する入力では、
+SO RPA、SO FLEX、SO hwave_sc の結果が変わります。</p></li>
+<li><p>PairHop 以外の係数に虚部があると拒否されます（以前は虚部が黙って畳み込まれて
+いました。複素 Exchange は issue #302 を参照）。</p></li>
+<li><p>このバージョンより前に書かれたスピン軌道のアーカイブ（fingerprint version 1
+またはなし）は作り直す必要があります（どのコマンドがどのファイルを書くかは
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照）。</p></li>
+</ol>
+<p>以前の結果を再現するには、該当する行や虚部を取り除くか、非スピン軌道の
+ソルバーを使ってください。</p>
+<p>スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>の値は読まれず、不正な値も無視されます。
+キーが指定されていると、計算ごとに WARNING が 1 回出ます: <code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">is</span>
+<span class="pre">ignored</span> <span class="pre">in</span> <span class="pre">spin-orbital</span> <span class="pre">mode;</span> <span class="pre">all</span> <span class="pre">R=0</span> <span class="pre">rows</span> <span class="pre">are</span> <span class="pre">treated</span> <span class="pre">exactly</span> <span class="pre">(see</span> <span class="pre">migration</span>
+<span class="pre">note)</span></code></p>
+</div>
 <p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算（<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）は、
 次元<span class="math notranslate nohighlight">\(n_d = 2 n_{\rm orb}\)</span>のスピン軌道インデックス（スピンブロック順
 <code class="docutils literal notranslate"><span class="pre">s</span> <span class="pre">*</span> <span class="pre">norb</span> <span class="pre">+</span> <span class="pre">a</span></code>）でアーカイブを書き出します。</p>
@@ -1448,7 +1469,16 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>は
 <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_block&quot;</span></code>を持ちます。<code class="docutils literal notranslate"><span class="pre">sigma</span></code>と<code class="docutils literal notranslate"><span class="pre">green</span></code>の
 形状は<code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span> <span class="pre">nd)</span></code>で、<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>は<code class="docutils literal notranslate"><span class="pre">&quot;split&quot;</span></code>形式の
-アーカイブ（<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>、<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>）です。</p></li>
+アーカイブ（<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>、<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>）です。<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は
+さらに<code class="docutils literal notranslate"><span class="pre">green_layout</span> <span class="pre">=</span> <span class="pre">&quot;b_f_k_o_o_v1&quot;</span></code>（保存された配列のレイアウト）と
+マーカー<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>を持ち、<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>は
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>を持ちます。</p></li>
+<li><p>この計算のすべてのアーカイブ（<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>・
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>）は、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が検査する version 2 の来歴メンバー
+（<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span> <span class="pre">=</span> <span class="pre">2</span></code>、バンド・相互作用・Green 関数のダイジェスト、実現した
+状態）を持ちます。<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照してください。以前のバージョンの
+アーカイブ（<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>がないか version 1）は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が拒否する
+ので、このバージョンの計算で作り直す必要があります。</p></li>
 <li><p>感受率は1つのスピンフルなチャネルで、<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>に<code class="docutils literal notranslate"><span class="pre">chiq</span></code>として書き出されます。
 形状は<code class="docutils literal notranslate"><span class="pre">(nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span> <span class="pre">nd,</span> <span class="pre">nd,</span> <span class="pre">nd)</span></code>で、<code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>、
 <code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span> <span class="pre">=</span> <span class="pre">&quot;acbd&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_block&quot;</span></code>を伴います。
@@ -1729,7 +1759,7 @@ CPU（numpy）実行へフォールバックします（結果は同一）。化
 <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code>や<code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code>に対しては<code class="docutils literal notranslate"><span class="pre">ValueError</span></code>を
 送出します。唯一の例外は<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>と
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の併用で、<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>の
-スピン軌道 FLEX（オンサイト相互作用のみ）になります。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>が
+スピン軌道 FLEX（オンサイトおよびセル内の相互作用のみ）になります。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code>が
 なければ一般スキームは<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否し、reduced スキームは常に
 拒否します。オフサイト項は
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>について受理されます

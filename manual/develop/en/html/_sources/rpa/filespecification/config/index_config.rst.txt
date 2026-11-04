@@ -81,7 +81,8 @@ that has no effect under the current settings.
   (see :ref:`flex_spin_orbital`). Requirements and limitations of this
   version:
 
-  - on-site interactions only (an off-site declaration is refused);
+  - on-site and in-cell (``R = 0``) interactions only (an off-site
+    declaration is refused);
   - ``spinful_vertex_exchange`` must stay ``true`` (the default);
   - ``longitudinal_bond_channels`` is not supported;
   - no seed: ``sigma_init``, ``trans_mod`` and ``green_init`` are refused,
@@ -100,7 +101,8 @@ that has no effect under the current settings.
 
   **Eliashberg solver.** ``hwave_sc`` solves the static linearized
   Eliashberg equation for a spin-orbital model with one
-  :math:`2N \times 2N` gap matrix (no ``pairing_type``), on-site interactions
+  :math:`2N \times 2N` gap matrix (no ``pairing_type``), on-site and in-cell
+  interactions
   and ``chi0q_mode = "calc"``, ``"load"`` or ``"flex"``; the scope, the
   outputs and the refused combinations are listed in
   :ref:`sc_spin_orbital`. With ``frequency = "dynamic"`` it solves for the
@@ -291,9 +293,13 @@ that has no effect under the current settings.
   List of non-negative integers (default: not set)
 
   **Description :**
-  Assigns each orbital of the original cell to a site (atom or molecule);
-  in spin-orbital mode the list runs over the physical orbitals. Orbitals
-  with the same label are on the same site. Read by ``hwave`` (RPA, FLEX)
+  Assigns each orbital of the original cell to a site (atom or molecule).
+  Orbitals with the same label are on the same site. **In spin-orbital mode
+  (``mode.enable_spin_orbital = true``) the key is ignored**: its value is
+  not read (an invalid value is ignored too), one WARNING is logged, and
+  every ``R = 0`` row is treated exactly, exchange crossing included (see
+  the :ref:`migration note <so_migration_note>`). The rest of this entry
+  describes the non-spin-orbital solvers. Read by ``hwave`` (RPA, FLEX)
   and by ``hwave_sc``; the UHF solvers do not use it.
 
   An ``R = 0`` two-body row between orbitals of DIFFERENT sites -- for

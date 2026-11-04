@@ -259,6 +259,22 @@ spin-orbital count (= 2 × physical orbitals); double any pre-existing RPA
 spin-orbital <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code> <code class="docutils literal notranslate"><span class="pre">Norbit</span></code>.</p>
 </div>
 </li>
+<li><p><strong>Complex coefficients in spin-orbital mode.</strong> With
+<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> every solver (RPA, FLEX and
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) refuses a nonzero <code class="docutils literal notranslate"><span class="pre">[J.imag]</span></code> (<code class="docutils literal notranslate"><span class="pre">[V.imag]</span></code>) on a
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> row,
+before any calculation. The test is
+<span class="math notranslate nohighlight">\(|\mathrm{Im}\,X| &gt; 10^{-10} + 10^{-8}|X|\)</span> on the coefficient as
+read. In H-wave’s declaration convention a row and its partner
+<span class="math notranslate nohighlight">\((-R, \beta, \alpha)\)</span> multiply the same operator, so the imaginary
+part has no operator content and was silently folded before; the message
+reads <code class="docutils literal notranslate"><span class="pre">&lt;type&gt;</span> <span class="pre">coefficient</span> <span class="pre">at</span> <span class="pre">R=...</span> <span class="pre">orbitals</span> <span class="pre">(a,</span> <span class="pre">b)</span> <span class="pre">has</span> <span class="pre">an</span> <span class="pre">imaginary</span> <span class="pre">part</span>
+<span class="pre">(...)</span></code> and asks to remove it. For <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> the partner multiplies the
+Hermitian conjugate, so an imaginary part would be a
+Dzyaloshinskii-Moriya-type term; that extension is tracked in issue #302.
+Only <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> carries a physical complex phase and is accepted with an
+imaginary part. Without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code> the previous behaviour is
+unchanged.</p></li>
 <li><p><strong>Extern in spin-orbital mode.</strong> With <code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>
 the Extern file keeps the <strong>physical</strong> orbital indices: an
 <span class="math notranslate nohighlight">\(N_\text{orbital} \times N_\text{orbital}\)</span> matrix per <span class="math notranslate nohighlight">\(R\)</span>,

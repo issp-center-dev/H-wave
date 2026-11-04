@@ -619,7 +619,9 @@ in the input TOML file. In this mode:</p>
 <li><p>The Hamiltonian is constructed in the full <span class="math notranslate nohighlight">\(2n_{\rm orb} \times 2n_{\rm orb}\)</span> space
 without assuming spin conservation.</p></li>
 <li><p>All interaction types (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>,
-<code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>) are supported.</p></li>
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>) are supported. An imaginary part on a
+<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>
+coefficient is refused (a complex <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is accepted).</p></li>
 <li><p>The block decomposition is applied automatically when possible.</p></li>
 <li><p>Both the <code class="docutils literal notranslate"><span class="pre">reduced</span></code> and <code class="docutils literal notranslate"><span class="pre">general</span></code> calculation schemes are supported for spin-orbital systems
 in RPA. FLEX supports the spin-orbital mode on the <code class="docutils literal notranslate"><span class="pre">general</span></code> scheme with
@@ -634,6 +636,44 @@ convention as UHFk.</p></li>
 spin-orbital count; double any pre-existing RPA spin-orbital <code class="docutils literal notranslate"><span class="pre">geom.dat</span></code>
 <code class="docutils literal notranslate"><span class="pre">Norbit</span></code>.</p>
 </div>
+<div class="admonition important" id="so-migration-note">
+<p class="admonition-title">Important</p>
+<p><strong>Release and migration note: spin-orbital mode.</strong> In spin-orbital mode:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code> is ignored. The exchange of every
+R = 0 row, including rows between orbitals labelled as different
+sites, is included exactly. SO RPA, SO FLEX and SO hwave_sc results
+change for inputs that combine <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> with such rows.</p></li>
+<li><p>An imaginary part on any coefficient other than PairHop is refused
+(it was silently folded before; see issue #302 for complex
+Exchange).</p></li>
+<li><p>Spin-orbital archives written before this version (fingerprint
+version 1 or none) must be regenerated (which command writes which
+file: see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>).</p></li>
+</ol>
+<p>To reproduce an earlier result, remove the affected rows or imaginary
+parts, or run the non-spin-orbital solver.</p>
+<p>In spin-orbital mode the value of <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> is not read; an
+invalid value is ignored too. One WARNING is logged per run when the key
+is present: <code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">is</span> <span class="pre">ignored</span> <span class="pre">in</span> <span class="pre">spin-orbital</span> <span class="pre">mode;</span> <span class="pre">all</span> <span class="pre">R=0</span> <span class="pre">rows</span>
+<span class="pre">are</span> <span class="pre">treated</span> <span class="pre">exactly</span> <span class="pre">(see</span> <span class="pre">migration</span> <span class="pre">note)</span></code>.</p>
+</div>
+<p id="rpa-so-offsite"><strong>Off-site rows in spin-orbital RPA.</strong> The spinful vertex of the RPA ring sum is the antisymmetrized vertex: the
+direct term plus its exchange crossing. For the on-site rows and the in-cell
+(<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) rows between different orbitals the crossing is
+included exactly. For an off-site row (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>) the
+crossing depends on both fermionic momenta and cannot be written as a function
+of the transfer momentum <span class="math notranslate nohighlight">\(\mathbf{q}\)</span> alone, so the off-site rows
+enter the ring sum through their direct (Hartree-like) part
+<span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span> only, as in the non-spin-orbital RPA. The spin-orbital
+RPA logs this once per run, at INFO level, when the input has off-site rows:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>enable_spin_orbital: the off-site rows of &lt;types&gt; enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included.
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">&lt;types&gt;</span></code> is the sorted, comma-separated list of the interaction types that
+have a nonzero off-site row. <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is not named in this list. The line
+is not logged by FLEX (which refuses off-site rows in spin-orbital mode) or
+by the RPA that <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> runs internally.</p>
 <section id="second-order-of-the-general-flex-path">
 <span id="flex-second-order-kernel"></span><h3>Second order of the general FLEX path<a class="headerlink" href="#second-order-of-the-general-flex-path" title="Link to this heading">¶</a></h3>
 <p>In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> the fluctuation
@@ -1066,8 +1106,11 @@ transverse content beyond that; the spin-orbital FLEX carries it.</p>
 <ul class="simple">
 <li><p>the general scheme with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> and the other
 conditions of that switch;</p></li>
-<li><p>on-site interactions only (the exchange crossing of an off-site
-interaction is not a <span class="math notranslate nohighlight">\(\mathbf{q}\)</span>-only vertex);</p></li>
+<li><p>on-site and in-cell (<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) interactions only (the
+exchange crossing of an off-site interaction is not a
+<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>-only vertex); an off-site row is refused;</p></li>
+<li><p>an imaginary part on a <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> coefficient is refused;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>, and no <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>;</p></li>
 <li><p>no <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> / <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>: the run starts from
 the bare Hartree-Fock state;</p></li>

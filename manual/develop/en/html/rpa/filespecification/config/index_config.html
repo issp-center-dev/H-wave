@@ -133,7 +133,8 @@ part is resummed in one channel with the antisymmetrized spinful vertex
 (see <a class="reference internal" href="../../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>). Requirements and limitations of this
 version:</p>
 <ul class="simple">
-<li><p>on-site interactions only (an off-site declaration is refused);</p></li>
+<li><p>on-site and in-cell (<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>) interactions only (an off-site
+declaration is refused);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code> must stay <code class="docutils literal notranslate"><span class="pre">true</span></code> (the default);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> is not supported;</p></li>
 <li><p>no seed: <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>, <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> and <code class="docutils literal notranslate"><span class="pre">green_init</span></code> are refused,
@@ -152,7 +153,8 @@ on-site dynamic solver (<code class="docutils literal notranslate"><span class="
 </ul>
 <p><strong>Eliashberg solver.</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> solves the static linearized
 Eliashberg equation for a spin-orbital model with one
-<span class="math notranslate nohighlight">\(2N \times 2N\)</span> gap matrix (no <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>), on-site interactions
+<span class="math notranslate nohighlight">\(2N \times 2N\)</span> gap matrix (no <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>), on-site and in-cell
+interactions
 and <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>; the scope, the
 outputs and the refused combinations are listed in
 <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> it solves for the
@@ -321,9 +323,13 @@ non-spin-orbital ladder).</p>
 <p><strong>Type :</strong>
 List of non-negative integers (default: not set)</p>
 <p><strong>Description :</strong>
-Assigns each orbital of the original cell to a site (atom or molecule);
-in spin-orbital mode the list runs over the physical orbitals. Orbitals
-with the same label are on the same site. Read by <code class="docutils literal notranslate"><span class="pre">hwave</span></code> (RPA, FLEX)
+Assigns each orbital of the original cell to a site (atom or molecule).
+Orbitals with the same label are on the same site. <strong>In spin-orbital mode
+(``mode.enable_spin_orbital = true``) the key is ignored</strong>: its value is
+not read (an invalid value is ignored too), one WARNING is logged, and
+every <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> row is treated exactly, exchange crossing included (see
+the <a class="reference internal" href="../../../algorithm/rpa.html#so-migration-note"><span class="std std-ref">migration note</span></a>). The rest of this entry
+describes the non-spin-orbital solvers. Read by <code class="docutils literal notranslate"><span class="pre">hwave</span></code> (RPA, FLEX)
 and by <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>; the UHF solvers do not use it.</p>
 <p>An <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> two-body row between orbitals of DIFFERENT sites – for
 example the two molecules of a dimer that share a unit cell – is an

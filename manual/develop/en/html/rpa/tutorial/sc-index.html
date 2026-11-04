@@ -2132,7 +2132,7 @@ omitted there (a warning says so)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
 <td><p>rejected</p></td>
-<td><p>accepted with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (on-site interactions only)</p></td>
+<td><p>accepted with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (on-site and in-cell interactions only)</p></td>
 <td><p>the static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads this output with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>;
 see <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a></p></td>
 </tr>
@@ -2203,6 +2203,55 @@ susceptibility to dress them. <code class="docutils literal notranslate"><span c
 </table>
 <p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code> contributes <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">=</span> <span class="pre">C</span> <span class="pre">=</span> <span class="pre">0</span></code> to the particle-hole vertex and is inert
 on every route (ignored with a warning).</p>
+<p>Interaction rows in spin-orbital mode (<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>)</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 28.0%" />
+<col style="width: 24.0%" />
+<col style="width: 24.0%" />
+<col style="width: 24.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>interaction rows</p></th>
+<th class="head"><p>RPA</p></th>
+<th class="head"><p>FLEX (<code class="docutils literal notranslate"><span class="pre">general</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>)</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> (static and dynamic)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>on-site rows, and in-cell (<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) rows between
+different orbitals, whatever <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> says</p></td>
+<td><p>accepted; direct part and exchange crossing, exactly</p></td>
+<td><p>accepted; direct part and exchange crossing, exactly</p></td>
+<td><p>accepted; direct part and exchange crossing, exactly</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code></p></td>
+<td><p>ignored; one WARNING per run</p></td>
+<td><p>ignored; one WARNING per run</p></td>
+<td><p>ignored; one WARNING per run</p></td>
+</tr>
+<tr class="row-even"><td><p>off-site rows (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>)</p></td>
+<td><p>accepted through their direct (Hartree-like) part only; an INFO line
+names the types (see <a class="reference internal" href="../../algorithm/rpa.html#rpa-so-offsite"><span class="std std-ref">off-site rows in spin-orbital RPA</span></a>)</p></td>
+<td><p>refused</p></td>
+<td><p>refused; the message asks to remove the off-site rows</p></td>
+</tr>
+<tr class="row-odd"><td><p>imaginary part on <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p></td>
+<td><p>refused</p></td>
+<td><p>refused</p></td>
+<td><p>refused</p></td>
+</tr>
+<tr class="row-even"><td><p>imaginary part on <code class="docutils literal notranslate"><span class="pre">PairHop</span></code></p></td>
+<td><p>not refused by this check</p></td>
+<td><p>as for RPA</p></td>
+<td><p>as for RPA</p></td>
+</tr>
+</tbody>
+</table>
+<p>Spin-orbital FLEX and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuse the bond-resolved channels
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>) in this version, and the
+off-site refusals above do not point to them.</p>
 </section>
 <section id="spin-structure">
 <h2><span class="section-number">5.2.14. </span>Spin structure<a class="headerlink" href="#spin-structure" title="Link to this heading">¶</a></h2>
@@ -2260,12 +2309,39 @@ spin-orbitals (<span class="math notranslate nohighlight">\(N\)</span> physical 
 triplet channels. Spin-orbit coupling and other spin-mixing one-body terms in
 the Transfer file are then included exactly, and the singlet and triplet
 components of the gap mix as the model dictates.</p>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p><strong>Release and migration note: spin-orbital mode.</strong> In spin-orbital mode:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code> is ignored. The exchange of every
+R = 0 row, including rows between orbitals labelled as different
+sites, is included exactly. SO RPA, SO FLEX and SO hwave_sc results
+change for inputs that combine <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> with such rows;
+inputs without such rows give the same numbers as before. Removing
+<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> from the input silences the WARNING below.</p></li>
+<li><p>An imaginary part on any coefficient other than PairHop is refused
+(it was silently folded before; see issue #302 for complex
+Exchange).</p></li>
+<li><p>Spin-orbital archives written before this version (fingerprint
+version 1 or none) must be regenerated (which command writes which
+file: see <a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>).</p></li>
+</ol>
+<p>To reproduce an earlier result, remove the affected rows or imaginary
+parts, or run the non-spin-orbital solver.</p>
+<p>In spin-orbital mode the value of <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> is not read; an
+invalid value is ignored too. One WARNING is logged per run when the key
+is present: <code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">is</span> <span class="pre">ignored</span> <span class="pre">in</span> <span class="pre">spin-orbital</span> <span class="pre">mode;</span> <span class="pre">all</span> <span class="pre">R=0</span> <span class="pre">rows</span>
+<span class="pre">are</span> <span class="pre">treated</span> <span class="pre">exactly</span> <span class="pre">(see</span> <span class="pre">migration</span> <span class="pre">note)</span></code>.</p>
+</div>
 <section id="scope">
 <h3>Scope<a class="headerlink" href="#scope" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> (the default; this section) or <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>
 (the frequency-resolved gap of <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>);</p></li>
-<li><p>on-site two-body interactions only;</p></li>
+<li><p>on-site and in-cell (<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) two-body interactions: a
+row between two different orbitals of the cell is treated exactly,
+exchange crossing included, whatever <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> says. Off-site rows
+(<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>) are refused (see <em>Refused combinations</em>);</p></li>
 <li><p>no bond-resolved channels (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>, the default);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> (the spinful <span class="math notranslate nohighlight">\(\chi_0\)</span> is computed
 internally), <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> (the general four-index chi0q written by a
@@ -2422,15 +2498,20 @@ susceptibility <span class="math notranslate nohighlight">\(\chi\)</span>; the F
 <span class="math notranslate nohighlight">\(\chi_0\)</span>; <strong>required</strong> – write it with <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code> in
 the FLEX run. It is used to check that the vertex of this input reproduces
 the stored <span class="math notranslate nohighlight">\(\chi\)</span>, <span class="math notranslate nohighlight">\((1 + \chi_0\Gamma)\chi = \chi_0\)</span>; a
-mismatch (for example a changed interaction file) is refused;</p></li>
+mismatch is refused (a changed interaction file is already caught by the
+interaction check of <a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_green</span></code> (default <code class="docutils literal notranslate"><span class="pre">&quot;green.npz&quot;</span></code>): the dressed Green
 function, also required; the FLEX run writes it only when <code class="docutils literal notranslate"><span class="pre">[file.output]</span>
-<span class="pre">green</span></code> is set;</p></li>
+<span class="pre">green</span></code> is set. A spin-orbital FLEX run records <code class="docutils literal notranslate"><span class="pre">green_layout</span> <span class="pre">=</span>
+<span class="pre">&quot;b_f_k_o_o_v1&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code> in it;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_sigma</span></code> (default <code class="docutils literal notranslate"><span class="pre">&quot;sigma.npz&quot;</span></code>): the self-energy of
-the same FLEX run, also required (write it with <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">sigma</span></code>).
-Its static part gives the closure density of the borrowed Green function,
+the same FLEX run, also required (write it with <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">sigma</span></code>;
+it carries <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>). Its static part gives the closure density of the borrowed Green function,
 which the gap archive records (see <a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>).</p></li>
 </ul>
+<p>All four archives must be written by a run of this version (fingerprint
+version 2); older ones are refused with a message that asks to regenerate
+them (see <a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>).</p>
 <p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code> are used only in
 spin-orbital mode; the keys are case-insensitive. <code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> and <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code> are refused,
 because a spin-orbital FLEX run stores one spinful channel rather than
@@ -2554,62 +2635,200 @@ weights are still an exact decomposition, and one WARNING is logged:</p>
 <span id="sc-so-archive-checks"></span><h3>Archive checks: exact state-point reuse only<a class="headerlink" href="#archive-checks-exact-state-point-reuse-only" title="Link to this heading">¶</a></h3>
 <p><strong>An archive is reused only at the identical state point.</strong> It is not a
 warm start across a sweep: a chi0q, chiq, green or sigma archive written at
-another field, filling, temperature or band is refused, and the producer has
-to be rerun with this input. The one exception is <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> in
-<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> (item 3 below): there a chi0q archive from another
+another field, filling, temperature, band or interaction is refused, and the
+producer has to be rerun with this input. The one exception is <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> in
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> (the state check below): there a chi0q archive from another
 <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> is accepted with a WARNING.</p>
-<p>The spin-orbital RPA and FLEX runs write version-1 provenance members into
-their archives (<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span> <span class="pre">=</span> <span class="pre">1</span></code>, <code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>,
-<code class="docutils literal notranslate"><span class="pre">producer_label</span></code>, the band digests <code class="docutils literal notranslate"><span class="pre">fp_transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">fp_extern</span></code>,
-<code class="docutils literal notranslate"><span class="pre">fp_meta</span></code>, <code class="docutils literal notranslate"><span class="pre">fp_band</span></code>, the Green digest <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>, the <code class="docutils literal notranslate"><span class="pre">prov_*</span></code>
-copies of the band input and the realized state <code class="docutils literal notranslate"><span class="pre">state_*</span></code>). In
-<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> the spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> checks
-each archive it reads against its own input, before any large array is read:</p>
-<ol class="arabic simple">
-<li><p><strong>Structure.</strong> The version is 1, <code class="docutils literal notranslate"><span class="pre">producer_stage</span></code> is a known stage, every
-member is present with its exact dtype (<code class="docutils literal notranslate"><span class="pre">int64</span></code>, <code class="docutils literal notranslate"><span class="pre">float64</span></code>,
-<code class="docutils literal notranslate"><span class="pre">complex128</span></code> or <code class="docutils literal notranslate"><span class="pre">bool</span></code>, in either byte order; a string of any
-width) and rank, the duplicated fields agree
-(<code class="docutils literal notranslate"><span class="pre">beta</span></code> = <code class="docutils literal notranslate"><span class="pre">state_beta</span></code>, <code class="docutils literal notranslate"><span class="pre">nmat</span></code> = <code class="docutils literal notranslate"><span class="pre">state_nmat</span></code>), the band digests
-recomputed from the <code class="docutils literal notranslate"><span class="pre">prov_*</span></code> members equal the stored ones, and the
+<p>Every spin-orbital archive is written with version-2 provenance members:
+<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> by the spin-orbital RPA and FLEX runs,
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> by the spin-orbital FLEX run, and
+<code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> / <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> by <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>. The members are</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">fingerprint_version</span> <span class="pre">=</span> <span class="pre">2</span></code>, <code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>, <code class="docutils literal notranslate"><span class="pre">producer_label</span></code> and
+<code class="docutils literal notranslate"><span class="pre">producer_version</span></code>;</p></li>
+<li><p>the band digests <code class="docutils literal notranslate"><span class="pre">fp_transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">fp_extern</span></code>, <code class="docutils literal notranslate"><span class="pre">fp_meta</span></code> and
+<code class="docutils literal notranslate"><span class="pre">fp_band</span></code>, and the Green-function digest <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>;</p></li>
+<li><p>the interaction digest <code class="docutils literal notranslate"><span class="pre">fp_interaction</span></code> (over the interaction rows of
+the input, compiled to operator terms) and the topology digest
+<code class="docutils literal notranslate"><span class="pre">fp_topology</span></code> (over the declared displacements of those rows);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fp_capability</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>: the archive does not resolve bond
+channels) and <code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code> (the literal <code class="docutils literal notranslate"><span class="pre">&quot;none:onsite&quot;</span></code>);</p></li>
+<li><p>the copies <code class="docutils literal notranslate"><span class="pre">prov_*</span></code> of the band and interaction input, and the realized
+state <code class="docutils literal notranslate"><span class="pre">state_*</span></code>.</p></li>
+</ul>
+<p>In <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> the spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
+checks each archive it reads against its own input, before any large array
+is read. The <code class="docutils literal notranslate"><span class="pre">prov_*</span></code> copies only word the difference in a message: no
+digest is recomputed from them. The stored digests are compared with the
+digests of <strong>this run’s own</strong> Transfer, Extern and interaction input.</p>
+<p><strong>Version.</strong> Within this check the version is read first (the loader’s
+own tag checks, such as <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> and the <code class="docutils literal notranslate"><span class="pre">spin_orbital</span></code>
+marker, can refuse a file before it). A <code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code> of 2 is
+required: an archive of version 1 and an archive without
+<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code> are refused with a message that says to regenerate
+them (see the table below), and are never reported as malformed. There is
+no conversion and no recompute: the archive has to be written again by the
+producer of this version.</p>
+<p><strong>Regenerating an archive.</strong> An archive of version 1 or without a version
+cannot be converted. Rerun the run that writes it, with this version and the
+same input, and with the <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> key (or <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> key) that
+writes the file:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 24.0%" />
+<col style="width: 46.0%" />
+<col style="width: 30.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Archive</p></th>
+<th class="head"><p>Regenerate with</p></th>
+<th class="head"><p>Key that writes it</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave</span> <span class="pre">&lt;input.toml&gt;</span></code>, a spin-orbital RPA or FLEX run
+(<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave</span> <span class="pre">&lt;input.toml&gt;</span></code>, a spin-orbital FLEX run</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>, <code class="docutils literal notranslate"><span class="pre">sigma</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span> <span class="pre">&lt;input.toml&gt;</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">output_gap</span></code> (the archive name is the gap file name
+with the extension <code class="docutils literal notranslate"><span class="pre">.npz</span></code>)</p></td>
+</tr>
+</tbody>
+</table>
+<p>In the messages of the table below, <code class="docutils literal notranslate"><span class="pre">&lt;producer&gt;</span></code> is the run named here.</p>
+<p>The check then runs in two steps.</p>
+<ol class="arabic">
+<li><p><strong>Structure.</strong> Three conditions, none of which reads a payload array.</p>
+<ul class="simple">
+<li><p><em>Provenance members.</em> <code class="docutils literal notranslate"><span class="pre">producer_stage</span></code> is a stage that writes this
+kind of archive; every member is present with its exact dtype
+(<code class="docutils literal notranslate"><span class="pre">int64</span></code>, <code class="docutils literal notranslate"><span class="pre">float64</span></code>, <code class="docutils literal notranslate"><span class="pre">complex128</span></code> or <code class="docutils literal notranslate"><span class="pre">bool</span></code>, in either byte
+order; a string of any width) and shape; the digests are 64 lowercase
+hexadecimal characters; <code class="docutils literal notranslate"><span class="pre">fp_capability</span></code> and
+<code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code> agree with the stage; the duplicated fields
+agree (<code class="docutils literal notranslate"><span class="pre">beta</span></code> = <code class="docutils literal notranslate"><span class="pre">state_beta</span></code>, <code class="docutils literal notranslate"><span class="pre">nmat</span></code> = <code class="docutils literal notranslate"><span class="pre">state_nmat</span></code>); and the
 recorded density residual is consistent and at most
 <span class="math notranslate nohighlight">\(10^{-8}\max(1, |t|)\)</span> electrons per cell (<span class="math notranslate nohighlight">\(t\)</span> the target).</p></li>
-<li><p><strong>Band.</strong> The Transfer table, the Extern table (and whether there is
+<li><p><em>Payload members and markers.</em> The payload of the kind is present
+(below) together with the markers <code class="docutils literal notranslate"><span class="pre">index_convention</span></code> and
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>; <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> also carries <code class="docutils literal notranslate"><span class="pre">green_layout</span> <span class="pre">=</span>
+<span class="pre">&quot;b_f_k_o_o_v1&quot;</span></code>.</p></li>
+<li><p><em>Payload headers.</em> The npy header of each payload member says
+<code class="docutils literal notranslate"><span class="pre">complex128</span></code>, C order and a rank that the kind allows, and the
+member’s stored size is the header plus the data the header declares
+(a truncated member is refused). Only the header and the zip directory
+are read.</p></li>
+</ul>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 20.0%" />
+<col style="width: 40.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Archive</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">producer_stage</span></code> that writes it</p></th>
+<th class="head"><p>Payload members</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">green</span></code>, <code class="docutils literal notranslate"><span class="pre">green_layout</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sigma_static</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sc_so_static</span></code>, <code class="docutils literal notranslate"><span class="pre">sc_so_dynamic</span></code> (<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code> is
+recognised)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">gap</span></code></p></td>
+</tr>
+</tbody>
+</table>
+<p>The stages <code class="docutils literal notranslate"><span class="pre">sc_so_bond_dynamic</span></code> and <code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code> are recognised
+but not read yet; they are refused with their own message (see the
+table below).</p>
+</li>
+<li><p><strong>Compatibility with this run</strong>, in this order; the first difference is
+reported.</p>
+<ol class="arabic simple">
+<li><p><em>Band.</em> The Transfer table, the Extern table (and whether there is
 one) and the metadata (<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>, the index convention, the
-orbital counts, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> and <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>) must be identical. The
-message lists each difference, e.g. <code class="docutils literal notranslate"><span class="pre">coeff_extern:</span> <span class="pre">file</span> <span class="pre">0.0,</span> <span class="pre">run</span> <span class="pre">0.1</span></code>
-or <code class="docutils literal notranslate"><span class="pre">Transfer:</span> <span class="pre">file</span> <span class="pre">12</span> <span class="pre">rows,</span> <span class="pre">run</span> <span class="pre">12</span> <span class="pre">rows;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">row</span> <span class="pre">(R=(1,</span> <span class="pre">0,</span>
-<span class="pre">0),</span> <span class="pre">a=1,</span> <span class="pre">b=2):</span> <span class="pre">file</span> <span class="pre">(0.1+0j),</span> <span class="pre">run</span> <span class="pre">(0.11+0j)</span></code> (orbitals 1-based).</p></li>
-<li><p><strong>State.</strong> <span class="math notranslate nohighlight">\(\beta\)</span> (relative <span class="math notranslate nohighlight">\(10^{-12}\)</span>); the μ-search mode
-(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> always searches μ, so a fixed-μ archive is refused); the
-target <code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">*</span> <span class="pre">2N</span></code> electrons per cell (relative <span class="math notranslate nohighlight">\(10^{-12}\)</span>);
-the producer’s closure density against that target (tolerance
-<span class="math notranslate nohighlight">\(\max(10^{-8}\max(1,|t|), 10\,r)\)</span> with <span class="math notranslate nohighlight">\(r\)</span> the file’s
-residual); <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> exactly when the Green function is borrowed
-(<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>). In <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> mode <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> may differ: the existing rule
-locates the zero bosonic frequency through the file’s <code class="docutils literal notranslate"><span class="pre">nmat</span></code>. The
-loaded <span class="math notranslate nohighlight">\(\chi_0\)</span> was then summed on another Matsubara grid, so its
-frequency truncation differs from this run’s (the difference shrinks
-as <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grows but can reach the percent level), and a WARNING
-says so; the same <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> as the producer reproduces it. μ itself is
-not compared: with the band identical, the density decides.</p></li>
-<li><p><strong>Green function.</strong> In <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> mode the digest of the Green function
+orbital counts, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> and <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>) must be identical.
+The message lists each difference, e.g. <code class="docutils literal notranslate"><span class="pre">coeff_extern:</span> <span class="pre">file</span> <span class="pre">0.0,</span> <span class="pre">run</span>
+<span class="pre">0.1</span></code> or <code class="docutils literal notranslate"><span class="pre">Transfer:</span> <span class="pre">file</span> <span class="pre">12</span> <span class="pre">rows,</span> <span class="pre">run</span> <span class="pre">12</span> <span class="pre">rows;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">row</span>
+<span class="pre">(R=(1,</span> <span class="pre">0,</span> <span class="pre">0),</span> <span class="pre">a=1,</span> <span class="pre">b=2):</span> <span class="pre">file</span> <span class="pre">(0.1+0j),</span> <span class="pre">run</span> <span class="pre">(0.11+0j)</span></code> (orbitals
+1-based).</p></li>
+<li><p><em>Interaction.</em> The interaction rows must be identical, compared on
+the input before any sublattice folding. The message gives the record
+counts and the first differing record, e.g. <code class="docutils literal notranslate"><span class="pre">file</span> <span class="pre">3</span> <span class="pre">records,</span> <span class="pre">run</span> <span class="pre">4</span>
+<span class="pre">records;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">record</span> <span class="pre">CoulombIntra</span> <span class="pre">modes</span> <span class="pre">(...)</span> <span class="pre">cells</span>
+<span class="pre">(...):</span> <span class="pre">file</span> <span class="pre">...,</span> <span class="pre">run</span> <span class="pre">...</span></code>.</p></li>
+<li><p><em>Capability.</em> The archive’s <code class="docutils literal notranslate"><span class="pre">fp_capability</span></code> must equal the
+capability the run consumes. Every spin-orbital path of this version
+works without bond channels and so consumes <code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>
+artifacts; an archive that resolves bond channels (<code class="docutils literal notranslate"><span class="pre">&quot;so_bond&quot;</span></code>) is
+refused. The declared and resolved bond topologies are compared only
+by a bond-resolved consumer, and there is none in this version.</p></li>
+<li><p><em>State.</em> <span class="math notranslate nohighlight">\(\beta\)</span> (relative <span class="math notranslate nohighlight">\(10^{-12}\)</span>); the μ-search mode
+(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> always searches μ, so a fixed-μ archive is refused);
+the target <code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">*</span> <span class="pre">2N</span></code> electrons per cell (relative
+<span class="math notranslate nohighlight">\(10^{-12}\)</span>); the producer’s closure density against that
+target (tolerance <span class="math notranslate nohighlight">\(\max(10^{-8}\max(1,|t|), 10\,r)\)</span> with
+<span class="math notranslate nohighlight">\(r\)</span> the file’s residual); <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> exactly when the Green
+function is borrowed (<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>). In <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> mode <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> may
+differ: the existing rule locates the zero bosonic frequency through
+the file’s <code class="docutils literal notranslate"><span class="pre">nmat</span></code>. The loaded <span class="math notranslate nohighlight">\(\chi_0\)</span> was then summed on
+another Matsubara grid, so its frequency truncation differs from this
+run’s (the difference shrinks as <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> grows but can reach the
+percent level), and a WARNING says so; the same <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> as the
+producer reproduces it. μ itself is not compared: with the band
+identical, the density decides.</p></li>
+<li><p><em>Green function.</em> In <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> mode the digest of the Green function
 as loaded must equal the <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> of the chiq archive (and of its
-chi0q companion, which is checked like chiq), and the sigma archive must
-record the same <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>. The chiq and chi0q archives must both carry
-<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code> or both lack it. <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> itself is verified through
-this digest, not by its own provenance members. In <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> mode no Green
-function is borrowed, and the archive’s <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> is logged as a
-producer assertion (INFO).</p></li>
+chi0q companion, which is checked like chiq), and the sigma archive
+must record the same <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>. <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>
+go through the whole check (structure, band, interaction, capability
+and state) before any array is read, and once the Green function is
+loaded, the <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> of <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> must equal its digest too.
+In <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> mode no Green function is borrowed, and the archive’s
+<code class="docutils literal notranslate"><span class="pre">fp_green</span></code> is logged as a producer assertion (INFO).</p></li>
 </ol>
-<p>An archive without <code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code> (written before this version, or
-by a run whose band the version-1 digests do not cover: <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> /
-<code class="docutils literal notranslate"><span class="pre">green_init</span></code>, or a supplied in-memory chi0q) cannot be checked. It is
-refused when this run has an Extern field, and otherwise accepted with a
-WARNING.</p>
+</li>
+</ol>
+<p><strong>Outputs that cannot be consumed.</strong> A spin-orbital RPA run writes no
+fingerprint members when the one-body band includes <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
+<span class="pre">trans_mod</span></code> or <code class="docutils literal notranslate"><span class="pre">green_init</span></code> (the fingerprints do not cover them), or when
+it is given a chi0q (<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> or an in-memory chi0q), whose band it
+did not build. The run logs an INFO line saying so; the archives are then
+unversioned, and a spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses them with the
+“no fingerprint_version” message of the table below, whether or not the run
+has an Extern field. (A run given a chi0q also lacks the marker
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>, which <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses first.) To use such a
+run’s susceptibility, rerun the spin-orbital RPA from the Transfer and
+Extern input alone. An unversioned archive of an earlier version was
+accepted with a WARNING when the run had no Extern field; it is now always
+refused.</p>
 <p><strong>What the gap archive records.</strong> <code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> (<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span>
 <span class="pre">&quot;sc_so_static&quot;</span></code>) and <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_dynamic&quot;</span></code>) carry the
-same version-1 members, describing what <em>this</em> run’s kernel used; nothing
+same version-2 members, describing what <em>this</em> run’s kernel used; nothing
 is copied from the producer:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>: the run’s own Green function, built from its
@@ -2618,15 +2837,14 @@ band and its own μ; <code class="docutils literal notranslate"><span class="pre
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> is the digest of the borrowed Green function as
 consumed, <code class="docutils literal notranslate"><span class="pre">state_mu</span></code> the FLEX μ it was built at, and <code class="docutils literal notranslate"><span class="pre">state_density</span></code>
 its closure density, computed with the routine FLEX uses (the static
-self-energy from <code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>, on this run’s band). With an archive
-without <code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code> the μ of the Green function is unknown,
-and the gap archive gets no provenance members (an INFO line says so).</p></li>
+self-energy from <code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>, on this run’s band).</p></li>
 </ul>
-<p>The scalar members also appear as <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code> lines in
-<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. Accepted limitations of version 1: the sigma archive is
-bound to the Green function only through its <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>; a producer must
-close its density to <span class="math notranslate nohighlight">\(10^{-8}\max(1,|t|)\)</span> electrons per cell (FLEX’s
-closure check at <span class="math notranslate nohighlight">\(10^{-10}\)</span> and the RPA μ search both do).</p>
+<p>The interaction digests (<code class="docutils literal notranslate"><span class="pre">fp_interaction</span></code>, <code class="docutils literal notranslate"><span class="pre">fp_topology</span></code>) are those of
+this run’s input. The scalar members also appear as <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code> lines
+in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. Accepted limitations: the sigma archive is bound to
+the Green function only through its <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>; a producer must close its
+density to <span class="math notranslate nohighlight">\(10^{-8}\max(1,|t|)\)</span> electrons per cell (FLEX’s closure
+check at <span class="math notranslate nohighlight">\(10^{-10}\)</span> and the RPA μ search both do).</p>
 <p><strong>Troubleshooting.</strong> Every refusal is one line naming the file and the
 producer:</p>
 <table class="docutils align-default">
@@ -2642,6 +2860,30 @@ producer:</p>
 </tr>
 </thead>
 <tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">carries</span> <span class="pre">fingerprint_version</span> <span class="pre">1</span> <span class="pre">(written</span> <span class="pre">before</span> <span class="pre">interaction</span>
+<span class="pre">fingerprints</span> <span class="pre">existed);</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">requires</span> <span class="pre">fingerprint_version</span> <span class="pre">2.</span>
+<span class="pre">Regenerate</span> <span class="pre">it</span> <span class="pre">by</span> <span class="pre">re-running</span> <span class="pre">&lt;producer&gt;</span> <span class="pre">with</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">(the</span> <span class="pre">run</span>
+<span class="pre">and</span> <span class="pre">the</span> <span class="pre">[file.output]</span> <span class="pre">key</span> <span class="pre">that</span> <span class="pre">write</span> <span class="pre">each</span> <span class="pre">archive</span> <span class="pre">are</span> <span class="pre">listed</span> <span class="pre">under</span>
+<span class="pre">'Archive</span> <span class="pre">checks'</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">hwave_sc</span> <span class="pre">documentation).</span></code></p></td>
+<td><p>A spin-orbital archive written by an earlier version. It cannot be
+converted. Rerun the producer with this version.</p></td>
+<td><p>the producer’s <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> archives</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">has</span> <span class="pre">no</span> <span class="pre">fingerprint_version</span> <span class="pre">(written</span> <span class="pre">before</span> <span class="pre">this</span> <span class="pre">version,</span> <span class="pre">or</span>
+<span class="pre">by</span> <span class="pre">a</span> <span class="pre">run</span> <span class="pre">whose</span> <span class="pre">band</span> <span class="pre">the</span> <span class="pre">fingerprints</span> <span class="pre">do</span> <span class="pre">not</span> <span class="pre">cover:</span> <span class="pre">trans_mod,</span>
+<span class="pre">green_init</span> <span class="pre">or</span> <span class="pre">a</span> <span class="pre">supplied</span> <span class="pre">chi0q;</span> <span class="pre">such</span> <span class="pre">outputs</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">read</span> <span class="pre">by</span> <span class="pre">a</span>
+<span class="pre">spin-orbital</span> <span class="pre">consumer);</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">requires</span> <span class="pre">fingerprint_version</span> <span class="pre">2.</span>
+<span class="pre">Regenerate</span> <span class="pre">it</span> <span class="pre">by</span> <span class="pre">re-running</span> <span class="pre">&lt;producer&gt;</span> <span class="pre">with</span> <span class="pre">this</span> <span class="pre">version,</span> <span class="pre">from</span> <span class="pre">the</span>
+<span class="pre">Transfer/Extern</span> <span class="pre">input</span> <span class="pre">(the</span> <span class="pre">run</span> <span class="pre">and</span> <span class="pre">the</span> <span class="pre">[file.output]</span> <span class="pre">key</span> <span class="pre">that</span> <span class="pre">write</span>
+<span class="pre">each</span> <span class="pre">archive</span> <span class="pre">are</span> <span class="pre">listed</span> <span class="pre">under</span> <span class="pre">'Archive</span> <span class="pre">checks'</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">hwave_sc</span>
+<span class="pre">documentation).</span></code></p></td>
+<td><p>Either an archive written before this version, or the output of a
+spin-orbital RPA run with <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>, <code class="docutils literal notranslate"><span class="pre">green_init</span></code> or a supplied
+chi0q. Rerun the producer with this version; for RPA, without those
+inputs.</p></td>
+<td><p>the producer’s <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> archives; remove <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
+<span class="pre">trans_mod</span></code>, <code class="docutils literal notranslate"><span class="pre">green_init</span></code> and <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> from the RPA run</p></td>
+</tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">match</span> <span class="pre">this</span> <span class="pre">run:</span> <span class="pre">band</span> <span class="pre">differs:</span> <span class="pre">coeff_extern:</span> <span class="pre">file</span> <span class="pre">0.0,</span>
 <span class="pre">run</span> <span class="pre">0.1</span> <span class="pre">...</span> <span class="pre">Archives</span> <span class="pre">are</span> <span class="pre">reused</span> <span class="pre">only</span> <span class="pre">at</span> <span class="pre">the</span> <span class="pre">identical</span> <span class="pre">state</span> <span class="pre">point</span></code></p></td>
 <td><p>The archive was written for another band (another field, Transfer or
@@ -2652,15 +2894,33 @@ field, with this input and the same route.</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>, <code class="docutils literal notranslate"><span class="pre">Extern</span></code>, <code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_extern</span></code> (also
 <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>)</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">match</span> <span class="pre">this</span> <span class="pre">run:</span> <span class="pre">interaction</span> <span class="pre">differs:</span> <span class="pre">file</span> <span class="pre">3</span> <span class="pre">records,</span>
+<span class="pre">run</span> <span class="pre">4</span> <span class="pre">records;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">record</span> <span class="pre">...</span> <span class="pre">Archives</span> <span class="pre">are</span> <span class="pre">reused</span> <span class="pre">only</span> <span class="pre">at</span>
+<span class="pre">the</span> <span class="pre">identical</span> <span class="pre">state</span> <span class="pre">point</span> <span class="pre">...</span></code></p></td>
+<td><p>The producer used other interaction definitions (an added, removed or
+changed row, in any interaction file). Rerun the producer with the
+interaction files of this input.</p></td>
+<td><p>the interaction files (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&lt;file&gt;</span> <span class="pre">was</span> <span class="pre">produced</span> <span class="pre">by</span> <span class="pre">&lt;producer&gt;</span> <span class="pre">(so_bond),</span> <span class="pre">but</span> <span class="pre">this</span> <span class="pre">run</span> <span class="pre">needs</span> <span class="pre">a</span>
+<span class="pre">so_onsite</span> <span class="pre">artifact</span></code></p></td>
+<td><p>The archive resolves bond channels, which this run does not use.
+Spin-orbital archives of this version are all <code class="docutils literal notranslate"><span class="pre">so_onsite</span></code>, so this
+message does not occur with archives written by this version.</p></td>
+<td><p>the producer’s <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> archives</p></td>
+</tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">calc_mu:</span> <span class="pre">file</span> <span class="pre">False,</span> <span class="pre">run</span> <span class="pre">True</span></code></p></td>
-<td><p>The producer ran at a fixed μ; <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> always searches μ from
-<code class="docutils literal notranslate"><span class="pre">filling</span></code>. Rerun the producer with <code class="docutils literal notranslate"><span class="pre">filling</span></code> instead of <code class="docutils literal notranslate"><span class="pre">mu</span></code>.</p></td>
+<td><p>The producer ran at a fixed μ (fixed-μ mismatch); <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> always
+searches μ from <code class="docutils literal notranslate"><span class="pre">filling</span></code>. Rerun the producer with <code class="docutils literal notranslate"><span class="pre">filling</span></code>
+instead of <code class="docutils literal notranslate"><span class="pre">mu</span></code>.</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code> (remove <code class="docutils literal notranslate"><span class="pre">mu</span></code>)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">target</span> <span class="pre">...</span> <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">...</span> <span class="pre">(run)</span> <span class="pre">...;</span> <span class="pre">density</span> <span class="pre">...</span>
 <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">target</span> <span class="pre">...</span> <span class="pre">(run,</span> <span class="pre">tol</span> <span class="pre">...)</span></code></p></td>
-<td><p>The FLEX (or RPA) run was at another filling. Rerun it at this
-filling.</p></td>
+<td><p>The FLEX (or RPA) run was at another filling, or its density did not
+reach the filling (FLEX density mismatch). Rerun it at this filling.</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">beta</span> <span class="pre">...</span> <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">...</span> <span class="pre">(run)</span></code></p></td>
@@ -2680,32 +2940,30 @@ but its frequency truncation differs. Set <code class="docutils literal notransl
 value to reproduce it.</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">Nmat</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">FLEX</span> <span class="pre">archives</span> <span class="pre">'...chiq.npz'</span> <span class="pre">(unversioned)</span> <span class="pre">and</span> <span class="pre">'...chi0q.npz'</span>
-<span class="pre">(versioned)</span> <span class="pre">disagree</span> <span class="pre">on</span> <span class="pre">fingerprint_version</span></code> (or the reverse)</p></td>
-<td><p>The chiq and chi0q archives come from two different FLEX runs.
-Regenerate both from one FLEX run.</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>, the FLEX <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code></p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fp_green</span> <span class="pre">mismatch</span></code> / <code class="docutils literal notranslate"><span class="pre">sigma.npz</span> <span class="pre">and</span> <span class="pre">green.npz</span> <span class="pre">come</span> <span class="pre">from</span> <span class="pre">different</span>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fp_green</span> <span class="pre">mismatch</span></code> / <code class="docutils literal notranslate"><span class="pre">sigma.npz</span> <span class="pre">and</span> <span class="pre">green.npz</span> <span class="pre">come</span> <span class="pre">from</span> <span class="pre">different</span>
 <span class="pre">runs</span></code></p></td>
 <td><p>The Green function (or the self-energy) is not the one the chiq
 archive was computed with: a modified or mixed-up file. Use the
 archives of one FLEX run, or rerun it.</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_green</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">has</span> <span class="pre">no</span> <span class="pre">fingerprint_version</span> <span class="pre">(...);</span> <span class="pre">the</span> <span class="pre">run</span> <span class="pre">has</span> <span class="pre">an</span> <span class="pre">Extern</span> <span class="pre">field,</span>
-<span class="pre">so</span> <span class="pre">its</span> <span class="pre">band</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">verified.</span> <span class="pre">Regenerate</span> <span class="pre">it.</span></code></p></td>
-<td><p>An unversioned archive and a run with a field. Rerun the producer
-with this version (without Extern only a WARNING is logged).</p></td>
-<td><p>the producer’s <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> archives</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">was</span> <span class="pre">written</span> <span class="pre">by</span> <span class="pre">producer_stage</span> <span class="pre">'sc_so_bond_dynamic',</span> <span class="pre">which</span>
+<span class="pre">this</span> <span class="pre">version</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">read</span> <span class="pre">yet</span> <span class="pre">(the</span> <span class="pre">dynamic</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">path</span>
+<span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span> <span class="pre">version).</span></code> (also <code class="docutils literal notranslate"><span class="pre">'flex_so_bond'</span></code>, “the
+spin-orbital bond FLEX”)</p></td>
+<td><p>The archive comes from a bond-resolved spin-orbital path that this
+version only recognises. Use an archive of <code class="docutils literal notranslate"><span class="pre">rpa_so</span></code> or
+<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code>.</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_green</span></code>,
+<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">needs</span> <span class="pre">the</span> <span class="pre">general</span> <span class="pre">(4-index)</span> <span class="pre">spinful</span> <span class="pre">chi0q</span> <span class="pre">...</span></code> (load mode,
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">needs</span> <span class="pre">the</span> <span class="pre">general</span> <span class="pre">(4-index)</span> <span class="pre">spinful</span> <span class="pre">chi0q</span> <span class="pre">...</span></code> (load mode,
 Zeeman field without spin-mixing hopping)</p></td>
 <td><p>The spin-orbital RPA reduces a Zeeman-only model to the spin-diagonal
 form. Use <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>.</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">is</span> <span class="pre">malformed</span> <span class="pre">or</span> <span class="pre">truncated:</span> <span class="pre">&lt;check&gt;</span> <span class="pre">(&lt;stored&gt;</span> <span class="pre">vs</span>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">is</span> <span class="pre">malformed</span> <span class="pre">or</span> <span class="pre">truncated:</span> <span class="pre">&lt;check&gt;</span> <span class="pre">(&lt;stored&gt;</span> <span class="pre">vs</span>
 <span class="pre">&lt;expected&gt;).</span> <span class="pre">Regenerate</span> <span class="pre">it</span> <span class="pre">with</span> <span class="pre">&lt;producer&gt;.</span></code> (also <code class="docutils literal notranslate"><span class="pre">the</span> <span class="pre">producer</span>
 <span class="pre">did</span> <span class="pre">not</span> <span class="pre">reach</span> <span class="pre">its</span> <span class="pre">filling</span></code>)</p></td>
 <td><p>A damaged, truncated or hand-edited archive, or a producer whose
@@ -2723,10 +2981,18 @@ before any calculation:</p>
 <li><p>a <code class="docutils literal notranslate"><span class="pre">frequency</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> (the refusals
 specific to <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> are listed in <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>;</p></li>
-<li><p>any off-site two-body row (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>), an
-<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span> row between orbitals of different sites under
-<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>, and off-site rows inside a <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>
-aggregate file;</p></li>
+<li><p>any off-site two-body row (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>), including off-site
+rows inside a <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code> aggregate file. The message names the row, says
+that the spin-orbital pairing vertex supports on-site and in-cell
+(<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) interactions only, and asks to remove the
+off-site rows. Every <span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span> row is accepted, also between
+orbitals that <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> would label as different sites
+(<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> is ignored in spin-orbital mode);</p></li>
+<li><p>an imaginary part on a <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
+or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> coefficient, on every spin-orbital path (RPA, FLEX and
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>). A complex <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is accepted. The message names the
+row and asks to remove the imaginary part; for <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> it points to
+issue #302;</p></li>
 <li><p>an interaction file with an orbital index outside <span class="math notranslate nohighlight">\(1 \ldots N\)</span>
 (an index larger than <span class="math notranslate nohighlight">\(N\)</span> means the file was written in
 spin-orbital indices; an index 0 is never valid);</p></li>
@@ -2907,7 +3173,7 @@ bosonic frequency, not only at <span class="math notranslate nohighlight">\(\nu 
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>: the spinful bubble of the bare Green function is
 computed at every bosonic frequency, and
 <span class="math notranslate nohighlight">\(\chi = [1 + \chi_0\Gamma]^{-1}\chi_0\)</span>;</p></li>
-<li><p>on-site interactions, no bond channels (as in the static case);</p></li>
+<li><p>on-site and in-cell interactions, no bond channels (as in the static case);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code>, in both modes (the archive checks compare the
 filling target);</p></li>
 <li><p>an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>;</p></li>

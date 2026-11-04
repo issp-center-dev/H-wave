@@ -1505,6 +1505,28 @@ older <code class="docutils literal notranslate"><span class="pre">green.npz</sp
 </section>
 <section id="spin-orbital-runs">
 <h3>Spin-orbital runs<a class="headerlink" href="#spin-orbital-runs" title="Link to this heading">¶</a></h3>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p><strong>Release and migration note: spin-orbital mode.</strong> In spin-orbital mode:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code> is ignored. The exchange of every
+R = 0 row, including rows between orbitals labelled as different
+sites, is included exactly. SO RPA, SO FLEX and SO hwave_sc results
+change for inputs that combine <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> with such rows.</p></li>
+<li><p>An imaginary part on any coefficient other than PairHop is refused
+(it was silently folded before; see issue #302 for complex
+Exchange).</p></li>
+<li><p>Spin-orbital archives written before this version (fingerprint
+version 1 or none) must be regenerated (which command writes which
+file: see <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>).</p></li>
+</ol>
+<p>To reproduce an earlier result, remove the affected rows or imaginary
+parts, or run the non-spin-orbital solver.</p>
+<p>In spin-orbital mode the value of <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> is not read; an
+invalid value is ignored too. One WARNING is logged per run when the key
+is present: <code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">is</span> <span class="pre">ignored</span> <span class="pre">in</span> <span class="pre">spin-orbital</span> <span class="pre">mode;</span> <span class="pre">all</span> <span class="pre">R=0</span> <span class="pre">rows</span>
+<span class="pre">are</span> <span class="pre">treated</span> <span class="pre">exactly</span> <span class="pre">(see</span> <span class="pre">migration</span> <span class="pre">note)</span></code>.</p>
+</div>
 <p>A run with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> (see <a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>)
 writes its archives on the spin-orbital index of dimension
 <span class="math notranslate nohighlight">\(n_d = 2 n_{\rm orb}\)</span>, in spin-block order <code class="docutils literal notranslate"><span class="pre">s</span> <span class="pre">*</span> <span class="pre">norb</span> <span class="pre">+</span> <span class="pre">a</span></code>:</p>
@@ -1512,7 +1534,16 @@ writes its archives on the spin-orbital index of dimension
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> carry <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span>
 <span class="pre">&quot;spin_block&quot;</span></code>. <code class="docutils literal notranslate"><span class="pre">sigma</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code> have shape <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span>
 <span class="pre">nd)</span></code>, and <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> is a <code class="docutils literal notranslate"><span class="pre">&quot;split&quot;</span></code> archive (<code class="docutils literal notranslate"><span class="pre">sigma_static</span></code>,
-<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>).</p></li>
+<code class="docutils literal notranslate"><span class="pre">sigma_fluct</span></code>). <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> also carries <code class="docutils literal notranslate"><span class="pre">green_layout</span> <span class="pre">=</span>
+<span class="pre">&quot;b_f_k_o_o_v1&quot;</span></code> (the layout of the stored array) and the marker
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>; <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> carries <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>.</p></li>
+<li><p>Every archive of the run (<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and
+<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>) carries the version-2 provenance members that
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> checks (<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span> <span class="pre">=</span> <span class="pre">2</span></code>, the band, interaction
+and Green-function digests, and the realized state); see
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>. An archive of an earlier version, which has
+no <code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code> or version 1, is refused by <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> and has
+to be regenerated by a run of this version.</p></li>
 <li><p>The susceptibility is a single spinful channel, written to <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> as
 <code class="docutils literal notranslate"><span class="pre">chiq</span></code> with shape <code class="docutils literal notranslate"><span class="pre">(nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span> <span class="pre">nd,</span> <span class="pre">nd,</span> <span class="pre">nd)</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span>
 <span class="pre">&quot;spin_orbital&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span> <span class="pre">=</span> <span class="pre">&quot;acbd&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span>
@@ -1827,7 +1858,7 @@ full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code>. The
 one exception is <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> together with
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>: the spin-orbital FLEX of
-<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a> (on-site interactions only); without
+<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a> (on-site and in-cell interactions only); without
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> the general scheme refuses <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>,
 and the reduced scheme always does. Off-site input is accepted for
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> (same-orbital or inter-orbital,

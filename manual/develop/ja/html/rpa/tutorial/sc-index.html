@@ -1981,7 +1981,7 @@ issue #239）と、真に非等価な2軌道の鎖に対する1次の参照構�
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
 <td><p>拒否</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で受け付ける（オンサイト相互作用のみ）</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で受け付ける（オンサイトおよびセル内の相互作用のみ）</p></td>
 <td><p>静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>でこの出力を読みます。
 <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照</p></td>
 </tr>
@@ -2050,6 +2050,55 @@ SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FL
 </table>
 <p><code class="docutils literal notranslate"><span class="pre">PairLift</span></code>は粒子‐正孔頂点に<code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">=</span> <span class="pre">C</span> <span class="pre">=</span> <span class="pre">0</span></code>しか寄与しないため、どの経路でも
 無効です（警告のうえ無視されます）。</p>
+<p>スピン軌道モード（<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>）での相互作用の行</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 28.0%" />
+<col style="width: 24.0%" />
+<col style="width: 24.0%" />
+<col style="width: 24.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>相互作用の行</p></th>
+<th class="head"><p>RPA</p></th>
+<th class="head"><p>FLEX（<code class="docutils literal notranslate"><span class="pre">general</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>）</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（静的・動的）</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>オンサイトの行、およびセル内（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の異なる軌道間の行
+（<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>によらない）</p></td>
+<td><p>受け入れ。直接項と交換交差を厳密に</p></td>
+<td><p>受け入れ。直接項と交換交差を厳密に</p></td>
+<td><p>受け入れ。直接項と交換交差を厳密に</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code></p></td>
+<td><p>無視。計算ごとに WARNING が 1 回</p></td>
+<td><p>無視。計算ごとに WARNING が 1 回</p></td>
+<td><p>無視。計算ごとに WARNING が 1 回</p></td>
+</tr>
+<tr class="row-even"><td><p>オフサイトの行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）</p></td>
+<td><p>直接（Hartree 型）部分のみで受け入れ。INFO の行が種類を示す
+（<a class="reference internal" href="../../algorithm/rpa.html#rpa-so-offsite"><span class="std std-ref">スピン軌道 RPA のオフサイトの行</span></a>を参照）</p></td>
+<td><p>拒否</p></td>
+<td><p>拒否。メッセージはオフサイトの行を取り除くよう伝える</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の係数の虚部</p></td>
+<td><p>拒否</p></td>
+<td><p>拒否</p></td>
+<td><p>拒否</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の係数の虚部</p></td>
+<td><p>この検査では拒否しない</p></td>
+<td><p>RPA と同じ</p></td>
+<td><p>RPA と同じ</p></td>
+</tr>
+</tbody>
+</table>
+<p>スピン軌道の FLEX と<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は、このバージョンではボンド分解チャネル
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>、<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>）を拒否します。上のオフサイトの
+拒否メッセージはそれらを案内しません。</p>
 </section>
 <section id="id35">
 <h2><span class="section-number">5.2.14. </span>スピン構造の取り扱い<a class="headerlink" href="#id35" title="Link to this heading">¶</a></h2>
@@ -2101,12 +2150,37 @@ pairing vertex と、reduced スキームが保存していない横成分感受
 軌道の数）にわたるひとつの一般的な行列<span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k})\)</span>として
 扱います。Transfer ファイル中のスピン軌道相互作用などのスピン混成一体項は厳密に
 取り込まれ、ギャップの一重項成分と三重項成分は模型に応じて混ざります。</p>
+<div class="admonition important">
+<p class="admonition-title">重要</p>
+<p><strong>リリース・移行上の注意: スピン軌道モード。</strong> スピン軌道モードでは次のとおりです。</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">orbital_site</span></code>は無視されます。異なるサイトの軌道とラベル
+付けされた軌道間の行も含め、すべての R = 0 の行の交換が厳密に
+取り込まれます。<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>とそのような行を併用する入力では、
+SO RPA、SO FLEX、SO hwave_sc の結果が変わります。そのような行を含まない
+入力では、数値は以前と同じです。入力から<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>を削除すると、
+下記の WARNING は出なくなります。</p></li>
+<li><p>PairHop 以外の係数に虚部があると拒否されます（以前は虚部が黙って畳み込まれて
+いました。複素 Exchange は issue #302 を参照）。</p></li>
+<li><p>このバージョンより前に書かれたスピン軌道のアーカイブ（fingerprint version 1
+またはなし）は作り直す必要があります（どのコマンドがどのファイルを書くかは
+<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照）。</p></li>
+</ol>
+<p>以前の結果を再現するには、該当する行や虚部を取り除くか、非スピン軌道の
+ソルバーを使ってください。</p>
+<p>スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>の値は読まれず、不正な値も無視されます。
+キーが指定されていると、計算ごとに WARNING が 1 回出ます: <code class="docutils literal notranslate"><span class="pre">orbital_site</span> <span class="pre">is</span>
+<span class="pre">ignored</span> <span class="pre">in</span> <span class="pre">spin-orbital</span> <span class="pre">mode;</span> <span class="pre">all</span> <span class="pre">R=0</span> <span class="pre">rows</span> <span class="pre">are</span> <span class="pre">treated</span> <span class="pre">exactly</span> <span class="pre">(see</span> <span class="pre">migration</span>
+<span class="pre">note)</span></code></p>
+</div>
 <section id="id36">
 <h3>適用範囲<a class="headerlink" href="#id36" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（既定値。この節）または<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>（振動数に
 依存するギャップ。<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）;</p></li>
-<li><p>オンサイトの2体相互作用のみ;</p></li>
+<li><p>オンサイトおよびセル内（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の2体相互作用: セル内の異なる
+軌道間の行は、<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>によらず、交換交差も含めて厳密に扱われます。
+オフサイトの行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）は拒否されます（「拒否される組み合わせ」を参照）;</p></li>
 <li><p>ボンド分解チャネルなし（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>、既定値）;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>（スピンフルな<span class="math notranslate nohighlight">\(\chi_0\)</span>を内部計算）、
 <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>（スピン軌道 RPA が出力した一般の4添字 chi0q。<strong>静的のみ</strong>）、または
@@ -2253,15 +2327,22 @@ FLEX の4つのアーカイブを<code class="docutils literal notranslate"><spa
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chi0q</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;chi0q.npz&quot;</span></code>）: FLEX の<span class="math notranslate nohighlight">\(\chi_0\)</span>。
 <strong>必須</strong>です。FLEX の実行で<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>を指定して出力してください。
 この入力の頂点が保存された<span class="math notranslate nohighlight">\(\chi\)</span>を再現すること
-<span class="math notranslate nohighlight">\((1 + \chi_0\Gamma)\chi = \chi_0\)</span>の確認に使い、一致しない場合（たとえば
-相互作用ファイルを変更した場合）は拒否します;</p></li>
+<span class="math notranslate nohighlight">\((1 + \chi_0\Gamma)\chi = \chi_0\)</span>の確認に使い、一致しない場合は拒否します
+（相互作用ファイルの変更は、その前に<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>の相互作用の検査で
+見つかります）;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_green</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;green.npz&quot;</span></code>）: 繰り込まれた Green 関数。
-これも必須です。FLEX は<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>を指定したときだけ出力します;</p></li>
+これも必須です。FLEX は<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>を指定したときだけ出力します。
+スピン軌道の FLEX 計算はここに<code class="docutils literal notranslate"><span class="pre">green_layout</span> <span class="pre">=</span> <span class="pre">&quot;b_f_k_o_o_v1&quot;</span></code>と
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>を記録します;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_sigma</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;sigma.npz&quot;</span></code>）: 同じ FLEX 計算の自己
-エネルギー。これも必須です（<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">sigma</span></code>で出力してください）。その
+エネルギー。これも必須です（<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">sigma</span></code>で出力してください。
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>を持ちます）。その
 静的部分から借りた Green 関数の閉包密度を求め、ギャップのアーカイブに記録します
 （<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照）。</p></li>
 </ul>
+<p>4つのアーカイブはすべてこのバージョン（fingerprint version 2）の計算で書かれたもので
+なければなりません。古いものは、作り直すよう指示するメッセージで拒否されます
+（<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照）。</p>
 <p><code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>はスピン軌道モードでのみ使われ、
 キーの大文字・小文字は区別しません。<code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>は拒否します。スピン軌道
 FLEX はスピン・電荷の別チャネルではなく、ひとつのスピンフルチャネルを保存する
@@ -2378,33 +2459,150 @@ W_\text{tot} = \sum |\Delta|^2\]</div>
 <section id="sc-so-archive-checks">
 <span id="id40"></span><h3>アーカイブの検査: 同一の状態点でのみ再利用<a class="headerlink" href="#sc-so-archive-checks" title="Link to this heading">¶</a></h3>
 <p><strong>アーカイブは同一の状態点でのみ再利用されます。</strong>掃引の初期値（ウォーム
-スタート）には使えません。別の磁場・フィリング・温度・バンドで出力された chi0q、
-chiq、green、sigma のアーカイブは拒否されるので、この入力で出力側の計算を
+スタート）には使えません。別の磁場・フィリング・温度・バンド・相互作用で出力された
+chi0q、chiq、green、sigma のアーカイブは拒否されるので、この入力で出力側の計算を
 実行し直してください。唯一の例外は<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>での<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>です
-（下の 3 項）。この場合、別の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の chi0q アーカイブは WARNING を出して
+（下の「状態」の検査）。この場合、別の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の chi0q アーカイブは WARNING を出して
 受け入れます。</p>
-<p>スピン軌道モードの RPA と FLEX は、アーカイブに version 1 の来歴メンバーを書き込み
-ます（<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span> <span class="pre">=</span> <span class="pre">1</span></code>、<code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>、<code class="docutils literal notranslate"><span class="pre">producer_label</span></code>、
-バンドのダイジェスト<code class="docutils literal notranslate"><span class="pre">fp_transfer</span></code>、<code class="docutils literal notranslate"><span class="pre">fp_extern</span></code>、<code class="docutils literal notranslate"><span class="pre">fp_meta</span></code>、
-<code class="docutils literal notranslate"><span class="pre">fp_band</span></code>、Green 関数のダイジェスト<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>、バンド入力の写し
-<code class="docutils literal notranslate"><span class="pre">prov_*</span></code>、実現した状態<code class="docutils literal notranslate"><span class="pre">state_*</span></code>）。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では、
-スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は読み込む各アーカイブを、大きな配列を読む前に
-自身の入力と照合します。</p>
-<ol class="arabic simple">
-<li><p><strong>構造。</strong>version が 1 であること、<code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>が既知の段階であること、
+<p>スピン軌道のアーカイブはすべて version 2 の来歴メンバーを付けて書き出されます。
+<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>はスピン軌道の RPA と FLEX が、
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>はスピン軌道の FLEX が、
+<code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が書き出します。メンバーは次のとおりです。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">fingerprint_version</span> <span class="pre">=</span> <span class="pre">2</span></code>、<code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>、<code class="docutils literal notranslate"><span class="pre">producer_label</span></code>、
+<code class="docutils literal notranslate"><span class="pre">producer_version</span></code>;</p></li>
+<li><p>バンドのダイジェスト<code class="docutils literal notranslate"><span class="pre">fp_transfer</span></code>、<code class="docutils literal notranslate"><span class="pre">fp_extern</span></code>、<code class="docutils literal notranslate"><span class="pre">fp_meta</span></code>、
+<code class="docutils literal notranslate"><span class="pre">fp_band</span></code>と、Green 関数のダイジェスト<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>;</p></li>
+<li><p>相互作用のダイジェスト<code class="docutils literal notranslate"><span class="pre">fp_interaction</span></code>（入力の相互作用の行を演算子項に
+コンパイルしたものに対するもの）と、トポロジーのダイジェスト<code class="docutils literal notranslate"><span class="pre">fp_topology</span></code>
+（それらの行の宣言された変位に対するもの）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">fp_capability</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>: アーカイブはボンド分解チャネルを含まない）と
+<code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code>（リテラル<code class="docutils literal notranslate"><span class="pre">&quot;none:onsite&quot;</span></code>）;</p></li>
+<li><p>バンドと相互作用の入力の写し<code class="docutils literal notranslate"><span class="pre">prov_*</span></code>と、実現した状態<code class="docutils literal notranslate"><span class="pre">state_*</span></code>。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では、スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
+読み込む各アーカイブを、大きな配列を読む前に自身の入力と照合します。<code class="docutils literal notranslate"><span class="pre">prov_*</span></code>の
+写しはメッセージで差分を示すためだけに使われ、そこからダイジェストを再計算する
+ことはありません。保存されたダイジェストは、<strong>この計算自身の</strong> Transfer・Extern・
+相互作用の入力から求めたダイジェストと比較されます。</p>
+<p><strong>バージョン。</strong>この検査の中では最初に version を読みます（<code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>や
+<code class="docutils literal notranslate"><span class="pre">spin_orbital</span></code>マーカーなど、読み込み側のタグの検査は、これより前にファイルを
+拒否することがあります）。<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>は 2 でなければ
+なりません。version 1 のアーカイブと<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>のないアーカイブは、
+作り直すよう指示するメッセージで拒否され（下の表を参照）、不正なファイルとしては
+扱われません。変換も再計算もありません。このバージョンの出力側で書き直す
+必要があります。</p>
+<p><strong>アーカイブの作り直し。</strong> version 1 または version のないアーカイブは変換できません。
+それを書き出す計算を、このバージョンで、同じ入力のまま、そのファイルを書き出す
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>のキー（または<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>のキー）を指定して実行し直して
+ください。</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 24.0%" />
+<col style="width: 46.0%" />
+<col style="width: 30.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>アーカイブ</p></th>
+<th class="head"><p>作り直すコマンド</p></th>
+<th class="head"><p>書き出すキー</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave</span> <span class="pre">&lt;input.toml&gt;</span></code>（スピン軌道の RPA または FLEX。
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>）</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">chiq</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave</span> <span class="pre">&lt;input.toml&gt;</span></code>（スピン軌道の FLEX）</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">sigma</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span> <span class="pre">&lt;input.toml&gt;</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">output_gap</span></code>（アーカイブ名はギャップのファイル名の拡張子を
+<code class="docutils literal notranslate"><span class="pre">.npz</span></code>にしたもの）</p></td>
+</tr>
+</tbody>
+</table>
+<p>下の表のメッセージにある<code class="docutils literal notranslate"><span class="pre">&lt;producer&gt;</span></code>は、ここに挙げた計算を指します。</p>
+<p>検査はそのあと 2 段階で行われます。</p>
+<ol class="arabic">
+<li><p><strong>構造。</strong>3 つの条件があり、どれも配列本体は読みません。</p>
+<ul class="simple">
+<li><p><em>来歴メンバー。</em><code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>がその種類のアーカイブを書く段階であること、
 すべてのメンバーが正確な dtype（<code class="docutils literal notranslate"><span class="pre">int64</span></code>、<code class="docutils literal notranslate"><span class="pre">float64</span></code>、<code class="docutils literal notranslate"><span class="pre">complex128</span></code>、
-<code class="docutils literal notranslate"><span class="pre">bool</span></code>のいずれか、バイト順はどちらでもよい。文字列は任意の幅）と次元で存在すること、重複するフィールドが一致する
-こと（<code class="docutils literal notranslate"><span class="pre">beta</span></code> = <code class="docutils literal notranslate"><span class="pre">state_beta</span></code>、<code class="docutils literal notranslate"><span class="pre">nmat</span></code> = <code class="docutils literal notranslate"><span class="pre">state_nmat</span></code>）、<code class="docutils literal notranslate"><span class="pre">prov_*</span></code>から
-再計算したバンドのダイジェストが保存値と等しいこと、記録された密度の残差が
-整合し、1セルあたり<span class="math notranslate nohighlight">\(10^{-8}\max(1, |t|)\)</span>電子以下であること
-（<span class="math notranslate nohighlight">\(t\)</span>は目標値）。</p></li>
-<li><p><strong>バンド。</strong>Transfer テーブル、Extern テーブル（とその有無）、メタデータ
-（<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>、添字の規約、軌道数、<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>、<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>）が同一で
-なければなりません。メッセージは各差分を示します。例:
-<code class="docutils literal notranslate"><span class="pre">coeff_extern:</span> <span class="pre">file</span> <span class="pre">0.0,</span> <span class="pre">run</span> <span class="pre">0.1</span></code>、<code class="docutils literal notranslate"><span class="pre">Transfer:</span> <span class="pre">file</span> <span class="pre">12</span> <span class="pre">rows,</span> <span class="pre">run</span> <span class="pre">12</span> <span class="pre">rows;</span>
-<span class="pre">first</span> <span class="pre">differing</span> <span class="pre">row</span> <span class="pre">(R=(1,</span> <span class="pre">0,</span> <span class="pre">0),</span> <span class="pre">a=1,</span> <span class="pre">b=2):</span> <span class="pre">file</span> <span class="pre">(0.1+0j),</span> <span class="pre">run</span> <span class="pre">(0.11+0j)</span></code>
-（軌道は1始まり）。</p></li>
-<li><p><strong>状態。</strong><span class="math notranslate nohighlight">\(\beta\)</span>（相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、μ の探索の有無
+<code class="docutils literal notranslate"><span class="pre">bool</span></code>のいずれか、バイト順はどちらでもよい。文字列は任意の幅）と形状で
+存在すること、ダイジェストが 64 文字の小文字 16 進数であること、
+<code class="docutils literal notranslate"><span class="pre">fp_capability</span></code>と<code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code>が段階と一致すること、重複する
+フィールドが一致すること（<code class="docutils literal notranslate"><span class="pre">beta</span></code> = <code class="docutils literal notranslate"><span class="pre">state_beta</span></code>、<code class="docutils literal notranslate"><span class="pre">nmat</span></code> =
+<code class="docutils literal notranslate"><span class="pre">state_nmat</span></code>）、記録された密度の残差が整合し、1セルあたり
+<span class="math notranslate nohighlight">\(10^{-8}\max(1, |t|)\)</span>電子以下であること（<span class="math notranslate nohighlight">\(t\)</span>は目標値）。</p></li>
+<li><p><em>本体のメンバーとマーカー。</em>その種類の本体（下の表）が、マーカー
+<code class="docutils literal notranslate"><span class="pre">index_convention</span></code>と<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>とともに存在すること。
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>はさらに<code class="docutils literal notranslate"><span class="pre">green_layout</span> <span class="pre">=</span> <span class="pre">&quot;b_f_k_o_o_v1&quot;</span></code>を持ちます。</p></li>
+<li><p><em>本体のヘッダー。</em>各本体メンバーの npy ヘッダーが<code class="docutils literal notranslate"><span class="pre">complex128</span></code>、C 順、
+その種類で許される次元であること。さらに、メンバーの格納サイズが、ヘッダーと
+ヘッダーが宣言するデータの大きさの和に等しいこと（途中で切れたメンバーは拒否
+されます）。読むのはヘッダーと zip のディレクトリだけです。</p></li>
+</ul>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 20.0%" />
+<col style="width: 40.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>アーカイブ</p></th>
+<th class="head"><p>書き出す<code class="docutils literal notranslate"><span class="pre">producer_stage</span></code></p></th>
+<th class="head"><p>本体のメンバー</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">green_layout</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sigma_static</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sc_so_static</span></code>、<code class="docutils literal notranslate"><span class="pre">sc_so_dynamic</span></code>（<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code>は認識のみ）</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">gap</span></code></p></td>
+</tr>
+</tbody>
+</table>
+<p>段階<code class="docutils literal notranslate"><span class="pre">sc_so_bond_dynamic</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code>は認識されますが、まだ
+読み込めません。専用のメッセージで拒否されます（下の表を参照）。</p>
+</li>
+<li><p><strong>この計算との整合。</strong>次の順に検査し、最初の差分を報告します。</p>
+<ol class="arabic simple">
+<li><p><em>バンド。</em>Transfer テーブル、Extern テーブル（とその有無）、メタデータ
+（<code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>、添字の規約、軌道数、<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>、<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>）が
+同一でなければなりません。メッセージは各差分を示します。例:
+<code class="docutils literal notranslate"><span class="pre">coeff_extern:</span> <span class="pre">file</span> <span class="pre">0.0,</span> <span class="pre">run</span> <span class="pre">0.1</span></code>、<code class="docutils literal notranslate"><span class="pre">Transfer:</span> <span class="pre">file</span> <span class="pre">12</span> <span class="pre">rows,</span> <span class="pre">run</span> <span class="pre">12</span>
+<span class="pre">rows;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">row</span> <span class="pre">(R=(1,</span> <span class="pre">0,</span> <span class="pre">0),</span> <span class="pre">a=1,</span> <span class="pre">b=2):</span> <span class="pre">file</span> <span class="pre">(0.1+0j),</span> <span class="pre">run</span>
+<span class="pre">(0.11+0j)</span></code>（軌道は1始まり）。</p></li>
+<li><p><em>相互作用。</em>相互作用の行が同一でなければなりません。副格子の折り畳み
+の前の入力で比較します。メッセージは行数と最初に異なる行を示します。例:
+<code class="docutils literal notranslate"><span class="pre">file</span> <span class="pre">3</span> <span class="pre">records,</span> <span class="pre">run</span> <span class="pre">4</span> <span class="pre">records;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">record</span> <span class="pre">CoulombIntra</span> <span class="pre">modes</span>
+<span class="pre">(...)</span> <span class="pre">cells</span> <span class="pre">(...):</span> <span class="pre">file</span> <span class="pre">...,</span> <span class="pre">run</span> <span class="pre">...</span></code>。</p></li>
+<li><p><em>機能。</em>アーカイブの<code class="docutils literal notranslate"><span class="pre">fp_capability</span></code>が、この計算が使う機能と等しくなければ
+なりません。このバージョンのスピン軌道の経路はすべてボンド分解チャネルなしで
+動作し、<code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>のアーカイブを使います。ボンド分解チャネルを含む
+アーカイブ（<code class="docutils literal notranslate"><span class="pre">&quot;so_bond&quot;</span></code>）は拒否されます。宣言されたボンドトポロジーと
+解決されたボンドトポロジーはボンド分解を使う側だけが比較しますが、
+このバージョンにはそのような経路はありません。</p></li>
+<li><p><em>状態。</em><span class="math notranslate nohighlight">\(\beta\)</span>（相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、μ の探索の有無
 （<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
 目標値<code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">*</span> <span class="pre">2N</span></code>（1セルあたりの電子数、相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、その目標値に
 対する出力側の閉包密度（許容幅<span class="math notranslate nohighlight">\(\max(10^{-8}\max(1,|t|), 10\,r)\)</span>、
@@ -2415,21 +2613,31 @@ chiq、green、sigma のアーカイブは拒否されるので、この入力�
 異なる（差は<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>とともに小さくなりますが、% のオーダーに達することがあります）ため、
 WARNING を出します。出力側と同じ<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>にすれば再現します。μ 自体は比較しません。
 バンドが同一なら密度で判定できるためです。</p></li>
-<li><p><strong>Green 関数。</strong><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では、読み込んだ Green 関数のダイジェストが chiq
+<li><p><em>Green 関数。</em><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では、読み込んだ Green 関数のダイジェストが chiq
 アーカイブ（および chiq と同様に検査する chi0q のアーカイブ）の<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>と
 等しく、sigma のアーカイブも同じ<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>を記録していなければなりません。
-chiq と chi0q のアーカイブは、両方が<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>をもつか、両方とも
-もたないかのどちらかでなければなりません。
-<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>自体はこのダイジェストで検証し、それ自身の来歴メンバーでは検証
-しません。<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>では Green 関数を借りないので、アーカイブの
-<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>は出力側の主張として INFO で記録されます。</p></li>
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>は、配列を読む前に検査全体（構造・バンド・
+相互作用・capability・状態）を受けます。Green 関数を読み込んだ後は、
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>の<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>もそのダイジェストと等しくなければなりません。
+<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>では Green 関数を借りないので、アーカイブの<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>は出力側の
+主張として INFO で記録されます。</p></li>
 </ol>
-<p><code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>のないアーカイブ（このバージョンより前に書かれたもの、または
-version 1 のダイジェストが扱わないバンドの計算、すなわち<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・
-<code class="docutils literal notranslate"><span class="pre">green_init</span></code>やメモリ上で与えた chi0q の計算で書かれたもの）は検査できません。
-この計算に Extern 場があれば拒否し、なければ WARNING を出して受け入れます。</p>
+</li>
+</ol>
+<p><strong>読み込めない出力。</strong>スピン軌道の RPA は、一体バンドに<code class="docutils literal notranslate"><span class="pre">[file.input]</span></code>の
+<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>または<code class="docutils literal notranslate"><span class="pre">green_init</span></code>が含まれる場合（ダイジェストがこれらを扱わないため）、
+または自分で作っていないバンドの chi0q（<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>やメモリ上の chi0q）を
+与えられた場合、fingerprint のメンバーを書き込みません。その旨を INFO で
+記録します。出力されたアーカイブは version なしになり、スピン軌道モードの
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は、計算に Extern 場があるかどうかによらず、下の表の
+「no fingerprint_version」のメッセージで拒否します。（chi0q を与えた計算は
+マーカー<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>も持たないので、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はまずそちらを
+拒否します。）そのような計算の感受率を使うには、Transfer と Extern の入力だけで
+スピン軌道の RPA を実行し直してください。以前のバージョンでは、version なしの
+アーカイブは計算に Extern 場がなければ WARNING を出して受け入れていましたが、
+いまは常に拒否されます。</p>
 <p><strong>ギャップのアーカイブに記録される内容。</strong><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span>
-<span class="pre">&quot;sc_so_static&quot;</span></code>）と<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_dynamic&quot;</span></code>）は同じ version 1 の
+<span class="pre">&quot;sc_so_static&quot;</span></code>）と<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_dynamic&quot;</span></code>）は同じ version 2 の
 メンバーをもち、<em>この</em>計算のカーネルが実際に使ったものを記録します。出力側の
 値を写すことはありません。</p>
 <ul class="simple">
@@ -2438,15 +2646,14 @@ version 1 のダイジェストが扱わないバンドの計算、すなわち<
 <code class="docutils literal notranslate"><span class="pre">state_mu_tol</span> <span class="pre">=</span> <span class="pre">|state_density</span> <span class="pre">-</span> <span class="pre">state_target|</span></code>です;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>は消費した借用 Green 関数のダイジェスト、<code class="docutils literal notranslate"><span class="pre">state_mu</span></code>は
 それを作った FLEX の μ、<code class="docutils literal notranslate"><span class="pre">state_density</span></code>はその閉包密度で、FLEX と同じ手続き
-（<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>の静的自己エネルギー、この計算のバンド）で求めます。
-<code class="docutils literal notranslate"><span class="pre">fingerprint_version</span></code>のないアーカイブでは Green 関数の μ がわからないため、
-ギャップのアーカイブには来歴メンバーを書き込みません（INFO で通知します）。</p></li>
+（<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>の静的自己エネルギー、この計算のバンド）で求めます。</p></li>
 </ul>
-<p>スカラーのメンバーは<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>にも<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code>の行として出力されます。
-version 1 で受け入れている制約: sigma のアーカイブは<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>によってのみ Green 関数と
-結び付けられます。出力側は密度を1セルあたり<span class="math notranslate nohighlight">\(10^{-8}\max(1,|t|)\)</span>電子まで
-閉じる必要があります（FLEX の閉包検査<span class="math notranslate nohighlight">\(10^{-10}\)</span>と RPA の μ 探索はどちらも
-満たします）。</p>
+<p>相互作用のダイジェスト（<code class="docutils literal notranslate"><span class="pre">fp_interaction</span></code>、<code class="docutils literal notranslate"><span class="pre">fp_topology</span></code>）はこの計算の入力の
+ものです。スカラーのメンバーは<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>にも<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code>の行として
+出力されます。受け入れている制約: sigma のアーカイブは<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>によってのみ
+Green 関数と結び付けられます。出力側は密度を1セルあたり
+<span class="math notranslate nohighlight">\(10^{-8}\max(1,|t|)\)</span>電子まで閉じる必要があります（FLEX の閉包検査
+<span class="math notranslate nohighlight">\(10^{-10}\)</span>と RPA の μ 探索はどちらも満たします）。</p>
 <p><strong>トラブルシューティング。</strong>どの拒否もファイルと出力側の計算を示す1行の
 メッセージです。</p>
 <table class="docutils align-default">
@@ -2462,6 +2669,31 @@ version 1 で受け入れている制約: sigma のアーカイブは<code class
 </tr>
 </thead>
 <tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">carries</span> <span class="pre">fingerprint_version</span> <span class="pre">1</span> <span class="pre">(written</span> <span class="pre">before</span> <span class="pre">interaction</span>
+<span class="pre">fingerprints</span> <span class="pre">existed);</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">requires</span> <span class="pre">fingerprint_version</span> <span class="pre">2.</span>
+<span class="pre">Regenerate</span> <span class="pre">it</span> <span class="pre">by</span> <span class="pre">re-running</span> <span class="pre">&lt;producer&gt;</span> <span class="pre">with</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">(the</span> <span class="pre">run</span>
+<span class="pre">and</span> <span class="pre">the</span> <span class="pre">[file.output]</span> <span class="pre">key</span> <span class="pre">that</span> <span class="pre">write</span> <span class="pre">each</span> <span class="pre">archive</span> <span class="pre">are</span> <span class="pre">listed</span> <span class="pre">under</span>
+<span class="pre">'Archive</span> <span class="pre">checks'</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">hwave_sc</span> <span class="pre">documentation).</span></code></p></td>
+<td><p>以前のバージョンで書かれたスピン軌道のアーカイブです。変換はできません。
+このバージョンで出力側を実行し直してください。メッセージ中の
+'Archive checks' はこの節（<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>）の作り直しの表です。</p></td>
+<td><p>出力側の<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>のアーカイブ</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">has</span> <span class="pre">no</span> <span class="pre">fingerprint_version</span> <span class="pre">(written</span> <span class="pre">before</span> <span class="pre">this</span> <span class="pre">version,</span> <span class="pre">or</span>
+<span class="pre">by</span> <span class="pre">a</span> <span class="pre">run</span> <span class="pre">whose</span> <span class="pre">band</span> <span class="pre">the</span> <span class="pre">fingerprints</span> <span class="pre">do</span> <span class="pre">not</span> <span class="pre">cover:</span> <span class="pre">trans_mod,</span>
+<span class="pre">green_init</span> <span class="pre">or</span> <span class="pre">a</span> <span class="pre">supplied</span> <span class="pre">chi0q;</span> <span class="pre">such</span> <span class="pre">outputs</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">read</span> <span class="pre">by</span> <span class="pre">a</span>
+<span class="pre">spin-orbital</span> <span class="pre">consumer);</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">requires</span> <span class="pre">fingerprint_version</span> <span class="pre">2.</span>
+<span class="pre">Regenerate</span> <span class="pre">it</span> <span class="pre">by</span> <span class="pre">re-running</span> <span class="pre">&lt;producer&gt;</span> <span class="pre">with</span> <span class="pre">this</span> <span class="pre">version,</span> <span class="pre">from</span> <span class="pre">the</span>
+<span class="pre">Transfer/Extern</span> <span class="pre">input</span> <span class="pre">(the</span> <span class="pre">run</span> <span class="pre">and</span> <span class="pre">the</span> <span class="pre">[file.output]</span> <span class="pre">key</span> <span class="pre">that</span> <span class="pre">write</span>
+<span class="pre">each</span> <span class="pre">archive</span> <span class="pre">are</span> <span class="pre">listed</span> <span class="pre">under</span> <span class="pre">'Archive</span> <span class="pre">checks'</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">hwave_sc</span>
+<span class="pre">documentation).</span></code></p></td>
+<td><p>このバージョンより前に書かれたアーカイブか、<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>・与えた chi0q を使ったスピン軌道 RPA の出力です。
+このバージョンで出力側を実行し直してください。RPA ではこれらの入力を
+使わないでください。</p></td>
+<td><p>出力側の<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>のアーカイブ。RPA の<code class="docutils literal notranslate"><span class="pre">[file.input]</span></code>から
+<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・<code class="docutils literal notranslate"><span class="pre">green_init</span></code>・<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>を削除</p></td>
+</tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">match</span> <span class="pre">this</span> <span class="pre">run:</span> <span class="pre">band</span> <span class="pre">differs:</span> <span class="pre">coeff_extern:</span> <span class="pre">file</span> <span class="pre">0.0,</span>
 <span class="pre">run</span> <span class="pre">0.1</span> <span class="pre">...</span> <span class="pre">Archives</span> <span class="pre">are</span> <span class="pre">reused</span> <span class="pre">only</span> <span class="pre">at</span> <span class="pre">the</span> <span class="pre">identical</span> <span class="pre">state</span> <span class="pre">point</span></code></p></td>
 <td><p>別のバンド（別の磁場、Transfer、Extern テーブル）のアーカイブです。または
@@ -2471,15 +2703,34 @@ version 1 で受け入れている制約: sigma のアーカイブは<code class
 <td><p><code class="docutils literal notranslate"><span class="pre">Transfer</span></code>、<code class="docutils literal notranslate"><span class="pre">Extern</span></code>、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_extern</span></code>（<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>、
 <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>も）</p></td>
 </tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">match</span> <span class="pre">this</span> <span class="pre">run:</span> <span class="pre">interaction</span> <span class="pre">differs:</span> <span class="pre">file</span> <span class="pre">3</span> <span class="pre">records,</span>
+<span class="pre">run</span> <span class="pre">4</span> <span class="pre">records;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">record</span> <span class="pre">...</span> <span class="pre">Archives</span> <span class="pre">are</span> <span class="pre">reused</span> <span class="pre">only</span> <span class="pre">at</span>
+<span class="pre">the</span> <span class="pre">identical</span> <span class="pre">state</span> <span class="pre">point</span> <span class="pre">...</span></code></p></td>
+<td><p>出力側が別の相互作用の定義を使っています（どの相互作用ファイルでも、
+行の追加・削除・変更）。この入力の相互作用ファイルで出力側の計算を
+実行し直してください。</p></td>
+<td><p>相互作用ファイル（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>）</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&lt;file&gt;</span> <span class="pre">was</span> <span class="pre">produced</span> <span class="pre">by</span> <span class="pre">&lt;producer&gt;</span> <span class="pre">(so_bond),</span> <span class="pre">but</span> <span class="pre">this</span> <span class="pre">run</span> <span class="pre">needs</span> <span class="pre">a</span>
+<span class="pre">so_onsite</span> <span class="pre">artifact</span></code></p></td>
+<td><p>アーカイブはボンド分解チャネルを含みますが、この計算は使いません。
+このバージョンのスピン軌道のアーカイブはすべて<code class="docutils literal notranslate"><span class="pre">so_onsite</span></code>なので、
+このバージョンで書かれたアーカイブではこのメッセージは出ません。</p></td>
+<td><p>出力側の<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>のアーカイブ</p></td>
+</tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">calc_mu:</span> <span class="pre">file</span> <span class="pre">False,</span> <span class="pre">run</span> <span class="pre">True</span></code></p></td>
-<td><p>出力側は μ 固定で実行されています。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はつねに<code class="docutils literal notranslate"><span class="pre">filling</span></code>から
-μ を探索します。<code class="docutils literal notranslate"><span class="pre">mu</span></code>の代わりに<code class="docutils literal notranslate"><span class="pre">filling</span></code>で実行し直してください。</p></td>
+<td><p>出力側は μ 固定で実行されています（固定 μ の不一致）。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
+つねに<code class="docutils literal notranslate"><span class="pre">filling</span></code>から μ を探索します。<code class="docutils literal notranslate"><span class="pre">mu</span></code>の代わりに<code class="docutils literal notranslate"><span class="pre">filling</span></code>で
+実行し直してください。</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code>（<code class="docutils literal notranslate"><span class="pre">mu</span></code>を削除）</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">target</span> <span class="pre">...</span> <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">...</span> <span class="pre">(run)</span> <span class="pre">...;</span> <span class="pre">density</span> <span class="pre">...</span>
 <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">target</span> <span class="pre">...</span> <span class="pre">(run,</span> <span class="pre">tol</span> <span class="pre">...)</span></code></p></td>
-<td><p>FLEX（または RPA）が別のフィリングで実行されています。このフィリングで
-実行し直してください。</p></td>
+<td><p>FLEX（または RPA）が別のフィリングで実行されているか、密度がフィリングに
+達していません（FLEX の密度の不一致）。このフィリングで実行し直して
+ください。</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">beta</span> <span class="pre">...</span> <span class="pre">(file)</span> <span class="pre">vs</span> <span class="pre">...</span> <span class="pre">(run)</span></code></p></td>
@@ -2497,32 +2748,29 @@ version 1 で受け入れている制約: sigma のアーカイブは<code class
 振動数の打ち切りが異なります。再現するには<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を出力側の値にしてください。</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">Nmat</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">FLEX</span> <span class="pre">archives</span> <span class="pre">'...chiq.npz'</span> <span class="pre">(unversioned)</span> <span class="pre">and</span> <span class="pre">'...chi0q.npz'</span>
-<span class="pre">(versioned)</span> <span class="pre">disagree</span> <span class="pre">on</span> <span class="pre">fingerprint_version</span></code>（またはその逆）</p></td>
-<td><p>chiq と chi0q のアーカイブが別々の FLEX 計算のものです。ひとつの FLEX
-計算から両方を作り直してください。</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>、FLEX の<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code></p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">fp_green</span> <span class="pre">mismatch</span></code>／<code class="docutils literal notranslate"><span class="pre">sigma.npz</span> <span class="pre">and</span> <span class="pre">green.npz</span> <span class="pre">come</span> <span class="pre">from</span> <span class="pre">different</span>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">fp_green</span> <span class="pre">mismatch</span></code>／<code class="docutils literal notranslate"><span class="pre">sigma.npz</span> <span class="pre">and</span> <span class="pre">green.npz</span> <span class="pre">come</span> <span class="pre">from</span> <span class="pre">different</span>
 <span class="pre">runs</span></code></p></td>
 <td><p>Green 関数（または自己エネルギー）が chiq の計算に使われたものではありません
 （変更された、または取り違えたファイル）。ひとつの FLEX 計算のアーカイブを
 使うか、実行し直してください。</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_green</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_chiq</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">has</span> <span class="pre">no</span> <span class="pre">fingerprint_version</span> <span class="pre">(...);</span> <span class="pre">the</span> <span class="pre">run</span> <span class="pre">has</span> <span class="pre">an</span> <span class="pre">Extern</span> <span class="pre">field,</span>
-<span class="pre">so</span> <span class="pre">its</span> <span class="pre">band</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">verified.</span> <span class="pre">Regenerate</span> <span class="pre">it.</span></code></p></td>
-<td><p>バージョンのないアーカイブを磁場のある計算で読もうとしています。この
-バージョンで出力側を実行し直してください（Extern がなければ WARNING のみ）。</p></td>
-<td><p>出力側の<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>のアーカイブ</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">was</span> <span class="pre">written</span> <span class="pre">by</span> <span class="pre">producer_stage</span> <span class="pre">'sc_so_bond_dynamic',</span> <span class="pre">which</span>
+<span class="pre">this</span> <span class="pre">version</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">read</span> <span class="pre">yet</span> <span class="pre">(the</span> <span class="pre">dynamic</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">path</span>
+<span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span> <span class="pre">version).</span></code>（<code class="docutils literal notranslate"><span class="pre">'flex_so_bond'</span></code>、&quot;the
+spin-orbital bond FLEX&quot; も）</p></td>
+<td><p>ボンド分解のスピン軌道経路のアーカイブで、このバージョンは認識するだけです。
+<code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>または<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code>のアーカイブを使ってください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_green</span></code>、
+<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">needs</span> <span class="pre">the</span> <span class="pre">general</span> <span class="pre">(4-index)</span> <span class="pre">spinful</span> <span class="pre">chi0q</span> <span class="pre">...</span></code>（load モード、
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">needs</span> <span class="pre">the</span> <span class="pre">general</span> <span class="pre">(4-index)</span> <span class="pre">spinful</span> <span class="pre">chi0q</span> <span class="pre">...</span></code>（load モード、
 スピン混成のホッピングのない Zeeman 場）</p></td>
 <td><p>スピン軌道 RPA は Zeeman 項だけの模型をスピン対角の形に簡約します。
 <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>を使ってください。</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">is</span> <span class="pre">malformed</span> <span class="pre">or</span> <span class="pre">truncated:</span> <span class="pre">&lt;check&gt;</span> <span class="pre">(&lt;stored&gt;</span> <span class="pre">vs</span>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">is</span> <span class="pre">malformed</span> <span class="pre">or</span> <span class="pre">truncated:</span> <span class="pre">&lt;check&gt;</span> <span class="pre">(&lt;stored&gt;</span> <span class="pre">vs</span>
 <span class="pre">&lt;expected&gt;).</span> <span class="pre">Regenerate</span> <span class="pre">it</span> <span class="pre">with</span> <span class="pre">&lt;producer&gt;.</span></code>（<code class="docutils literal notranslate"><span class="pre">the</span> <span class="pre">producer</span> <span class="pre">did</span> <span class="pre">not</span>
 <span class="pre">reach</span> <span class="pre">its</span> <span class="pre">filling</span></code>も）</p></td>
 <td><p>壊れた・途中で切れた・手で編集したアーカイブ、または密度が閉じなかった
@@ -2539,9 +2787,16 @@ version 1 で受け入れている制約: sigma のアーカイブは<code class
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">frequency</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>に固有の
 拒否は<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>にまとめています）;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>;</p></li>
-<li><p>オフサイトの2体項の行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
-<span class="pre">orbital_site</span></code>のもとで異なるサイトの軌道間の<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>の行、
-<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>集約ファイル中のオフサイトの行;</p></li>
+<li><p>オフサイトの2体項の行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）。<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>集約ファイル中の
+オフサイトの行も含みます。メッセージはその行を示し、スピン軌道の対形成頂点は
+オンサイトおよびセル内（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の相互作用のみを扱うこと、
+オフサイトの行を取り除くことを伝えます。<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>の行はすべて
+受け入れられ、<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>なら別のサイトとみなされる軌道間の行も同様です
+（スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>は無視されます）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の
+係数の虚部。スピン軌道のすべての経路（RPA・FLEX・<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）で拒否されます。
+複素の<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は受け入れられます。メッセージはその行を示して虚部を取り除く
+ように伝え、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>では issue #302 を案内します;</p></li>
 <li><p>軌道添字が<span class="math notranslate nohighlight">\(1 \ldots N\)</span>の範囲外の相互作用ファイル（<span class="math notranslate nohighlight">\(N\)</span>を
 超える添字はスピン軌道添字で書かれたファイルを意味します。添字 0 はつねに不正です）;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code>、reduced（2添字）の
@@ -2710,7 +2965,7 @@ Pauli 禁制モードは現れません。</p></li>
 確認は<span class="math notranslate nohighlight">\(\nu = 0\)</span>だけでなく<strong>すべての</strong>ボソン振動数で行います;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>: 裸の Green 関数のスピンフルなバブルをすべてのボソン
 振動数で計算し、<span class="math notranslate nohighlight">\(\chi = [1 + \chi_0\Gamma]^{-1}\chi_0\)</span>とします;</p></li>
-<li><p>オンサイト相互作用のみ、ボンドチャネルなし（静的な場合と同じ）;</p></li>
+<li><p>オンサイトおよびセル内の相互作用のみ、ボンドチャネルなし（静的な場合と同じ）;</p></li>
 <li><p>両方のモードで<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code>が必要（アーカイブの検査がフィリングの
 目標値を比較するため）;</p></li>
 <li><p>偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>;</p></li>

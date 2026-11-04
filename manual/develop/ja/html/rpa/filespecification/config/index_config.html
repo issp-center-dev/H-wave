@@ -122,7 +122,7 @@ UHFk と同じ規約です。</p>
 Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点による1つのチャネルで
 総和されます（<a class="reference internal" href="../../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）。この版での要件と制限:</p>
 <ul class="simple">
-<li><p>オンサイト相互作用のみ（オフサイトの宣言は拒否されます）</p></li>
+<li><p>オンサイトおよびセル内（<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>）の相互作用のみ（オフサイトの宣言は拒否されます）</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code>は<code class="docutils literal notranslate"><span class="pre">true</span></code>（デフォルト）のままにする必要があります</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>には対応していません</p></li>
 <li><p>初期値の指定はできません。<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>・<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・
@@ -141,7 +141,7 @@ Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点に�
 </ul>
 <p><strong>Eliashberg ソルバー。</strong> <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はスピン軌道模型の静的な線形化
 Eliashberg 方程式を、ひとつの<span class="math notranslate nohighlight">\(2N \times 2N\)</span>ギャップ行列（<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>なし）、
-オンサイト相互作用、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>で
+オンサイトおよびセル内の相互作用、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>で
 解きます。適用範囲、出力、拒否される組み合わせは<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>に
 まとめています。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>では振動数に依存するギャップを
 求めます（一様格子、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>）。
@@ -272,8 +272,11 @@ exchange 配線は2つのフェルミオン運動量に依存するためこの�
 <p><strong>形式 :</strong> 非負整数のリスト (デフォルトは指定なし)</p>
 <p><strong>説明 :</strong>
 元の単位胞の各軌道がどのサイト（原子や分子）に属するかを指定します。
-スピン軌道モードでは物理軌道ごとに並べます。同じラベルの軌道は同じサイトに
-属します。<code class="docutils literal notranslate"><span class="pre">hwave</span></code>（RPA、FLEX）と<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が読み、UHF の
+同じラベルの軌道は同じサイトに属します。<strong>スピン軌道モード
+（``mode.enable_spin_orbital = true``）ではこのキーは無視されます。</strong>値は読まれず
+（不正な値も無視されます）、WARNING が 1 回出て、<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の行はすべて交換交差も含めて
+厳密に扱われます（<a class="reference internal" href="../../../algorithm/rpa.html#so-migration-note"><span class="std std-ref">移行上の注意</span></a>を参照）。以下の説明は
+非スピン軌道ソルバーについてのものです。<code class="docutils literal notranslate"><span class="pre">hwave</span></code>（RPA、FLEX）と<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が読み、UHF の
 ソルバーは使いません。</p>
 <p><code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の二体項の行のうち、<strong>異なる</strong>サイトの軌道を結ぶもの（たとえば
 単位胞を共有する二量体の2つの分子間の相互作用）はサイト間の相互作用です。
