@@ -27,25 +27,24 @@ why the entries below are per-method: several of these classes hold both a
 30 s ED granule and a sub-second guard, and the guard stays in the fast
 gate.
 
-THE TWO DOCUMENTED EXCEPTIONS
------------------------------
-Four tests exceed the 5 s rule and STAY in the fast gate anyway. They are
-NOT decorated, and they are deliberately absent from :data:`HEAVY_TESTS`:
-
-* ``test_spinful_transverse_ed.TestGateS0ExtractionAdjudication``
-  (``test_step3_dressed_extraction_matches_totalned``,
-  ``test_step4_g2_g4_swap_mutation_must_fail``), ~31 s
-* ``test_spinful_transverse_ed.TestGateS2ProductionRouting``
-  (``test_old_slice_then_solve_fails_the_s0_granule``,
-  ``test_production_passes_the_s0_granule``), ~31 s
-
-Reason: everything in :data:`HEAVY_TESTS` pins per-type numerical CONTENT.
-These four pin the production ROUTING instead -- that ``solve()`` takes the
-dressed-extraction path at all, and that the old slice-then-solve path
-still fails the S0 granule. Routing is what an everyday structural change
-actually breaks, and these four are also what fixes issue #110 in place;
-losing them from the per-push gate would be losing the guard, not deferring
-a re-measurement. Their cost is accepted knowingly.
+THE DOCUMENTED EXCEPTIONS (NONE AT PRESENT)
+-------------------------------------------
+:data:`FAST_GATE_EXCEPTIONS` lists tests that exceed the 5 s rule and STAY
+in the fast gate anyway (not decorated, absent from :data:`HEAVY_TESTS`).
+It is empty now. Until 2026-11-04 it held the four production-ROUTING
+gates of ``test_spinful_transverse_ed`` (``TestGateS0ExtractionAdjudication``
+and ``TestGateS2ProductionRouting``, two methods each): they pin that
+``solve()`` takes the dressed-extraction path at all and that the old
+slice-then-solve path still fails the S0 granule -- what an everyday
+structural change actually breaks, and the in-place fix of issue #110 --
+and at the ~31 s each they cost when carved out, keeping them on every
+push was judged worth it. MEASURED on the CI runners on 2026-11-04 they
+had grown to ~175 s EACH (12 minutes of the fast gate, paid in both of its
+passes), and the FULL job now runs on every pull request too, so moving
+them into :data:`HEAVY_TESTS` defers nothing past a merge: the guard still
+runs before one, in `test-full`. The same measurement moved
+``test_bond_vs_ed_oracle.TestCaseM``'s ``test_ph_g_plus`` /
+``test_ph_g_minus`` (162 s each, never carved out -- simply over the rule).
 
 And the inverse: two tests BELOW the 5 s rule are registered anyway --
 ``test_flex_second_order_ed_chain.TestG4``'s ``test_coulombinter_chain``
@@ -198,6 +197,10 @@ HEAVY_TESTS = (
      "case-M joint-ray ph adjudication at (1,1)"),
     ("test_bond_vs_ed_oracle", "TestCaseM", "test_joint_ray_pp_1_1",
      "case-M joint-ray pp adjudication at (1,1)"),
+    ("test_bond_vs_ed_oracle", "TestCaseM", "test_ph_g_minus",
+     "case-M ph adjudication, g- direction -- 162 s on CI (2026-11-04)"),
+    ("test_bond_vs_ed_oracle", "TestCaseM", "test_ph_g_plus",
+     "case-M ph adjudication, g+ direction -- 162 s on CI (2026-11-04)"),
     ("test_bond_vs_ed_oracle", "TestPpInterOrbitalSanityFx3", "test_g_minus",
      "fx3 inter-orbital pp sanity, g- direction"),
     ("test_bond_vs_ed_oracle", "TestPpInterOrbitalSanityFx3", "test_g_plus",
@@ -393,6 +396,22 @@ HEAVY_TESTS = (
      "gate 0-S2 (ii, #88): TotalNED equals SectorED on the 12-mode L = 3 "
      "Zeeman chain (3.7 s measured; registered with its ED siblings, the "
      "L = 2 variant stays in the fast gate)"),
+    # --- tests/test_spinful_transverse_ed.py -- production routing gates --
+    # the former FAST_GATE_EXCEPTIONS (see the module docstring): ~175 s
+    # each on CI (2026-11-04); test-full runs on every pull request, so
+    # the routing guard still runs before a merge
+    ("test_spinful_transverse_ed", "TestGateS0ExtractionAdjudication",
+     "test_step3_dressed_extraction_matches_totalned",
+     "gate S0: dressed extraction matches the total-N ED (routing guard)"),
+    ("test_spinful_transverse_ed", "TestGateS0ExtractionAdjudication",
+     "test_step4_g2_g4_swap_mutation_must_fail",
+     "gate S0: the g2/g4 swap mutation must fail (routing guard)"),
+    ("test_spinful_transverse_ed", "TestGateS2ProductionRouting",
+     "test_old_slice_then_solve_fails_the_s0_granule",
+     "gate S2: the old slice-then-solve path fails the S0 granule"),
+    ("test_spinful_transverse_ed", "TestGateS2ProductionRouting",
+     "test_production_passes_the_s0_granule",
+     "gate S2: production solve() passes the S0 granule (issue #110)"),
     # --- tests/test_spinful_transverse_ed.py -- t_so granule campaign ----
     ("test_spinful_transverse_ed", "TestTask4GranuleCampaign",
      "test_norb2_coulombinter",
@@ -433,20 +452,12 @@ HEAVY_TESTS = (
      "revision on the reversed declaration"),
 )
 
-#: The four fast-gate tests that exceed the 5 s rule by documented
-#: exception (see the module docstring). Data, not prose, so the
-#: consistency test can assert they are NOT skipped in the fast gate --
-#: silently decorating one of them would otherwise go unnoticed.
-FAST_GATE_EXCEPTIONS = (
-    ("test_spinful_transverse_ed", "TestGateS0ExtractionAdjudication",
-     "test_step3_dressed_extraction_matches_totalned"),
-    ("test_spinful_transverse_ed", "TestGateS0ExtractionAdjudication",
-     "test_step4_g2_g4_swap_mutation_must_fail"),
-    ("test_spinful_transverse_ed", "TestGateS2ProductionRouting",
-     "test_old_slice_then_solve_fails_the_s0_granule"),
-    ("test_spinful_transverse_ed", "TestGateS2ProductionRouting",
-     "test_production_passes_the_s0_granule"),
-)
+#: Fast-gate tests that exceed the 5 s rule by documented exception (see
+#: the module docstring). Data, not prose, so the consistency test can
+#: assert they are NOT skipped in the fast gate -- silently decorating one
+#: of them would otherwise go unnoticed. Empty since 2026-11-04: the four
+#: routing gates it held moved into HEAVY_TESTS (~175 s each on CI).
+FAST_GATE_EXCEPTIONS = ()
 
 #: Attribute stamped on every method :func:`heavy` decorates. The
 #: consistency test scans the discovered suite for it, which is how a
