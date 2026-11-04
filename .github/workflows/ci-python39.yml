@@ -9,7 +9,8 @@ name: CI Python 3.10+
 #                 floor.
 #   test-full  -- the FULL-ONLY tests, HWAVE_FULL_TESTS=1: only the test
 #                 files that contain a test gated on that switch, run
-#                 once with pytest and without coverage. Everything else
+#                 once with pytest and without coverage, on Python 3.12
+#                 only (`test` keeps all three versions). Everything else
 #                 is the fast gate's job and is not repeated here.
 #
 # Both jobs are driven by the single `on:` block below, so BOTH run on
@@ -219,7 +220,7 @@ jobs:
 
 
   # ---------------------------------------------------------------------
-  # FULL-ONLY tests: the same matrix and the same provisioning as `test`,
+  # FULL-ONLY tests: the same provisioning as `test`, on Python 3.12 only,
   # with HWAVE_FULL_TESTS=1 so the opt-in exact-diagonalization tests run,
   # restricted to the test files that contain such a test and run once,
   # with pytest, without coverage (see the note at the top for the
@@ -232,9 +233,18 @@ jobs:
     # step below.
     env:
       HWAVE_FULL_TESTS: "1"
+    # ONE Python version, unlike `test`: the full-only tests are numerical
+    # content (exact-diagonalization and dense-sum oracles), which depends
+    # on the numpy / scipy stack, not on the interpreter version -- and
+    # every leg runs the identical stack (numpy 1.26.4, scipy 1.15.3 on
+    # run 41701329212, frozen per leg by the cached venv). Three legs ran
+    # the same ~hour of arithmetic three times. Interpreter-version
+    # breakage is the fast gate's job, which keeps all three versions.
+    # Re-widen this matrix if the legs' stacks ever diverge (the "Verify
+    # installation" step prints them).
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.12"]
 
     steps:
     - uses: actions/checkout@v4
