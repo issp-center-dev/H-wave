@@ -18,6 +18,9 @@ dense Lehmann/ED sum; that content only moves when a vertex table or a
 bubble kernel is edited deliberately, which is exactly the change a
 pre-merge FULL run is there to catch. Everyday structural edits do not
 move it, so paying 10+ minutes for them on every push buys nothing.
+(The ``test_bubble_kernel.py`` case, ``TestIrBondOracle``, has since left
+the registry: its oracle's 2e9-term Matsubara sum became the closed form,
+and the test runs in well under a second.)
 
 THE SELECTION RULE
 ------------------
@@ -205,11 +208,6 @@ HEAVY_TESTS = (
      "fx3 inter-orbital pp sanity, g- direction"),
     ("test_bond_vs_ed_oracle", "TestPpInterOrbitalSanityFx3", "test_g_plus",
      "fx3 inter-orbital pp sanity, g+ direction"),
-    # --- tests/test_bubble_kernel.py -------------------------------------
-    ("test_bubble_kernel", "TestIrBondOracle",
-     "test_matches_direct_lehmann_sum",
-     "IR bond bubble vs a direct Lehmann sum -- 171 s on its own, the "
-     "single most expensive test in the suite"),
     # --- tests/test_eliashberg_bond_entry.py -- the two pairing entries ---
     ("test_eliashberg_bond_entry", "TestPostProcessingRuns",
      "test_ir_lambda_arm_matches_uniform",
@@ -399,7 +397,10 @@ HEAVY_TESTS = (
     # --- tests/test_spinful_transverse_ed.py -- production routing gates --
     # the former FAST_GATE_EXCEPTIONS (see the module docstring): ~175 s
     # each on CI (2026-11-04); test-full runs on every pull request, so
-    # the routing guard still runs before a merge
+    # the routing guard still runs before a merge. Since the four share
+    # one cached ED reference (_s0_ed_derivative), the first of them to
+    # run pays ~19 s locally and the others under 1 s; each one ALONE
+    # still costs ~19 s, over the rule, so all four stay registered.
     ("test_spinful_transverse_ed", "TestGateS0ExtractionAdjudication",
      "test_step3_dressed_extraction_matches_totalned",
      "gate S0: dressed extraction matches the total-N ED (routing guard)"),

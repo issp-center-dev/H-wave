@@ -20,7 +20,6 @@ from tests.approx_util import assert_approx_array
 from hwave.solver import green as green_mod
 from hwave.solver import bubble as bubble_mod
 from tests.test_bond_channels import _bond_view
-from tests.heavy_tests import heavy
 
 
 def _tiny_eig(nvol=4, p=2, seed=7):
@@ -1810,15 +1809,18 @@ class TestIrBondOracle(unittest.TestCase):
     """Independent oracle for ``bubble._ir_bond_static``: the exact static
     (``Omega=0``) bond-enlarged bubble on a ``Nx=3``-site, single-orbital
     (``p=1``) tight-binding ring THREADED BY A FLUX (Peierls phase), computed
-    by a plain-Python Lehmann/Matsubara double sum with NO shared transforms
+    by a plain-Python Lehmann/Matsubara sum with NO shared transforms
     whatsoever -- no FFT, no IR basis machinery, no ``bond_channels``
     helpers, not even ``bubble.py``'s own ``contract_general``/
     ``_roll_spatial``. The analytic ``G`` of the ring Hamiltonian is written
     out directly (``H(k) = -2 t cos(k - phi)``, a trivial one-pole Lehmann
     representation per k-point since the tight-binding Hamiltonian is
-    already diagonal in k), and the Matsubara frequency sum is a genuine
-    truncated double sum with a CERTIFIED analytic remainder bound (below),
-    independent of ``_prepare_ir``/``ir_axis.IRAxis``'s own machinery.
+    already diagonal in k), and the Matsubara frequency sum is done in
+    CLOSED FORM (below), independent of ``_prepare_ir``/
+    ``ir_axis.IRAxis``'s own machinery. The closed form is itself pinned
+    against the truncated frequency sum by
+    ``test_closed_form_matches_truncated_matsubara_sum``, with the
+    CERTIFIED analytic remainder bound derived below.
 
     SELF-INVERSE DISPLACEMENT / INVERSION-SYMMETRIC GREEN BLIND SPOT (Pass B
     review): the ORIGINAL fixture used ``Nx=2`` with displacement
@@ -1860,6 +1862,24 @@ class TestIrBondOracle(unittest.TestCase):
 
     with ``G(k, iw_n) = 1/(iw_n - (e(k) - mu))``, ``iw_n = i(2n+1) pi/beta``
     ranging over ALL integers n (positive and negative).
+
+    Closed form of the frequency sum (``_closed_T``). With ``e1 = e(k+q) -
+    mu`` and ``e2 = e(k) - mu``, partial fractions give
+    ``G1 G2 = (G1 - G2) / (e1 - e2)``, and ``(1/beta) sum_n G(e, iw_n)
+    e^{iw_n 0+} = f(e)`` (the convergence factors cancel in the
+    difference, the product decaying as ``1/w_n^2``), so
+
+        T(e1, e2) := sum_n G(e1, iw_n) G(e2, iw_n)
+                   = beta (f(e1) - f(e2)) / (e1 - e2)
+                   -> beta f'(e)  = -beta^2 f(e) (1 - f(e))   at e1 = e2,
+
+    ``f(e) = 1/(e^{beta e} + 1)``. This is the static (``Omega = 0``) case:
+    no bosonic shift enters. The degenerate limit (here the ``q = 0``
+    diagonal, ``k + q == k``) is taken without a branch by the identity
+    ``f(a) - f(b) = -sinh(beta (a - b)/2) / (2 cosh(beta a/2)
+    cosh(beta b/2))``, i.e. ``T = -(beta^2/4) shc(beta (e1 - e2)/2) /
+    (cosh(beta e1/2) cosh(beta e2/2))`` with ``shc(x) = sinh(x)/x``,
+    ``shc(0) = 1``.
 
     Tail-bound derivation (documented per the task's requirement)
     ----------------------------------------------------------------
@@ -1921,18 +1941,26 @@ class TestIrBondOracle(unittest.TestCase):
     every CI runner -- giving a wide, already-CI-validated margin from the
     boundary.
 
-    ``N_cut``: at the larger ``beta``, the Matsubara spacing ``pi/beta``
-    shrinks, so reaching the same certified remainder needs more terms:
-    ``N_cut = 2 * 10**9`` gives a certified remainder of ``~5.07e-11 <
-    1e-10`` (asserted below, not just asserted in this docstring; the same
-    numeric value as the old ``beta=0.1``/``N_cut=10**8`` fixture's bound,
-    coincidentally, since both were tuned for a comparable safety margin
-    below the ``1e-10`` threshold) at a runtime of roughly 160 seconds
-    (``Nx=3`` needs 9 chunked (q, k) sums, each 20x the old fixture's
-    ``N_cut``; chunked summation throughout, no huge array materialized at
-    once -- CHUNK=10**7 was measured to be near-optimal, larger chunks were
-    NOT faster since per-chunk complex-array allocation overhead dominates
-    over python-loop overhead at this scale).
+    ``N_cut``: until 2026-11 the oracle WAS the truncated sum, at
+    ``N_cut = 2 * 10**9`` (certified remainder ``~5.07e-11``), about
+    160 s locally and 326 s on the CI runners -- the single most expensive
+    test of the suite. It is now the closed form above. Before the switch,
+    the full ``(q, m, mp)`` oracle was computed both ways at that cut: they
+    differ by 5.07e-11, the old sum's own truncation (its certified
+    remainder, 5.07e-11, is saturated: the tail is ~-1/w_n^2), and per
+    ``(q, k)`` frequency sum by 7.8e-16 -- round-off -- once the leading
+    tail is added to the old sum analytically. A reversed bond
+    displacement on the production side still fails the gate against the
+    closed form (checked by mutation at the switch). The gate's tolerance is
+    kept exactly as it was, ``remainder`` included (evaluated at the former
+    ``N_cut``), so the switch loosens nothing. The truncated sum stays, at
+    the small cut ``N_check``, as the cross-check of the closed form
+    (``test_closed_form_matches_truncated_matsubara_sum``): there the
+    difference must lie within the certified first-order remainder
+    ``2 S(N_check)``, and, after the leading ``-1/w_n^2`` tail is added
+    back in closed form (trigamma), within a certified second-order bound
+    -- which pins the closed form to ~1e-13, four orders of magnitude
+    below this gate's tolerance.
 
     Skips cleanly when ``sparse_ir`` is not importable (mirrors
     ``TestBubbleOldVsNewIr``'s guard).
@@ -1945,7 +1973,11 @@ class TestIrBondOracle(unittest.TestCase):
     beta = 2.0
     wmax = 5.0
     eps = 1e-8
+    # the former brute-force cut; it now sets only the (unchanged) gate
+    # tolerance through the certified remainder at that cut
     N_cut = 2_000_000_000
+    # the cut of the truncated-sum cross-check of the closed form
+    N_check = 100_000
     CHUNK = 10_000_000
     delta_r = ((0, 0, 0), (1, 0, 0))
 
@@ -1966,7 +1998,7 @@ class TestIrBondOracle(unittest.TestCase):
                            "(w_N must exceed the bandwidth W)")
         return 1.0 / (wN - W) ** 2 + 1.0 / (2.0 * a * (wN - W))
 
-    def _direct_T(self, ek, ekq):
+    def _direct_T(self, ek, ekq, N_cut):
         """``sum_{n=-infty}^{infty} G(ekq, iw_n) G(ek, iw_n)``, truncated
         to ``|n| < N_cut``, via the positive-frequency branch doubled by
         conjugation (``G(-iw_n) = G(iw_n)*`` for a real spectrum) --
@@ -1974,42 +2006,100 @@ class TestIrBondOracle(unittest.TestCase):
         a = np.pi / self.beta
         total = 0.0 + 0.0j
         n0 = 0
-        while n0 < self.N_cut:
-            n = np.arange(n0, min(n0 + self.CHUNK, self.N_cut),
+        while n0 < N_cut:
+            n = np.arange(n0, min(n0 + self.CHUNK, N_cut),
                           dtype=np.float64)
             iw = 1j * (2.0 * n + 1.0) * a
             total += np.sum(1.0 / (iw - ekq) * (1.0 / (iw - ek)))
             n0 += self.CHUNK
         return 2.0 * total.real
 
-    @heavy
-    def test_matches_direct_lehmann_sum(self):
-        from hwave.solver import bubble as bubble_mod
-        from hwave.solver.ir_axis import IRAxis
+    def _closed_T(self, ek, ekq):
+        """The same sum over ALL ``n``, in closed form (class docstring):
+        ``beta (f(ekq) - f(ek)) / (ekq - ek)``, ``beta f'(ek)`` in the
+        degenerate limit, written through ``sinh(x)/x`` so that the limit
+        needs no branch on the energies."""
+        beta = self.beta
+        x = 0.5 * beta * (ekq - ek)
+        # sinh(x)/x; its Taylor series below |x| = 1e-4 (next term x^4/120)
+        shc = 1.0 + x * x / 6.0 if abs(x) < 1e-4 else np.sinh(x) / x
+        return -0.25 * beta * beta * shc / (
+            np.cosh(0.5 * beta * ekq) * np.cosh(0.5 * beta * ek))
 
-        Nx, t, mu, beta, phi = self.Nx, self.t, self.mu, self.beta, self.phi
-        kx = 2.0 * np.pi * np.arange(Nx) / Nx
+    def _ring_energies(self):
+        """``(kx, e(k))`` of the flux-threaded ring (``mu`` not subtracted)."""
+        kx = 2.0 * np.pi * np.arange(self.Nx) / self.Nx
         # Flux/Peierls phase phi: breaks e(-k) == e(k) (see class
         # docstring's blind-spot note) while H(k) stays a real 1x1
         # Hermitian matrix per k, so the Lehmann form and tail bound are
         # unaffected.
-        ev = -2.0 * t * np.cos(kx - phi)
+        return kx, -2.0 * self.t * np.cos(kx - self.phi)
+
+    def test_closed_form_matches_truncated_matsubara_sum(self):
+        """Pins ``_closed_T`` -- the oracle of the gate below -- against the
+        truncated frequency sum ``_direct_T`` at ``N_check``, on every
+        ``(q, k)`` pair the gate uses (the degenerate ``q = 0`` diagonal
+        included):
+
+        1. ``|closed - direct| <= 2 S(N_check)``, the certified remainder
+           of the class docstring (the closed form is the ``N -> infty``
+           limit, so the difference IS the tail).
+        2. Second order: ``Re[G1 G2] = -1/w^2 + r`` with
+           ``|r| <= (3 W^2 + W^4/w_N^2) / w^4`` for ``|e1|, |e2| <= W``.
+           The leading tail ``2 sum_{n >= N} (-1/w_n^2) = -2 psi_1(N +
+           1/2) / (4 a^2)`` (``a = pi/beta``, ``psi_1`` the trigamma
+           function) is added to ``direct`` exactly; what is left is
+           bounded by ``2 (3 W^2 + W^4/w_N^2) psi_3(N + 1/2) / (96 a^4)``,
+           plus a fixed 1e-13 allowance for the round-off of the
+           ``N_check``-term float sum. Measured: the residual is ~5e-16.
+        """
+        from scipy.special import polygamma
+
+        N = self.N_check
+        a = np.pi / self.beta
+        _, ek_all = self._ring_energies()
+        ev = ek_all - self.mu
+        W = float(np.max(np.abs(ev)))
+        wN = (2 * N + 1) * a
+        bound1 = 2.0 * self._tail_sum_bound(W, N)
+        lead = -2.0 * float(polygamma(1, N + 0.5)) / (4.0 * a * a)
+        bound2 = (2.0 * (3.0 * W ** 2 + W ** 4 / wN ** 2)
+                  * float(polygamma(3, N + 0.5)) / (96.0 * a ** 4))
+        for qi in range(self.Nx):
+            for ki in range(self.Nx):
+                ek, ekq = ev[ki], ev[(ki + qi) % self.Nx]
+                closed = self._closed_T(ek, ekq)
+                direct = self._direct_T(ek, ekq, N)
+                self.assertLessEqual(abs(closed - direct), bound1,
+                                     (qi, ki, closed, direct, bound1))
+                self.assertLessEqual(abs(closed - (direct + lead)),
+                                     bound2 + 1e-13,
+                                     (qi, ki, closed, direct + lead, bound2))
+
+    def test_matches_direct_lehmann_sum(self):
+        from hwave.solver import bubble as bubble_mod
+        from hwave.solver.ir_axis import IRAxis
+
+        Nx, mu, beta = self.Nx, self.mu, self.beta
+        kx, ev = self._ring_energies()
         W = float(np.max(np.abs(ev - mu)))
 
+        # The certified remainder of the former brute-force oracle at
+        # N_cut. The oracle is now exact (closed form), but this term is
+        # kept in `tol` below so that the gate's tolerance is exactly the
+        # one it always had.
         S = self._tail_sum_bound(W, self.N_cut)
         remainder = (2.0 / beta) * S
-        self.assertLess(remainder, 1e-10,
-                        "N_cut too small for the certified remainder "
-                        "bound < 1e-10 (got {})".format(remainder))
+        self.assertLess(remainder, 1e-10)
 
         # sum_n G(k+q,iwn) G(k,iwn), one entry per (q, k) k-point pair --
         # reused for every (m, mp) bond channel below (the bond phase is a
-        # cheap post-multiplication, not part of the expensive n-sum).
+        # post-multiplication, not part of the n-sum).
         T = np.zeros((Nx, Nx), dtype=complex)
         for qi in range(Nx):
             for ki in range(Nx):
                 kqi = (ki + qi) % Nx
-                T[qi, ki] = self._direct_T(ev[ki] - mu, ev[kqi] - mu)
+                T[qi, ki] = self._closed_T(ev[ki] - mu, ev[kqi] - mu)
 
         n_ch = len(self.delta_r)
         oracle = np.zeros((Nx, n_ch, n_ch), dtype=complex)
@@ -2033,7 +2123,8 @@ class TestIrBondOracle(unittest.TestCase):
 
         # tol has two terms of different character: `remainder` is the
         # CERTIFIED analytic Matsubara-truncation bound derived in the
-        # class docstring; `axF.eps * max|oracle|` is NOT a second
+        # class docstring (of the former truncated oracle, kept so the
+        # tolerance is unchanged); `axF.eps * max|oracle|` is NOT a second
         # certified bound of that kind -- axF.eps is sparse-ir's basis
         # SIZE CUTOFF (the singular-value threshold controlling how many
         # IR basis functions are kept), and this term is an empirically
