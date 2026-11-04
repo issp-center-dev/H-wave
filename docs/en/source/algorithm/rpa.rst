@@ -661,7 +661,9 @@ in the input TOML file. In this mode:
 - The Hamiltonian is constructed in the full :math:`2n_{\rm orb} \times 2n_{\rm orb}` space
   without assuming spin conservation.
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
-  ``Ising``, ``PairLift``, ``PairHop``) are supported.
+  ``Ising``, ``PairLift``, ``PairHop``) are supported. An imaginary part on a
+  ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange`` or ``PairLift``
+  coefficient is refused (a complex ``PairHop`` is accepted).
 - The block decomposition is applied automatically when possible.
 - Both the ``reduced`` and ``general`` calculation schemes are supported for spin-orbital systems
   in RPA. FLEX supports the spin-orbital mode on the ``general`` scheme with
@@ -675,6 +677,50 @@ in the input TOML file. In this mode:
    **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
    spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
    ``Norbit``.
+
+.. _so_migration_note:
+
+.. important::
+
+   **Release and migration note: spin-orbital mode.** In spin-orbital mode:
+
+   (1) ``[mode.param] orbital_site`` is ignored. The exchange of every
+       R = 0 row, including rows between orbitals labelled as different
+       sites, is included exactly. SO RPA, SO FLEX and SO hwave_sc results
+       change for inputs that combine ``orbital_site`` with such rows.
+   (2) An imaginary part on any coefficient other than PairHop is refused
+       (it was silently folded before; see issue #302 for complex
+       Exchange).
+   (3) Spin-orbital archives written before this version (fingerprint
+       version 1 or none) must be regenerated (which command writes which
+       file: see :ref:`sc_so_archive_checks`).
+
+   To reproduce an earlier result, remove the affected rows or imaginary
+   parts, or run the non-spin-orbital solver.
+
+   In spin-orbital mode the value of ``orbital_site`` is not read; an
+   invalid value is ignored too. One WARNING is logged per run when the key
+   is present: ``orbital_site is ignored in spin-orbital mode; all R=0 rows
+   are treated exactly (see migration note)``.
+
+.. _rpa_so_offsite:
+
+**Off-site rows in spin-orbital RPA.** The spinful vertex of the RPA ring sum is the antisymmetrized vertex: the
+direct term plus its exchange crossing. For the on-site rows and the in-cell
+(:math:`\mathbf{R} = 0`) rows between different orbitals the crossing is
+included exactly. For an off-site row (:math:`\mathbf{R} \neq 0`) the
+crossing depends on both fermionic momenta and cannot be written as a function
+of the transfer momentum :math:`\mathbf{q}` alone, so the off-site rows
+enter the ring sum through their direct (Hartree-like) part
+:math:`V(\mathbf{q})` only, as in the non-spin-orbital RPA. The spin-orbital
+RPA logs this once per run, at INFO level, when the input has off-site rows::
+
+   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included.
+
+``<types>`` is the sorted, comma-separated list of the interaction types that
+have a nonzero off-site row. ``PairHop`` is not named in this list. The line
+is not logged by FLEX (which refuses off-site rows in spin-orbital mode) or
+by the RPA that ``hwave_sc`` runs internally.
 
 
 .. _flex_second_order_kernel:
@@ -1154,8 +1200,11 @@ Domain of this version:
 
 - the general scheme with ``flex_hartree_fock = true`` and the other
   conditions of that switch;
-- on-site interactions only (the exchange crossing of an off-site
-  interaction is not a :math:`\mathbf{q}`-only vertex);
+- on-site and in-cell (:math:`\mathbf{R} = 0`) interactions only (the
+  exchange crossing of an off-site interaction is not a
+  :math:`\mathbf{q}`-only vertex); an off-site row is refused;
+- an imaginary part on a ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``
+  or ``PairLift`` coefficient is refused;
 - ``spinful_vertex_exchange = true``, and no ``longitudinal_bond_channels``;
 - no ``sigma_init`` / ``trans_mod`` / ``green_init``: the run starts from
   the bare Hartree-Fock state;

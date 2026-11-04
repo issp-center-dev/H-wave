@@ -627,7 +627,9 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 - ハミルトニアンはスピン保存を仮定せず、
   完全な\ :math:`2n_{\rm orb} \times 2n_{\rm orb}`\ 空間で構成されます。
 - 全ての相互作用型（\ ``CoulombIntra``\ 、\ ``CoulombInter``\ 、\ ``Hund``\ 、\ ``Exchange``\ 、
-  ``Ising``\ 、\ ``PairLift``\ 、\ ``PairHop``\ ）がサポートされます。
+  ``Ising``\ 、\ ``PairLift``\ 、\ ``PairHop``\ ）がサポートされます。\ ``CoulombInter``\ ・
+  ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairLift``\ の係数に虚部があると拒否されます
+  （複素の\ ``PairHop``\ は受け入れられます）。
 - 可能な場合、ブロック分解が自動的に適用されます。
 - RPA では\ ``reduced``\ と\ ``general``\ の両計算スキームがスピン軌道系で利用可能です。
   FLEX がスピン軌道モードに対応するのは\ ``flex_hartree_fock = true``\ の
@@ -639,6 +641,48 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 
    **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数になりました。
    既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
+
+.. _so_migration_note:
+
+.. important::
+
+   **リリース・移行上の注意: スピン軌道モード。** スピン軌道モードでは次のとおりです。
+
+   (1) ``[mode.param] orbital_site``\ は無視されます。異なるサイトの軌道とラベル
+       付けされた軌道間の行も含め、すべての R = 0 の行の交換が厳密に
+       取り込まれます。\ ``orbital_site``\ とそのような行を併用する入力では、
+       SO RPA、SO FLEX、SO hwave_sc の結果が変わります。
+   (2) PairHop 以外の係数に虚部があると拒否されます（以前は虚部が黙って畳み込まれて
+       いました。複素 Exchange は issue #302 を参照）。
+   (3) このバージョンより前に書かれたスピン軌道のアーカイブ（fingerprint version 1
+       またはなし）は作り直す必要があります（どのコマンドがどのファイルを書くかは
+       :ref:`sc_so_archive_checks`\ を参照）。
+
+   以前の結果を再現するには、該当する行や虚部を取り除くか、非スピン軌道の
+   ソルバーを使ってください。
+
+   スピン軌道モードでは\ ``orbital_site``\ の値は読まれず、不正な値も無視されます。
+   キーが指定されていると、計算ごとに WARNING が 1 回出ます: ``orbital_site is
+   ignored in spin-orbital mode; all R=0 rows are treated exactly (see migration
+   note)``
+
+.. _rpa_so_offsite:
+
+**スピン軌道 RPA のオフサイトの行。** RPA のリング和のスピンフル頂点は反対称化した
+頂点、すなわち直接項にその交換交差を加えたものです。オンサイトの行と、セル内
+（\ :math:`\mathbf{R} = 0`\ ）の異なる軌道間の行では、交換交差を厳密に含めます。
+オフサイトの行（\ :math:`\mathbf{R} \neq 0`\ ）の交換交差は 2 つのフェルミオン
+運動量の両方に依存し、移行運動量\ :math:`\mathbf{q}`\ だけの関数としては書けないため、
+オフサイトの行は非スピン軌道の RPA と同じく、直接（Hartree 型）部分
+:math:`V(\mathbf{q})`\ だけでリング和に入ります。入力にオフサイトの行があると、
+スピン軌道 RPA は 1 回の計算につき 1 回、INFO レベルで次の行を記録します::
+
+   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included.
+
+``<types>``\ は、オフサイトの行がゼロでない相互作用の種類を、並べ替えてコンマで
+区切ったリストです。\ ``PairHop``\ はこのリストには挙がりません。この行は FLEX
+（スピン軌道モードではオフサイトの行を拒否します）と、\ ``hwave_sc``\ が内部で実行する
+RPA では記録されません。
 
 
 .. _flex_second_order_kernel:
@@ -1066,8 +1110,11 @@ SU(2) 対称な相互作用の場合だけです。一方\ :math:`\Gamma`\ は�
 この版の適用範囲:
 
 - ``flex_hartree_fock = true``\ の一般スキーム（このスイッチのその他の条件も適用）
-- オンサイト相互作用のみ（オフサイト相互作用の交換交差は\ :math:`\mathbf{q}`\ のみの
-  頂点では表せないため）
+- オンサイトおよびセル内（\ :math:`\mathbf{R} = 0`\ ）の相互作用のみ（オフサイト
+  相互作用の交換交差は\ :math:`\mathbf{q}`\ のみの頂点では表せないため。オフサイトの
+  行は拒否されます）
+- \ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairLift``\ の
+  係数の虚部は拒否されます
 - ``spinful_vertex_exchange = true``\ で、\ ``longitudinal_bond_channels``\ はなし
 - ``sigma_init``\ ・\ ``trans_mod``\ ・\ ``green_init``\ はなし（計算は裸の
   Hartree-Fock 状態から始まります）

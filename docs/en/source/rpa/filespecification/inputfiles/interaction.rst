@@ -245,6 +245,23 @@ Usage rules
       spin-orbital count (= 2 × physical orbitals); double any pre-existing RPA
       spin-orbital ``geom.dat`` ``Norbit``.
 
+-  **Complex coefficients in spin-orbital mode.** With
+   ``mode.enable_spin_orbital = true`` every solver (RPA, FLEX and
+   ``hwave_sc``) refuses a nonzero ``[J.imag]`` (``[V.imag]``) on a
+   ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange`` or ``PairLift`` row,
+   before any calculation. The test is
+   :math:`|\mathrm{Im}\,X| > 10^{-10} + 10^{-8}|X|` on the coefficient as
+   read. In H-wave's declaration convention a row and its partner
+   :math:`(-R, \beta, \alpha)` multiply the same operator, so the imaginary
+   part has no operator content and was silently folded before; the message
+   reads ``<type> coefficient at R=... orbitals (a, b) has an imaginary part
+   (...)`` and asks to remove it. For ``Exchange`` the partner multiplies the
+   Hermitian conjugate, so an imaginary part would be a
+   Dzyaloshinskii-Moriya-type term; that extension is tracked in issue #302.
+   Only ``PairHop`` carries a physical complex phase and is accepted with an
+   imaginary part. Without ``enable_spin_orbital`` the previous behaviour is
+   unchanged.
+
 -  **Extern in spin-orbital mode.** With ``mode.enable_spin_orbital = true``
    the Extern file keeps the **physical** orbital indices: an
    :math:`N_\text{orbital} \times N_\text{orbital}` matrix per :math:`R`,

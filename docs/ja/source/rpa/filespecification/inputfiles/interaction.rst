@@ -219,6 +219,19 @@
       **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数（= 物理軌道数 × 2）
       になりました。既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
 
+-  **スピン軌道モードでの複素係数。** ``mode.enable_spin_orbital = true``\ では、
+   すべてのソルバー（RPA、FLEX、\ ``hwave_sc``\ ）が、\ ``CoulombInter``\ ・\ ``Hund``\ ・
+   ``Ising``\ ・\ ``Exchange``\ ・\ ``PairLift``\ の行の\ ``[J.imag]``\ （\ ``[V.imag]``\ ）が
+   ゼロでないものを、計算の前に拒否します。判定は、読み込んだ係数に対する
+   :math:`|\mathrm{Im}\,X| > 10^{-10} + 10^{-8}|X|`\ です。H-wave の宣言規約では
+   行とその相手\ :math:`(-R, \beta, \alpha)`\ は同じ演算子にかかるため、虚部は
+   演算子としての内容をもたず、以前は黙って畳み込まれていました。メッセージは
+   ``<type> coefficient at R=... orbitals (a, b) has an imaginary part (...)``\ で、
+   虚部を取り除くよう伝えます。\ ``Exchange``\ では相手が Hermite 共役にかかるため、
+   虚部は Dzyaloshinskii-Moriya 型の項になります。この拡張は issue #302 で扱っています。
+   物理的な複素位相をもつのは\ ``PairHop``\ だけで、虚部があっても受け入れられます。
+   ``enable_spin_orbital``\ を使わない場合の動作は変わりません。
+
 -  **スピン軌道モードでの Extern。**\ ``mode.enable_spin_orbital = true``\ の場合も、
    Extern ファイルは\ **物理**\ 軌道インデックスで書きます。各\ :math:`R`\ について
    :math:`N_\text{orbital} \times N_\text{orbital}`\ 行列であり、インデックスは

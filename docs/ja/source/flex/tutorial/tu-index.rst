@@ -1401,6 +1401,28 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 スピン軌道計算
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+.. important::
+
+   **リリース・移行上の注意: スピン軌道モード。** スピン軌道モードでは次のとおりです。
+
+   (1) ``[mode.param] orbital_site``\ は無視されます。異なるサイトの軌道とラベル
+       付けされた軌道間の行も含め、すべての R = 0 の行の交換が厳密に
+       取り込まれます。\ ``orbital_site``\ とそのような行を併用する入力では、
+       SO RPA、SO FLEX、SO hwave_sc の結果が変わります。
+   (2) PairHop 以外の係数に虚部があると拒否されます（以前は虚部が黙って畳み込まれて
+       いました。複素 Exchange は issue #302 を参照）。
+   (3) このバージョンより前に書かれたスピン軌道のアーカイブ（fingerprint version 1
+       またはなし）は作り直す必要があります（どのコマンドがどのファイルを書くかは
+       :ref:`sc_so_archive_checks`\ を参照）。
+
+   以前の結果を再現するには、該当する行や虚部を取り除くか、非スピン軌道の
+   ソルバーを使ってください。
+
+   スピン軌道モードでは\ ``orbital_site``\ の値は読まれず、不正な値も無視されます。
+   キーが指定されていると、計算ごとに WARNING が 1 回出ます: ``orbital_site is
+   ignored in spin-orbital mode; all R=0 rows are treated exactly (see migration
+   note)``
+
 ``enable_spin_orbital = true``\ の計算（:ref:`flex_spin_orbital`\ を参照）は、
 次元\ :math:`n_d = 2 n_{\rm orb}`\ のスピン軌道インデックス（スピンブロック順
 ``s * norb + a``\ ）でアーカイブを書き出します。
@@ -1408,7 +1430,16 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 - ``sigma.npz``\ ・\ ``green.npz``\ ・\ ``chi0q.npz``\ は
   ``index_convention = "spin_block"``\ を持ちます。\ ``sigma``\ と\ ``green``\ の
   形状は\ ``(1, nmat, nvol, nd, nd)``\ で、\ ``sigma.npz``\ は\ ``"split"``\ 形式の
-  アーカイブ（``sigma_static``\ 、\ ``sigma_fluct``\ ）です。
+  アーカイブ（``sigma_static``\ 、\ ``sigma_fluct``\ ）です。\ ``green.npz``\ は
+  さらに\ ``green_layout = "b_f_k_o_o_v1"``\ （保存された配列のレイアウト）と
+  マーカー\ ``spin_orbital = True``\ を持ち、\ ``sigma.npz``\ は
+  ``spin_orbital = True``\ を持ちます。
+- この計算のすべてのアーカイブ（\ ``chi0q.npz``\ ・\ ``chiq.npz``\ ・\ ``green.npz``\ ・
+  ``sigma.npz``\ ）は、\ ``hwave_sc``\ が検査する version 2 の来歴メンバー
+  （\ ``fingerprint_version = 2``\ 、バンド・相互作用・Green 関数のダイジェスト、実現した
+  状態）を持ちます。\ :ref:`sc_so_archive_checks`\ を参照してください。以前のバージョンの
+  アーカイブ（\ ``fingerprint_version``\ がないか version 1）は\ ``hwave_sc``\ が拒否する
+  ので、このバージョンの計算で作り直す必要があります。
 - 感受率は1つのスピンフルなチャネルで、\ ``chiq.npz``\ に\ ``chiq``\ として書き出されます。
   形状は\ ``(nmat, nvol, nd, nd, nd, nd)``\ で、\ ``chi_convention = "spin_orbital"``\ 、
   ``chi_orbital_layout = "acbd"``\ 、\ ``index_convention = "spin_block"``\ を伴います。
@@ -1677,7 +1708,7 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
    ``spin_mode = "spin-diag"``\ や\ ``"spinful"``\ に対しては\ ``ValueError``\ を
    送出します。唯一の例外は\ ``enable_spin_orbital = true``\ と
    ``flex_hartree_fock = true``\ の併用で、\ :ref:`flex_spin_orbital`\ の
-   スピン軌道 FLEX（オンサイト相互作用のみ）になります。\ ``flex_hartree_fock``\ が
+   スピン軌道 FLEX（オンサイトおよびセル内の相互作用のみ）になります。\ ``flex_hartree_fock``\ が
    なければ一般スキームは\ ``enable_spin_orbital``\ を拒否し、reduced スキームは常に
    拒否します。オフサイト項は
    ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ について受理されます
