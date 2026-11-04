@@ -399,7 +399,10 @@ HEAVY_TESTS = (
     # --- tests/test_spinful_transverse_ed.py -- production routing gates --
     # the former FAST_GATE_EXCEPTIONS (see the module docstring): ~175 s
     # each on CI (2026-11-04); test-full runs on every pull request, so
-    # the routing guard still runs before a merge
+    # the routing guard still runs before a merge. Since the four share
+    # one cached ED reference (_s0_ed_derivative), the first of them to
+    # run pays ~19 s locally and the others under 1 s; each one ALONE
+    # still costs ~19 s, over the rule, so all four stay registered.
     ("test_spinful_transverse_ed", "TestGateS0ExtractionAdjudication",
      "test_step3_dressed_extraction_matches_totalned",
      "gate S0: dressed extraction matches the total-N ED (routing guard)"),

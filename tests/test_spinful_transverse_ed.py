@@ -434,6 +434,15 @@ _S0_PAIRHOP_PHASE = np.exp(0.4j)
 _S0_NMAT1, _S0_NMAT2 = 1024, 2048
 
 
+def _readonly(arr):
+    """A read-only copy of ``arr``, for a result cached across tests: a
+    test that writes into it in place fails loudly instead of corrupting
+    the value every later test reads."""
+    out = np.array(arr, copy=True)
+    out.setflags(write=False)
+    return out
+
+
 def _s0_sidx(o, s):
     """1-based, interleaved (2*orb+spin) spin-orbital file index -- the
     Transfer file's OWN convention under enable_spin_orbital (confirmed
@@ -722,14 +731,21 @@ def _s0_frame_map(X):
     return np.transpose(x_qrev, (0, 3, 4, 1, 2))
 
 
+@functools.lru_cache(maxsize=1)
 def _s0_ed_derivative():
     """(D_ed_v1, D_ed_vhalf): the Richardson pair (V1, V1/2) of the frame-
     mapped ED reference, for ``adjudicate_granule``'s ED-side convergence
-    measurement (``delta_rich``)."""
-    D_v1 = _s0_frame_map(ed_oracle_util.richardson(_s0_X_of_v, CAMPAIGN_V1))
+    measurement (``delta_rich``).
+
+    Cached for the process: it takes no input (the fixture is the module's
+    constants), and the four S0/S2 gates all adjudicate against this one
+    reference. The arrays are returned READ-ONLY so that no caller can
+    alter the shared result (an in-place write raises instead)."""
+    X_of_v = functools.lru_cache(maxsize=None)(_s0_X_of_v)
+    D_v1 = _s0_frame_map(ed_oracle_util.richardson(X_of_v, CAMPAIGN_V1))
     D_vhalf = _s0_frame_map(
-        ed_oracle_util.richardson(_s0_X_of_v, CAMPAIGN_V1 / 2))
-    return D_v1, D_vhalf
+        ed_oracle_util.richardson(X_of_v, CAMPAIGN_V1 / 2))
+    return _readonly(D_v1), _readonly(D_vhalf)
 
 
 class TestGateS0ExtractionAdjudication(unittest.TestCase):
@@ -1511,13 +1527,20 @@ def _s4_norb2_fixture():
     return fx, _h1_with_spin_orbit(fx, _S4_2_LSO)
 
 
+@functools.lru_cache(maxsize=None)
 def _s4_ed_derivative(variant, kind, v1, phase=1.0):
     """(D_v1, D_vhalf): the Richardson pair of TotalNED's full-minus-HF-
     only ``bond_correlator_transverse`` derivative for ONE on-site type,
     on the given fixture variant, frame-mapped via ``_s0_frame_map`` --
     REUSED VERBATIM (interfaces: "REUSE it verbatim"; the map is pure
     index/axis algebra -- q-reversal and the Kubo pair-slot swap -- with
-    no dependence on the particular (L, norb) it is applied to)."""
+    no dependence on the particular (L, norb) it is applied to).
+
+    Cached for the process, keyed by its full input ``(variant, kind, v1,
+    phase)`` (the fixture itself is the module's constants): the
+    direction-set gates of ``TestTask4SVDSensitivityGate`` adjudicate the
+    same granules ``TestTask4GranuleCampaign`` does, and re-ran their ED.
+    The arrays are returned READ-ONLY (see ``_readonly``)."""
     fx, h1_so = (_s4_norb1_fixture() if variant == "norb1"
                  else _s4_norb2_fixture())
     norb = _S4_1_NORB if variant == "norb1" else _S4_2_NORB
@@ -1539,7 +1562,7 @@ def _s4_ed_derivative(variant, kind, v1, phase=1.0):
 
     D_v1 = _s0_frame_map(ed_oracle_util.richardson(X_of_v, v1))
     D_vhalf = _s0_frame_map(ed_oracle_util.richardson(X_of_v, v1 / 2))
-    return D_v1, D_vhalf
+    return _readonly(D_v1), _readonly(D_vhalf)
 
 
 def _s4_adjudicate(variant, kind, label, phase=1.0, v1=CAMPAIGN_V1,
