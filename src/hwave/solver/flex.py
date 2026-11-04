@@ -290,6 +290,10 @@ class FLEX(RPA):
     # Phase B (#181): configuration surface -- spec 2026-09-06 section 4.1
     # ------------------------------------------------------------------
     _accepts_flex_keys = True
+    #: the spin-orbital off-site INFO line of RPA is not logged by FLEX (its
+    #: spin-orbital vertex refuses off-site rows); a separate marker from
+    #: _accepts_flex_keys, which gates the FLEX-only [mode.param] keys
+    _SO_OFFSITE_INFO = False
     #: the spin-orbital (spinful) Hartree-Fock FLEX of #83; set by _init_spin_orbital
     _so_spinful = False
     _keep_spinful = False
@@ -1984,8 +1988,8 @@ class FLEX(RPA):
             itype = sorted(split.offsite_types)[0]
             (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
             raise ValueError(
-                "[mode] enable_spin_orbital = true (FLEX) supports on-site interactions "
-                "only in this version (the antisymmetrized spinful vertex carries the "
+                "[mode] enable_spin_orbital = true (FLEX) supports on-site and in-cell "
+                "interactions only in this version (the antisymmetrized spinful vertex carries the "
                 "on-site exchange crossing only); the off-site '{}' declaration at "
                 "irvec={}, orbvec={} is refused.".format(itype, tuple(irvec), tuple(orbvec)))
         refused = () if self.longitudinal_bond_channels else ("PairHop", "Exchange")
@@ -5287,14 +5291,15 @@ class FLEX(RPA):
         """
         logger.info("Save FLEX results")
         path_to_output = info_outputfile["path_to_output"]
-        # #88: the version-1 fingerprint and state members of a spin-orbital
-        # run, built ONCE and merged into chiq, green, sigma and chi0q; the
-        # Green digest is that of the array written to green.npz
+        # #88: the fingerprint and state members of a spin-orbital run, built
+        # ONCE and merged into chiq, green, sigma and chi0q; the Green digest
+        # is that of the array written to green.npz
         so_prov = {}
         if (getattr(self, "_so_spinful", False)
                 and getattr(self, "_so_state", None) is not None
                 and green_info.get("green") is not None):
-            self._so_fp_green = fingerprint.green_digest(green_info["green"], "b_f_k_o_o_v1")
+            self._so_fp_green = fingerprint.green_digest(
+                green_info["green"], fingerprint.GREEN_LAYOUT)
             so_prov = self._so_provenance("flex_so_onsite", "hwave FLEX (spin-orbital)")
         _pb = getattr(self, "_phase_b_active", False)
         _bond_static = {}
@@ -5518,6 +5523,7 @@ class FLEX(RPA):
                                    **self._provenance_block("final_state"))
             if self._so_spinful:
                 sigma_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
+                sigma_extra["spin_orbital"] = True
                 sigma_extra.update(so_prov)
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
@@ -5548,7 +5554,11 @@ class FLEX(RPA):
             if getattr(self, "_phase_b_active", False):
                 green_extra.update(self._provenance_block("final_state"))
             if self._so_spinful:
+                # the layout of the stored array (the canonical Green layout
+                # of the archive checks) and the spin-orbital marker
                 green_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
+                green_extra["green_layout"] = fingerprint.GREEN_LAYOUT
+                green_extra["spin_orbital"] = True
                 green_extra.update(so_prov)
             np.savez(file_name,
                      green=green_info.get("green"),

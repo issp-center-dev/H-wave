@@ -1630,3 +1630,46 @@ def _grid_tables():
 #: a two-dimensional 5x3 mesh (norb_phys = 1) with complex spin-flip hopping
 #: and interactions on the x, y and diagonal bonds (no exact diagonalization)
 FIXTURE_GRID_5X3 = FixtureSpec.make((5, 3, 1), 1, 2.0, 0.2, _grid_transfer(), _grid_tables())
+
+
+# ------------------------------------------------- archive-version oracles
+# Independent literals of the spin-orbital archive refusals (never imported
+# from hwave.solver.fingerprint), shared by the archive-check tests.
+
+#: the provenance members of a fingerprint_version 1 archive, in writer order
+V1_MEMBERS = (
+    "fingerprint_version", "producer_stage", "producer_label", "producer_version",
+    "fp_transfer", "fp_extern", "fp_meta", "fp_band", "fp_green",
+    "prov_transfer_keys", "prov_transfer_vals", "prov_extern_present",
+    "prov_extern_keys", "prov_extern_vals",
+    "prov_coeff_extern", "prov_enable_spin_orbital", "prov_index_convention",
+    "prov_norb", "prov_norb_phys", "prov_cell_shape", "prov_sub_shape",
+    "state_beta", "state_nmat", "state_mu", "state_density", "state_calc_mu",
+    "state_target", "state_mu_tol")
+#: the members of a fingerprint_version 2 archive that version 1 did not write
+V2_ONLY_MEMBERS = ("fp_interaction", "fp_topology", "fp_resolved_topology", "fp_capability",
+                   "prov_rec_types", "prov_rec_modes", "prov_rec_cells", "prov_rec_v",
+                   "prov_topology")
+#: the provenance members of a fingerprint_version 2 archive, in writer order
+PROVENANCE_MEMBERS = V1_MEMBERS + V2_ONLY_MEMBERS
+#: the members a bond-resolved stage adds, in writer order
+BOND_MEMBERS = ("delta_r", "reverse", "slot_convention", "max_shells")
+#: the producers the hwave_sc consumers name: the RPA run of a chi0q load,
+#: the FLEX run of a (static or dynamic) flex entry
+EXPECTED_RPA_PRODUCER = "the spin-orbital RPA run (hwave RPA, enable_spin_orbital = true)"
+EXPECTED_FLEX_PRODUCER = "the spin-orbital FLEX run (hwave FLEX, enable_spin_orbital = true)"
+#: the refusal of a version-1 archive (``path``, ``producer``)
+V1_REFUSAL_TEXT = ("'{path}' carries fingerprint_version 1 (written before interaction "
+                   "fingerprints existed); this version requires fingerprint_version 2. "
+                   "Regenerate it by re-running {producer} with this version (the run "
+                   "and the [file.output] key that write each archive are listed under "
+                   "'Archive checks' in the hwave_sc documentation).")
+#: the refusal of an unversioned archive (``path``, ``producer``)
+UNVERSIONED_REFUSAL_TEXT = (
+    "'{path}' has no fingerprint_version (written before this version, or by a run "
+    "whose band the fingerprints do not cover: trans_mod, green_init or a supplied "
+    "chi0q; such outputs cannot be read by a spin-orbital consumer); this version "
+    "requires fingerprint_version 2. Regenerate it by re-running {producer} with this "
+    "version, from the Transfer/Extern input (the run and the [file.output] key that "
+    "write each archive are listed under 'Archive checks' in the hwave_sc "
+    "documentation).")

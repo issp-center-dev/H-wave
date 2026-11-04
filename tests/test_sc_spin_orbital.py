@@ -45,6 +45,7 @@ orthonormal basis of that subspace (``sc._SOAntisymmetricBasis``).
 import contextlib
 import logging
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -54,6 +55,7 @@ import numpy as np
 
 import hwave.sc as sc
 from hwave.solver import so_pairing
+from hwave.solver.spin_orbital import ORBITAL_SITE_WARNING
 
 #: physical orbitals
 NP = 2
@@ -71,6 +73,14 @@ _SU2_TYPES = tuple(_SU2_VALUES)
 
 _IY = np.array([[0, 1], [-1, 0]], complex)
 
+#: the off-site refusal of the spin-orbital entries, with the row and its
+#: source filled in
+OFFSITE_TEXT = ("[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site row "
+                "(R = {R}, orbitals {orbs}) in {src} is not supported; the spin-orbital "
+                "pairing vertex supports on-site and in-cell (R = 0) interactions only "
+                "(the exchange crossing of an off-site term depends on k + k'). Remove "
+                "the off-site rows.")
+
 
 @contextlib.contextmanager
 def _quiet():
@@ -80,6 +90,19 @@ def _quiet():
         yield
     finally:
         logging.disable(prev)
+
+
+@contextlib.contextmanager
+def _count_warnings():
+    """The messages of every ``Logger.warning`` call in the block (any
+    logger; counted even while logging is disabled, and not emitted)."""
+    seen = []
+
+    def warning(self, msg, *a, **kw):
+        seen.append(msg % a if a else msg)
+
+    with mock.patch.object(logging.Logger, "warning", warning):
+        yield seen
 
 
 def _wfile(path, head, n, rows):
@@ -523,31 +546,71 @@ class TestRefusals(_TmpDir):
     def test_offsite_coulomb_inter(self):
         files = _write_model(self.d, so=True, extra_rows={
             "CoulombInter": [(1, 0, 0, 0.2), (-1, 0, 0, 0.2)]})
-        self._refused(r"off-site row .* in the CoulombInter file", so_files=files)
+        self._refused("^" + re.escape(OFFSITE_TEXT.format(
+            R=(1, 0, 0), orbs=(1, 1), src="the CoulombInter file")) + "$", so_files=files)
 
     def test_offsite_row_in_coulomb_aggregate(self):
         _write_model(self.d, so=True, types=())
         _wfile(os.path.join(self.d, "coulomb.dat"), "Coulomb", NP,
                [(0, 0, 0, 1, 1, 1.5, 0.0), (0, 0, 0, 2, 2, 1.5, 0.0),
                 (1, 0, 0, 1, 1, 0.3, 0.0), (-1, 0, 0, 1, 1, 0.3, 0.0)])
-        self._refused(r"off-site row .* in the Coulomb file", so_files={"Coulomb": "coulomb.dat"})
+        self._refused("^" + re.escape(OFFSITE_TEXT.format(
+            R=(1, 0, 0), orbs=(1, 1), src="the Coulomb file (split into CoulombInter)"))
+            + "$", so_files={"Coulomb": "coulomb.dat"})
 
     def test_cross_site_row_under_orbital_site(self):
+        # spin-orbital mode treats every R = 0 row exactly and ignores
+        # orbital_site: the run is accepted and equals the run without it
+        # (a consistency check only: the treatment of the R = 0 rows itself
+        # is the one validated against exact diagonalization elsewhere)
         files = _write_model(self.d, so=True, types=("CoulombIntra", "CoulombInter"))
-        self._refused(r"orbital_site", so_files=files, orbital_site=[0, 1])
+        eli = {"chi0q_mode": "calc", "solver_mode": "eigenvalue", "num_eigenvalues": 4}
+        small = {"CellShape": [2, 2, 1]}
+        ref = _run(_input(self.d, files, True, eli, nmat=16, out="ref", **small))
+        with _count_warnings() as warned:
+            got = _run(_input(self.d, files, True, eli, nmat=16, out="site",
+                              orbital_site=[0, 1], **small))
+        self.assertEqual(warned.count(ORBITAL_SITE_WARNING), 1)
+        # equal up to the run-to-run rounding of the eigensolver and the
+        # phase of the gap (tests.so_run_compare)
+        from tests.so_run_compare import eigenvalues_close, same_leading_vector
+        self.assertTrue(eigenvalues_close(got["evs"], ref["evs"]))
+        self.assertTrue(same_leading_vector(ref["evs"], ref["gap"], got["gap"]))
 
     def test_reduced_chi0q_tensor(self):
         self._refused(r"chi0q_tensor", {"chi0q_tensor": "reduced"})
 
+    def _so_rpa_chi0q(self, files, scheme, payload=None):
+        """The chi0q archive of the spin-orbital RPA run (``calc_scheme =
+        scheme``) of the model ``files`` in ``<d>/out``, where the hwave_sc
+        load entry of :func:`_input` reads it; ``payload`` replaces its chi0q
+        array (its fingerprint members kept)."""
+        from hwave import qlms
+        rpa_in = _input(self.d, files, True, {})
+        rpa_in["mode"]["calc_scheme"] = scheme
+        rpa_in["file"]["input"]["path_to_input"] = self.d
+        del rpa_in["eliashberg"]
+        rpa_in["log"] = {"print_level": 0}
+        with _quiet():
+            qlms.run(input_dict=rpa_in)
+        out = rpa_in["file"]["output"]["path_to_output"]
+        self.assertEqual(os.listdir(out), ["chi0q.npz"])
+        path = os.path.join(out, "chi0q.npz")
+        if payload is not None:
+            with np.load(path) as z:
+                members = {k: z[k] for k in z.files}
+            members["chi0q"] = payload
+            np.savez(path, **members)
+        return out
+
     def test_reduced_chi0q_file(self):
-        out = os.path.join(self.d, "out")
-        os.makedirs(out)
-        nvol = int(np.prod(CELL))
-        np.savez(os.path.join(out, "chi0q.npz"),
-                 chi0q=np.zeros((64, nvol, ND, ND), complex),
-                 index_convention="spin_block", momentum_convention="e_plus_ikR",
-                 spin_orbital=True)
-        files = _write_model(self.d, so=True)
+        # the reduced-scheme chi0q of a real spin-orbital RPA run (rank 4;
+        # the reduced scheme takes density-diagonal interactions only)
+        files = _write_model(self.d, so=True, types=("CoulombIntra", "Hund"))
+        out = self._so_rpa_chi0q(files, "reduced")
+        with np.load(os.path.join(out, "chi0q.npz")) as z:
+            self.assertEqual(z["chi0q"].ndim, 4)
+            self.assertEqual(int(z["fingerprint_version"]), 2)
         inp = _input(self.d, files, True, {"chi0q_mode": "load",
                                            "solver_mode": "eigenvalue"})
         # refused right after loading, before the Green function is built
@@ -752,14 +815,10 @@ class TestRefusals(_TmpDir):
     def test_load_layout_error_is_rewrapped(self):
         """A chi0q file ``_load_chi0q`` itself rejects (no supported layout)
         is refused in load mode with the spin-orbital requirement appended."""
-        out = os.path.join(self.d, "out")
-        os.makedirs(out)
         nvol = int(np.prod(CELL))
-        np.savez(os.path.join(out, "chi0q.npz"),
-                 chi0q=np.zeros((64, nvol) + (3,) * 4, complex),
-                 index_convention="spin_block", momentum_convention="e_plus_ikR",
-                 spin_orbital=True)
         files = _write_model(self.d, so=True)
+        out = self._so_rpa_chi0q(files, "general",
+                                 payload=np.zeros((64, nvol) + (3,) * 4, complex))
         inp = _input(self.d, files, True, {"chi0q_mode": "load",
                                            "solver_mode": "eigenvalue"})
         with self.assertRaisesRegex(
@@ -1703,10 +1762,12 @@ class TestFlexMode(unittest.TestCase):
                     out=self._out("out_absent")))
 
     def test_vertex_mismatch_is_refused(self):
-        """Interaction files that do not reproduce the FLEX run's vertex are
-        refused through the stored chi0q: a CoulombIntra change, and -- a
-        smaller, spin-structure-only perturbation -- a Hund-only or an
-        Exchange-only change of 2.5 %."""
+        """Interaction files that differ from the FLEX run's are refused by
+        the interaction fingerprint of its archives, before any payload is
+        read: a CoulombIntra change, and -- a smaller, spin-structure-only
+        perturbation -- a Hund-only or an Exchange-only change of 2.5 %. (The
+        vertex check through the stored chi0q stays behind it:
+        test_tampered_chiq_payload_is_refused.)"""
         for fname, old, new in (
                 ("coulombintra.dat", "1.600000000000", "1.700000000000"),
                 ("hund.dat", "0.120000000000", "0.123000000000"),
@@ -1720,8 +1781,29 @@ class TestFlexMode(unittest.TestCase):
             with open(os.path.join(d, fname), "w") as f:
                 f.write(txt.replace(old, new))
             with self.subTest(file=fname):
-                self._refused(r"do not reproduce the vertex", _flex_input(
-                    d, files, self.flex, out=self._out("out_mis")))
+                self._refused(r"chiq\.npz' \(written by .*\) does not match this run: "
+                              r"interaction differs: ", _flex_input(
+                                  d, files, self.flex, out=self._out("out_mis")))
+
+    def test_tampered_chiq_payload_is_refused(self):
+        """A chiq whose zero-frequency slice is not the resummation of the
+        stored chi0q with this run's vertex, while every fingerprint
+        matches (no payload is digested), is refused by the vertex check
+        through the public static entry (the static twin of the dynamic
+        finite-frequency test)."""
+        d = tempfile.mkdtemp(prefix="sc_so_flex_t_")
+        self.addCleanup(shutil.rmtree, d, True)
+        for f in os.listdir(self.flex):
+            shutil.copy(os.path.join(self.flex, f), d)
+        with np.load(os.path.join(self.flex, "chiq.npz")) as z:
+            chiq = np.array(z["chiq"])
+            static = int(np.flatnonzero(np.asarray(z["freq_index"]) == 16)[0])
+            self.assertEqual(int(z["fingerprint_version"]), 2)
+        chiq[static] = chiq[static + 1]
+        _resave(os.path.join(self.flex, "chiq.npz"), os.path.join(d, "chiq.npz"),
+                chiq=chiq)
+        self._refused(r"do not reproduce the vertex .*at the zero bosonic frequency",
+                      _flex_input(self.d, self.files, d, out=self._out("out_tampered")))
 
     def test_norb1_shape_ambiguity_uses_tags(self):
         """N = 1 (nd = 2, the shape of a two-orbital non-spin-orbital file)
@@ -1736,7 +1818,9 @@ class TestFlexMode(unittest.TestCase):
         self.assertTrue(np.isfinite(seen["evs"][0]))
         cases = (("chiq.npz", ("chi_convention",), r"no chi_convention tag"),
                  ("chiq.npz", ("index_convention",), r"no index_convention tag"),
-                 ("green.npz", ("index_convention",), r"index_convention = None"))
+                 # a versioned green archive: refused by its structure check
+                 ("green.npz", ("index_convention",),
+                  r"green\.npz' is malformed or truncated: marker index_convention is missing"))
         for name, drop, pattern in cases:
             with self.subTest(file=name, drop=drop):
                 bad = os.path.join(d, "bad_" + "_".join(drop) + name[:-4])
@@ -2076,7 +2160,7 @@ class TestArchiveMembers(_TmpDir):
     """The ``spin_orbital`` marker is written ONLY by spin-orbital runs: a
     non-spin-orbital RPA / FLEX archive keeps exactly its previous member
     set; a spin-orbital RPA run writes ``spin_orbital = True`` and the
-    version-1 fingerprint/state members (issue #88), and nothing else."""
+    fingerprint/state members (issue #88), and nothing else."""
 
     def _rpa(self, files, so, scheme, out):
         from hwave import qlms
@@ -2112,8 +2196,8 @@ class TestArchiveMembers(_TmpDir):
                 m = np.asarray(z["spin_orbital"])
                 self.assertEqual((m.ndim, m.dtype), (0, np.bool_))
                 self.assertTrue(bool(m))
-                from hwave.solver import fingerprint
-                prov = set(fingerprint.SO_PROVENANCE_MEMBERS)
+                from tests.so_bond_oracles import PROVENANCE_MEMBERS
+                prov = set(PROVENANCE_MEMBERS)
                 self.assertLessEqual(prov, set(z.files))
                 self.assertEqual(sorted(set(z.files) - {"spin_orbital"} - prov),
                                  _NON_SO_MEMBERS[("RPA", "general", name)])

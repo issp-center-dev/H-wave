@@ -17,10 +17,12 @@ Everything that converts between these orders, counts physical orbitals or
 reads the switch lives here, so every solver agrees on it.
 """
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 from requests.structures import CaseInsensitiveDict
 
+from . import fingerprint, so_records
 from .backend import strict_bool
 
 #: The ``index_convention`` tag RPA/FLEX write into chi0q/chiq files.
@@ -229,3 +231,164 @@ def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
             "requires 'spin_block' (spin*norb+orb). Regenerate it with the "
             "current RPA solver.".format(file_name, conv)
         )
+
+
+#: The WARNING a spin-orbital entry logs, once per public run, when
+#: ``[mode.param] orbital_site`` is given.
+ORBITAL_SITE_WARNING = ("orbital_site is ignored in spin-orbital mode; all R=0 rows are "
+                        "treated exactly (see migration note)")
+
+#: The ``[mode]`` dict key under which a public entry hands its
+#: :class:`SOEntryContext` to a nested solver.
+SO_ENTRY_CONTEXT_KEY = "_so_entry_context"
+
+#: lower-cased table names handed to the interaction compiler (the
+#: interaction types and the aggregate ``Coulomb``); other tables of the
+#: ``param_ham`` dict (Geometry, Transfer, Extern, Initial, ...) are not
+#: interactions
+_INTERACTION_KEYS = frozenset(t.lower() for t in so_records.TYPES + ("Coulomb",))
+
+
+@dataclass
+class SOEntryContext:
+    """What a public spin-orbital entry establishes once for the whole run.
+
+    Attributes
+    ----------
+    compiled : so_records.CompiledInteraction
+        The interaction compiled from the pre-fold tables.
+    orbital_site_warned : bool
+        True when ``[mode.param] orbital_site`` was given (and the WARNING
+        :data:`ORBITAL_SITE_WARNING` has been logged).
+    interaction : fingerprint.InteractionInputs
+        The fingerprints of ``compiled`` (``fp_interaction`` over its
+        records, ``fp_topology`` over its declared topology), which the
+        archive writers record and the archive consumers compare.
+    tables_digest : str
+        :func:`interaction_tables_digest` of the raw tables ``compiled``
+        was compiled from. A nested solver that builds its vertex from its
+        own reader tables compares it, so the fingerprints it records
+        describe the tables its vertex is built from.
+    """
+
+    compiled: so_records.CompiledInteraction
+    orbital_site_warned: bool
+    interaction: fingerprint.InteractionInputs
+    tables_digest: str
+
+
+#: the refusal of a nested solver whose interaction tables are not the ones
+#: its supplied entry context was compiled from
+TABLES_MISMATCH_TEXT = (
+    "enable_spin_orbital: the interaction tables of this solver differ from "
+    "the ones its entry context was compiled from, so the recorded "
+    "interaction fingerprint would not describe the vertex. Build the "
+    "context and the solver from the same interaction files.")
+
+
+def interaction_tables_digest(tables):
+    """Digest of the raw interaction tables of a spin-orbital run.
+
+    Only the interaction types and the aggregate ``Coulomb`` table are
+    covered (keys matched case-insensitively). ``Coulomb`` is split as
+    every reader splits it (``wan90.split_coulomb``: the ``R = 0`` diagonal
+    goes to CoulombIntra, the rest to CoulombInter) and empty tables are
+    left out, so the RPA reader (which keeps the aggregate) and the
+    hwave_sc reader (which splits it) of the same files give one digest.
+    """
+    from hwave.qlmsio import wan90
+    canonical = {t.lower(): t for t in so_records.TYPES}
+    merged = {}
+
+    def add(name, tbl):
+        merged.setdefault(name, {}).update(tbl)
+
+    for key, tbl in tables.items():
+        low = str(key).lower()
+        if low == "coulomb":
+            intra, inter = wan90.split_coulomb(tbl)
+            add("CoulombIntra", intra)
+            add("CoulombInter", inter)
+        elif low in canonical:
+            add(canonical[low], tbl)
+
+    def chunks():
+        for name in sorted(n for n, t in merged.items() if t):
+            yield fingerprint.encode_string(name)
+            yield fingerprint.encode_string(fingerprint.table_digest(name, merged[name]))
+
+    return fingerprint.digest("interaction_tables", chunks())
+
+
+def build_so_entry_context(param, tables, norb_phys, log):
+    """The :class:`SOEntryContext` of one public spin-orbital entry.
+
+    Parameters
+    ----------
+    param : mapping or None
+        The ``[mode.param]`` dict. Its ``orbital_site`` key is looked up
+        case-insensitively; the value is never parsed or validated, since
+        spin-orbital mode treats every ``R = 0`` row exactly. When the key
+        is present, :data:`ORBITAL_SITE_WARNING` is logged once on ``log``.
+    tables : mapping
+        The pre-fold interaction tables ``{type: {((Rx, Ry, Rz), (a, b)):
+        v}}`` in physical orbital indices (0-based). Only the interaction
+        types and ``Coulomb`` (case-insensitive) are compiled; any other
+        table is left out.
+    norb_phys : int
+        Physical orbitals per cell.
+    log : logging.Logger
+        The entry's logger.
+
+    Returns
+    -------
+    SOEntryContext
+
+    Raises
+    ------
+    ValueError
+        Every refusal of :func:`so_records.compile_interaction` (an
+        imaginary part on a CoulombInter, Hund, Ising, Exchange or PairLift
+        entry, a table that is not Hermitian-closed, ...).
+    """
+    # A CaseInsensitiveDict (ParamDict included) is asked directly: copying
+    # a ParamDict reads every key, so the hwave entry would no longer
+    # report the [mode.param] keys the run never read.
+    if param is not None and not isinstance(param, CaseInsensitiveDict):
+        param = CaseInsensitiveDict(param)
+    warned = param is not None and "orbital_site" in param
+    if warned:
+        log.warning(ORBITAL_SITE_WARNING)
+    # The readers own the interaction-key validation (the RPA reader refuses
+    # an unknown key; hwave_sc reads a fixed list of types), so the
+    # compiler's unknown-type refusal is not reached from this entry.
+    interaction = {key: tbl for key, tbl in tables.items()
+                   if str(key).lower() in _INTERACTION_KEYS}
+    compiled = so_records.compile_interaction(interaction, norb_phys)
+    return SOEntryContext(compiled=compiled, orbital_site_warned=warned,
+                          interaction=fingerprint.interaction_inputs(compiled),
+                          tables_digest=interaction_tables_digest(interaction))
+
+
+def context_for_nested(info_mode, context):
+    """Store ``context`` in ``info_mode[SO_ENTRY_CONTEXT_KEY]`` (a top-level
+    key, never under ``param``), so a nested solver built from this
+    ``[mode]`` dict reuses it: the interaction is not compiled again and
+    the ``orbital_site`` WARNING is not logged again."""
+    info_mode[SO_ENTRY_CONTEXT_KEY] = context
+
+
+def offsite_types(compiled):
+    """The sorted names of the types with a nonzero off-site record (its
+    four cells not all equal) whose off-site rows enter the spin-orbital
+    RPA vertex through their direct part.
+
+    PairHop is never named: the RPA vertex drops an off-site PairHop row
+    (with its own WARNING). An ``R = 0`` row between different orbitals is
+    not off-site."""
+    names = set()
+    for r in compiled.records:
+        cells = r["cells"]
+        if r["type"] != "PairHop" and not (cells == cells[0]).all():
+            names.add(str(r["type"]))
+    return tuple(sorted(names))

@@ -26,13 +26,20 @@ import numpy as np
 from hwave.solver import npy_header
 
 
-def _npy_bytes(version, header_text, encoding="utf-8"):
-    """A synthetic .npy stream carrying `header_text` at `version`."""
+def _npy_bytes(version, header_text, encoding=None):
+    """A synthetic .npy stream carrying `header_text` at `version`, from the
+    format specification: magic, version, a 2-byte (1.0) or 4-byte (2.0/3.0)
+    little-endian header length, the header text (latin-1 for 1.0/2.0, utf-8
+    for 3.0 unless `encoding` is given) padded with spaces and a newline to a
+    multiple of 64 bytes."""
+    if encoding is None:
+        encoding = "utf-8" if version == (3, 0) else "latin-1"
     hb = header_text.encode(encoding)
-    pad = 64 - ((10 + len(hb) + 1) % 64)
+    nlen = 2 if version == (1, 0) else 4
+    pad = 64 - ((6 + 2 + nlen + len(hb) + 1) % 64)
     body = hb + b" " * pad + b"\n"
     return (b"\x93NUMPY" + bytes(version)
-            + len(body).to_bytes(4, "little") + body)
+            + len(body).to_bytes(nlen, "little") + body)
 
 
 def _member(array):
@@ -300,6 +307,53 @@ class TestReadNpyHeaderShape(unittest.TestCase):
         raw = b"\x93NUMPY" + bytes((9, 9)) + b"\x00" * 4
         with self.assertRaises(npy_header.UnsupportedNpyHeaderVersion):
             npy_header.read_npy_header_shape(io.BytesIO(raw))
+
+
+class TestNpyHeader(unittest.TestCase):
+    """``read_npy_header``: shape, dtype and order from the header alone."""
+
+    _CASES = (
+        ("{'descr': '<c16', 'fortran_order': False, 'shape': (3, 2, 4), }",
+         (3, 2, 4), np.dtype("<c16"), False),
+        ("{'descr': '>f8', 'fortran_order': True, 'shape': (5,), }",
+         (5,), np.dtype(">f8"), True),
+        ("{'descr': '<i8', 'fortran_order': False, 'shape': (), }",
+         (), np.dtype("<i8"), False),
+    )
+
+    def test_shape_dtype_order_without_reading_data(self):
+        for version in ((1, 0), (2, 0), (3, 0)):
+            for text, shape, dtype, fortran in self._CASES:
+                with self.subTest(version=version, header=text):
+                    head = _npy_bytes(version, text)
+                    # a truncated data section (one byte of the payload)
+                    fh = io.BytesIO(head + b"\x00")
+                    h = npy_header.read_npy_header(fh)
+                    self.assertIsInstance(h, npy_header.NpyHeader)
+                    self.assertEqual(h.shape, shape)
+                    self.assertEqual(h.dtype, dtype)
+                    self.assertEqual(h.dtype.byteorder, dtype.byteorder)
+                    self.assertIs(h.fortran_order, fortran)
+                    self.assertEqual(fh.tell(), len(head))   # stops at the data
+                    fh.seek(0)
+                    self.assertEqual(npy_header.read_npy_header_shape(fh), shape)
+                    self.assertEqual(fh.tell(), len(head))
+
+    def test_numpy_written_member(self):
+        a = np.asfortranarray(np.zeros((2, 3), dtype=complex))
+        path = _member(a)
+        with zipfile.ZipFile(path) as z, z.open("k.npy") as f:
+            h = npy_header.read_npy_header(f)
+        self.assertEqual(h, npy_header.NpyHeader((2, 3), np.dtype(complex), True))
+
+    def test_errors_unchanged(self):
+        bad = _npy_bytes((3, 0), "{'descr': '<c16', 'fortran_order': 0, 'shape': (4,)}")
+        for f in (npy_header.read_npy_header, npy_header.read_npy_header_shape):
+            with self.subTest(f=f.__name__):
+                with self.assertRaises(ValueError):
+                    f(io.BytesIO(bad))
+                with self.assertRaises(npy_header.UnsupportedNpyHeaderVersion):
+                    f(io.BytesIO(b"\x93NUMPY" + bytes((9, 9)) + b"\x00" * 4))
 
 
 class TestCallerContracts(unittest.TestCase):
