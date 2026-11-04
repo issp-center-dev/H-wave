@@ -177,10 +177,11 @@ class TestEigenvaluesUnchanged(_Tmp):
         calls = []
 
         def full_path(input_dict, chi0q_tensor="auto", precomputed_mu=None,
-                      prepared=None, static_only=False):
+                      prepared=None, static_only=False, so_context=None):
             calls.append(static_only)
             chi = real(input_dict, chi0q_tensor=chi0q_tensor,
-                       precomputed_mu=precomputed_mu, prepared=prepared)
+                       precomputed_mu=precomputed_mu, prepared=prepared,
+                       so_context=so_context)
             nmat = chi.shape[0]
             return chi[nmat // 2:nmat // 2 + 1]
 

@@ -336,13 +336,45 @@ class TestBondGreen(_Base):
             sc.calc_eliashberg(self._bond_inp(p))
 
     def test_refusal_does_not_read_the_green_array(self):
-        p = self._green_with("lazy")
-        with mock.patch.object(
-                sc, "_load_green_npz",
-                side_effect=AssertionError("array read")):
-            with self.assertRaisesRegex(ValueError, "spin_block"):
-                sc._build_bond_green(
-                    np.zeros((4, 4, 1, 2)), None, 0.0, 4.0, 32, 0.0, p)
+        # the spin_orbital marker is checked first; a green without it is
+        # refused by its index_convention tag
+        for name, drop, pattern in (("lazy", (), r"^Green-function file .*spin_orbital = True"),
+                                    ("lazy_tag_only", ("spin_orbital",), "spin_block")):
+            with self.subTest(fixture=name):
+                p = self._green_with(name, drop=drop)
+                with mock.patch.object(
+                        sc, "_load_green_npz",
+                        side_effect=AssertionError("array read")):
+                    with self.assertRaisesRegex(ValueError, pattern):
+                        sc._build_bond_green(
+                            np.zeros((4, 4, 1, 2)), None, 0.0, 4.0, 32, 0.0, p)
+
+    def test_marker_message_noun(self):
+        # the marker refusals name a file with a green member a
+        # Green-function file; every other archive keeps the susceptibility
+        # wording (the messages of earlier versions)
+        hint = ("Enable [mode] enable_spin_orbital = true, or regenerate the "
+                "archive with a non-spin-orbital run.")
+        for noun, payload in (("susceptibility file", "chiq"),
+                              ("susceptibility file", "chi0q"),
+                              ("susceptibility file", "gap"),
+                              ("Green-function file", "green")):
+            with self.subTest(payload=payload):
+                data = {payload: np.zeros(1), "spin_orbital": np.bool_(True)}
+                with self.assertRaises(ValueError) as cm:
+                    sc._refuse_so_archive_in_non_so_mode(data, "x.npz")
+                self.assertEqual(str(cm.exception), (
+                    "{} 'x.npz' was written by a spin-orbital run (spin_orbital = True) "
+                    "and cannot be used without [mode] enable_spin_orbital = true: its "
+                    "shape would be misread as a non-spin-orbital file over twice as "
+                    "many orbitals. {}".format(noun, hint)))
+                data["spin_orbital"] = np.int64(1)
+                with self.assertRaises(ValueError) as cm:
+                    sc._refuse_so_archive_in_non_so_mode(
+                        data, "x.npz", check_index_convention=payload == "green")
+                self.assertEqual(str(cm.exception), (
+                    "{} 'x.npz': malformed spin_orbital marker ({!r}); expected a "
+                    "boolean. {}".format(noun, np.int64(1), hint)))
 
     def test_so_mode_flag_skips_the_check(self):
         p = os.path.join(self.flex, "green.npz")
@@ -355,7 +387,8 @@ class TestBondGreen(_Base):
                     spin_orbital_mode=True)
 
     def test_unmarked_green_still_loads(self):
-        p = self._green_with("plain", drop=("index_convention",))
+        # neither the index_convention tag nor the spin_orbital marker
+        p = self._green_with("plain", drop=("index_convention", "spin_orbital"))
         with np.load(p) as z:
             g = z["green"]
         carrier = sc._build_bond_green(

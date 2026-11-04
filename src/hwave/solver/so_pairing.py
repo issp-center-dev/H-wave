@@ -381,21 +381,25 @@ def check_so_config(input_dict):
                 "Remove {}.".format(_SO_WHAT, key, key))
 
 
-def check_so_supported(input_dict, interactions, site, norb_phys=None):
+def check_so_supported(input_dict, interactions, site=None, norb_phys=None):
     """:func:`check_so_config` plus the interaction tables.
 
     ``interactions`` are the ORIGINAL declarations ``{type: {(R, (a, b)): v}}``
     in physical orbital indices (as read, before any folding: an off-site row
-    can fold onto ``R = 0``), ``site`` the ``[mode.param] orbital_site``
-    labels of the physical orbitals or ``None``. Refused: any nonzero row
-    with ``R != 0`` (also inside a ``Coulomb`` aggregate file) and, with
-    ``orbital_site``, any ``R = 0`` row between orbitals of different sites:
-    the spin-orbital pairing vertex supports on-site interactions only.
-    Every orbital index must satisfy ``0 <= o < norb_phys`` (``o >= 0``
-    when ``norb_phys`` is not given): an input orbital 0 (reads as -1) would
-    otherwise wrap to the last orbital in the vertex, and an index past the
-    physical orbitals means a file written in spin-orbital indices."""
-    from hwave.solver.sites import is_onsite
+    can fold onto ``R = 0``). Refused: any nonzero row with ``R != 0`` (also
+    inside a ``Coulomb`` aggregate file): the spin-orbital pairing vertex
+    supports on-site and in-cell interactions only. Every ``R = 0`` row is
+    accepted, between any two orbitals of the cell: spin-orbital mode treats
+    it exactly (direct part and exchange crossing). Every orbital index must
+    satisfy ``0 <= o < norb_phys`` (``o >= 0`` when ``norb_phys`` is not
+    given): an input orbital 0 (reads as -1) would otherwise wrap to the last
+    orbital in the vertex, and an index past the physical orbitals means a
+    file written in spin-orbital indices.
+
+    ``site`` is accepted for compatibility and ignored: spin-orbital mode
+    never reads ``[mode.param] orbital_site``, so the result is the same for
+    any value."""
+    del site    # ignored (see the docstring)
     check_so_config(input_dict)
     files = _ci(input_dict.get("file", {}).get("input", {}).get("interaction", {}))
     aggregate = "Coulomb" in files
@@ -418,25 +422,18 @@ def check_so_supported(input_dict, interactions, site, norb_phys=None):
                         bad[0] + 1, rng,
                         "" if norb_phys is None else
                         ", and the model has {}".format(int(norb_phys))))
-            if v == 0 or is_onsite(irvec, orbvec, site):
-                continue
             R = tuple(int(x) for x in irvec)
+            if v == 0 or R == (0, 0, 0):
+                continue
             src = ("the Coulomb file (split into {})".format(t)
                    if aggregate and t in ("CoulombIntra", "CoulombInter")
                    else "the {} file".format(t))
-            if R != (0, 0, 0):
-                why = "an off-site row (R = {}, orbitals {}) in {}".format(
-                    R, tuple(int(o) + 1 for o in orbvec), src)
-                fix = "remove the off-site rows"
-            else:
-                why = ("an R = 0 row between orbitals {} of different sites "
-                       "([mode.param] orbital_site) in {}".format(
-                           tuple(int(o) + 1 for o in orbvec), src))
-                fix = "remove the row or the orbital_site labels"
             raise ValueError(
-                "{}: {} is not supported; the spin-orbital pairing vertex supports "
-                "on-site interactions only (the exchange crossing of an off-site "
-                "term depends on k + k'). {}.".format(_SO_WHAT, why, fix[0].upper() + fix[1:]))
+                "{}: an off-site row (R = {}, orbitals {}) in {} is not supported; "
+                "the spin-orbital pairing vertex supports on-site and in-cell "
+                "(R = 0) interactions only (the exchange crossing of an off-site "
+                "term depends on k + k'). Remove the off-site rows.".format(
+                    _SO_WHAT, R, tuple(int(o) + 1 for o in orbvec), src))
 
 
 # ---------------------------------------------------------------------------

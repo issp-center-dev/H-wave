@@ -1,4 +1,4 @@
-"""Version-1 provenance of the spin-orbital RPA and FLEX archives (#88, PR 0).
+"""Provenance of the spin-orbital RPA and FLEX archives (#88).
 
 A spin-orbital RPA run writes the fingerprint and state members into chi0q
 and chiq; a spin-orbital Hartree-Fock FLEX run writes them into chiq, green,
@@ -6,10 +6,11 @@ sigma and chi0q, with one Green digest (that of the G in green.npz) in all
 four. What this module pins:
 
 * :class:`TestMembers` -- ``fingerprint.so_provenance_members``: the member
-  schema (dtype, shape), the digests recomputable from the stored ``prov_*``
-  tables, the ``calc_mu`` tagged union of the state, the refusal of a
-  non-finite member, ``producer_version`` (truncation, git describe cached,
-  never failing, and taken only from the package's own repository).
+  schema (dtype, shape), the band digests recomputable from the stored
+  ``prov_*`` tables (they feed the consumers' diffs), the ``calc_mu``
+  tagged union of the state, the refusal of a non-finite member,
+  ``producer_version`` (truncation, git describe cached, never failing,
+  and taken only from the package's own repository).
 * :class:`TestProducersWrite` -- the RPA and FLEX producers through
   ``hwave.qlms.run``: the band digest equals the one computed from the input
   files, the state is the realized one (closure density in electrons per
@@ -37,7 +38,10 @@ import numpy as np
 import hwave
 import hwave.qlmsio.wan90 as wan90
 from hwave.solver import fingerprint as fp
+from hwave.solver.so_records import compile_interaction
 import tests.test_so_zeeman_route as Z
+from tests.so_bond_oracles import (EXPECTED_RPA_PRODUCER, PROVENANCE_MEMBERS,
+                                   UNVERSIONED_REFUSAL_TEXT)
 from tests.so_provenance_ref import make as ref_make
 
 _REF_DIR = os.path.dirname(os.path.abspath(ref_make.__file__))
@@ -56,6 +60,10 @@ _SCHEMA = {
     "prov_norb": ("i", 0), "prov_norb_phys": ("i", 0), "state_nmat": ("i", 0),
     "prov_index_convention": ("U", 0),
     "prov_cell_shape": ("i", 1), "prov_sub_shape": ("i", 1),
+    "fp_interaction": ("U", 0), "fp_topology": ("U", 0),
+    "fp_resolved_topology": ("U", 0), "fp_capability": ("U", 0),
+    "prov_rec_types": ("U", 1), "prov_rec_modes": ("i", 2),
+    "prov_rec_cells": ("i", 3), "prov_rec_v": ("c", 1), "prov_topology": ("i", 2),
 }
 _ITEMSIZE = {"i": 8, "f": 8, "c": 16, "b": 1}
 
@@ -73,6 +81,12 @@ def _quiet():
 def _table_from_prov(keys, vals):
     return {(tuple(int(x) for x in k[:3]), tuple(int(x) for x in k[3:])): complex(v)
             for k, v in zip(keys, vals)}
+
+
+#: the interaction fingerprints of the test-side member builds: an on-site U
+#: on the one physical orbital
+_INTERACTION = fp.interaction_inputs(compile_interaction(
+    {"CoulombIntra": {((0, 0, 0), (0, 0)): 2.0}}, 1))
 
 
 def _meta_from_prov(z):
@@ -197,12 +211,13 @@ class TestMembers(_Dir):
         self.kw = dict(producer_stage="rpa_so", producer_label="test producer",
                        transfer=T, extern=E, meta=meta, fp_green="0" * 64,
                        state=fp.so_state(beta=2.0, nmat=16, mu=-0.3, density=0.8,
-                                         calc_mu=True, target=0.8 + 1e-14))
+                                         calc_mu=True, target=0.8 + 1e-14),
+                       interaction=_INTERACTION)
 
     def test_schema(self):
         m = fp.so_provenance_members(**self.kw)
         self.assertEqual(set(m), set(_SCHEMA))
-        self.assertEqual(tuple(m), fp.SO_PROVENANCE_MEMBERS)
+        self.assertEqual(tuple(m), PROVENANCE_MEMBERS)
         for k, (kind, ndim) in _SCHEMA.items():
             with self.subTest(member=k):
                 self.assertEqual(m[k].dtype.kind, kind)
@@ -215,7 +230,7 @@ class TestMembers(_Dir):
         self.assertEqual(m["prov_cell_shape"].shape, (3,))
         for k in ("fp_transfer", "fp_extern", "fp_meta", "fp_band"):
             self.assertRegex(str(m[k]), r"^[0-9a-f]{64}$")
-        self.assertEqual(int(m["fingerprint_version"]), 1)
+        self.assertEqual(int(m["fingerprint_version"]), 2)
 
     def test_digests_recomputable_from_prov(self):
         m = fp.so_provenance_members(**self.kw)
@@ -310,7 +325,7 @@ class TestProducersWrite(_Dir):
         self.ncond = p["filling"] * 2 * self.ncell                # Nstate = nd * ncell
 
     def _check(self, npz, stage, inp):
-        self.assertEqual(int(npz["fingerprint_version"]), 1)
+        self.assertEqual(int(npz["fingerprint_version"]), 2)
         self.assertEqual(str(npz["producer_stage"]), stage)
         T, E, meta = _tables_and_meta_from_input(inp)
         self.assertEqual(str(npz["fp_band"]), fp.band_digests(T, E, meta)["fp_band"])
@@ -407,16 +422,17 @@ class TestProducersWrite(_Dir):
                     self.assertEqual(float(a["state_target"]), 0.1)
 
     def test_rpa_trans_mod_writes_no_provenance(self):
-        """A one-body band changed by trans_mod is not covered by the
-        version-1 band digest: the archives keep the spin_orbital marker but
-        carry no provenance member, and one INFO line says why."""
+        """A one-body band changed by trans_mod is not covered by the band
+        digest: the archives keep the spin_orbital marker but carry no
+        provenance member (so no spin-orbital consumer reads them), and one
+        INFO line says why."""
         import tests.test_rpa_so_trans_mod as TM
         tc = TM.TestRPASOTransModMultiOrbital()
         tc._tmpdir = self.new_dir()
         tm_path = tc._write_fixture()
         inter = {"Geometry": "geom_so_2orb.dat", "Transfer": "transfer_so_2orb.dat",
                  "CoulombIntra": "coulombintra_2orb.dat"}
-        prov = set(fp.SO_PROVENANCE_MEMBERS)
+        prov = set(PROVENANCE_MEMBERS)
         for trans_mod in (None, tm_path):
             with self.subTest(trans_mod=trans_mod is not None):
                 out = os.path.join(self.new_dir(), "out")
@@ -439,6 +455,8 @@ class TestProducersWrite(_Dir):
                 else:
                     self.assertEqual(len(note), 1)
                     self.assertIn("trans_mod/green_init", note[0])
+                    self.assertIn("a spin-orbital consumer cannot read these outputs",
+                                  note[0])
 
     def test_flex_so_bindings_agree(self):
         out = _run_flex_so(self.inp_soc)
@@ -678,9 +696,10 @@ def _set_member(path, k, v):
 
 
 def _strip_fingerprint_members(path):
-    """An archive as written before version 1: no provenance member (the
-    spin_orbital marker stays)."""
-    _resave(path, drop=fp.SO_PROVENANCE_MEMBERS)
+    """An archive without fingerprint_version (written before the
+    fingerprints, or by a run whose band they do not cover): no provenance
+    member (the spin_orbital marker stays)."""
+    _resave(path, drop=PROVENANCE_MEMBERS)
 
 
 def _overwrite_green_entry(green_path, value):
@@ -762,8 +781,12 @@ def _sc(mode, inp, src=None, frequency="static", transfer_edit=None,
 
 
 def _write_members(d, members):
+    """A chiq archive of the provenance ``members`` (a rank-6 chiq payload and
+    the spin-orbital markers added)."""
     path = os.path.join(tempfile.mkdtemp(dir=d), "a.npz")
-    np.savez(path, **members)
+    np.savez(path, **dict({"chiq": np.zeros((2, 1, 2, 2, 2, 2), complex),
+                           "spin_orbital": np.bool_(True),
+                           "index_convention": np.str_("spin_block")}, **members))
     return path
 
 
@@ -776,8 +799,8 @@ def _write_raw(d, lines):
 
 class TestConsumerChecks(_Dir):
     """``fingerprint.check_so_archive`` through the hwave_sc consumers: the
-    structural, band, state and green refusals, the legacy policy and the
-    exact state-point rule."""
+    structural, band, interaction, state and green refusals, the refusal of
+    an unversioned archive and the exact state-point rule."""
 
     def setUp(self):
         super().setUp()
@@ -788,9 +811,18 @@ class TestConsumerChecks(_Dir):
         self.band = fp.band_inputs(T, E, meta)
         self.kw = dict(producer_stage="rpa_so", producer_label="test producer",
                        transfer=T, extern=E, meta=meta, fp_green="0" * 64,
-                       state=fp.SOState(10.0, 64, 0.1, 2.0, True, 2.0, 0.0))
+                       state=fp.SOState(10.0, 64, 0.1, 2.0, True, 2.0, 0.0),
+                       interaction=_INTERACTION)
         nan = float("nan")
         self.run_state = fp.SOState(10.0, 64, nan, nan, True, 2.0, nan)
+
+    def check(self, data, path, **kw):
+        """``fingerprint.check_so_archive`` of the chiq archive ``data`` as an
+        on-site consumer of this test's band, state and interaction."""
+        args = dict(kind="chiq", run_band=self.band, run_state=self.run_state,
+                    nmat_rule="exact", run_interaction=_INTERACTION, need="so_onsite")
+        args.update(kw)
+        return fp.check_so_archive(data, path, **args)
 
     def test_run_inputs_mixed_case_keys(self):
         """``sc._so_run_inputs`` reads ``CellShape``/``SubShape`` (and
@@ -834,14 +866,18 @@ class TestConsumerChecks(_Dir):
         with self.assertRaisesRegex(ValueError, r"fp_green mismatch"):
             _sc("flex", self.inp_soc)
 
-    def test_unversioned_archive_rules(self):
-        _strip_fingerprint_members(_rpa_for_sc(self.inp_soc)["path"])
-        with self.assertLogs("qlms", "WARNING") as cm:
-            _sc("load", self.inp_soc, quiet=False)
-        self.assertTrue(any("has no fingerprint_version" in m for m in cm.output))
-        _strip_fingerprint_members(_rpa_for_sc(self.inp_soc_extern)["path"])
-        with self.assertRaisesRegex(ValueError, r"has an Extern field.*Regenerate"):
-            _sc("load", self.inp_soc_extern)
+    def test_unversioned_archive_refused(self):
+        """An unversioned chi0q is refused with or without an Extern field
+        (it was accepted with a WARNING before the interaction fingerprints),
+        naming the RPA run to repeat."""
+        for inp in (self.inp_soc, self.inp_soc_extern):
+            with self.subTest(extern="Extern" in inp["inter"]):
+                path = _rpa_for_sc(inp)["path"]
+                _strip_fingerprint_members(path)
+                with self.assertRaises(fp.SOArchiveError) as cm:
+                    _sc("load", inp)
+                self.assertEqual(str(cm.exception), UNVERSIONED_REFUSAL_TEXT.format(
+                    path=path, producer=EXPECTED_RPA_PRODUCER))
 
     def test_missing_member_and_bad_stage_and_dup_field(self):
         for mutate, rx in ((lambda p: _drop_member(p, "fp_band"),
@@ -878,15 +914,16 @@ class TestConsumerChecks(_Dir):
                                                 r"\(R=\(0, 0, 0\), a=1, b=1\)"):
             _sc("load", self.inp_soc_extern, extern_edit=((0, 0, 0), (0, 0), 0.2))
 
-    def test_tampered_provenance_and_inflated_tolerance_refused(self):
-        for mutate, rx in ((lambda p: _set_member(p, "prov_coeff_extern", 0.5),
-                            r"malformed.*fp_meta"),
-                           (lambda p: _set_member(p, "state_mu_tol", 1.0),
-                            r"malformed.*state_mu_tol")):
-            with self.subTest(rx=rx):
-                mutate(_rpa_for_sc(self.inp_soc)["path"])
-                with self.assertRaisesRegex(ValueError, rx):
-                    _sc("load", self.inp_soc)
+    def test_prov_edit_accepted_and_inflated_tolerance_refused(self):
+        """No digest is recomputed from the ``prov_*`` members (they feed the
+        diffs only): an edited ``prov_coeff_extern`` is not refused. An
+        inflated ``state_mu_tol`` breaks the recorded state and is."""
+        _set_member(_rpa_for_sc(self.inp_soc)["path"], "prov_coeff_extern", 0.5)
+        out = _sc("load", self.inp_soc)
+        self.assertEqual(int(out.npz["fingerprint_version"]), 2)
+        _set_member(_rpa_for_sc(self.inp_soc)["path"], "state_mu_tol", 1.0)
+        with self.assertRaisesRegex(ValueError, r"malformed.*state_mu_tol"):
+            _sc("load", self.inp_soc)
 
     def test_tagged_union_round_trip(self):
         for calc_mu, state in ((True, fp.SOState(10.0, 64, 0.1, 2.0 + 1e-11, True, 2.0, 1e-11)),
@@ -897,10 +934,8 @@ class TestConsumerChecks(_Dir):
                 run = self.run_state._replace(
                     calc_mu=calc_mu, target=state.target,
                     mu=state.mu if not calc_mu else float("nan"))
-                info = fp.check_so_archive(np.load(path), path, run_band=self.band,
-                                           run_state=run, run_has_extern=False,
-                                           nmat_rule="exact")
-                self.assertFalse(info.legacy)
+                info = self.check(np.load(path), path, run_state=run)
+                self.assertEqual(info.version, 2)
                 self.assertEqual(info.producer_state.calc_mu, calc_mu)
                 self.assertEqual(info.producer_state, state)
                 self.assertEqual(info.producer_label, "test producer")
@@ -908,40 +943,33 @@ class TestConsumerChecks(_Dir):
                 if not calc_mu:
                     with self.assertRaisesRegex(ValueError, r"fixed mu 0\.1 \(file\) "
                                                             r"vs 0\.2 \(run\)"):
-                        fp.check_so_archive(np.load(path), path, run_band=self.band,
-                                            run_state=run._replace(mu=0.2),
-                                            run_has_extern=False, nmat_rule="exact")
+                        self.check(np.load(path), path, run_state=run._replace(mu=0.2))
 
     def test_nmat_rule(self):
         path = _write_members(self.d, fp.so_provenance_members(**self.kw))
         run = self.run_state._replace(nmat=128)
         with self.assertRaisesRegex(ValueError, r"nmat 64 \(file\) vs 128 \(run\)"):
-            fp.check_so_archive(np.load(path), path, run_band=self.band, run_state=run,
-                                run_has_extern=False, nmat_rule="exact")
-        fp.check_so_archive(np.load(path), path, run_band=self.band, run_state=run,
-                            run_has_extern=False, nmat_rule="load")
+            self.check(np.load(path), path, run_state=run)
+        self.check(np.load(path), path, run_state=run, nmat_rule="load")
         with self.assertRaisesRegex(ValueError, r"nmat_rule"):
-            fp.check_so_archive(np.load(path), path, run_band=self.band, run_state=run,
-                                run_has_extern=False, nmat_rule="loose")
+            self.check(np.load(path), path, run_state=run, nmat_rule="loose")
 
-    def test_legacy_checked_first_and_unknown_label(self):
-        """No fingerprint_version: the legacy policy, even with other members
-        missing or broken; a malformed versioned archive without a readable
-        label names <unknown producer>."""
-        path = _write_members(self.d, {"spin_orbital": np.bool_(True),
-                                       "state_beta": np.str_("broken")})
-        with self.assertLogs("qlms", "WARNING"):
-            info = fp.check_so_archive(np.load(path), path, run_band=self.band,
-                                       run_state=self.run_state, run_has_extern=False,
-                                       nmat_rule="exact")
-        self.assertEqual(info, fp.SOArchiveInfo(None, None, None, legacy=True))
+    def test_unversioned_checked_first_and_unknown_label(self):
+        """No fingerprint_version: refused as unversioned before any other
+        check, even with other members missing or broken; a malformed
+        archive without a readable label names <unknown producer>, or the
+        expected producer when the caller names one."""
+        path = _write_members(self.d, {"state_beta": np.str_("broken")})
+        with self.assertRaisesRegex(fp.SOArchiveError, r"has no fingerprint_version .*"
+                                                       r"re-running <unknown producer> with"):
+            self.check(np.load(path), path)
         m = fp.so_provenance_members(**self.kw)
         m.pop("producer_label")
         path = _write_members(self.d, m)
         with self.assertRaisesRegex(ValueError, r"Regenerate it with <unknown producer>\."):
-            fp.check_so_archive(np.load(path), path, run_band=self.band,
-                                run_state=self.run_state, run_has_extern=False,
-                                nmat_rule="exact")
+            self.check(np.load(path), path)
+        with self.assertRaisesRegex(ValueError, r"Regenerate it with the RPA run\."):
+            self.check(np.load(path), path, expected_producer="the RPA run")
 
     def test_green_verified_or_asserted(self):
         g = np.zeros((1, 4, 4, 2, 2), dtype=complex)
@@ -949,9 +977,7 @@ class TestConsumerChecks(_Dir):
         m = fp.so_provenance_members(**dict(self.kw, fp_green=fp.green_digest(
             g, "b_f_k_o_o_v1")))
         path = _write_members(self.d, m)
-        call = lambda **kw: fp.check_so_archive(
-            np.load(path), path, run_band=self.band, run_state=self.run_state,
-            run_has_extern=False, nmat_rule="exact", **kw)
+        call = lambda **kw: self.check(np.load(path), path, **kw)
         call(green=g, green_layout="b_f_k_o_o_v1")
         with self.assertLogs("qlms", "INFO") as cm:
             call()
@@ -975,9 +1001,7 @@ class TestConsumerChecks(_Dir):
                     **dict(self.kw, state=fp.so_state(beta=10.0, nmat=64, mu=0.1,
                                                       density=t + r, calc_mu=True,
                                                       target=t))))
-                call = lambda: fp.check_so_archive(
-                    np.load(path), path, run_band=self.band, run_state=self.run_state,
-                    run_has_extern=False, nmat_rule="exact")
+                call = lambda: self.check(np.load(path), path)
                 if ok:
                     call()
                 else:
@@ -1006,7 +1030,7 @@ class TestConsumerChecks(_Dir):
     def test_flex_chi0q_companion_checked(self):
         """The FLEX chi0q is provenance-checked like chiq: one from another
         coeff_extern is refused by its band, an unversioned one beside a
-        versioned chiq is refused."""
+        versioned chiq is refused as unversioned."""
         out = _flex_for_sc(self.inp_soc)
         other = _flex_for_sc(_soc_input(self.new_dir()), coeff_extern=0.0)
         shutil.copy(other["chi0q"], out["chi0q"])
@@ -1015,21 +1039,22 @@ class TestConsumerChecks(_Dir):
             _sc("flex", self.inp_soc)
         out = _flex_for_sc(self.inp_soc)
         _strip_fingerprint_members(out["chi0q"])
-        with self.assertRaisesRegex(ValueError, r"chiq\.npz' \(versioned\) and '.*chi0q\.npz' "
-                                                r"\(unversioned\) disagree on fingerprint_version"):
+        with self.assertRaisesRegex(fp.SOArchiveError,
+                                    r"chi0q\.npz' has no fingerprint_version .*re-running the "
+                                    r"spin-orbital FLEX run \(hwave FLEX, enable_spin_orbital "
+                                    r"= true\)"):
             _sc("flex", self.inp_soc)
 
-    def test_flex_legacy_chiq_with_versioned_chi0q_refused(self):
-        """The reversed mix (unversioned chiq, versioned chi0q) is refused
-        too, before the Green function is read: otherwise the Green-digest
-        and self-energy checks would be skipped."""
+    def test_flex_unversioned_chiq_refused(self):
+        """An unversioned chiq beside versioned FLEX archives is refused
+        before the Green function is read."""
         out = _flex_for_sc(self.inp_soc)
         _strip_fingerprint_members(out["chiq"])
         os.remove(out["sigma"])
         os.remove(out["green"])              # a Green read would fail differently
-        with self.assertRaisesRegex(ValueError, r"chiq\.npz' \(unversioned\) and '.*chi0q\.npz' "
-                                                r"\(versioned\) disagree on fingerprint_version; "
-                                                r"regenerate both from one FLEX run"):
+        with self.assertRaisesRegex(fp.SOArchiveError,
+                                    r"chiq\.npz' has no fingerprint_version .*re-running the "
+                                    r"spin-orbital FLEX run"):
             _sc("flex", self.inp_soc)
 
     def test_nmat_only_difference_names_the_key(self):
@@ -1038,11 +1063,12 @@ class TestConsumerChecks(_Dir):
                                                 r"\(run\)\. .*set \[mode\.param\] Nmat = 16"):
             _sc("flex", self.inp_soc, nmat=32)
 
-    def test_legacy_sigma_with_versioned_chiq(self):
+    def test_unversioned_sigma_with_versioned_chiq(self):
         out = _flex_for_sc(self.inp_soc)
         _strip_fingerprint_members(out["sigma"])
-        with self.assertRaisesRegex(ValueError, r"sigma\.npz' has no fingerprint_version; "
-                                                r"regenerate the FLEX run's sigma"):
+        with self.assertRaisesRegex(fp.SOArchiveError,
+                                    r"sigma\.npz' has no fingerprint_version .*re-running the "
+                                    r"spin-orbital FLEX run"):
             _sc("flex", self.inp_soc)
 
     def test_wrong_dtype_member_refused(self):
@@ -1058,9 +1084,7 @@ class TestConsumerChecks(_Dir):
                 with self.assertRaisesRegex(ValueError, r"malformed or truncated: member {} "
                                                         r"has the wrong dtype or rank"
                                             .format(k)):
-                    fp.check_so_archive(np.load(path), path, run_band=self.band,
-                                        run_state=self.run_state, run_has_extern=False,
-                                        nmat_rule="exact")
+                    self.check(np.load(path), path)
 
     def test_big_endian_member_accepted(self):
         """Every value is read through a Python scalar, so the byte order of
@@ -1071,10 +1095,8 @@ class TestConsumerChecks(_Dir):
         path = _write_members(self.d, swapped)
         with np.load(path) as z:
             self.assertEqual(z["state_nmat"].dtype.byteorder, ">")
-            info = fp.check_so_archive(z, path, run_band=self.band,
-                                       run_state=self.run_state, run_has_extern=False,
-                                       nmat_rule="exact")
-        self.assertFalse(info.legacy)
+            info = self.check(z, path)
+        self.assertEqual(info.version, 2)
 
     def test_dynamic_requires_filling(self):
         _flex_for_sc(self.inp_soc)
@@ -1121,7 +1143,7 @@ class TestScWriters(_Dir):
         self.inp_soc = _soc_input(self.new_dir())
 
     def _common(self, npz, stage):
-        self.assertEqual(int(npz["fingerprint_version"]), 1)
+        self.assertEqual(int(npz["fingerprint_version"]), 2)
         self.assertEqual(str(npz["producer_stage"]), stage)
         T, E, meta = _tables_and_meta_from_input(self.inp_soc)
         self.assertEqual(str(npz["fp_band"]), fp.band_digests(T, None, meta)["fp_band"])
@@ -1226,20 +1248,6 @@ class TestScWriters(_Dir):
         self.assertIn("# fp_green = {}".format(str(out.npz["fp_green"])), text)
         self.assertIn("# state_calc_mu = true", text)
         self.assertNotIn("prov_transfer_keys", text)
-
-    def test_legacy_input_gives_truthful_outputs(self):
-        _strip_fingerprint_members(_rpa_for_sc(self.inp_soc)["path"])
-        out = _sc("load", self.inp_soc).npz
-        self.assertEqual(int(out["fingerprint_version"]), 1)
-        self.assertTrue(np.isfinite(float(out["state_density"])))
-
-    def test_legacy_flex_writes_no_provenance(self):
-        out = _flex_for_sc(self.inp_soc)
-        for k in ("chiq", "green", "sigma", "chi0q"):
-            _strip_fingerprint_members(out[k])
-        npz = _sc("flex", self.inp_soc).npz
-        self.assertFalse(set(fp.SO_PROVENANCE_MEMBERS) & set(npz))
-        self.assertTrue(bool(npz["spin_orbital"]))
 
 
 if __name__ == "__main__":

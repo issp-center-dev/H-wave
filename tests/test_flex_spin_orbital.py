@@ -179,7 +179,7 @@ class TestConstructionGates(_TmpDir):
     def test_refuses_offsite_interactions(self):
         files = _write_model(self.d, True, offsite=True)
         s, gi = _build(self.d, files)
-        with self.assertRaisesRegex(ValueError, r"supports on-site interactions only .*"
+        with self.assertRaisesRegex(ValueError, r"supports on-site and in-cell interactions only .*"
                                     r"off-site 'CoulombInter' declaration"):
             with _quiet():
                 s.solve(gi, self.d)

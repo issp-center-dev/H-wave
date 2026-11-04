@@ -33,6 +33,7 @@ and the spin-orbital pairing vertex at every bosonic frequency.
 import contextlib
 import logging
 import os
+import re
 import shutil
 import tempfile
 import types
@@ -427,7 +428,8 @@ class TestFlexMode(_FlexFixture):
         np.testing.assert_array_equal(full[1], stat[1])
 
     def test_vertex_mismatch_is_refused(self):
-        """Interaction files that differ from the FLEX run's are refused."""
+        """Interaction files that differ from the FLEX run's are refused (by
+        the interaction fingerprint of its archives)."""
         d = tempfile.mkdtemp(prefix="sc_so_dyn_mm_")
         self.addCleanup(shutil.rmtree, d, True)
         for f in os.listdir(self.d):
@@ -439,7 +441,8 @@ class TestFlexMode(_FlexFixture):
             f.write(txt.replace("0.500000000000", "0.550000000000"))
         inp = S._flex_input(d, self.files, self.flex, _dyn_eli(), out="o")
         inp["mode"]["param"]["Nmat"] = _NMAT_E2E
-        with self.assertRaisesRegex(ValueError, "do not reproduce the vertex"):
+        with self.assertRaisesRegex(ValueError, "does not match this run: interaction "
+                                                "differs: "):
             with _quiet():
                 sc.calc_eliashberg(inp)
         self.assertFalse(os.path.exists(os.path.join(d, "o")))
@@ -840,11 +843,27 @@ class TestRefusals(unittest.TestCase):
     def test_offsite_row(self):
         files = S._write_model(self.d, so=True, extra_rows={
             "CoulombInter": [(1, 0, 0, 0.2), (-1, 0, 0, 0.2)]})
-        self._refused(r"off-site row .* in the CoulombInter file", {}, files=files)
+        self._refused("^" + re.escape(S.OFFSITE_TEXT.format(
+            R=(1, 0, 0), orbs=(1, 1), src="the CoulombInter file")) + "$", {}, files=files)
 
     def test_cross_site_row_under_orbital_site(self):
+        # spin-orbital mode treats every R = 0 row exactly and ignores
+        # orbital_site: the run is accepted and equals the run without it
+        # (a consistency check only: the treatment of the R = 0 rows itself
+        # is the one validated against exact diagonalization elsewhere)
         files = S._write_model(self.d, so=True, types=("CoulombIntra", "CoulombInter"))
-        self._refused("orbital_site", {}, files=files, orbital_site=[0, 1])
+        eli = _dyn_eli(chi0q_mode="calc", num_eigenvalues=4)
+        small = {"CellShape": [2, 2, 1]}
+        ref = _run(S._input(self.d, files, True, eli, nmat=16, out="ref", **small))
+        with S._count_warnings() as warned:
+            got = _run(S._input(self.d, files, True, eli, nmat=16, out="site",
+                                orbital_site=[0, 1], **small))
+        self.assertEqual(warned.count(S.ORBITAL_SITE_WARNING), 1)
+        # equal up to the run-to-run rounding of the eigensolver
+        # (tests.so_run_compare)
+        from tests.so_run_compare import eigenvalues_close
+        self.assertTrue(eigenvalues_close(got["vals"], ref["vals"]))
+        self.assertTrue(eigenvalues_close(got["lam"], ref["lam"]))
 
     def test_ir_basis(self):
         self._refused("matsubara_basis", {"matsubara_basis": "ir"})
