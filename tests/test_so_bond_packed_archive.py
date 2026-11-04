@@ -413,6 +413,50 @@ class TestReadSlotMemberRefusals(unittest.TestCase):
                 "got shape (2, {1}, {2})".format(FILE, SM.ND, SM.ND - 1))):
             read_slot_member(data, "chi_w", want="sz_packed", sector_map=SM, file=FILE)
 
+    def test_dense_pass_through_checked(self):
+        """A dense file read by a dense consumer is checked like the other
+        layouts: complex128 (either byte order), ending in (ND, ND)."""
+        cases = (
+            (np.zeros((2, SM.ND, SM.ND), dtype=np.int64), SM,
+             "must be a complex128 array, got int64"),
+            (np.zeros((2, SM.ND, SM.ND), dtype=np.complex64), None,
+             "must be a complex128 array, got complex64"),
+            (np.zeros(3, dtype=np.complex128), None,
+             "must end in a square (ND, ND) pair, got shape (3,)"),
+            (np.zeros((2, SM.ND, SM.ND - 1), dtype=np.complex128), None,
+             "must end in a square (ND, ND) pair, got shape (2, {}, {})".format(SM.ND,
+                                                                             SM.ND - 1)),
+            (np.zeros((2, SM.ND - 1, SM.ND - 1), dtype=np.complex128), SM,
+             "must end in shape (ND, ND) = ({0}, {0}), got shape (2, {1}, {1})".format(
+                 SM.ND, SM.ND - 1)),
+        )
+        for arr, sm, tail in cases:
+            with self.subTest(dtype=arr.dtype, shape=arr.shape, sector_map=sm is not None):
+                with self.assertRaisesRegex(ValueError, exact(
+                        "read_slot_member: 'chi_w' of '{}' {}".format(FILE, tail))):
+                    read_slot_member(_dense_file(arr), "chi_w", want="dense", sector_map=sm,
+                                     file=FILE)
+        for dtype in (np.float64, np.complex64):
+            for shape in ((SM.ND, SM.ND), (2, SM.ND, SM.ND)):
+                with self.subTest(want="sz_packed", dtype=np.dtype(dtype).name, shape=shape):
+                    with self.assertRaisesRegex(ValueError, exact(
+                            "read_slot_member: 'chi_w' of '{}' must be a complex128 array, "
+                            "got {}".format(FILE, np.dtype(dtype).name))):
+                        read_slot_member(_dense_file(np.zeros(shape, dtype=dtype)), "chi_w",
+                                         want="sz_packed", sector_map=SM, file=FILE)
+        M = _block_diagonal((3,), seed=5)
+        for want in ("dense", "sz_packed"):
+            with self.subTest(byte_order=">c16", want=want):
+                R = read_slot_member(_dense_file(M.astype(">c16")), "chi_w", want=want,
+                                     sector_map=SM, file=FILE)
+                if want == "dense":
+                    self.assertEqual(R.dtype, np.dtype(np.complex128))
+                    self.assertTrue(R.dtype.isnative)
+                    self.assertTrue(np.array_equal(R, M))
+                else:
+                    for s, ref in enumerate(restrict(M, LISTS)):
+                        self.assertTrue(np.array_equal(R.blocks[s], ref))
+
 
 if __name__ == "__main__":
     unittest.main()

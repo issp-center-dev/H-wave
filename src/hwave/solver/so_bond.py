@@ -1226,6 +1226,25 @@ def _member(data, key, file):
     return np.asarray(data[key])
 
 
+def _dense_member(data, name, file, ND):
+    """The dense code-slot member ``name`` of ``data``: a complex128 array (either
+    byte order; returned native) ending in a square ``(ND, ND)`` pair, ``ND``
+    taken from the run's sector map when one is given."""
+    dense = _member(data, name, file)
+    if not (isinstance(dense, np.ndarray) and dense.dtype.kind == "c"
+            and dense.dtype.itemsize == 16):
+        raise ValueError("read_slot_member: '{}' of '{}' must be a complex128 array, got "
+                         "{}".format(name, file, getattr(dense, "dtype", type(dense).__name__)))
+    if ND is None:
+        if dense.ndim < 2 or dense.shape[-1] != dense.shape[-2]:
+            raise ValueError("read_slot_member: '{}' of '{}' must end in a square (ND, ND) "
+                             "pair, got shape {}".format(name, file, dense.shape))
+    elif dense.ndim < 2 or dense.shape[-2:] != (ND, ND):
+        raise ValueError("read_slot_member: '{}' of '{}' must end in shape (ND, ND) = ({}, {}), "
+                         "got shape {}".format(name, file, ND, ND, dense.shape))
+    return dense.astype(np.complex128, copy=False)      # native byte order
+
+
 def read_slot_member(data, name, *, want, sector_map, file):
     """The code-slot member ``name`` of an archive ``data`` in the layout
     ``want`` (``"dense"``: an ndarray ``(..., ND, ND)``; ``"sz_packed"``: a
@@ -1235,7 +1254,8 @@ def read_slot_member(data, name, *, want, sector_map, file):
     :func:`check_sector_map_members`; a packed file must in addition carry
     exactly the index map of ``sector_map``.
 
-    * Same layout: the stored arrays as they are.
+    * Same layout: the stored arrays (a dense member checked to be complex128,
+      ending in (ND, ND), and returned in native byte order).
     * Packed file, dense consumer: expanded slice by slice along the first
       axis; off-sector entries are exactly 0.
     * Dense file, packed consumer: packed slice by slice; every off-sector
@@ -1251,7 +1271,8 @@ def read_slot_member(data, name, *, want, sector_map, file):
                          "with check_sector_map_members first".format(
                              file, _layout_text(data), _LAYOUT_SET))
     if layout == want == "dense":
-        return _member(data, name, file)
+        return _dense_member(data, name, file,
+                             sector_map.ND if isinstance(sector_map, SectorMap) else None)
     if not isinstance(sector_map, SectorMap):
         raise ValueError("read_slot_member: converting '{}' of '{}' needs the run's sector map, "
                          "got {}".format(name, file, type(sector_map).__name__
@@ -1273,11 +1294,7 @@ def read_slot_member(data, name, *, want, sector_map, file):
         for l in range(packed.lead_shape[0]):
             PackedArrays(sector_map, tuple(b[l] for b in packed.blocks)).to_dense(out=out[l])
         return out
-    dense = _member(data, name, file)
-    ND = sector_map.ND
-    if dense.ndim < 2 or dense.shape[-2:] != (ND, ND):
-        raise ValueError("read_slot_member: '{}' of '{}' must end in shape (ND, ND) = ({}, {}), "
-                         "got shape {}".format(name, file, ND, ND, dense.shape))
+    dense = _dense_member(data, name, file, sector_map.ND)
     if dense.ndim == 2:
         blocks, off_max = _sector_blocks(dense, sector_map)
         if off_max != 0.0:
