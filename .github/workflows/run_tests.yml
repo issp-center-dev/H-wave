@@ -5,9 +5,18 @@ name: Run tests
 
 on:
   push:
+    # a push to a branch with an open pull request already runs this
+    # workflow through the pull_request event; an unfiltered push ran it
+    # twice
+    branches: [ main, develop ]
   pull_request:
   schedule:
     - cron: '0 0 1,15 * *' # JST 9:00 on 1st and 15th every month
+
+# as in ci-python39.yml: a new push to the same PR cancels its previous run
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 
 jobs:

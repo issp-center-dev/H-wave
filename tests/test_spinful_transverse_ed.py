@@ -814,6 +814,7 @@ class TestGateS0ExtractionAdjudication(unittest.TestCase):
     confirming Step 3's PASS is not vacuous.
     """
 
+    @heavy
     def test_step3_dressed_extraction_matches_totalned(self):
         D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
         D_pred_nmat = _s0_pred_at_nmat(
@@ -839,6 +840,7 @@ class TestGateS0ExtractionAdjudication(unittest.TestCase):
             format(rec["status"], rec["delta_rich"], rec["delta_nmat"],
                    rec["tol"], rec["max_signal"], rec["failures"][:5]))
 
+    @heavy
     def test_step4_g2_g4_swap_mutation_must_fail(self):
         D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
         D_pred_nmat = _s0_pred_at_nmat(
@@ -1178,6 +1180,7 @@ class TestGateS2ProductionRouting(unittest.TestCase):
     -- exact bit-for-bit agreement, not merely close, at
     ``v=1.0, nmat=1024``."""
 
+    @heavy
     def test_old_slice_then_solve_fails_the_s0_granule(self):
         D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
         D_old_nmat = _s2_old_pred(_S0_NMAT1, CAMPAIGN_V1)
@@ -1196,6 +1199,7 @@ class TestGateS2ProductionRouting(unittest.TestCase):
                 rec["status"], rec["delta_rich"], rec["delta_nmat"],
                 rec["tol"], rec["max_signal"]))
 
+    @heavy
     def test_production_passes_the_s0_granule(self):
         D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
         D_new_nmat = _s2_new_pred(_S0_NMAT1, CAMPAIGN_V1)

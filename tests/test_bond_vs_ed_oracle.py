@@ -3234,9 +3234,11 @@ class TestCaseM(unittest.TestCase):
                         r["delta_nmat"], r["tol"], r["max_signal"],
                         r["failures"][:5]))
 
+    @heavy
     def test_ph_g_plus(self):
         self._check_ph("g+")
 
+    @heavy
     def test_ph_g_minus(self):
         self._check_ph("g-")
 
