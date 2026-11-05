@@ -57,10 +57,10 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -77,7 +77,7 @@ jobs:
 
     - name: Load cached venv
       id: cached-poetry-dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: .venv
         key: venv-v4-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
@@ -97,7 +97,7 @@ jobs:
       # a reference that is present but unusable (wrong revision, dirty) is a
       # failure rather than a silent skip.
       #
-      # actions/checkout@v4 fetches depth 1, hence the explicit fetch of the
+      # actions/checkout@v5 fetches depth 1, hence the explicit fetch of the
       # named revision. The added worktree shares this checkout's object
       # store, and it lives under RUNNER_TEMP -- outside the checkout -- so
       # the "tracked tree clean" step below is unaffected (the command writes
@@ -211,9 +211,15 @@ jobs:
         fi
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      # v6 is the first codecov-action release on the Node 24 runtime (the
+      # action itself is composite; its one JavaScript step is github-script
+      # v8). `file` was renamed `files` in v5. No upload token is configured
+      # in this repository, so the upload runs tokenless -- which codecov
+      # supports for public repositories -- and fail_ci_if_error stays
+      # false so a rejected upload cannot fail the gate.
+      uses: codecov/codecov-action@v6
       with:
-        file: ./coverage.xml
+        files: ./coverage.xml
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
@@ -247,10 +253,10 @@ jobs:
         python-version: ["3.12"]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -267,7 +273,7 @@ jobs:
 
     - name: Load cached venv
       id: cached-poetry-dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: .venv
         key: venv-v4-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
@@ -287,7 +293,7 @@ jobs:
       # a reference that is present but unusable (wrong revision, dirty) is a
       # failure rather than a silent skip.
       #
-      # actions/checkout@v4 fetches depth 1, hence the explicit fetch of the
+      # actions/checkout@v5 fetches depth 1, hence the explicit fetch of the
       # named revision. The added worktree shares this checkout's object
       # store, and it lives under RUNNER_TEMP -- outside the checkout -- so
       # the "tracked tree clean" step below is unaffected (the command writes
@@ -399,10 +405,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: "3.11"
 
