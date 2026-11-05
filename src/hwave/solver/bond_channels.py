@@ -3265,6 +3265,17 @@ def solve_residual(mat, chi, cb):
     return num / den
 
 
+def _dress_refusal_text(channel, l, nmat, q):
+    """The message of :func:`dress_batch`'s conditioning refusal for the
+    ``channel`` denominator at grid index ``l`` (of ``nmat``) and q-point
+    index ``q = (qx, qy, qz)``."""
+    return ("dress_batch: the {} RPA denominator is singular or nearly singular at "
+            "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
+            "the bond path has entered the instability region. Reduce the interaction "
+            "strength, raise the temperature, refine or reduce the q grid, or lower "
+            "cond_tol deliberately.".format(channel, 2 * l - nmat, l, *q))
+
+
 def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BOND_COND_FLOOR,
                 guard_freqs="all", residual_tol=_STATIC_RESIDUAL_TOL,
                 guard_policy="refuse", violations=None, iteration=None,
@@ -3463,11 +3474,7 @@ def dress_batch(chi_bar_b, W, channel, *, l0, nmat, spatial_shape, cond_tol=_BON
         cause = _conditioning_refusal(
             channel, (worst, i - i_offset, ratio_i, pole_i, smin_i, smax_i), cond_tol, 1, 1)
         raise BondConditioningError(
-            "dress_batch: the {} RPA denominator is singular or nearly singular at "
-            "bosonic Matsubara index {} (grid index l={}) and q-point index ({}, {}, {}); "
-            "the bond path has entered the instability region. Reduce the interaction "
-            "strength, raise the temperature, refine or reduce the q grid, or lower "
-            "cond_tol deliberately.".format(channel, 2 * l - nmat, l, qx, qy, qz),
+            _dress_refusal_text(channel, l, nmat, (qx, qy, qz)),
             channel=channel, iq=q, q=(qx, qy, qz), l=l, worst=worst, ratio=ratio_i,
             pole=pole_i, smin=smin_i, smax=smax_i, cond_tol=cond_tol) from cause
 

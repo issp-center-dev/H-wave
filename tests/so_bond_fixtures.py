@@ -11,10 +11,26 @@ imports).
 * :func:`green_kw`, :func:`pair_kernel` -- the Green-function layout of
   the bond bubble and the bond pairing kernel of code-slot vertex blocks.
 * :func:`exact` -- an anchored regex of an exact refusal message.
+* :func:`assert_recomputed` -- two computations of the same arithmetic
+  agree to round-off (:data:`RECOMPUTE_RTOL`).
 * :func:`chibar_static`, :func:`production_gamma_label`,
   :func:`production_first_order` -- the production spinful bond vertex in
   the label form of an exact-diagonalization fixture and its first-order
   correlator ``u^T [-chibar(q) Gamma(-q) chibar(q)] v``.
+* :func:`canonical_green` -- the free Green function of an S_z-conserving
+  fixture built per spin block (exact zeros between the spin blocks).
+* :func:`static_pair_inputs`, :func:`static_pair_kernels` -- the static
+  pairing vertex and pair propagator of an S_z-conserving fixture through
+  the packed production chain, and its kernel, packed and dense.
+* :func:`dense_spectrum`, :func:`cluster_projector`, :func:`match_spectrum`
+  -- the eigenvalue matching rule: optimal assignment, cluster-level
+  condition numbers from the left and right eigenvectors.
+* the packed production chain of the conserving fixtures (``chain_*``,
+  the bubbles, the dressing, the pairing parts and batch), the packed
+  pairing kernel on random inputs (``kernel_setup``, ``random_kernels``),
+  the FLEX ring of the ``P_B`` gate (``pb_*``) and sector operators of a
+  given reduced matrix (:func:`subset_bases`, :func:`sector_op_of`),
+  shared by the packed-layout tests and the index-map mutation tests.
 """
 import contextlib
 import functools
@@ -24,16 +40,28 @@ import re
 import shutil
 import tempfile
 
+from typing import NamedTuple
+
 import numpy as np
+import scipy.linalg
+from scipy.optimize import linear_sum_assignment
+from scipy.sparse.linalg import LinearOperator
 
 import hwave.qlmsio.read_input_k as read_input_k
+from hwave import sc
+from hwave.solver import bond_channels, flex_bond, so_bond
 from hwave.solver import eliashberg_bond as eb
 from hwave.solver import rpa
-from hwave.solver.so_bond import (SLOT_CONVENTION, SOBondCaps, plan_so_bond, slot_geometry,
-                                  so_bond_topology, so_bond_vertex)
+from hwave.solver.so_bond import (SLOT_CONVENTION, PackedArrays, PackedBondPairKernel,
+                                  SOBondCaps, plan_so_bond, select_layout, slot_geometry,
+                                  so_bond_topology, so_bond_vertex, sz_sector_map)
 from hwave.solver.so_records import compile_interaction
-from tests.so_bond_oracles import (CELL, first_order_prediction, gamma_code_to_label,
-                                   lindhard_static, mesh_index)
+from tests.so_bond_oracles import (BASE, CELL, FIXTURE_LZSZ, FIXTURE_LZSZ_GRID, FIXTURE_SZ_GRID,
+                                   FIXTURE_SZ_GRID_H0, FIXTURE_SZ_GRID_SYM, FIXTURE_SZ_RING,
+                                   TYPES_OFFSITE, OracleGeometry, closed_row, expand_tables,
+                                   file_gamma_label, first_order_prediction,
+                                   gamma_code_to_label, lindhard_static, mesh_index,
+                                   ph_sector_lists, pp_sector_lists, random_green, sz_of_mode)
 
 
 @contextlib.contextmanager
@@ -106,6 +134,29 @@ def exact(msg):
     return "^" + re.escape(msg) + "$"
 
 
+#: two computations of the same arithmetic on different buffers agree to this
+#: (relative, max-norm): the SIMD loops of numpy < 2 depend on the memory
+#: alignment, so a recomputed float array is not reproducible bitwise
+RECOMPUTE_RTOL = 1.0e-15
+
+
+def assert_recomputed(tc, got, want, msg=None, rtol=RECOMPUTE_RTOL):
+    """``max|got - want| <= rtol max|want|`` for arrays or ``PackedArrays``
+    (block by block against the largest block entry), shapes equal. Use a
+    bitwise compare only where an array is moved, not recomputed."""
+    if isinstance(want, PackedArrays):
+        tc.assertIsInstance(got, PackedArrays, msg)
+        pairs = list(zip(got.blocks, want.blocks))
+        tc.assertEqual(len(got.blocks), len(want.blocks), msg)
+    else:
+        pairs = [(np.asarray(got), np.asarray(want))]
+    scale = max(float(np.max(np.abs(w))) if w.size else 0.0 for _, w in pairs)
+    for g, w in pairs:
+        tc.assertEqual(g.shape, w.shape, msg)
+        if w.size:
+            tc.assertLessEqual(float(np.max(np.abs(g - w))), rtol * scale, msg)
+
+
 def production_gamma_b(tables, norb, topo, shape):
     """The production ``Gamma_B`` ``(nvol, ND, ND)`` of the interaction
     ``tables`` (``norb`` physical orbitals) on the channels of ``topo`` (any
@@ -175,3 +226,541 @@ def production_first_order(fixture, frame, sketches, qs):
     of ``frame``."""
     return first_order_prediction(chibar_static(frame), production_gamma_label(fixture, frame),
                                   frame.spatial_shape, sketches, qs)
+
+
+@functools.lru_cache(maxsize=None)
+def canonical_green(fixture, nmat):
+    """``G(k, i w_n) = [i w_n + mu - H_s(k)]^{-1}`` ``(nmat, nvol, nd, nd)``
+    (spin-block index, ``w_n = (2n + 1 - nmat) pi T``) of an S_z-conserving
+    fixture, inverted per spin block ``s``: the entries between the spin
+    blocks are exactly zero. Refuses a band with a nonzero spin-off-diagonal
+    entry. Read-only (cached by content)."""
+    h1_k, mu, beta = fixture.band
+    h1_k = np.asarray(h1_k, dtype=np.complex128)
+    nvol, nd, _ = h1_k.shape
+    norb = nd // 2
+    up, dn = slice(0, norb), slice(norb, nd)
+    if np.any(h1_k[:, up, dn] != 0) or np.any(h1_k[:, dn, up] != 0):
+        raise ValueError("canonical_green: the band has spin-off-diagonal entries")
+    w = (2 * np.arange(nmat) + 1 - nmat) * np.pi / beta
+    eye = np.eye(norb)
+    out = np.zeros((nmat, nvol, nd, nd), dtype=np.complex128)
+    for blk in (up, dn):
+        A = (1j * w + mu)[:, None, None, None] * eye - h1_k[None, :, blk, blk]
+        out[:, :, blk, blk] = np.linalg.inv(A)
+    out.flags.writeable = False
+    return out
+
+
+@functools.lru_cache(maxsize=None)
+def static_pair_inputs(fixture, nmat=8):
+    """``(V, G2, geom, sector_map, plan)``: the static pairing vertex of an
+    S_z-conserving fixture through the packed production chain -- the packed
+    ``Gamma_B`` (``so_bond_vertex``), the static packed bubble of
+    :func:`canonical_green` (``so_bond_bubble``), its dressing
+    (``so_bond_dress``, a batch of one at ``l0 = nmat // 2``) and ``V =
+    V_bare + V_fluct`` (``so_bond_pairing_vertex_parts``) as
+    ``PackedArrays`` of leading shape ``(1, nvol)`` -- with the pair
+    propagator ``sc._calc_g2`` of the same Green function, the slot
+    geometry, the sector map and a packed vertex plan. Cached by content."""
+    nd, shape, nvol = fixture.nd, fixture.spatial_shape, fixture.nvol
+    c = compile_interaction(fixture.tables_dict, fixture.norb_phys)
+    topo = so_bond_topology(c, CELL)
+    geom = slot_geometry(topo, shape)
+    layout, reason = select_layout(c, fixture.transfer_dict, override="auto")
+    if layout != "sz_packed":
+        raise ValueError("static_pair_inputs: the fixture does not conserve S_z ({})"
+                         .format(reason))
+
+    def plan(consumer):
+        return plan_so_bond(nmat=nmat, nvol=nvol, B=geom.B, nd=nd, consumers=(consumer,),
+                            caps=SOBondCaps(None, None, None), layout=layout,
+                            layout_reason=reason)
+    sm = sz_sector_map(topo, nd)
+    gamma = so_bond_vertex(c, topo, shape, plan=plan("vertex"))
+    green = canonical_green(fixture, nmat)
+    chibar = PackedArrays.zeros(sm, (nvol,))
+    so_bond.so_bond_bubble(green[None].copy(), None, fixture.beta, topo, shape,
+                           plan=plan("chi_static"), freq="static", sink=chibar)
+    chi = so_bond.so_bond_dress(PackedArrays(sm, tuple(b[None] for b in chibar.blocks)), gamma,
+                                plan=plan("chi_static"), l0=nmat // 2, spatial_shape=shape)
+    chi = PackedArrays(sm, tuple(b[0] for b in chi.blocks))
+    v_bare, v_fluct = so_bond.so_bond_pairing_vertex_parts(gamma, chi, geom,
+                                                           plan=plan("pairing_static"))
+    V = PackedArrays(sm, tuple((a + b)[None] for a, b in zip(v_bare.blocks, v_fluct.blocks)))
+    g_kw = green.reshape((nmat,) + shape + (nd, nd)).transpose(4, 5, 1, 2, 3, 0)
+    G2 = sc._calc_g2(np.ascontiguousarray(g_kw), fixture.beta)[..., None]
+    return V, G2, geom, sm, plan("vertex")
+
+
+@functools.lru_cache(maxsize=None)
+def static_pair_kernels(fixture, nmat=8):
+    """``(packed, dense)``: the static pairing kernel of
+    :func:`static_pair_inputs`. ``packed`` is the ``PackedBondPairKernel``
+    of ``V``, ``dense`` the production ``BondPairKernel`` of
+    ``V.to_dense()`` (:func:`pair_kernel`). Cached by content."""
+    V, G2, geom, sm, plan = static_pair_inputs(fixture, nmat)
+    shape = fixture.spatial_shape
+    packed = PackedBondPairKernel(V, G2, geom, sm, plan=plan, spatial_shape=shape,
+                                  beta=fixture.beta, nfreq=1)
+    dense = pair_kernel(V.to_dense(), G2, geom, fixture.nd, shape, fixture.beta)
+    return packed, dense
+
+
+#: the eigenvalue matching rule: ``|lambda - mu| <= MATCH_TOL max(1, max|lambda|)
+#: max(1, kappa_c)``; clusters join at ``MATCH_TOL max(1, max|lambda|)``
+MATCH_TOL = 1.0e-8
+#: the largest cluster condition number a fixture may have
+KAPPA_MAX = 1.0e4
+
+
+class DenseSpectrum(NamedTuple):
+    """The complete spectrum of a dense matrix: eigenvalues ``vals``, right
+    and left eigenvectors (columns, ``Y^H M = Lambda Y^H``), the clusters
+    (``bond_channels.cluster_eigenvalues`` at ``MATCH_TOL scale``), the
+    cluster condition number ``kappa`` of each eigenvalue's cluster and
+    ``scale = max(1, max|lambda|)``."""
+    vals: np.ndarray
+    right: np.ndarray
+    left: np.ndarray
+    clusters: tuple
+    kappa: np.ndarray
+    scale: float
+
+
+def cluster_projector(right, left, idx):
+    """The spectral projector ``X_c (Y_c^H X_c)^{-1} Y_c^H`` of the
+    eigenvectors ``idx`` (right ``X``, left ``Y``)."""
+    X, Y = right[:, list(idx)], left[:, list(idx)]
+    return X @ np.linalg.solve(Y.conj().T @ X, Y.conj().T)
+
+
+def dense_spectrum(M):
+    """:class:`DenseSpectrum` of the dense matrix ``M`` (``scipy.linalg.eig``
+    with the left eigenvectors); ``kappa`` of a cluster is the 2-norm of its
+    spectral projector (``||x|| ||y|| / |y^H x|`` for a simple
+    eigenvalue)."""
+    vals, left, right = scipy.linalg.eig(np.asarray(M), left=True, right=True)
+    scale = max(1.0, float(np.abs(vals).max())) if vals.size else 1.0
+    clusters = tuple(tuple(int(i) for i in c)
+                     for c in bond_channels.cluster_eigenvalues(vals, deg_tol=MATCH_TOL * scale))
+    kappa = np.empty(len(vals))
+    for c in clusters:
+        kappa[list(c)] = np.linalg.norm(cluster_projector(right, left, c), 2)
+    return DenseSpectrum(vals, right, left, clusters, kappa, scale)
+
+
+def match_spectrum(ref, mu):
+    """Assign each value of ``mu`` to a distinct eigenvalue of the
+    :class:`DenseSpectrum` ``ref`` (``linear_sum_assignment`` on ``|lambda -
+    mu|``, complex). Returns ``(cols, ratio)``: ``cols[j]`` the eigenvalue of
+    ``ref`` assigned to ``mu[j]``, and the largest ``|lambda - mu| /
+    (MATCH_TOL scale max(1, kappa_c))`` (the rule holds when ``ratio <=
+    1``)."""
+    mu = np.asarray(mu, dtype=complex).ravel()
+    if mu.size > ref.vals.size:
+        raise ValueError("match_spectrum: {} values against {} eigenvalues".format(
+            mu.size, ref.vals.size))
+    cost = np.abs(mu[:, None] - ref.vals[None, :])
+    rows, cols = linear_sum_assignment(cost)
+    out = np.empty(mu.size, dtype=np.int64)
+    out[rows] = cols
+    bound = MATCH_TOL * ref.scale * np.maximum(1.0, ref.kappa[out])
+    ratio = float(np.max(cost[np.arange(mu.size), out] / bound)) if mu.size else 0.0
+    return out, ratio
+
+
+# ---------------------------------------------------------------------------
+# the S_z-packed production chain of the conserving fixtures (shared by the
+# packed-layout tests and the index-map mutation tests)
+# ---------------------------------------------------------------------------
+
+NOCAP = SOBondCaps(None, None, None)
+#: the subtest labels of the conserving fixtures
+FIXTURE_NAMES = {FIXTURE_SZ_RING: "ring", FIXTURE_SZ_GRID: "grid", FIXTURE_LZSZ: "lzsz",
+                 FIXTURE_SZ_GRID_H0: "grid h=0", FIXTURE_SZ_GRID_SYM: "grid spin-symmetric",
+                 FIXTURE_LZSZ_GRID: "lzsz grid"}
+
+
+@functools.lru_cache(maxsize=None)
+def chain_setup(fx):
+    """``(compiled, topo, geom)`` of a fixture's interaction."""
+    c = compile_interaction(fx.tables_dict, fx.norb_phys)
+    topo = so_bond_topology(c, CELL)
+    return c, topo, slot_geometry(topo, fx.spatial_shape)
+
+
+def chain_plan(fx, layout, consumers=("vertex",), nmat=2, **kw):
+    """The admission plan of a fixture in ``layout`` (``"sz_packed"`` takes
+    the selection's reason line and asserts the selection)."""
+    c, topo, _ = chain_setup(fx)
+    reason = None
+    if layout == "sz_packed":
+        selected, reason = select_layout(c, fx.transfer_dict, override="auto")
+        assert selected == "sz_packed", (FIXTURE_NAMES.get(fx), reason)
+    return plan_so_bond(nmat=nmat, nvol=fx.nvol, B=len(topo.delta_r), nd=fx.nd,
+                        consumers=consumers, caps=NOCAP, layout=layout,
+                        layout_reason=reason, **kw)
+
+
+@functools.lru_cache(maxsize=None)
+def chain_gamma(fx, layout):
+    """The production ``Gamma_B`` of a fixture in ``layout``."""
+    c, topo, _ = chain_setup(fx)
+    return so_bond_vertex(c, topo, fx.spatial_shape, plan=chain_plan(fx, layout))
+
+
+def chain_lists(fx):
+    """The test-side ph sector lists of a fixture's channels."""
+    return ph_sector_lists(chain_setup(fx)[2].B, fx.nd)
+
+
+def chain_sector_map(fx):
+    return sz_sector_map(chain_setup(fx)[2], fx.nd)
+
+
+def random_packed(sm, lead, seed):
+    """Seeded complex random ``PackedArrays`` of leading shape ``lead`` (an
+    int is one leading axis)."""
+    lead = (lead,) if isinstance(lead, (int, np.integer)) else tuple(lead)
+    rng = np.random.default_rng(seed)
+    return PackedArrays(sm, tuple(rng.normal(size=lead + (n, n))
+                                  + 1j * rng.normal(size=lead + (n, n)) for n in sm.sizes))
+
+
+def copy_packed(p):
+    return PackedArrays(p.sector_map, tuple(b.copy() for b in p.blocks))
+
+
+#: Matsubara counts of the bubble fixtures
+BUBBLE_NMAT = {FIXTURE_SZ_GRID: 8, FIXTURE_LZSZ: 8}
+
+
+def bubble_green(fx):
+    """The bubble input ``(1, nmat, nvol, nd, nd)``: the per-spin-block G."""
+    return canonical_green(fx, BUBBLE_NMAT[fx])[None].copy()
+
+
+def static_bubble(fx, layout, g, sink=None):
+    """The production static bubble of ``g`` in ``layout`` (into ``sink``)."""
+    topo = chain_setup(fx)[1]
+    plan = chain_plan(fx, layout, ("chi_static",), BUBBLE_NMAT[fx])
+    ND = plan.ND
+    if sink is None:
+        sink = (np.empty((fx.nvol, ND, ND), dtype=np.complex128) if layout == "dense"
+                else PackedArrays.zeros(chain_sector_map(fx), (fx.nvol,)))
+    out = so_bond.so_bond_bubble(g, None, fx.beta, topo, fx.spatial_shape, plan=plan,
+                                 freq="static", sink=sink)
+    assert out is sink
+    return sink
+
+
+def every_slice_bubble(fx, layout, g):
+    """``(chibar, pairs)``: the whole slot (dense array or a copy of the
+    packed blocks) and ``get_pair_full`` of every channel pair."""
+    topo = chain_setup(fx)[1]
+    plan = chain_plan(fx, layout, ("chi_dynamic",), BUBBLE_NMAT[fx])
+    sm = chain_sector_map(fx)
+    with so_bond.open_store(plan, sm if layout == "sz_packed" else None) as store:
+        self_out = so_bond.so_bond_bubble(g, None, fx.beta, topo, fx.spatial_shape, plan=plan,
+                                          freq="all", sink=store)
+        assert self_out is None
+        if layout == "dense":
+            chibar = store.get_freq_batch("chibar", 0, plan.nmat).copy()
+        else:
+            chibar = PackedArrays(sm, tuple(b.copy() for b in store.packed("chibar").blocks))
+        pairs = {(a, b): store.get_pair_full("chibar", a, b)
+                 for a in range(plan.B) for b in range(plan.B)}
+    return chibar, pairs
+
+
+@functools.lru_cache(maxsize=None)
+def production_bubbles(fx, freq):
+    """``(dense, packed)`` production bubbles of the canonical G
+    (``freq = "static"`` or ``"all"``)."""
+    run = static_bubble if freq == "static" else every_slice_bubble
+    return run(fx, "dense", bubble_green(fx)), run(fx, "sz_packed", bubble_green(fx))
+
+
+#: the batch rows of the frequency-batch comparison (grid index l0 = 2, nb = 4)
+BATCH = slice(2, 6)
+#: relative size and seed of the sector-preserving perturbation of the bubbles
+PERTURB = (0.05, 2711)
+
+
+def packed_lead(p, lead):
+    """The packed blocks of ``p`` indexed by ``lead`` along the leading axes (copies)."""
+    return PackedArrays(p.sector_map, tuple(np.array(b[lead]) for b in p.blocks))
+
+
+def dress_inputs(fx, kind, scale=1.0):
+    """``(X_dense, X_packed, gamma_dense, gamma_packed, l0)``: a batch of the
+    packed production bubbles of the canonical G (``"static"``: the static
+    bubble as a batch of one; ``"batch"``: four slices of the every-slice
+    bubble), each sector block plus a seeded random block of
+    ``PERTURB[0]`` times its largest entry (this breaks the lattice and
+    +1/-1 symmetries that make blocks tie in the guard's argmin, and keeps
+    the input sector diagonal), its dense image, and the production vertex
+    times ``scale``."""
+    if kind == "static":
+        p, l0 = packed_lead(production_bubbles(fx, "static")[1], np.s_[None]), BUBBLE_NMAT[fx] // 2
+    else:
+        p, l0 = packed_lead(production_bubbles(fx, "all")[1][0], BATCH), BATCH.start
+    rng = np.random.default_rng(PERTURB[1])
+    for b in p.blocks:
+        b += PERTURB[0] * np.abs(b).max() * (rng.normal(size=b.shape)
+                                             + 1j * rng.normal(size=b.shape))
+    gd, gp = chain_gamma(fx, "dense"), chain_gamma(fx, "sz_packed")
+    gp = PackedArrays(gp.sector_map, tuple(scale * b for b in gp.blocks))
+    return p.to_dense(), p, scale * gd, gp, l0
+
+
+def dress_plan(fx, layout, kind):
+    return chain_plan(fx, layout, ("chi_static",) if kind == "static" else ("chi_dynamic",),
+                      BUBBLE_NMAT[fx])
+
+
+def dress(fx, layout, X, gamma, l0, kind, **kw):
+    """``(chi, diagnostics)`` of the production dressing in ``layout``."""
+    diag = {}
+    chi = so_bond.so_bond_dress(X, gamma, plan=dress_plan(fx, layout, kind), l0=l0,
+                                spatial_shape=fx.spatial_shape, diagnostics=diag, **kw)
+    return chi, diag
+
+
+@functools.lru_cache(maxsize=None)
+def dressed(fx, kind):
+    """``(X_dense, X_packed, gamma_dense, gamma_packed, chi_dense,
+    chi_packed)``: the dressing inputs of :func:`dress_inputs` and the
+    production dressing in both layouts (static: the batch of one taken
+    at its single slice)."""
+    xd, xp, gd, gp, l0 = dress_inputs(fx, kind)
+    chi_d, _ = dress(fx, "dense", xd, gd, l0, kind)
+    chi_p, _ = dress(fx, "sz_packed", xp, gp, l0, kind)
+    if kind == "static":
+        xd, xp, chi_d, chi_p = xd[0], packed_lead(xp, 0), chi_d[0], packed_lead(chi_p, 0)
+    return xd, xp, gd, gp, chi_d, chi_p
+
+
+def parts_plan(fx, layout):
+    return chain_plan(fx, layout, ("pairing_static",), BUBBLE_NMAT[fx])
+
+
+def batch_plan(fx, layout, **kw):
+    return chain_plan(fx, layout, ("chi_dynamic",), BUBBLE_NMAT[fx], vertex_batch=True, **kw)
+
+
+def pairing_parts(fx, layout, gamma, chi):
+    """``(V_bare, V_fluct)`` of the production static pairing parts."""
+    return so_bond.so_bond_pairing_vertex_parts(gamma, chi, chain_setup(fx)[2],
+                                                plan=parts_plan(fx, layout))
+
+
+def vertex_batch(fx, layout, gamma, Y, out=None, plan=None):
+    """The production pairing vertex batch written into ``out`` (a fresh
+    array or ``PackedArrays`` when None)."""
+    if out is None:
+        out = (np.empty(Y.shape, dtype=np.complex128) if layout == "dense"
+               else PackedArrays.zeros(Y.sector_map, Y.lead_shape))
+    plan = batch_plan(fx, layout) if plan is None else plan
+    got = so_bond.so_bond_pairing_vertex_batch(gamma, Y, chain_setup(fx)[2], plan=plan,
+                                               out=out)
+    assert got is out
+    return out
+
+
+# -- the packed pairing kernel on random inputs ------------------------------
+
+@functools.lru_cache(maxsize=None)
+def kernel_setup(fx):
+    """``(geom, sector_map, plan)`` of a fixture (packed vertex plan)."""
+    c, topo, geom = chain_setup(fx)
+    layout, reason = select_layout(c, fx.transfer_dict, override="auto")
+    assert layout == "sz_packed", (FIXTURE_NAMES[fx], reason)
+    plan = plan_so_bond(nmat=2, nvol=fx.nvol, B=geom.B, nd=fx.nd, consumers=("vertex",),
+                        caps=NOCAP, layout=layout, layout_reason=reason)
+    return geom, sz_sector_map(topo, fx.nd), plan
+
+
+def random_vertex(sm, nfreq, nvol, seed):
+    """Seeded random packed vertex of leading shape ``(nfreq, nvol)``."""
+    rng = np.random.default_rng(seed)
+    return PackedArrays(sm, tuple(rng.normal(size=(nfreq, nvol, n, n))
+                                  + 1j * rng.normal(size=(nfreq, nvol, n, n))
+                                  for n in sm.sizes))
+
+
+def pp_of_pair(nd):
+    """``p = S_z(b) + S_z(c)`` of every pair ``(b, c)`` (test side)."""
+    norb = nd // 2
+    return np.array([[int(round(sz_of_mode(b, norb) + sz_of_mode(c, norb))) for c in range(nd)]
+                     for b in range(nd)])
+
+
+def random_g2(fx, nfreq, seed):
+    """A random pair propagator ``G2[i, l, j, m]`` (output pair ``(i, j)``,
+    input pair ``(l, m)``) that conserves the pair S_z exactly."""
+    nd = fx.nd
+    rng = np.random.default_rng(seed)
+    shape = (nd,) * 4 + fx.spatial_shape + (nfreq,)
+    g2 = rng.normal(size=shape) + 1j * rng.normal(size=shape)
+    pp = pp_of_pair(nd)
+    off = pp[:, None, :, None] != pp[None, :, None, :]
+    g2[off] = 0
+    return g2
+
+
+def gap_shape(fx, nfreq):
+    return (fx.nd, fx.nd) + fx.spatial_shape + ((nfreq,) if nfreq > 1 else ())
+
+
+def pp_flat_index(nd, grid):
+    """Per pp sector ``(+1, 0, -1)`` the ascending flat gap indices of a gap
+    ``(nd, nd) + grid points`` (test side)."""
+    return [(l[:, None] * grid + np.arange(grid)[None, :]).ravel() for l in pp_sector_lists(nd)]
+
+
+@functools.lru_cache(maxsize=None)
+def random_kernels(fx, nfreq, seed=5):
+    """``(packed, dense, V, G2)`` on a random vertex and pair propagator."""
+    geom, sm, plan = kernel_setup(fx)
+    V = random_vertex(sm, nfreq, fx.nvol, seed)
+    G2 = random_g2(fx, nfreq, seed + 1)
+    packed = PackedBondPairKernel(V, G2, geom, sm, plan=plan, spatial_shape=fx.spatial_shape,
+                                  beta=fx.beta, nfreq=nfreq)
+    dense = pair_kernel(V.to_dense(), G2, geom, fx.nd, fx.spatial_shape, fx.beta)
+    return packed, dense, V, G2
+
+
+def cvec(rng, n):
+    return rng.normal(size=n) + 1j * rng.normal(size=n)
+
+
+# -- the FLEX ring of the P_B gate (a chain of L = 5 sites, norb_phys = 1) -----
+
+PB_L, PB_NMAT, PB_BETA, PB_ND = 5, 4, 1.7, 2
+PB_SHAPE = (PB_L, 1, 1)
+
+
+def _pb_tables(nnn, pairlift):
+    """CoulombIntra on site and every off-site type on the nearest bond (and
+    at 0.47 of it on the next-nearest bond), PairHop complex."""
+    out = {"CoulombIntra": {((0, 0, 0), (0, 0)): BASE["CoulombIntra"]}}
+    for t in TYPES_OFFSITE:
+        if t == "PairLift" and not pairlift:
+            continue
+        v = BASE[t] * (1 + 0.6j if t == "PairHop" else 1.0)
+        out[t] = dict(closed_row(1, 0, 0, v))
+        if nnn:
+            out[t].update(closed_row(2, 0, 0, 0.47 * v))
+    return out
+
+
+#: all seven types; the S_z-conserving subset (PairLift dropped)
+PB_TABLES_ALL = {nnn: _pb_tables(nnn, True) for nnn in (False, True)}
+PB_TABLES_SZ = {nnn: _pb_tables(nnn, False) for nnn in (False, True)}
+
+
+def _pb_label_geometry(nnn):
+    """The oracle's labels, listed independently of the production channels
+    (another order; the functional does not depend on it)."""
+    dr = [(1, 0, 0), (0, 0, 0), (-1, 0, 0)] + ([(-2, 0, 0), (2, 0, 0)] if nnn else [])
+    rev = [dr.index(tuple(-x for x in d)) for d in dr]
+    return OracleGeometry(dr, rev, PB_SHAPE)
+
+
+PB_GEOM_L = {nnn: _pb_label_geometry(nnn) for nnn in (False, True)}
+
+
+def pb_gamma_label(tables, geom):
+    return file_gamma_label(expand_tables(tables, 1), geom, PB_ND)
+
+
+def pb_green(seed, sz):
+    """``(nmat, nvol, nd, nd)``; with ``sz`` the spin-off-diagonal entries
+    are set to exactly zero."""
+    g = random_green(seed, PB_NMAT, PB_L, PB_ND)
+    if sz:
+        g[..., 0, 1] = 0
+        g[..., 1, 0] = 0
+    return g
+
+
+@functools.lru_cache(maxsize=None)
+def pb_setup(nnn, sz):
+    """``(compiled, topo, geom)`` of the P_B chain."""
+    tables = (PB_TABLES_SZ if sz else PB_TABLES_ALL)[nnn]
+    c = compile_interaction(tables, 1)
+    topo = so_bond_topology(c, CELL)
+    return c, topo, slot_geometry(topo, PB_SHAPE)
+
+
+def pb_plan(nnn, sz, layout):
+    c, topo, _ = pb_setup(nnn, sz)
+    reason = None
+    if layout == "sz_packed":
+        selected, reason = select_layout(c, {}, override="auto")
+        assert selected == "sz_packed", reason
+    return plan_so_bond(nmat=PB_NMAT, nvol=PB_L, B=len(topo.delta_r), nd=PB_ND,
+                        consumers=("chi_dynamic",), caps=NOCAP, layout=layout,
+                        layout_reason=reason)
+
+
+def pb_sigma(source, green, geom):
+    """The production self-energy of the ``W`` slot of ``source``."""
+    return flex_bond.calc_self_energy_bond(source, green[None].copy(), PB_BETA, geom, PB_SHAPE,
+                                           PB_ND, 1)[0]
+
+
+def pb_sigma_prod_packed(nnn, seed):
+    """The production self-energy through the S_z-packed chain: packed
+    Gamma_B, the bubble in a packed store, the ring per sector, ``p_b`` of
+    the packed ring into the store's ``W`` slot, read by the self-energy."""
+    c, topo, geom = pb_setup(nnn, True)
+    plan = pb_plan(nnn, True, "sz_packed")
+    sm = sz_sector_map(topo, PB_ND)
+    gam = so_bond_vertex(c, topo, PB_SHAPE, plan=plan)
+    assert isinstance(gam, PackedArrays)
+    g = pb_green(seed, True)
+    with so_bond.PackedBondBlockStore(PB_NMAT, PB_L, sm, ("chibar", "W")) as st:
+        so_bond.so_bond_bubble(g[None].copy(), None, PB_BETA, topo, PB_SHAPE, plan=plan,
+                               freq="all", sink=st)
+        X = st.packed("chibar")
+        M = PackedArrays(sm, tuple(0.5 * gb[None] @ xb @ gb[None]
+                                   for gb, xb in zip(gam.blocks, X.blocks)))
+        W = st.packed("W")
+        assert so_bond.p_b(M, PB_ND, out=W) is W
+        return pb_sigma(st, g, geom)
+
+
+# -- sector operators of a given reduced matrix ------------------------------
+
+def subset_bases(shape, dims):
+    """Subset bases of the requested dimensions on disjoint orbits of the
+    antisymmetric basis of ``shape``."""
+    full = sc._SOAntisymmetricBasis(shape)
+    out, start = [], 0
+    for d in dims:
+        reps = full.rep[start:start + d]
+        start += d
+        idx = np.sort(np.concatenate([reps, full.partner[reps]])).astype(np.int64)
+        out.append(sc._SOAntisymmetricBasis.from_subset(shape, idx))
+    assert start <= full.dim, (shape, dims)
+    return out
+
+
+def sector_op_of(p, basis, M, *, adjoint=True, matmat=True):
+    """A ``SectorOp`` whose reduced operator is ``M``: ``K = E M E^dagger``
+    on the sector vector, with its adjoint precomputed when ``adjoint``;
+    ``matmat = False`` gives forward and adjoint products only (as the
+    kernel's ``sector_op``)."""
+    E = basis.to_full(np.eye(basis.dim, dtype=complex))
+    K = E @ np.asarray(M, dtype=complex) @ E.conj().T
+    n = basis.n
+    kw = dict(matvec=lambda x: K @ np.asarray(x).ravel())
+    if matmat:
+        kw["matmat"] = lambda X: K @ X
+    if adjoint:
+        KH = np.ascontiguousarray(K.conj().T)
+        kw["rmatvec"] = lambda y: KH @ np.asarray(y).ravel()
+    return sc.SectorOp(p, LinearOperator((n, n), dtype=complex, **kw), basis, adjoint)
