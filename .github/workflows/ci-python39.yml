@@ -13,6 +13,11 @@ name: CI Python 3.10+
 #                 only (`test` keeps all three versions). Everything else
 #                 is the fast gate's job and is not repeated here.
 #
+# Both jobs carry a numpy axis: the default leg resolves the newest numpy
+# 2.x that pyproject allows, and one leg per job pins numpy < 2 (see the
+# matrix comments). pyproject's old "^1.14" constraint had kept every CI
+# run on numpy 1.26 without anyone choosing that.
+#
 # Both jobs are driven by the single `on:` block below, so BOTH run on
 # push AND on pull_request. That is deliberate and is the decision on
 # record: the ED assets must run BEFORE a merge, not after it. test-full
@@ -55,6 +60,19 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+        # numpy major. "" lets Poetry resolve the newest release that
+        # pyproject allows (numpy 2.x since the constraint became
+        # ">=1.26,<3"); "<2" pins the leg to the last 1.x line. The tests
+        # branch on the major in a few places (NUMPY_BELOW_2 in
+        # tests/test_flex_second_order_compat.py and test_flex_hf_scf.py:
+        # bit-identical comparisons on numpy 2, a last-bit allowance on
+        # numpy < 2 because the FFT/BLAS memory paths differ there), so
+        # both majors must run. One numpy < 2 leg is enough for that; it
+        # rides on the newest interpreter.
+        numpy: [""]
+        include:
+          - python-version: "3.12"
+            numpy: "<2"
 
     steps:
     - uses: actions/checkout@v4
@@ -80,7 +98,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: .venv
-        key: venv-v4-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        # The numpy pin is part of the key: a venv cached for the numpy 2
+        # leg must not be handed to the numpy < 2 leg (or vice versa).
+        key: venv-v5-${{ runner.os }}-${{ matrix.python-version }}-numpy${{ matrix.numpy }}-${{ hashFiles('**/poetry.lock') }}
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
@@ -88,6 +108,16 @@ jobs:
 
     - name: Install project and dependencies
       run: poetry install --no-interaction --with dev
+
+    - name: Pin numpy for this leg
+      # Only the numpy < 2 leg. pip, not Poetry, so the pin does not touch
+      # pyproject.toml; the "Verify installation" step prints what was
+      # actually installed and the assertion below fails the leg if the
+      # pin did not take (a cached venv with the wrong major, say).
+      if: matrix.numpy != ''
+      run: |
+        poetry run pip install "numpy${{ matrix.numpy }}"
+        poetry run python -c "import numpy; v = numpy.__version__; assert int(v.split('.')[0]) < 2, f'expected numpy < 2 on this leg, got {v}'"
 
     - name: Provision the reference revision for the compatibility comparisons
       # tests/test_flex_second_order_compat.py and the three harnesses that
@@ -235,16 +265,21 @@ jobs:
       HWAVE_FULL_TESTS: "1"
     # ONE Python version, unlike `test`: the full-only tests are numerical
     # content (exact-diagonalization and dense-sum oracles), which depends
-    # on the numpy / scipy stack, not on the interpreter version -- and
-    # every leg runs the identical stack (numpy 1.26.4, scipy 1.15.3 on
-    # run 41701329212, frozen per leg by the cached venv). Three legs ran
-    # the same ~hour of arithmetic three times. Interpreter-version
-    # breakage is the fast gate's job, which keeps all three versions.
-    # Re-widen this matrix if the legs' stacks ever diverge (the "Verify
-    # installation" step prints them).
+    # on the numpy / scipy stack, not on the interpreter version. Three
+    # interpreter legs ran the same ~hour of arithmetic three times;
+    # interpreter-version breakage is the fast gate's job, which keeps all
+    # three versions.
+    #
+    # TWO numpy majors, though: that IS the stack the oracles depend on.
+    # The diagnostic ceilings and the equivalence table were frozen on
+    # numpy 1.26 (every CI leg ran 1.26.4 while pyproject still said
+    # "^1.14"), and the compatibility tests take a different branch per
+    # major (NUMPY_BELOW_2). The "" leg resolves the newest numpy 2.x;
+    # the "<2" leg keeps the historical stack. Both must stay green.
     strategy:
       matrix:
         python-version: ["3.12"]
+        numpy: ["", "<2"]
 
     steps:
     - uses: actions/checkout@v4
@@ -270,7 +305,8 @@ jobs:
       uses: actions/cache@v4
       with:
         path: .venv
-        key: venv-v4-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        # The numpy pin is part of the key (see the `test` job).
+        key: venv-v5-${{ runner.os }}-${{ matrix.python-version }}-numpy${{ matrix.numpy }}-${{ hashFiles('**/poetry.lock') }}
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
@@ -278,6 +314,13 @@ jobs:
 
     - name: Install project and dependencies
       run: poetry install --no-interaction --with dev
+
+    - name: Pin numpy for this leg
+      # Only the numpy < 2 leg; see the same step of the `test` job.
+      if: matrix.numpy != ''
+      run: |
+        poetry run pip install "numpy${{ matrix.numpy }}"
+        poetry run python -c "import numpy; v = numpy.__version__; assert int(v.split('.')[0]) < 2, f'expected numpy < 2 on this leg, got {v}'"
 
     - name: Provision the reference revision for the compatibility comparisons
       # tests/test_flex_second_order_compat.py and the three harnesses that

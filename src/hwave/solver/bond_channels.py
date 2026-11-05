@@ -2911,7 +2911,9 @@ def W_pm_bond(topo, ham_pm_onsite, *, spatial_shape):
             "integers; got {!r}".format(spatial_shape))
     nvol = Nx * Ny * Nz
 
-    ham_pm_onsite = np.array(ham_pm_onsite, dtype=complex, copy=False)
+    # np.asarray, not np.array(..., copy=False): under numpy 2 the latter
+    # raises when the conversion to complex needs a copy (a real input).
+    ham_pm_onsite = np.asarray(ham_pm_onsite, dtype=complex)
     if ham_pm_onsite.ndim != 5:
         raise ValueError(
             "W_pm_bond: ham_pm_onsite must have ndim=5 (nvol, norb, norb, "
