@@ -26,7 +26,7 @@ from scipy.sparse.linalg import LinearOperator
 
 from hwave import sc
 from hwave.solver.eliashberg import so_solve as sc_so
-from hwave.solver import eliashberg_dynamic
+from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
 from tests.so_bond_fixtures import exact, pp_flat_index, quiet, subset_bases
 from tests.so_bond_fixtures import sector_op_of as _sector
 

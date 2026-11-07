@@ -1057,7 +1057,7 @@ class TestG2TailConfigPlumbing(unittest.TestCase):
     def test_subnormal_temperature_rejected_on_the_dynamic_path_too(self):
         """solve_dynamic shares _coerce_run_beta; the gate must fire before
         any other configuration is even read."""
-        from hwave.solver import eliashberg_dynamic
+        from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
         with self.assertRaises(ValueError) as cm:
             eliashberg_dynamic.solve_dynamic(
                 {"mode": {"param": {"T": np.nextafter(0.0, 1.0)}}})

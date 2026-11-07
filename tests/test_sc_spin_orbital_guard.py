@@ -191,7 +191,7 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
         the spin-orbital dynamic solver, whose configuration guard fires before
         any other configuration is read (a minimal dict suffices: the default
         chi0q_mode = "load" is refused)."""
-        from hwave.solver import eliashberg_dynamic
+        from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
         with self.assertRaises(ValueError) as cm:
             eliashberg_dynamic.solve_dynamic(
                 {"mode": {"enable_spin_orbital": True}})

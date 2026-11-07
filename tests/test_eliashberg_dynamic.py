@@ -40,7 +40,7 @@ def test_dynamic_requires_even_nmat():
 
 
 def test_gpu_requested_parses_bool_and_string():
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     assert ed._gpu_requested({"gpu": True}) is True
     assert ed._gpu_requested({"gpu": False}) is False
     assert ed._gpu_requested({}) is False
@@ -97,7 +97,7 @@ def _write_symmetric_flex_fixture(tmp_path, nmat=8, Nx=2, Ny=2, T=0.5):
     return dict(nmat=nmat, norb=1, Nx=Nx, Ny=Ny, Nz=1)
 
 def test_load_flex_chi_dynamic_shapes(tmp_path):
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     m = _write_flex_fixture(tmp_path)
     inp = {"mode": {"param": {"Nmat": m["nmat"]}},
            "file": {"output": {"path_to_output": str(tmp_path)}},
@@ -109,7 +109,7 @@ def test_load_flex_chi_dynamic_shapes(tmp_path):
 
 
 def test_load_flex_chi_dynamic_grid_mismatch(tmp_path):
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     m = _write_flex_fixture(tmp_path, nmat=8)
     # overwrite green with a different nmat
     np.savez(tmp_path/"green.npz", green=(np.zeros((1, 6, 4, 1, 1), complex)), momentum_convention="e_plus_ikR")
@@ -123,7 +123,7 @@ def test_load_flex_chi_dynamic_grid_mismatch(tmp_path):
 def test_npz_freq_size_reads_header_without_loading(tmp_path):
     """_npz_freq_size returns the stored frequency-axis length from the NPZ
     header (chi: axis 0; green: axis 1) without materializing the array."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     _write_flex_fixture(tmp_path, nmat=12, norb=1, Nx=2, Ny=2, Nz=1)
     assert ed._npz_freq_size(str(tmp_path / "chiq_s.npz"),
                              ("chiq_s", "chiq"), axis=0) == 12
@@ -135,7 +135,7 @@ def test_npz_freq_size_returns_none_on_bad_or_missing(tmp_path):
     """Header probe is best-effort: an absent file, a non-NPZ file, or a missing
     key all return None (so the caller falls back to the config grid and the
     loader raises the real error) rather than a new header-parser failure."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     assert ed._npz_freq_size(str(tmp_path / "nope.npz"),
                              ("chiq_s",), axis=0) is None
     (tmp_path / "garbage.npz").write_bytes(b"not a zip file")
@@ -150,7 +150,7 @@ def test_npz_freq_size_returns_none_if_numpy_header_api_changes(tmp_path, monkey
     """The probe uses numpy.lib.format internals; if a future numpy renames them
     (AttributeError), the best-effort probe must still return None (fall back to
     the loader) rather than crash."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     from numpy.lib import format as npformat
     _write_flex_fixture(tmp_path, nmat=8)
 
@@ -167,7 +167,7 @@ def test_grid_mismatch_detected_before_loading(monkeypatch, tmp_path):
     rejected from the NPZ headers BEFORE the full arrays are allocated -- the
     memory guard sizes on the real file, not the smaller config."""
     from hwave.solver.eliashberg import io as sc_io
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     _write_flex_fixture(tmp_path, nmat=16, norb=1, Nx=2, Ny=2, Nz=1)
 
     called = {"loaded": False}
@@ -497,7 +497,7 @@ def test_expand_flex_chi_returns_host_numpy(tmp_path):
 
 
 def test_check_memory_aborts_over_limit():
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     with pytest.raises(MemoryError, match="mem_limit_gb"):
         ed.check_memory(norb=2, Nk=1024, nmat=512, mem_limit_gb=0.01)
     ed.check_memory(norb=1, Nk=4, nmat=8, mem_limit_gb=0)  # disabled: no raise
@@ -508,8 +508,7 @@ def test_memory_guard_runs_before_loading(monkeypatch):
     allocates the full-frequency chi/green arrays (fail-before-allocating):
     a too-tight mem_limit must raise MemoryError without the loader running."""
     from hwave.solver.eliashberg import io as sc_io
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     called = {"loaded": False}
 
     def _must_not_run(*args, **kwargs):
@@ -528,7 +527,7 @@ def test_memory_guard_runs_before_loading(monkeypatch):
 
 def test_dynamic_vertex_matches_static_per_frequency():
     import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     norb, Nx, Ny, Nz, nmat = 1, 2, 2, 1, 4
     nd = norb*norb
     rng = np.random.default_rng(5)
@@ -548,7 +547,7 @@ def test_dynamic_vertex_matches_static_per_frequency():
 
 
 def test_kernel_single_k_matches_dense_freq_operator():
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     from hwave.solver import matsubara as ms
     norb, Nx, Ny, Nz, nmat = 1, 1, 1, 1, 4
     beta = 8.0
@@ -579,7 +578,7 @@ def test_kernel_precomputed_vertex_rt_matches():
     at fp64 round-off, not bit-identity: numpy's FFT/einsum results vary in
     the last bits with buffer alignment, so even two identical kernel calls
     are not bit-reproducible.)"""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 8
     beta = 7.0
     rng = np.random.default_rng(23)
@@ -602,7 +601,7 @@ def test_kernel_fft_workers_matches_serial():
     """The scipy-parallel spatial FFT path (workers=-1) matches the serial
     numpy path to machine precision. (scipy's FFT backend may differ from
     numpy's in the last bits, hence allclose rather than bit equality.)"""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     if ed._SFFT is None:
         pytest.skip("scipy.fft unavailable")
     norb, Nx, Ny, Nz, nmat = 2, 1, 8, 8, 8
@@ -624,7 +623,7 @@ def test_kernel_fft_workers_matches_serial():
 
 
 def test_frequency_inner_is_full_vdot():
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     rng = np.random.default_rng(11)
     a = rng.standard_normal((2, 2, 2, 2, 1, 3)) + 1j*rng.standard_normal((2, 2, 2, 2, 1, 3))
     b = rng.standard_normal(a.shape) + 1j*rng.standard_normal(a.shape)
@@ -634,7 +633,7 @@ def test_frequency_inner_is_full_vdot():
 @pytest.mark.parametrize("norb", [1, 2])
 def test_g2_dynamic_sums_to_static(norb):
     import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     Nx, Ny, Nz, nmat = 2, 2, 1, 8
     rng = np.random.default_rng(6)
     # uniquely-populated (non-symmetric in orbital) green so an l-axis
@@ -687,7 +686,7 @@ def test_solve_dynamic_smoke_returns_finite_lambda(tmp_path):
     fixture no power iteration converges, and a non-converged iteration
     reports NaN (``test_outputs_written``)."""
     import os
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -720,7 +719,7 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
     import os
     import hwave.sc as sc
     from hwave.solver.eliashberg import eigen as sc_eigen
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -760,7 +759,7 @@ def test_iteration_spectral_shift_labels_eigenvalue_dat(tmp_path):
     number is NaN, ``eigen_converged=false`` is recorded, and the note says
     it is NOT an eigenvalue; it never claims a VALIDATED signed eigenvalue."""
     import os
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -806,7 +805,7 @@ def test_kernel_cupy_matches_numpy():
         cupy.zeros(1)
     except Exception:
         pytest.skip("cupy installed but no usable CUDA device")
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     norb, Nx, Ny, Nz, nmat = 2, 4, 2, 1, 8
     beta = 7.0
     rng = np.random.default_rng(29)
@@ -861,8 +860,7 @@ def test_solve_dynamic_gpu_falls_back_without_cupy(tmp_path, monkeypatch,
     import os
     import logging
     from hwave.solver import backend
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -892,8 +890,7 @@ def test_solve_dynamic_gpu_end_to_end_matches_cpu(tmp_path):
     except Exception:
         pytest.skip("cupy installed but no usable CUDA device")
     import os
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -914,7 +911,7 @@ def test_solve_dynamic_requires_green(tmp_path):
     """green_w=None (missing green.npz) must fail-fast with a clear message,
     not an AttributeError (Task 3 review gap / spec section 9)."""
     import os
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -972,7 +969,7 @@ def test_static_limit_matvec_multi_k(norb):
     einsums perform, so an accidental orbital transposition would change the
     result and fail this assertion."""
     import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     Nx, Ny, Nz, nmat = 4, 2, 1, 4
     beta = 7.0  # unused by the kernel; G2 is passed raw to both paths
     rng = np.random.default_rng(20 + norb)
@@ -1021,7 +1018,7 @@ def test_dense_oracle(norb, Nx, Ny, Nz, nmat):
     structure is exercised. norb=2 catches an orbital-index transposition."""
     import scipy.linalg
     import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     from scipy.sparse.linalg import LinearOperator
     rng = np.random.default_rng(31 + norb)
     beta = 5.0
@@ -1082,7 +1079,7 @@ def test_analytic_flat_diagonal():
     gap with lambda = -V0 * sum_n G2(n). (The 1/N spatial fold is cancelled by
     the sum over the Nk-fold uniform mesh.) Assert the driver reproduces it."""
     import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     from scipy.sparse.linalg import LinearOperator
     norb, Nx, Ny, Nz, nmat = 1, 2, 2, 1, 4
     beta = 3.0
@@ -1120,7 +1117,7 @@ def test_gauge_deterministic():
     components, then rotate so the largest-|magnitude| component is real-
     positive (lexicographic tie-break). Applying an arbitrary phase before
     _fix_gauge must reproduce the same array."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     rng = np.random.default_rng(77)
     phi = (rng.standard_normal((2, 2, 3, 2, 1, 4))
            + 1j * rng.standard_normal((2, 2, 3, 2, 1, 4)))
@@ -1157,7 +1154,7 @@ def test_outputs_written(tmp_path):
     """solve_dynamic writes gap_dynamic.npz (with the required metadata keys)
     and a gap.dat whose first line starts with '#' and marks frequency=dynamic."""
     import os
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -1486,7 +1483,7 @@ def _pure_sector(shape, sector, seed):
 
 
 def test_reverse_kw_is_an_involution():
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     g = _rand_gap(seed=1)
     g2 = ed._reverse_kw_and_orbital(ed._reverse_kw_and_orbital(g))
     assert np.allclose(g2, g, atol=1e-12)
@@ -1496,7 +1493,7 @@ def test_parity_projectors_split_even_odd():
     """The channel projectors select the EVEN-FREQUENCY sectors: (even k,
     even w) for singlet, (odd k, even w) for triplet. The two odd-frequency
     sectors -- also allowed by the combined parity -- belong to neither."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     shape = (2, 2, 4, 4, 1, 8)
     ge = _pure_sector(shape, "even_k_even_w", 2)    # conventional singlet
     go = _pure_sector(shape, "odd_k_even_w", 3)     # conventional triplet
@@ -1522,7 +1519,7 @@ def test_parity_projectors_split_even_odd():
 
 def test_channel_projectors_are_even_frequency():
     """Structure of the two channel projectors and of gap_sector_weights."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     shape = (2, 2, 4, 4, 1, 8)
     rng = np.random.default_rng(17)
     g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
@@ -1563,7 +1560,7 @@ def test_singlet_projector_is_bit_identical_where_pk_is_the_identity():
     historical (1 + P)/2 -- bit for bit, which is what keeps such runs
     numerically unchanged. The TRIPLET sector is empty there: its projector is
     identically zero, not the historical (1 - P)/2."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     shape = (1, 1, 2, 2, 1, 8)
     rng = np.random.default_rng(5)
     g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
@@ -1579,7 +1576,7 @@ def test_singlet_projector_is_bit_identical_where_pk_is_the_identity():
 def test_reorder_promotes_channel_parity_eigenpair():
     """The odd mode has the larger eigenvalue but the singlet request must
     surface the (even k, even w) eigenpair as leading."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     gap_shape = (2, 2, 4, 4, 1, 8)
     ge = _pure_sector(gap_shape, "even_k_even_w", 31)   # singlet
     go = _pure_sector(gap_shape, "odd_k_even_w", 32)    # triplet
@@ -1600,7 +1597,7 @@ def test_reorder_prefers_even_frequency_state():
     combined parity -1 and the old projector promoted it for a triplet
     request even though it is not a conventional triplet. The channels are
     now the even-frequency sectors, so that mode matches NEITHER channel."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     gap_shape = (1, 1, 4, 4, 1, 8)
     A = _pure_sector(gap_shape, "even_k_odd_w", 41)    # odd frequency
     B = _pure_sector(gap_shape, "odd_k_even_w", 42)    # conventional triplet
@@ -1632,7 +1629,7 @@ def test_projected_iteration_returns_even_frequency_triplet():
     """The projected power iteration for a triplet request converges on the
     (odd k, even w) state (lambda = 0.5), not on the larger odd-frequency
     eigenvalue (0.9), and reports the sector weights of what it returned."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     gap_shape = (1, 1, 4, 4, 1, 8)
     A = _pure_sector(gap_shape, "even_k_odd_w", 51).ravel()
     B = _pure_sector(gap_shape, "odd_k_even_w", 52).ravel()
@@ -1685,7 +1682,7 @@ def test_channel_leakage_zero_for_sector_preserving_operator():
     into itself, and O(1) for one that maps it out of the sector -- including
     a kernel that respects the combined parity but mixes the frequency
     parity, which ``_parity_leakage`` cannot see."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     shape = (1, 1, 4, 4, 1, 8)
 
     # diagonal in the sector basis: every sector is an eigenspace
@@ -1724,7 +1721,7 @@ def test_channel_leakage_is_none_and_the_iteration_refuses_an_empty_sector():
     0.0 that would read as "perfectly preserved") and the iteration refuses
     with a message that names the grid, not a generic seed failure."""
     import pytest
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     shape = (1, 1, 2, 2, 1, 8)
 
     def matvec(x):
@@ -1749,7 +1746,7 @@ def test_iteration_falls_back_to_combined_parity_projection(caplog):
     sector: the iteration projects onto the combined-parity sector instead,
     says so, and records ``sector_selection = "combined_parity"``."""
     import logging
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     shape = (1, 1, 4, 4, 1, 8)
     u = _pure_sector(shape, "even_k_even_w", 71).ravel()
     v = _pure_sector(shape, "odd_k_odd_w", 72).ravel()
@@ -1785,7 +1782,7 @@ def test_iteration_falls_back_to_combined_parity_projection(caplog):
 def test_reorder_falls_back_to_combined_parity_when_no_channel_eigenpair():
     """Two-stage matching: the channel sector first, and only if nothing lies
     in it, the channel's combined-parity sector (with a warning)."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     gap_shape = (1, 1, 4, 4, 1, 8)
     oo = _pure_sector(gap_shape, "odd_k_odd_w", 81)      # combined parity +1
     eo = _pure_sector(gap_shape, "even_k_odd_w", 82)     # combined parity -1
@@ -1820,7 +1817,7 @@ def test_eigenvalue_file_labels_the_combined_parity_fallback(tmp_path):
     out of the channel (no projected solve) while its eigenvectors still lie in
     the channel's combined-parity sector."""
     import os
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     gap_shape = (1, 1, 4, 4, 1, 8)
     a = _pure_sector(gap_shape, "even_k_even_w", 91).ravel()   # channel, combined +1
     b = _pure_sector(gap_shape, "odd_k_odd_w", 92).ravel()     # odd freq, combined +1
@@ -1856,7 +1853,7 @@ def test_solve_dynamic_eigenvalue_writes_match_column(tmp_path):
     """solve_dynamic (eigenvalue path) tags eigenvalue.dat with the
     channel-parity match column and returns an in-sector leading gap."""
     import os
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -1903,7 +1900,7 @@ def test_project_seed_dynamic_guard():
     """Seed projection raises when the seed has no component in the requested
     sector (mirrors sc._solve_iteration's guard), else returns a normalized
     in-sector seed."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     shape = (2, 2, 4, 4, 1, 8)
     ge = _pure_sector(shape, "even_k_even_w", 71)   # singlet sector
     go = _pure_sector(shape, "odd_k_even_w", 72)    # triplet sector
@@ -1928,7 +1925,7 @@ def test_project_seed_dynamic_guard():
 def test_parity_leakage_zero_for_commuting_operator():
     """_parity_leakage ~ 0 for an operator that commutes with parity (identity)
     and O(1) for one that maps into the opposite sector."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     gap_shape = (2, 2, 1, 4, 1, 4)
 
     class _Op:
@@ -1955,17 +1952,17 @@ class TestIrKeepStaticChiBoolParsing:
     and must keep working (issue #62)."""
 
     def test_disabled_values(self):
-        from hwave.solver.eliashberg_dynamic import _ir_keep_static_requested
+        from hwave.solver.eliashberg.dynamic import _ir_keep_static_requested
         for v in (False, "false", "False", "off", "0", "no", "", 0):
             assert _ir_keep_static_requested({"ir_keep_static_chi": v}) is False, v
 
     def test_enabled_values(self):
-        from hwave.solver.eliashberg_dynamic import _ir_keep_static_requested
+        from hwave.solver.eliashberg.dynamic import _ir_keep_static_requested
         for v in (True, "true", "True", "on", "1", "yes", 1):
             assert _ir_keep_static_requested({"ir_keep_static_chi": v}) is True, v
 
     def test_default_is_false(self):
-        from hwave.solver.eliashberg_dynamic import _ir_keep_static_requested
+        from hwave.solver.eliashberg.dynamic import _ir_keep_static_requested
         assert _ir_keep_static_requested({}) is False
 
 
@@ -2029,7 +2026,7 @@ def test_solve_dynamic_seed_selects_overlapping_eigenpair(tmp_path):
     (returns the same lambda); seeding from a sub-leading eigenvector selects
     that branch instead of the algebraically-largest one."""
     import os
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     # a channel-conserving fixture: the un-seeded reference run has a
     # channel eigenpair to report (the random archive has none)
     inp, out = _dyn_input(tmp_path, {}, symmetric=True)
@@ -2052,7 +2049,7 @@ def test_solve_dynamic_seed_selects_overlapping_eigenpair(tmp_path):
 
 def test_seed_gap_nmat_mismatch_raises(tmp_path):
     import os
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     # a seed gap with a different Nmat than the run
     bad = str(tmp_path / "bad_seed.npz")
     np.savez(bad, gap=np.zeros((1, 1, 2, 2, 1, 6), dtype=complex))  # Nmat=6
@@ -2135,7 +2132,7 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
     CHANNEL = "even_k_even_w"
 
     def _run(self, matvec, eli_param, *, seed_vec=None):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         return ed.run_leading_eigenproblem(
             matvec, self.SHAPE, eli_param, "singlet",
             phi0=_pure_sector(self.SHAPE, self.CHANNEL, 900),
@@ -2275,7 +2272,7 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
         # which is a largest-real solve, not "LM"; the provenance must say so and
         # no redundant re-solve may run (should_fix #3/#4). A seed keeps the run
         # on the unprojected path so the dense selection is what is reported.
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         shape = (1, 1, 1, 1, 1, 2)
@@ -2306,7 +2303,7 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
         self.assertFalse(any("re-solving" in r.getMessage() for r in recs))
 
     def test_eigenvalue_selection_in_file_header_and_npz(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         tmp = _tempfile.mkdtemp()
         try:
             gap = np.zeros(self.SHAPE, dtype=complex)
@@ -2387,7 +2384,7 @@ def _solve_dynamic_lambda(indir, outdir, basis="uniform", keep_static=False,
     from unittest import mock
     import hwave.sc as sc
     from hwave.solver.eliashberg import eigen as sc_eigen
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     records = []
     real = sc._solve_leading
 
@@ -2461,7 +2458,7 @@ def test_tsweep_parser_reads_the_dynamic_leader(tmp_path):
     value and row 0 equal the solver's returned leader."""
     import os
     from hwave import tsweep
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
     os.makedirs(output_dir, exist_ok=True)
@@ -2482,7 +2479,7 @@ def test_tsweep_parser_reads_the_dynamic_leader(tmp_path):
 
 def _channel_projector_matrix(shape, pairing_type):
     """Dense matrix of ``_project_parity_dynamic`` on flat vectors."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     n = int(np.prod(shape))
     eye = np.eye(n, dtype=complex)
     return np.column_stack([ed._project_parity_dynamic(
@@ -2502,7 +2499,7 @@ class TestChannelSectorBasis(_unittest.TestCase):
     with ``to_reduced`` = Q^H."""
 
     def test_isometry_onto_the_channel_sector(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         rng = np.random.default_rng(318)
         for shape in _SECTOR_SHAPES:
             for pairing_type in ("singlet", "triplet"):
@@ -2533,7 +2530,7 @@ def _reference_sector_maps(shape, pairing_type):
     """The sector maps written directly with the channel projector (two
     applications of ``_project_parity_dynamic`` per round trip): the
     reference the precomputed gather/scatter maps must reproduce."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     n = int(np.prod(shape))
     flat = np.arange(n)
     idx = flat.reshape(shape)
@@ -2568,7 +2565,7 @@ class TestChannelSectorMapsMatchTheProjector(_unittest.TestCase):
     round-off (<= 1e-15 relative), on every shape and channel."""
 
     def test_maps_equal_the_projector_form(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         rng = np.random.default_rng(3180)
         for shape in _SECTOR_SHAPES + ((1, 1, 8, 8, 1, 16),
                                        (2, 2, 6, 4, 1, 10)):
@@ -2615,7 +2612,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
     SHAPE = (1, 1, 4, 4, 1, 4)
 
     def _run(self, M, pairing_type, shape=None, **eli):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         shape = shape or self.SHAPE
         info = {}
         rng = np.random.default_rng(5)
@@ -2640,7 +2637,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
     def test_solve_runs_on_the_sector_dimension(self):
         import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         for pairing_type in ("singlet", "triplet"):
             with self.subTest(pairing_type=pairing_type):
                 M, _B = _sector_conserving_kernel(
@@ -2664,7 +2661,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
         """Non-normal sector blocks under a complement of larger magnitude
         and larger real part: the reported value is the sector's largest
         real part to round-off, and the returned gap is its eigenvector."""
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         for pairing_type in ("singlet", "triplet"):
             for seed in (3, 4):
                 with self.subTest(pairing_type=pairing_type, seed=seed):
@@ -2712,8 +2709,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
         import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         import scipy.sparse.linalg as spl
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         def no_conv(A, k=6, **kw):
             raise spl.ArpackNoConvergence("forced", np.array([]),
                                           np.array([]))
@@ -2762,8 +2758,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
         parts after the automatic re-solve or with a user spectral_shift.
         eigenvalue_selection stays "LR_projected" in every case."""
         import tempfile
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         def repulsive(d):
             return np.diag([-10.0] + [-12.0] * (d - 1)).astype(complex)
         cases = (

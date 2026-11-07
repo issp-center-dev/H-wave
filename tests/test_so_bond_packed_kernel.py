@@ -33,7 +33,7 @@ from scipy.sparse.linalg import LinearOperator
 
 from hwave import sc
 from hwave.solver.eliashberg import so_solve as sc_so
-from hwave.solver import eliashberg_dynamic
+from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
 from hwave.solver.so_bond import (PackedArrays, PackedBondBlockStore, PackedBondPairKernel,
                                   estimate_packed_kernel_workspace_bytes, plan_so_bond)
 from tests.so_bond_fixtures import (KAPPA_MAX, MATCH_TOL, NOCAP, assert_recomputed,

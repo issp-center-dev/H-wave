@@ -48,9 +48,9 @@ import numpy as np
 
 from hwave.solver import bond_channels as bc
 from hwave.solver import bubble
-from hwave.solver.eliashberg_bond import (COEFF, ArrayBlockSource, BondPairKernel,
+from hwave.solver.eliashberg.bond_dynamic import (COEFF, ArrayBlockSource, BondPairKernel,
                                           PairVertexUniform, instantaneous_vertex)
-from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+from hwave.solver.eliashberg.dynamic import calc_g2_dynamic
 from tests.ed_oracle_util import EDFixture, SectorED, canonical_density_terms
 from tests.eliashberg_bond_fixtures import _channel0_from_gate, _tables_from_pairs
 from tests.heavy_tests import heavy

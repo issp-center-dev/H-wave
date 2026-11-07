@@ -87,7 +87,7 @@ def test_ir_matvec_matches_uniform_kernel(flex_outdir):
     """Acceptance gate (design Sec. 2): the IR kernel applied to an
     IR-representable probe must reproduce the full-grid kernel after
     densification, BEFORE any eigensolver runs."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     import hwave.sc as sc
 
     inp = _eliashberg_input(flex_outdir)
@@ -206,8 +206,7 @@ def test_solve_dynamic_ir_matches_uniform_lambda(flex_outdir, tmp_path):
     "1.5e-2/0.395" came from a non-converged power iteration whose 0.395 was
     the two-cycle artefact of the negative dominant eigenvalue). The IR run writes the gap on the SAME uniform
     grid/metadata, with IR provenance recorded."""
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     lam_u = ed.solve_dynamic(_eliashberg_input(flex_outdir))
     lam_ir = ed.solve_dynamic(_eliashberg_input(
         flex_outdir, extra={"matsubara_basis": "ir"}))
@@ -238,7 +237,7 @@ def test_solve_dynamic_ir_matches_uniform_lambda(flex_outdir, tmp_path):
 
 def test_solve_dynamic_ir_requires_sparse_ir(flex_outdir, monkeypatch):
     import hwave.solver.ir_axis as ir_axis
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     monkeypatch.setattr(ir_axis, "_import_sparse_ir",
                         lambda: (_ for _ in ()).throw(ImportError("nope")))
     with pytest.raises(ImportError, match="sparse-ir"):
@@ -247,7 +246,7 @@ def test_solve_dynamic_ir_requires_sparse_ir(flex_outdir, monkeypatch):
 
 
 def test_solve_dynamic_rejects_unknown_basis(flex_outdir):
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     with pytest.raises(ValueError, match="matsubara_basis"):
         ed.solve_dynamic(_eliashberg_input(
             flex_outdir, extra={"matsubara_basis": "nonsense"}))
@@ -261,7 +260,7 @@ def test_solve_dynamic_ir_gpu_matches_cpu(flex_outdir):
         cupy.zeros(1)
     except Exception:
         pytest.skip("cupy installed but no usable CUDA device")
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     lam_cpu = ed.solve_dynamic(_eliashberg_input(
         flex_outdir, extra={"matsubara_basis": "ir"}))
     lam_gpu = ed.solve_dynamic(_eliashberg_input(
@@ -278,7 +277,7 @@ def _const_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax):
     """Kernel gate with a PURE frequency-independent vertex (chi terms = 0):
     the bare 0.5*(S+C) piece is a delta(tau) in imaginary time, which the
     bosonic IR basis cannot represent -- it must be handled analytically."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     from hwave.solver.ir_axis import IRAxis
 
     rng = np.random.default_rng(7)
@@ -373,7 +372,7 @@ def test_ir_matvec_gate_offsite_interaction(flex_outdir_offsite):
     """End-to-end kernel gate on the off-site model, BOTH pairing channels
     (the triplet instantaneous part is 0.5*(C-S); a sign regression there
     must not hide behind the singlet-only gate)."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     import hwave.sc as sc
 
     inp = _offsite_input(flex_outdir_offsite)
@@ -460,7 +459,7 @@ def test_solve_dynamic_ir_gpu_matches_cpu_offsite(flex_outdir_offsite):
         cupy.zeros(1)
     except Exception:
         pytest.skip("cupy installed but no usable CUDA device")
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     lam_cpu = ed.solve_dynamic(_offsite_input(
         flex_outdir_offsite, extra={"matsubara_basis": "ir"}))
     lam_gpu = ed.solve_dynamic(_offsite_input(
@@ -536,8 +535,7 @@ def _smooth_vertex_gate(norb, Nx, Ny, Nz, beta, nmat, wmax, g=1.3):
     vertex (Lorentzian bosonic profile) and bare pair bubble -- the uniform
     and IR kernels must agree to numerical precision (no chi-artifact
     contamination, unlike the FLEX-data gate)."""
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     p = _smooth_vertex_pieces(norb, Nx, Ny, Nz, beta, nmat, wmax, g=g)
     axF = p["axF"]
     out_u = ed.eliashberg_kernel_dynamic(p["V_w"], p["G2_u"],
@@ -555,8 +553,7 @@ def test_channel_decomposition_ir_offsite_bare_only_keeps_instantaneous_term(
 ):
     """Both zero flags on the IR/off-site path remove fluctuations while the
     nonzero singlet bare vertex is subtracted and reinserted analytically."""
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     captured = {}
     real_kernel = ed.eliashberg_kernel_ir
     real_compress = ed._ir_compress
@@ -607,8 +604,7 @@ def test_channel_decomposition_ir_bypasses_only_zeroed_channel(
     point). (a) guards against a regression that densifies a discarded channel;
     (b) is the scientifically decisive check that the fluctuations are actually
     removed from the vertex, not merely routed differently."""
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     compressed = []
     captured = {}
     real_compress = ed._ir_compress
@@ -753,7 +749,7 @@ class TestIRInstantaneousVertexTerm(unittest.TestCase):
     def _instantaneous_vertex(p, scale=0.6, seed=29):
         """A parity-invariant, frequency-flat vertex on the ``(q)`` grid, plus
         its spatial transform (what the IR kernel consumes)."""
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         norb = p["norb"]
         rng = np.random.default_rng(seed)
         V = rng.standard_normal((norb,)*4 + p["shape"]) * scale
@@ -765,8 +761,7 @@ class TestIRInstantaneousVertexTerm(unittest.TestCase):
         kernel without the instantaneous term and 9e-16 for the uniform kernel
         with it. After: 2.0e-14."""
         from scipy.sparse.linalg import LinearOperator
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         p = _smooth_vertex_pieces(2, 4, 4, 1, beta=2.0, nmat=256, wmax=20.0,
                                   symmetrize=True)
         axF, beta, norb = p["axF"], p["beta"], p["norb"]
@@ -802,7 +797,7 @@ class TestIRInstantaneousVertexTerm(unittest.TestCase):
         carries a ``1/(i w)`` tail: a frequency-FLAT pair bubble times a
         single-pole gap. The physical bubble decays as ``1/w^2`` and would
         hide the tau jump the two functionals differ by."""
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         from hwave.solver.ir_axis import IRAxis
 
         Nx, Ny, Nz = shape

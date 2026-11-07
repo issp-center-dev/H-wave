@@ -28,13 +28,13 @@ class TestAccumulator(unittest.TestCase):
     def test_pairing_coefficients_are_pinned(self):
         """The normative coefficients of spec 4.2, pinned as literals so that a
         mutated COEFF cannot pass by moving the reference with it."""
-        from hwave.solver.eliashberg_bond import COEFF
+        from hwave.solver.eliashberg.bond_dynamic import COEFF
         self.assertEqual(COEFF["singlet"], (1.5, -0.5))
         self.assertEqual(COEFF["triplet"], (-0.5, -0.5))
         self.assertEqual(set(COEFF), {"singlet", "triplet"})
 
     def test_accumulator_stages_agree(self):                      # 10.1.7
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator, COEFF
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator, COEFF
         fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=4)
         for eta in ("singlet", "triplet"):
             with _dev(fx) as dev:
@@ -65,7 +65,7 @@ class TestAccumulator(unittest.TestCase):
                     acc3.finish()
 
     def test_uniform_refuses_two_types_and_non_finite(self):
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator, ArrayBlockSource
         fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4)
         with _dev(fx) as dev:
             with self.assertRaisesRegex(ValueError, "exactly one pairing type"):
@@ -90,7 +90,7 @@ class TestAccumulator(unittest.TestCase):
         import os
         import shutil
         import tempfile
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator, ArrayBlockSource
         fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=6)
         # nb = 2 -> batches [0, 2) [2, 4) [4, 6); bad frequency -> (batch, span)
         cases = {0: (0, "[0, 2)"), 3: (2, "[2, 4)"), 5: (4, "[4, 6)")}
@@ -138,7 +138,7 @@ class TestAccumulator(unittest.TestCase):
         """Adding the same stage twice would DOUBLE-COUNT it silently, and
         adding anything after ``finish`` would mutate a vertex the caller
         already holds. Both are refused, as is a second ``finish``."""
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator
         fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4)
 
         def build(dev):
@@ -172,7 +172,7 @@ class TestAccumulator(unittest.TestCase):
         absorbed. A caller that catches and retries the stage would then
         double-count the absorbed batches, so the accumulator refuses any
         further use until it is rebuilt."""
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator, ArrayBlockSource
         fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4)
         with _dev(fx) as dev:
             bad = fx["chi_s"].copy()
@@ -192,7 +192,7 @@ class TestAccumulator(unittest.TestCase):
                     retry()
 
     def test_add_dressed_that_raises_midway_taints_the_accumulator(self):
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator, ArrayBlockSource
         fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4)
         with _dev(fx) as dev:
             bad = fx["chibar"].copy()
@@ -210,7 +210,7 @@ class TestAccumulator(unittest.TestCase):
     def test_ir_finish_refuses_a_stage_callable_that_replays_nothing(self):
         """A callable that replays no stage leaves r = a = 0, which would read as
         a perfect fit AND silently disable the constant-vs-scale refusal."""
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator
         # nmat must resolve the augmented fit (L+1 columns at Lambda=beta*wmax=24,
         # L=17): the #183 conditioning guard now refuses an underdetermined
         # uniform grid, and this test is about the stage-replay refusal, not the
@@ -252,7 +252,7 @@ class TestAdmission(unittest.TestCase):
         SAME RAM. Checking them against two independent caps admits a
         residency whose two needs fit one at a time but not together; the
         shared-pool rule sums them against the host cap instead."""
-        from hwave.solver.eliashberg_bond import estimate_pair_memory
+        from hwave.solver.eliashberg.bond_dynamic import estimate_pair_memory
         tab = estimate_pair_memory(nmat=8, ntau=0, nfreq=8, nvol=16, norb=2, B=3,
                                    num_eigenvalues=2, residency="auto", ir=False, L_B=0,
                                    n_channels=1, in_process=False)
@@ -266,7 +266,7 @@ class TestAdmission(unittest.TestCase):
             tab.choose("host", host_cap=h + d, device_cap=h + d, shared=True), "host")
 
     def test_admission_table(self):                              # 10.1.11
-        from hwave.solver.eliashberg_bond import estimate_pair_memory
+        from hwave.solver.eliashberg.bond_dynamic import estimate_pair_memory
         tab = estimate_pair_memory(nmat=8, ntau=0, nfreq=8, nvol=16, norb=2, B=3,
                                    num_eigenvalues=2, residency="auto", ir=False, L_B=0,
                                    n_channels=1, in_process=False)
@@ -367,12 +367,12 @@ def _b1_topology(norb):
 
 
 def _g2(fx):
-    from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+    from hwave.solver.eliashberg.dynamic import calc_g2_dynamic
     return calc_g2_dynamic(fx["green_sc"], fx["beta"])
 
 
 def _kernel(fx, vertex, residency="host", V_inst=None):
-    from hwave.solver.eliashberg_bond import BondPairKernel
+    from hwave.solver.eliashberg.bond_dynamic import BondPairKernel
     return BondPairKernel(vertex, _g2(fx), fx["view"], xp=np,
                           spatial_shape=fx["spatial_shape"], norb=fx["norb"],
                           beta=fx["beta"], nfreq=fx["nmat"], V_inst=V_inst,
@@ -380,7 +380,7 @@ def _kernel(fx, vertex, residency="host", V_inst=None):
 
 
 def _uniform_vertex(fx, eta):
-    from hwave.solver.eliashberg_bond import PairVertexAccumulator
+    from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator
     with _dev(fx) as dev:
         acc = PairVertexAccumulator(dev, pairing_types=(eta,), nb=4, nmat=fx["nmat"],
                                     nvol=fx["nvol"], nd=fx["nd"],
@@ -396,7 +396,7 @@ class TestKernelUniform(unittest.TestCase):
         the message can still name the quantity; deep inside ``matvec`` the
         same mismatch is an opaque einsum or broadcast failure."""
         import types
-        from hwave.solver.eliashberg_bond import (BondPairKernel, PairVertexUniform,
+        from hwave.solver.eliashberg.bond_dynamic import (BondPairKernel, PairVertexUniform,
                                                   PairVertexIR)
         fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4, beta=2.0)
         vert = _uniform_vertex(fx, "singlet")
@@ -438,8 +438,8 @@ class TestKernelUniform(unittest.TestCase):
             build(view=types.SimpleNamespace(n_channels=B, delta_r=fx["view"].delta_r[:-1]))
 
     def test_b1_matches_onsite_dynamic_kernel(self):              # 10.1.1
-        from hwave.solver import eliashberg_dynamic as ed
-        from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
+        from hwave.solver.eliashberg import dynamic as ed
+        from hwave.solver.eliashberg.bond_dynamic import (PairVertexUniform, ArrayBlockSource,
                                                   BondPairKernel, COEFF, instantaneous_vertex)
         from hwave.solver.bond_channels import BondSetView
         rng = np.random.default_rng(1)
@@ -482,7 +482,7 @@ class TestKernelUniform(unittest.TestCase):
 
     def test_flat_frequency_matches_static_bond_kernel(self):     # 10.1.2
         import hwave.sc as sc
-        from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
+        from hwave.solver.eliashberg.bond_dynamic import (PairVertexUniform, ArrayBlockSource,
                                                   BondPairKernel, COEFF)
         fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=8, beta=2.0,
                               delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)))
@@ -576,7 +576,7 @@ class TestKernelUniform(unittest.TestCase):
             np.testing.assert_allclose(out, ref, rtol=0, atol=1e-12, err_msg=eta)
 
     def test_parity_commutation(self):                            # 10.1.4
-        from hwave.solver.eliashberg_dynamic import _parity_leakage
+        from hwave.solver.eliashberg.dynamic import _parity_leakage
         from scipy.sparse.linalg import LinearOperator
         fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=4, beta=1.0)
         for eta in ("singlet", "triplet"):
@@ -586,8 +586,8 @@ class TestKernelUniform(unittest.TestCase):
             self.assertLessEqual(_parity_leakage(A, K.gap_shape, eta), 1e-10, eta)
 
     def test_parity_leakage_refused(self):                        # 10.1.4b
-        from hwave.solver.eliashberg_dynamic import run_leading_eigenproblem, build_seed
-        from hwave.solver.eliashberg_bond import ArrayBlockSource, PairVertexUniform
+        from hwave.solver.eliashberg.dynamic import run_leading_eigenproblem, build_seed
+        from hwave.solver.eliashberg.bond_dynamic import ArrayBlockSource, PairVertexUniform
         fx = physical_fixture(norb=1, shape=(4, 2, 1), nmat=4, beta=1.0)
         vert = _uniform_vertex(fx, "singlet")
         Gam = vert.source.get_freq_batch(vert.slot, 0, fx["nmat"]).copy()
@@ -631,7 +631,7 @@ class TestKernelUniform(unittest.TestCase):
 
     def test_residency_modes_agree(self):                         # 10.1.6
         from hwave.solver import backend
-        from hwave.solver.eliashberg_bond import BondPairKernel
+        from hwave.solver.eliashberg.bond_dynamic import BondPairKernel
         fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=4, beta=1.0)
         vert = _uniform_vertex(fx, "singlet")
         rng = np.random.default_rng(3)
@@ -653,7 +653,7 @@ class TestKernelUniform(unittest.TestCase):
         np.testing.assert_allclose(Kd.matvec(phi), ref, atol=1e-13)
 
     def test_gap_bond_projection(self):                           # 10.1.10
-        from hwave.solver.eliashberg_bond import gap_bond_projection
+        from hwave.solver.eliashberg.bond_dynamic import gap_bond_projection
         fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=2)
         nx, ny, nz = fx["spatial_shape"]
         kx = 2 * np.pi * np.arange(nx) / nx
@@ -668,7 +668,7 @@ class TestKernelUniform(unittest.TestCase):
 
     def test_gap_bond_projection_validates_inputs(self):
         import types
-        from hwave.solver.eliashberg_bond import gap_bond_projection
+        from hwave.solver.eliashberg.bond_dynamic import gap_bond_projection
         fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=2)
         nx, ny, nz = fx["spatial_shape"]
         rng = np.random.default_rng(3)
@@ -706,7 +706,7 @@ class TestKernelUniform(unittest.TestCase):
             gap_bond_projection(good, empty_view, fx["spatial_shape"])
 
     def test_array_block_source_rejects_nonpositive_nd(self):
-        from hwave.solver.eliashberg_bond import ArrayBlockSource
+        from hwave.solver.eliashberg.bond_dynamic import ArrayBlockSource
         arrays = {"x": np.zeros((2, 2, 4, 4), complex)}
         for bad in (0, -1, -4):
             with self.assertRaisesRegex(ValueError, "nd must be a positive integer"):
@@ -716,8 +716,8 @@ class TestKernelUniform(unittest.TestCase):
 
     def test_instantaneous_vertex_single_band_equals_onsite(self):   # 10.1.12
         import hwave.sc as sc
-        from hwave.solver import eliashberg_dynamic as ed
-        from hwave.solver.eliashberg_bond import instantaneous_vertex
+        from hwave.solver.eliashberg import dynamic as ed
+        from hwave.solver.eliashberg.bond_dynamic import instantaneous_vertex
         fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=2, U=2.0,
                               delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)))
         nx, ny, nz = fx["spatial_shape"]
@@ -758,8 +758,8 @@ class TestKernelUniform(unittest.TestCase):
         frequency-summed ``F``."""
         from tests.test_bond_channels import _bare_channel0, _direct_bond_kernel
         from hwave.solver import bond_channels as bc
-        from hwave.solver.eliashberg_dynamic import _project_parity_dynamic
-        from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
+        from hwave.solver.eliashberg.dynamic import _project_parity_dynamic
+        from hwave.solver.eliashberg.bond_dynamic import (PairVertexUniform, ArrayBlockSource,
                                                   BondPairKernel, instantaneous_vertex)
         fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=8, beta=2.0, U=2.0,
                               delta_r=((0, 0, 0), (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)))
@@ -809,8 +809,8 @@ class TestKernelUniform(unittest.TestCase):
         than the norb = 1 scalar division."""
         from tests.test_bond_channels import _bare_channel0, _direct_bond_kernel
         from hwave.solver import bond_channels as bc
-        from hwave.solver.eliashberg_dynamic import _project_parity_dynamic, calc_g2_dynamic
-        from hwave.solver.eliashberg_bond import (PairVertexUniform, ArrayBlockSource,
+        from hwave.solver.eliashberg.dynamic import _project_parity_dynamic, calc_g2_dynamic
+        from hwave.solver.eliashberg.bond_dynamic import (PairVertexUniform, ArrayBlockSource,
                                                   BondPairKernel, instantaneous_vertex)
 
         def check(coeffs):
@@ -893,7 +893,7 @@ def _direct_residual(fx, axB, eta, keep):
     resident contributions: per stage, ``r = max |eval(fit(G)) - G|`` and
     ``a = max |G|`` over frequency, momentum and the elements of each
     ``(alpha, beta)`` block, reported as ``max_stage r / a``."""
-    from hwave.solver.eliashberg_bond import COEFF
+    from hwave.solver.eliashberg.bond_dynamic import COEFF
     nd, B, nmat = fx["nd"], fx["B"], fx["nmat"]
     fit, ev = axB.uniform_matrices(nmat, with_constant=True)
     cs, cc = COEFF[eta]
@@ -921,7 +921,7 @@ def _lorentzian_source(fx, g=1.3, kappa=0.0):
     blocks times a Lorentzian bosonic profile ``g^2 / (nu^2 + g^2)``, plus an
     optional frequency-FLAT offset ``kappa`` -- the delta(tau) component the
     smooth basis cannot represent and ``ir_keep_static`` retains."""
-    from hwave.solver.eliashberg_bond import ArrayBlockSource
+    from hwave.solver.eliashberg.bond_dynamic import ArrayBlockSource
     nmat, beta = fx["nmat"], fx["beta"]
     nu = (2 * np.arange(nmat) - nmat) * np.pi / beta
     prof = (g * g / (nu ** 2 + g * g) + kappa)[:, None, None, None]
@@ -937,9 +937,9 @@ def _ir_vs_uniform_at_nodes(fx, axF, axB, eta, *, source, keep, with_vinst):
     IR output instead would be meaningless here: a frequency-FLAT output term
     (the bare vertex, the retained constant) is by construction outside the
     fermionic IR basis."""
-    from hwave.solver.eliashberg_bond import (PairVertexAccumulator, BondPairKernel,
+    from hwave.solver.eliashberg.bond_dynamic import (PairVertexAccumulator, BondPairKernel,
                                               instantaneous_vertex)
-    from hwave.solver.eliashberg_dynamic import calc_g2_dynamic, _ir_compress
+    from hwave.solver.eliashberg.dynamic import calc_g2_dynamic, _ir_compress
     nmat, beta = fx["nmat"], fx["beta"]
     nx, ny, nz = fx["spatial_shape"]
     stages = _stage_pair(source)
@@ -987,7 +987,7 @@ def _ir_vs_uniform_at_nodes(fx, axF, axB, eta, *, source, keep, with_vinst):
 
 class TestKernelIR(unittest.TestCase):
     def test_ir_coefficient_accumulation_equals_direct_fit(self):     # 10.1.8
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator, COEFF
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator, COEFF
         fx = _ir_fixture()
         axF, axB = _axes(fx["beta"])
         nmat = fx["nmat"]
@@ -1069,7 +1069,7 @@ class TestKernelIR(unittest.TestCase):
                             float(both["singlet"].fit_residual_rel.max()))
 
     def test_ir_fit_tol_refusal(self):                                # 10.1.9
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator, ArrayBlockSource
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator, ArrayBlockSource
         fx = _ir_fixture()
         axF, axB = _axes(fx["beta"])
         rng = np.random.default_rng(2)
@@ -1171,9 +1171,9 @@ class TestKernelIR(unittest.TestCase):
         with the frequency reversal: measured leakage 4.30e-01 before the fix
         on this fixture (an IR fit residual of 2.9e-10, so not a data-quality
         effect), 1.3e-12 after."""
-        from hwave.solver.eliashberg_bond import (PairVertexAccumulator, BondPairKernel,
+        from hwave.solver.eliashberg.bond_dynamic import (PairVertexAccumulator, BondPairKernel,
                                                   instantaneous_vertex)
-        from hwave.solver.eliashberg_dynamic import (calc_g2_dynamic, _ir_compress,
+        from hwave.solver.eliashberg.dynamic import (calc_g2_dynamic, _ir_compress,
                                                      _parity_leakage)
         from scipy.sparse.linalg import LinearOperator
         beta = 2.0
@@ -1208,9 +1208,9 @@ class TestKernelIR(unittest.TestCase):
         frequency-flat terms (which live outside the hoisted blocks) are part
         of the comparison."""
         from hwave.solver import backend
-        from hwave.solver.eliashberg_bond import (PairVertexAccumulator, BondPairKernel,
+        from hwave.solver.eliashberg.bond_dynamic import (PairVertexAccumulator, BondPairKernel,
                                                   instantaneous_vertex)
-        from hwave.solver.eliashberg_dynamic import calc_g2_dynamic, _ir_compress
+        from hwave.solver.eliashberg.dynamic import calc_g2_dynamic, _ir_compress
         axF, axB = _axes(2.0, wmax=20.0)
         fx = physical_fixture(norb=2, shape=(4, 2, 1), nmat=64, beta=2.0, U=1.0)
         stages = _stage_pair(_lorentzian_source(fx, kappa=0.3))
@@ -1262,8 +1262,8 @@ class TestKernelIR(unittest.TestCase):
         ``asarray`` returns an ndarray SUBCLASS -- with the plain stand-in
         (whose every operation IS numpy's) the ``np.ndarray`` check would
         hold on both sides and prove nothing."""
-        from hwave.solver.eliashberg_bond import PairVertexAccumulator, BondPairKernel
-        from hwave.solver.eliashberg_dynamic import calc_g2_dynamic, _ir_compress
+        from hwave.solver.eliashberg.bond_dynamic import PairVertexAccumulator, BondPairKernel
+        from hwave.solver.eliashberg.dynamic import calc_g2_dynamic, _ir_compress
         axF, axB = _axes(2.0, wmax=20.0)
         fx = physical_fixture(norb=1, shape=(4, 2, 1), nmat=32, beta=2.0, U=1.0)
         stages = _stage_pair(_lorentzian_source(fx, kappa=0.3))
@@ -1333,7 +1333,8 @@ class TestDeviceProbeFallback(unittest.TestCase):
     fall back to the host cap and say so."""
 
     def test_helper_falls_back_to_the_host_cap(self):
-        from hwave.solver import backend as bk, eliashberg_bond as eb
+        from hwave.solver import backend as bk
+        from hwave.solver.eliashberg import bond_dynamic as eb
         with mock.patch.object(bk, "device_available_bytes", return_value=None):
             with self.assertLogs("qlms.eliashberg_bond", "WARNING") as log:
                 cap = eb.device_cap_or_host(7.0 * eb._GIB, "probe test")
@@ -1347,7 +1348,8 @@ class TestDeviceProbeFallback(unittest.TestCase):
     def test_kernel_admission_survives_a_failed_probe(self):
         """``BondPairKernel(device_cap=None)`` on a device backend: the
         admission runs with the host cap on both sides instead of raising."""
-        from hwave.solver import backend as bk, eliashberg_bond as eb
+        from hwave.solver import backend as bk
+        from hwave.solver.eliashberg import bond_dynamic as eb
         fx = physical_fixture(norb=1, shape=(4, 2, 1), nmat=4, beta=1.0)
         vert = _uniform_vertex(fx, "singlet")
         seen = {}

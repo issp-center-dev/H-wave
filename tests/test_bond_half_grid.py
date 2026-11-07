@@ -1600,7 +1600,7 @@ def _capture_kernels(store):
     it (uniform: every raw ``(a, b)`` block with the bare term, i.e. through
     ``get_pair_full``; IR: the coefficients and the retained constant) and
     its matvec of a fixed vector."""
-    from hwave.solver import eliashberg_bond as eb
+    from hwave.solver.eliashberg import bond_dynamic as eb
     real = eb.BondPairKernel.__init__
 
     def init(self, vertex, *a, **k):
@@ -1882,7 +1882,7 @@ class TestPairingUnits(unittest.TestCase):
         self.assertLessEqual(_rel(ref, got), 1e-14)
 
     def test_array_source(self):
-        from hwave.solver import eliashberg_bond as eb
+        from hwave.solver.eliashberg import bond_dynamic as eb
         from hwave.solver import half_grid as hg
         nmat, nd, B = 8, 4, 3
         full = _hermitian_in_frequency(nmat, 2, nd * B, seed=7)
@@ -1903,7 +1903,7 @@ class TestPairingUnits(unittest.TestCase):
             eb.ArrayBlockSource({"W": full}, nd, half_grid=True, nmat=nmat)
 
     def test_accumulator_refuses_a_mismatched_source(self):
-        from hwave.solver import eliashberg_bond as eb
+        from hwave.solver.eliashberg import bond_dynamic as eb
         from hwave.solver import half_grid as hg
         nmat, nd, B = 8, 1, 2
         S = np.zeros((4, B * nd, B * nd), complex)
@@ -1925,7 +1925,7 @@ class TestPairingUnits(unittest.TestCase):
         """A half-grid source of another Nmat (or another nvol / ND) is refused
         before anything is absorbed or zeroed: the chibar source given to
         add_dressed and an external uniform target store alike."""
-        from hwave.solver import eliashberg_bond as eb
+        from hwave.solver.eliashberg import bond_dynamic as eb
         from hwave.solver import half_grid as hg
         nd, B = 1, 2
         S = np.zeros((4, B * nd, B * nd), complex)
@@ -1990,7 +1990,7 @@ class TestPairingRedressRefusal(unittest.TestCase):
 
     def _run(self, case, half, floor):
         from hwave.solver import bond_channels as bc
-        from hwave.solver import eliashberg_bond_io as io
+        from hwave.solver.eliashberg import bond_io as io
         real = io._run_inprocess_pairing
 
         def wrapped(*a, **k):
@@ -2114,7 +2114,7 @@ class TestPairingMemory(unittest.TestCase):
                          2 * (1024 - 513) * 1024 * 36 ** 2 * 16)
 
     def test_solver_preflight_with_pairing(self):
-        from hwave.solver import eliashberg_bond as eb
+        from hwave.solver.eliashberg import bond_dynamic as eb
         seen = {}
         real = eb.estimate_pair_memory
 
@@ -2244,7 +2244,7 @@ class TestPairingMutations(unittest.TestCase):
     def _during_pairing(self, patch):
         # the mutation is active in the in-process pairing step only, so the
         # FLEX transport (which shares the helpers) stays exact
-        from hwave.solver import eliashberg_bond_io as io
+        from hwave.solver.eliashberg import bond_io as io
         real = io._run_inprocess_pairing
 
         def wrapped(*a, **k):

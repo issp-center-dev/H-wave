@@ -240,7 +240,7 @@ class TestDynamicGolden(unittest.TestCase):
                 if not iteration:
                     self.assertAlmostEqual(float(w[0]), 1.0, places=9, msg=tag)
                 # the recorded weights describe the gap stored next to them
-                from hwave.solver import eliashberg_dynamic as ed
+                from hwave.solver.eliashberg import dynamic as ed
                 recomputed = ed.gap_sector_weights(a["gap"])
                 for i, label in enumerate(labels):
                     self.assertAlmostEqual(float(w[i]), recomputed[label],
@@ -267,7 +267,7 @@ class TestGoldenFixtures(unittest.TestCase):
 
     def test_symmetric_archive_leader_is_the_dense_channel_leader(self):
         from unittest import mock
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         cap = {}
         real = ed._solve_channel_projected
 
@@ -300,7 +300,7 @@ class TestEigenDriverUnits(unittest.TestCase):
     golden end-to-end runs above."""
 
     def setUp(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         self.ed = ed
         self.gap_shape = (1, 1, 2, 2, 1, 4)
         vec_size = int(np.prod(self.gap_shape))

@@ -19,8 +19,7 @@ from tests.test_eliashberg_ir import (
 def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite, pairing_type):
     """Spin, charge, and retained bare vertex terms are linearly separable."""
     import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     inp = _offsite_input(flex_outdir_offsite)
     norb, nx, ny, nz = 1, LX, LY, 1
     chis_w, chic_w, _, convention = ed.load_flex_chi_dynamic(inp, norb, nx, ny, nz)
@@ -67,8 +66,7 @@ def test_channel_decomposition_flags_route_through_solve_dynamic(
     flex_outdir, monkeypatch, pairing_type, extra, expected
 ):
     """The public uniform solver routes both pairing types without sparse-ir."""
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     captured = {}
     real_compute = ed.compute_vertices_flex_dynamic
 
@@ -182,8 +180,7 @@ def test_dynamic_path_does_not_warn_about_channel_flags(monkeypatch):
     the invariant against a future reordering of the dispatch vs. the warning."""
     import hwave.sc as sc
     from hwave.solver.eliashberg import static as sc_static
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     called = {"warn": False}
 
     def flag_warn(eli_param):

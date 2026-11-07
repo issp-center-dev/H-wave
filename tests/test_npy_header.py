@@ -362,8 +362,7 @@ class TestCallerContracts(unittest.TestCase):
     def test_eliashberg_probe_returns_none_for_an_unreadable_header(self):
         # Its contract is to never raise: the authoritative loader below
         # it must be the one to produce the diagnostic.
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         d = tempfile.mkdtemp(prefix="npy_header_bad_")
         path = os.path.join(d, "chiq_s.npz")
         raw = _npy_bytes(

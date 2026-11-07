@@ -1109,8 +1109,7 @@ class TestOffsiteTypesAreBondResolved(_ApproxTestCase):
         constant that acts on on-site pairs only, so it leaves this fixture's
         leading eigenvalue, whose gap has no on-site component, unchanged."""
         from unittest import mock
-        from hwave.solver import eliashberg_bond as eb
-
+        from hwave.solver.eliashberg import bond_dynamic as eb
         def run(extra, label, patch=None):
             out = os.path.join(self.tmp_path, label)
             with mock.patch.object(eb, "offsite_singlet_bare_vertex",

@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(not _HAVE_SPARSE_IR,
 # --- RC1 --------------------------------------------------------------------
 
 def test_ir_auto_wmax_uses_dispersion_not_hopping_grand_sum():
-    from hwave.solver.eliashberg_dynamic import _ir_auto_wmax
+    from hwave.solver.eliashberg.dynamic import _ir_auto_wmax
     # An on-site offset that shifts the band far from zero WITHOUT widening it
     # is exactly the case the grand-|t|-sum bug over-counts. Two decoupled 1D
     # chains, on-site 5.0, NN hopping -1.0:
@@ -57,7 +57,7 @@ def test_ir_auto_wmax_uses_dispersion_not_hopping_grand_sum():
 
 
 def test_ir_auto_wmax_includes_interaction_scale():
-    from hwave.solver.eliashberg_dynamic import _ir_auto_wmax
+    from hwave.solver.eliashberg.dynamic import _ir_auto_wmax
     # Single 1D chain: eps(k) = -2 cos(k), range [-2, 2]. mu = 0 (band centre)
     # -> max|eps - mu| = 2. Interaction max = 3. So 3 * (2 + 3) = 15.
     hr = {
@@ -70,7 +70,7 @@ def test_ir_auto_wmax_includes_interaction_scale():
 
 
 def test_ir_auto_wmax_solves_mu_from_filling():
-    from hwave.solver.eliashberg_dynamic import _ir_auto_wmax
+    from hwave.solver.eliashberg.dynamic import _ir_auto_wmax
     # Same offset chain; mu is NOT given but half-filling (per orbital per
     # spin) fixes it at the band centre 5.0 by particle-hole symmetry of
     # -2 cos(k), so max|eps - mu| = 2 and wmax = 6 -- same as passing mu=5.
@@ -106,7 +106,7 @@ def test_ir_compress_illconditioned_augmented_fit_raises():
     ir_wmax, superseding the earlier downstream "constant exceeds the data
     scale" proxy (which was only ever a symptom of the same ill-conditioning).
     """
-    from hwave.solver.eliashberg_dynamic import _ir_compress
+    from hwave.solver.eliashberg.dynamic import _ir_compress
     axB, arr = _static_dominated_illcond()
     with pytest.raises(ValueError, match="ir_wmax") as exc:
         _ir_compress(arr, axB, 512, "chiq_s", drop_constant=True)
@@ -120,7 +120,7 @@ def test_ir_compress_keep_constant_does_not_bypass_conditioning_guard():
     pathological Lambda. (The correct remedy at a sane Lambda -- retaining the
     flat component as an operator -- is exercised by the on-site static path.)
     """
-    from hwave.solver.eliashberg_dynamic import _ir_compress
+    from hwave.solver.eliashberg.dynamic import _ir_compress
     axB, arr = _static_dominated_illcond()
     with pytest.raises(ValueError, match="ir_wmax"):
         _ir_compress(arr, axB, 512, "chiq_s",
@@ -133,7 +133,7 @@ def test_ir_compress_return_constant_extracts_offset_without_aliasing():
     a plain drop), and the constant matches the injected offset -- so the
     caller can keep it as a flat operator instead of aliasing it into the
     smooth basis."""
-    from hwave.solver.eliashberg_dynamic import _ir_compress
+    from hwave.solver.eliashberg.dynamic import _ir_compress
     from hwave.solver.ir_axis import IRAxis
     beta, nmat = 50.0, 512
     axB = IRAxis(beta=beta, wmax=4.0, eps=1.0e-8, statistics="B")
@@ -154,7 +154,7 @@ def test_ir_compress_return_constant_extracts_offset_without_aliasing():
 
 
 def test_ir_compress_return_constant_requires_drop_constant():
-    from hwave.solver.eliashberg_dynamic import _ir_compress
+    from hwave.solver.eliashberg.dynamic import _ir_compress
     from hwave.solver.ir_axis import IRAxis
     axB = IRAxis(beta=50.0, wmax=4.0, eps=1.0e-8, statistics="B")
     arr = np.ones((1, 512), dtype=np.complex128)
@@ -166,7 +166,7 @@ def test_ir_compress_keep_constant_retains_offset():
     """Mechanistic check at a SANE wmax: a representable bosonic function plus a
     known moderate constant. drop recovers the clean function; keep returns the
     clean function PLUS the constant (the static weight is retained)."""
-    from hwave.solver.eliashberg_dynamic import _ir_compress
+    from hwave.solver.eliashberg.dynamic import _ir_compress
     from hwave.solver.ir_axis import IRAxis
     beta, nmat = 50.0, 512
     axB = IRAxis(beta=beta, wmax=4.0, eps=1.0e-8, statistics="B")
@@ -182,7 +182,7 @@ def test_ir_compress_keep_constant_retains_offset():
 
 
 def test_ir_compress_small_constant_still_dropped():
-    from hwave.solver.eliashberg_dynamic import _ir_compress
+    from hwave.solver.eliashberg.dynamic import _ir_compress
     from hwave.solver.ir_axis import IRAxis
     nmat = 128
     axF = IRAxis(beta=20.0, wmax=4.0, eps=1.0e-8, statistics="F")

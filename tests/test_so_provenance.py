@@ -763,7 +763,7 @@ def _sc(mode, inp, src=None, frequency="static", transfer_edit=None,
         seen["green"] = np.array(green, copy=True)
         return real_g2(green, *a, **kw)
 
-    import hwave.solver.eliashberg_dynamic_so as dso
+    from hwave.solver.eliashberg import dynamic_so as dso
     real_g2d = dso.calc_g2_dynamic
 
     def spy_g2d(green, *a, **kw):

@@ -167,9 +167,9 @@ def _dynamic_kernel(norb, eta):
     ``Gamma = c_s S chibar S + c_c C chibar C`` of the dynamic bond bubble and
     the bare term: the frequency-resolved legs of the kernel at ``norb``."""
     from hwave.solver import bubble
-    from hwave.solver.eliashberg_bond import (COEFF, ArrayBlockSource, BondPairKernel,
+    from hwave.solver.eliashberg.bond_dynamic import (COEFF, ArrayBlockSource, BondPairKernel,
                                               PairVertexUniform, instantaneous_vertex)
-    from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+    from hwave.solver.eliashberg.dynamic import calc_g2_dynamic
     nx = NX1 // norb
     tables = _model(norb)
     g = _green(norb, nx, tables, nmat=NMAT_DYN)

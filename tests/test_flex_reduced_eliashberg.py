@@ -679,7 +679,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
     def test_dynamic_vertex_builder_warns_exactly_once(self):
         """The dynamic path must emit the reduced-data warning once for the
         whole run, not once per frequency."""
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         import logging
 
         norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 6
@@ -737,8 +737,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
                     self.assertIn(key, str(cm.exception))
 
     def test_instantaneous_vertex_rejects_exchange_pairhop(self):
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         for key in ("Exchange", "PairHop"):
             for norb in (1, 2):
                 with self.subTest(interaction=key, norb=norb):
@@ -751,8 +750,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
                     self.assertIn(key, str(cm.exception))
 
     def test_dynamic_builder_route_rejects(self):
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz, nmat = 1, 2, 2, 1, 4
         chi_w = np.zeros((Nx, Ny, Nz, 1, 1, nmat), dtype=complex)
         with self.assertRaises(ValueError):
@@ -765,8 +763,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         """Centralizing the rejection must not touch the general (myo)
         convention, which fully represents Exchange/PairHop."""
         import hwave.sc as sc
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz = 2, 2, 2, 1
         nd = norb * norb
         inter_k = self._inter_k(["CoulombIntra", "Exchange", "PairHop"],
@@ -786,8 +783,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         review reproduced convention='invalid' + cache returning a
         vertex)."""
         import hwave.sc as sc
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz = 2, 2, 2, 1
         nd = norb * norb
         chi = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
@@ -821,8 +817,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         uncached myo vertices must be bit-identical on the static,
         instantaneous, and dynamic routes."""
         import hwave.sc as sc
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 3
         nd = norb * norb
         inter_k = self._inter_k(["CoulombIntra", "Exchange", "PairHop"],
@@ -863,8 +858,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         including when the dispatcher (the only other validator) is skipped
         by a supplied cache."""
         import hwave.sc as sc
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz = 1, 2, 2, 1
         chi = np.zeros((Nx, Ny, Nz, 1, 1), dtype=complex)
         chi_w = np.zeros((Nx, Ny, Nz, 1, 1, 3), dtype=complex)
@@ -896,7 +890,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         independent of nmat (round-9 review measured ~nmat identical
         full-grid builds)."""
         import hwave.sc as sc
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         from unittest import mock
 
         norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 6

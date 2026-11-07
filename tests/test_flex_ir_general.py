@@ -113,7 +113,7 @@ class TestChi0GeneralGateIrMatchesUniformLargeNmat(unittest.TestCase):
             raise unittest.SkipTest("sparse-ir not installed")
 
     def test_chi0_general_gate_ir_matches_uniform_large_nmat(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         T = 2.0
         beta = 1.0 / T
         diffs = []
@@ -252,7 +252,7 @@ def test_sigma_general_ir_direct_matches_uniform(T, nmat, tol):
     Parameterized over two substantially different temperatures (beta=0.5
     and beta=2.0) so a beta-dependent normalization bug (e.g. a missing or
     mis-scaled 1/beta) cannot hide behind a single-temperature comparison."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     beta = 1.0 / T
     su, giu = _make_general_solver(nmat, "uniform", T=T)
     su._calc_epsilon_k(giu)
@@ -284,7 +284,7 @@ def test_sigma_general_gate_one_iteration():
     """GATE: one general SCF step (sigma=0 -> sigma_new) on the IR path must
     match the uniform general step at large Nmat, compressed onto the
     fermionic nodes."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     T = 2.0
     beta = 1.0 / T
     diffs = []
@@ -365,7 +365,7 @@ def test_coeff_tail_uniform_converges_toward_ir_as_nmat_grows():
     physics change, on the uniform path either). Cheap (~15s total for one
     IR reference + three uniform Nmat points), so kept unmarked (not
     @pytest.mark.slow)."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     T = 2.0
     beta = 1.0 / T
     s_ir, gi_ir = _make_general_solver(1024, "ir", T=T, iteration_max=60,
@@ -451,7 +451,7 @@ def _outdict(path):
 
 def _run_dynamic_lambda(flex_out_dir, T, matsubara_basis="uniform"):
     """Run the dynamic Eliashberg solver consuming FLEX outputs in flex_out_dir."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     dirpath = _fixture_dirpath()
     _write_2d_2orb_onsite_fixture(dirpath)
     eli = {"chi0q_mode": "flex", "frequency": "dynamic",
@@ -953,7 +953,7 @@ def test_flex_and_eliashberg_ir_wmax_agree_with_onsite_offset():
     """Anti-regression for #184: the FLEX and dynamic-Eliashberg auto ir_wmax
     are the SAME number for a model with a nonzero on-site offset -- neither
     lets the offset leak in, and both are mu-aware."""
-    from hwave.solver.eliashberg_dynamic import _ir_auto_wmax
+    from hwave.solver.eliashberg.dynamic import _ir_auto_wmax
     e0, t, U = 5.0, 1.0, 4.0
     beta = 1.0 / 2.0
 

@@ -493,7 +493,7 @@ class TestRound4Hardening(unittest.TestCase):
 class TestDynamicGapSeedGate(unittest.TestCase):
 
     def test_unmarked_k_odd_seed_is_rejected(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         nx, nmat = 4, 4

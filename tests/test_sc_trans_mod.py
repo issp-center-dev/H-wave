@@ -668,7 +668,7 @@ class TestFlexPathsUnchanged(unittest.TestCase):
                         logs.output)
 
     def test_dynamic_warns(self):
-        from hwave.solver import eliashberg_dynamic
+        from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
         saved_solve = eliashberg_dynamic.solve_dynamic
         saved_prereq = sc_static._validate_dynamic_prereqs
         eliashberg_dynamic.solve_dynamic = lambda inp: "solved"

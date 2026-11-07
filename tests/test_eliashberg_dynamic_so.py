@@ -48,8 +48,8 @@ from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.eliashberg import eigen as sc_eigen
 from hwave.solver import backend, bubble
-from hwave.solver import eliashberg_dynamic as dyn
-from hwave.solver import eliashberg_dynamic_so as dso
+from hwave.solver.eliashberg import dynamic as dyn
+from hwave.solver.eliashberg import dynamic_so as dso
 from hwave.solver.so_pairing import so_pairing_vertex, so_pairing_vertex_parts
 from tests.heavy_tests import heavy
 import tests.test_sc_spin_orbital as S

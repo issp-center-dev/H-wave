@@ -37,9 +37,7 @@ import numpy as np
 import hwave.sc as sc
 from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import eigen as sc_eigen
-from hwave.solver import eliashberg_dynamic as ed
-
-
+from hwave.solver.eliashberg import dynamic as ed
 LAM_NEG = -1.93          # largest magnitude, repulsive (on-site s-like)
 LAM_POS = 0.359          # largest real part, the physical channel eigenvalue
 LAM_REST = 0.01          # every other mode
@@ -592,7 +590,7 @@ class TestHwaveScDefaultSolverMode(unittest.TestCase):
 
     def test_default_is_the_eigenvalue_solver(self):
         self.assertEqual(sc.DEFAULT_SOLVER_MODE, "eigenvalue")
-        from hwave.solver.eliashberg_bond_io import PairingControls
+        from hwave.solver.eliashberg.bond_io import PairingControls
         ctl = PairingControls.from_param({}, pairing_types=("singlet",))
         self.assertEqual(ctl.solver_mode, "eigenvalue")
 

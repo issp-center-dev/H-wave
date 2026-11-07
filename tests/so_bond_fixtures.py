@@ -50,7 +50,7 @@ from scipy.sparse.linalg import LinearOperator
 import hwave.qlmsio.read_input_k as read_input_k
 from hwave import sc
 from hwave.solver import bond_channels, flex_bond, so_bond
-from hwave.solver import eliashberg_bond as eb
+from hwave.solver.eliashberg import bond_dynamic as eb
 from hwave.solver import rpa
 from hwave.solver.so_bond import (SLOT_CONVENTION, PackedArrays, PackedBondPairKernel,
                                   SOBondCaps, plan_so_bond, select_layout, slot_geometry,

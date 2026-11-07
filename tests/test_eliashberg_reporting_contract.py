@@ -733,7 +733,7 @@ def _dyn_channel_kernel(channel_vals, other_val, shape=(1, 1, 4, 1, 1, 4)):
     """A dynamic kernel that conserves the singlet channel's even-frequency
     sector: eigenvalues ``channel_vals`` (then the last one repeated) there,
     ``other_val`` on its complement."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     n = int(np.prod(shape))
     I = np.eye(n, dtype=complex)
     P = np.column_stack([ed._project_parity_dynamic(
@@ -747,7 +747,7 @@ def _dyn_channel_kernel(channel_vals, other_val, shape=(1, 1, 4, 1, 1, 4)):
 
 
 def _run_dynamic(M, shape, **eli):
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     info = {}
     phi0 = ed._project_seed_dynamic(np.ones(shape, complex), "singlet")
     eli = dict({"solver_mode": "eigenvalue", "num_eigenvalues": 2}, **eli)
@@ -761,7 +761,7 @@ def _run_dynamic(M, shape, **eli):
 def _in_channel_sector(tc, gap, shape, pairing_type="singlet"):
     """The gap is finite, nonzero and lies in the channel's even-frequency
     sector."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     g = np.asarray(gap).ravel()
     tc.assertTrue(np.all(np.isfinite(g)))
     tc.assertGreater(np.linalg.norm(g), 0.0)
@@ -987,7 +987,7 @@ class TestExactlyZeroOperator(unittest.TestCase):
         value 0 with eigen_converged = true, the label "null-operator" and
         sector_selection "none" (an uncertified continuation, as for any
         seeded run without a channel match)."""
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         shape = (1, 1, 4, 1, 1, 4)
         phi0 = ed._project_seed_dynamic(np.ones(shape, complex), "singlet")
         seed = phi0.ravel() / np.linalg.norm(phi0)
@@ -1055,7 +1055,7 @@ class TestExactlyZeroOperator(unittest.TestCase):
 
     def test_projected_dynamic_above_the_dense_limit(self):
         """Unforced, at a reduced dimension above _DENSE_FALLBACK_MAX."""
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         shape = (1, 1, 16, 16, 1, 32)
         _f, _r, dim = ed._channel_sector_basis(shape, "singlet")
         self.assertGreater(dim, sc._DENSE_FALLBACK_MAX)
@@ -1173,7 +1173,7 @@ def _no_channel_kernel(shape=(1, 1, 4, 1, 1, 4)):
     """Singlet (combined +) leader +1 under opposite-sector modes {5, 4, 3};
     every eigenvector a generic even/odd-frequency mixture, so no eigenpair
     of the which='LM' set has the channel's (or the combined) parity."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     n = int(np.prod(shape))
     I = np.eye(n, dtype=complex)
 
@@ -1198,7 +1198,7 @@ class TestDynamicNoChannelEigenpair(unittest.TestCase):
     value; a seeded continuation keeps its value with a WARNING."""
 
     def _run(self, seed_vec=None, **eli):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         from tests.test_eliashberg_dynamic import _capture_dynamic_warnings
         shape = (1, 1, 4, 1, 1, 4)
         M = _no_channel_kernel(shape)

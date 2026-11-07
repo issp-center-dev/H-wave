@@ -605,8 +605,7 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         from unittest import mock
         import hwave.sc as sc
         from hwave.solver.eliashberg import static as sc_static
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         base = {"mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
                                    "SubShape": [2, 1, 1],
                                    "filling": 0.5}},
@@ -634,8 +633,7 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         (geometry/interactions are consumed unfolded); it used to fail
         late with an unhelpful shape mismatch."""
         import hwave.sc as sc
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         base = {"mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
                                    "SubShape": [2, 1, 1],
                                    "filling": 0.5}},

@@ -118,8 +118,7 @@ class TestProductionCallSites(unittest.TestCase):
         np.testing.assert_array_equal(sc._reverse_k_and_orbital(gap), old)
 
     def test_eliashberg_dynamic_reverse_kw_and_orbital(self):
-        from hwave.solver import eliashberg_dynamic as ed
-
+        from hwave.solver.eliashberg import dynamic as ed
         rng = np.random.default_rng(12)
         gap_w = rng.standard_normal((3, 3, 4, 3, 5, 6)) \
             + 1j * rng.standard_normal((3, 3, 4, 3, 5, 6))

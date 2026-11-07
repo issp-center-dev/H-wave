@@ -842,7 +842,7 @@ class TestRefusals(_TmpDir):
     def test_dynamic_entry_checks_the_configuration_first(self):
         """A direct solve_dynamic call reaches the spin-orbital dynamic solver,
         whose configuration checks run before anything else is read."""
-        from hwave.solver import eliashberg_dynamic
+        from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
         with self.assertRaisesRegex(ValueError, "enable_spin_orbital.*chi0q_mode"):
             eliashberg_dynamic.solve_dynamic({"mode": {"enable_spin_orbital": True}})
 
@@ -1276,9 +1276,9 @@ class TestStaticKernelBridge(_TmpDir):
 
     def test_production_operator_equals_validated_kernel(self):
         import types
-        from hwave.solver.eliashberg_bond import (
+        from hwave.solver.eliashberg.bond_dynamic import (
             ArrayBlockSource, BondPairKernel, PairVertexUniform, _vinst_as_block)
-        from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+        from hwave.solver.eliashberg.dynamic import calc_g2_dynamic
         files = _write_model(self.d, so=True, soc=0.3)
         inp = _input(self.d, files, True,
                      {"chi0q_mode": "calc", "solver_mode": "eigenvalue",

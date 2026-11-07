@@ -103,7 +103,7 @@ def _run_flex(inp):
     """Run the FLEX solve; return the bond kernel's matvec (when the
     in-process pairing step ran) and the green_info of the run."""
     import hwave.qlms as qlms
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     cap = {}
     real = ed.run_leading_eigenproblem
 
@@ -128,7 +128,7 @@ def _green(path):
 def _f_loc(G, beta, phi):
     """F_loc = (1/(N beta)) sum_{k,n} G(k, iw_n) phi(k, iw_n) G(-k, -iw_n),
     through the solver's own pair bubble (calc_g2_dynamic)."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     G2 = ed.calc_g2_dynamic(G[np.newaxis, np.newaxis], beta)[0, 0, 0, 0]
     return np.sum(G2 * phi) / phi[..., 0].size
 

@@ -26,7 +26,7 @@ from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.eliashberg import vertex as sc_vertex
 from hwave import qlms
-from hwave.solver import eliashberg_dynamic
+from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
 from tests.test_sc_spin_orbital import (_input, _quiet, _run_flex,
                                         _write_one_orbital, _wfile, _resave)
 
