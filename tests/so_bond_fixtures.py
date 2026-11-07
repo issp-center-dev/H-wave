@@ -57,9 +57,9 @@ from hwave.solver.so_bond import (SLOT_CONVENTION, PackedArrays, PackedBondPairK
                                   so_bond_topology, so_bond_vertex, sz_sector_map)
 from hwave.solver.so_records import compile_interaction
 from tests.so_bond_oracles import (BASE, CELL, FIXTURE_LZSZ, FIXTURE_LZSZ_GRID, FIXTURE_SZ_GRID,
-                                   FIXTURE_SZ_GRID_H0, FIXTURE_SZ_GRID_SYM, FIXTURE_SZ_RING,
-                                   TYPES_OFFSITE, OracleGeometry, closed_row, expand_tables,
-                                   file_gamma_label, first_order_prediction,
+                                   FIXTURE_SZ_GRID_4X2, FIXTURE_SZ_GRID_H0, FIXTURE_SZ_GRID_SYM,
+                                   FIXTURE_SZ_RING, TYPES_OFFSITE, OracleGeometry, closed_row,
+                                   expand_tables, file_gamma_label, first_order_prediction,
                                    gamma_code_to_label, lindhard_static, mesh_index,
                                    ph_sector_lists, pp_sector_lists, random_green, sz_of_mode)
 
@@ -379,7 +379,7 @@ NOCAP = SOBondCaps(None, None, None)
 #: the subtest labels of the conserving fixtures
 FIXTURE_NAMES = {FIXTURE_SZ_RING: "ring", FIXTURE_SZ_GRID: "grid", FIXTURE_LZSZ: "lzsz",
                  FIXTURE_SZ_GRID_H0: "grid h=0", FIXTURE_SZ_GRID_SYM: "grid spin-symmetric",
-                 FIXTURE_LZSZ_GRID: "lzsz grid"}
+                 FIXTURE_LZSZ_GRID: "lzsz grid", FIXTURE_SZ_GRID_4X2: "grid 4x2"}
 
 
 @functools.lru_cache(maxsize=None)

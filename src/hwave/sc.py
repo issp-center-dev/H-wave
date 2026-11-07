@@ -37,6 +37,7 @@ from hwave.solver import backend
 from hwave.solver import bond_channels
 from hwave.solver import bubble
 from hwave.solver import green as green_mod
+from hwave.solver.so_pairing import _SO_WHAT
 
 logger = logging.getLogger("hwave_sc")
 
@@ -411,6 +412,17 @@ def _resolve_bond_coeff_tail(eli_param):
     return value, "config"
 
 
+def _warn_stale_bond_options(eli_param):
+    """The WARNING naming every bond option set while ``bond_channels`` is
+    off (they are ignored, never parsed)."""
+    stale = [name for name in _BOND_OPTION_KEYS if name in eli_param]
+    if stale:
+        logger.warning(
+            "[eliashberg] %s set but bond_channels=false; the bond-channel "
+            "options only apply to bond_channels=true and are ignored "
+            "here.", ", ".join(stale))
+
+
 def _read_bond_config(eli_param):
     """Read the ``[eliashberg]`` bond-channel options (spec S5).
 
@@ -434,12 +446,7 @@ def _read_bond_config(eli_param):
     """
     use_bond = _bond_bool_option(eli_param, "bond_channels", False)
     if not use_bond:
-        stale = [name for name in _BOND_OPTION_KEYS if name in eli_param]
-        if stale:
-            logger.warning(
-                "[eliashberg] %s set but bond_channels=false; the bond-channel "
-                "options only apply to bond_channels=true and are ignored "
-                "here.", ", ".join(stale))
+        _warn_stale_bond_options(eli_param)
         return False, None, None, None, {}, False
 
     bond_diagnostics = _bond_bool_option(eli_param, "bond_diagnostics", False)
@@ -489,6 +496,163 @@ def _read_bond_config(eli_param):
                 "{}".format(dense_limit))
         pre_opts["dense_limit"] = dense_limit
     return True, bond_green, max_shells, cap_gb, pre_opts, bond_diagnostics
+
+
+# ---------------------------------------------------------------------------
+# The configuration of the spin-orbital bond path ([mode] enable_spin_orbital
+# = true with [eliashberg] bond_channels = true; issue #270)
+# ---------------------------------------------------------------------------
+
+_SO_BOND_LAYOUT_IGNORED = (
+    "[eliashberg] so_bond_layout set but bond_channels=false; it only applies to "
+    "the spin-orbital bond path and is ignored here.")
+_SO_BOND_GREEN_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] bond_green is not available with bond_channels in "
+    "spin-orbital mode: no run writes a spin-orbital bond-resolved Green function "
+    "yet (it arrives with the spin-orbital bond FLEX). Remove bond_green; the Green "
+    "function is built from the Transfer (and Extern) input.")
+_SO_BOND_DIAGNOSTICS_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] bond_diagnostics is not available in spin-orbital "
+    "mode (its character analysis is the singlet/triplet one of the "
+    "non-spin-orbital bond path); the gap.npz S_z and spin decompositions describe "
+    "the leading state. Remove bond_diagnostics.")
+#: ``{key}`` = the key as the user spelled it
+_SO_BOND_PRECONDITION_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] {key} tunes the Hermiticity check of the "
+    "non-spin-orbital bond kernel; the spin-orbital kernel is not Hermitian and has "
+    "no such check. Remove {key}.")
+_SO_BOND_FLEX_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] chi0q_mode = \"flex\" with bond_channels = true is "
+    "not available yet: the spin-orbital bond path builds its bond bubble from the "
+    "band's Green function and reads no FLEX output. Remove chi0q_mode (or leave it "
+    "unset); it is not used on this path.")
+_SO_BOND_GPU_REQUIRED_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] gpu_required = true is not available with "
+    "bond_channels = true: the spin-orbital bond-resolved kernel runs on the CPU "
+    "only. Remove gpu_required (gpu = true alone is ignored with a warning).")
+#: WARNING texts (``%s`` arguments) of :func:`_so_bond_entry_warnings`
+_SO_BOND_CHI0Q_UNUSED = (
+    "[eliashberg] bond_channels=true in spin-orbital mode builds its own "
+    "bond-resolved bubble directly from the Green function, so chi0q_mode = '%s' "
+    "and chi0q_tensor = '%s' are not used: no chi0q file is read or computed on "
+    "this path.")
+_SO_BOND_GPU_IGNORED = (
+    "[eliashberg] gpu=true is ignored for bond_channels=true in spin-orbital mode: "
+    "the spin-orbital bond-resolved kernel is CPU-only (GPU support is a deferred "
+    "follow-up).")
+_SO_BOND_FLEX_KEYS_UNUSED = (
+    "[eliashberg] %s: not used for bond_channels=true in spin-orbital mode (the "
+    "spin-orbital bond path reads no FLEX output).")
+
+_SO_BOND_PRECONDITION_PREFIX = "bond_precondition_"
+_SO_BOND_CAP_KEY = "[eliashberg] bond_memory_cap_gb"
+
+
+class _SOBondConfig(NamedTuple):
+    """The ``[eliashberg]`` options of a spin-orbital run's bond path.
+
+    ``use_bond`` is ``bond_channels``; with it off every other field is
+    ``None``. ``layout_request`` is the ``so_bond_layout`` value in lower
+    case (``"auto"`` when unset); ``cap_raw`` the ``bond_memory_cap_gb`` value
+    as a float (``None`` when unset, ``0.0`` = no cap); ``max_shells`` the
+    ``bond_max_shells`` cutoff (``None`` = every shell); ``coeff_tail``,
+    ``coeff_tail_source`` the resolved ``bond_coeff_tail``
+    (:func:`_resolve_bond_coeff_tail`); ``g2_tail`` the Matsubara tail
+    switch."""
+    use_bond: bool
+    layout_request: object
+    cap_raw: object
+    max_shells: object
+    coeff_tail: object
+    coeff_tail_source: object
+    g2_tail: object
+
+
+def _read_so_bond_config(eli_param):
+    """Read the bond options of a spin-orbital run from the ``[eliashberg]``
+    table ``eli_param`` (keys case-insensitive).
+
+    With ``bond_channels`` off the bond options are ignored with a WARNING
+    (the non-spin-orbital one, plus one for ``so_bond_layout``) and never
+    parsed. With it on, the options the spin-orbital bond path does not use
+    are refused, the first offender winning, in this order: ``bond_green``;
+    ``bond_diagnostics`` (any value); any ``bond_precondition_*`` key (any
+    value; the first in lower-case order, named as spelled);
+    ``chi0q_mode = "flex"``; ``gpu_required = true``. Then the values are
+    validated: ``so_bond_layout`` (:func:`hwave.solver.so_bond.parse_layout_key`),
+    ``bond_max_shells >= 0``, ``bond_memory_cap_gb`` a finite number ``>= 0``
+    (``0`` disables the memory admission check), ``bond_coeff_tail`` and
+    ``g2_tail``. Nothing here reads a file or selects a backend."""
+    from requests.structures import CaseInsensitiveDict
+    from hwave.solver import so_bond
+    eli = CaseInsensitiveDict(eli_param or {})
+    if not _bond_bool_option(eli, "bond_channels", False):
+        _warn_stale_bond_options(eli)
+        if "so_bond_layout" in eli:
+            logger.warning(_SO_BOND_LAYOUT_IGNORED)
+        return _SOBondConfig(False, None, None, None, None, None, None)
+
+    if "bond_green" in eli:
+        raise ValueError(_SO_BOND_GREEN_REFUSAL)
+    if "bond_diagnostics" in eli:
+        raise ValueError(_SO_BOND_DIAGNOSTICS_REFUSAL)
+    precondition = sorted(
+        (key for key in eli if key.lower().startswith(_SO_BOND_PRECONDITION_PREFIX)),
+        key=lambda key: (key.lower(), key))
+    if precondition:
+        raise ValueError(_SO_BOND_PRECONDITION_REFUSAL.format(key=precondition[0]))
+    if eli.get("chi0q_mode") == "flex":
+        raise ValueError(_SO_BOND_FLEX_REFUSAL)
+    if backend.as_bool(eli.get("gpu_required", False)):
+        raise ValueError(_SO_BOND_GPU_REQUIRED_REFUSAL)
+
+    layout = eli.get("so_bond_layout")
+    layout_request = so_bond.parse_layout_key(
+        "auto" if layout is None else layout, key="[eliashberg] so_bond_layout")
+    max_shells = _bond_int_option(eli, "bond_max_shells")
+    if max_shells is not None and max_shells < 0:
+        raise ValueError(
+            "[eliashberg] bond_max_shells must be >= 0 (shell 0 = the "
+            "on-site Delta r = 0 point), got {}".format(max_shells))
+    cap_given = eli.get("bond_memory_cap_gb")
+    cap_raw = None
+    if cap_given is not None:
+        if isinstance(cap_given, (bool, np.bool_)):
+            cap_raw = float("nan")                  # refused below
+        else:
+            try:
+                cap_raw = _bond_float_option(eli, "bond_memory_cap_gb")
+            except OverflowError:                   # an integer beyond the float range
+                cap_raw = float("nan")
+        if not np.isfinite(cap_raw) or cap_raw < 0.0:
+            raise ValueError(so_bond.CAP_RANGE_TEXT.format(
+                key=_SO_BOND_CAP_KEY, raw=cap_given))
+    coeff_tail, coeff_tail_source = _resolve_bond_coeff_tail(eli)
+    g2_tail = _coerce_g2_tail(eli.get("g2_tail", True))
+    return _SOBondConfig(True, layout_request, cap_raw, max_shells, coeff_tail,
+                         coeff_tail_source, g2_tail)
+
+
+def _so_bond_entry_warnings(eli_param, log):
+    """The WARNINGs, at most one each, of the options a spin-orbital bond
+    run accepts but does not use: ``chi0q_mode`` / ``chi0q_tensor`` (no
+    chi0q is read or computed), ``gpu = true`` (the kernel is CPU-only) and
+    ``flex_chi_s`` / ``flex_chi_c`` (no FLEX output is read)."""
+    from requests.structures import CaseInsensitiveDict
+    eli = CaseInsensitiveDict(eli_param or {})
+
+    def shown(key):
+        val = eli.get(key)
+        return "unset" if val is None else val
+
+    if "chi0q_mode" in eli or "chi0q_tensor" in eli:
+        log.warning(_SO_BOND_CHI0Q_UNUSED, shown("chi0q_mode"), shown("chi0q_tensor"))
+    if backend.as_bool(eli.get("gpu", False)):
+        log.warning(_SO_BOND_GPU_IGNORED)
+    flex_keys = sorted((key for key in eli if key.lower() in ("flex_chi_s", "flex_chi_c")),
+                       key=lambda key: (key.lower(), key))
+    if flex_keys:
+        log.warning(_SO_BOND_FLEX_KEYS_UNUSED, ", ".join(flex_keys))
 
 
 def _validate_bond_prereqs(chi0q_mode, norb, interactions,
@@ -2558,22 +2722,65 @@ def _so_coeff_extern(input_dict):
     return spin_orbital.validate_coeff_extern(raw)
 
 
+class _SOBondRun(NamedTuple):
+    """The bond topology of a spin-orbital bond run, resolved once per run:
+    ``topo`` (:func:`hwave.solver.so_bond.so_bond_topology`), ``inputs``
+    (:class:`hwave.solver.fingerprint.BondInputs`: ``delta_r``, ``reverse``,
+    the slot convention and ``max_shells``, ``-1`` when no cutoff is set), as
+    the bond archives record and the bond consumers compare it, and
+    ``fp_resolved_topology``, its digest."""
+    topo: object
+    inputs: object
+    fp_resolved_topology: str
+
+
+def _so_bond_run(context, cell, max_shells):
+    """The :class:`_SOBondRun` of the interaction compiled in ``context``
+    (:class:`hwave.solver.spin_orbital.SOEntryContext`) on the lattice
+    ``cell`` (rows are the lattice vectors), with the shell cutoff
+    ``max_shells`` (``None``: every declared shell). A cutoff that drops a
+    shell used by a nonzero interaction record is refused by
+    :func:`hwave.solver.so_bond.so_bond_topology`."""
+    from hwave.solver import fingerprint, so_bond
+    topo = so_bond.so_bond_topology(context.compiled, cell, max_shells=max_shells)
+    delta_r = np.asarray(topo.delta_r)
+    reverse = np.asarray(topo.reverse)
+    inputs = fingerprint.BondInputs(delta_r, reverse, so_bond.SLOT_CONVENTION,
+                                    -1 if max_shells is None else int(max_shells))
+    return _SOBondRun(topo, inputs, fingerprint.resolved_topology_digest(
+        delta_r, reverse, so_bond.SLOT_CONVENTION))
+
+
+def _same_bond_inputs(a, b):
+    """Whether two :class:`hwave.solver.fingerprint.BondInputs` hold the same
+    channels, reversal map, slot convention and cutoff."""
+    def conv(c):
+        to_string = getattr(c, "to_string", None)
+        return to_string() if callable(to_string) else str(c)
+    return (np.array_equal(np.asarray(a.delta_r), np.asarray(b.delta_r))
+            and np.array_equal(np.asarray(a.reverse), np.asarray(b.reverse))
+            and conv(a.slot_convention) == conv(b.slot_convention)
+            and int(a.max_shells) == int(b.max_shells))
+
+
 class _SORun(NamedTuple):
     """This spin-orbital hwave_sc run as the archive checks see it (#88):
     its band (:func:`hwave.solver.fingerprint.band_inputs`), its state
     (``beta``, ``nmat``, ``calc_mu = True``, ``target`` in electrons per cell;
     ``mu``, ``density`` and ``mu_tol`` are NaN, in memory only, never
-    compared and never serialized) and the entry context
+    compared and never serialized), the entry context
     (:class:`hwave.solver.spin_orbital.SOEntryContext`: the interaction
     compiled once, the ``orbital_site`` WARNING state) that the nested RPA
-    runs reuse."""
+    runs reuse, and, for a bond run, its bond topology
+    (:class:`_SOBondRun`, ``None`` for an on-site run)."""
     band: object
     state: object
-    context: object = None
+    context: object
+    bond: object = None
 
 
 def _so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat,
-                   n_filling, context=None):
+                   n_filling, *, context, bond=None):
     """The :class:`_SORun` of a spin-orbital hwave_sc run, built from its own
     input before any archive is read. hwave_sc always searches mu
     (``filling`` is mandatory), so the target is ``filling * nd`` electrons
@@ -2581,10 +2788,17 @@ def _so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat,
     Transfer table as read (interleaved), the physical-orbital Extern table
     (or None), and the metadata of the spin-orbital RPA/FLEX producers
     (``coeff_extern``, the index convention, the orbital counts, CellShape
-    and the resolved SubShape). ``context`` is stored as
-    :attr:`_SORun.context`."""
+    and the resolved SubShape). ``context`` (the run's
+    :class:`hwave.solver.spin_orbital.SOEntryContext`, required) is stored
+    as :attr:`_SORun.context` and ``bond`` (a :class:`_SOBondRun` or
+    ``None``) as :attr:`_SORun.bond`."""
     from requests.structures import CaseInsensitiveDict
     from hwave.solver import fingerprint, spin_orbital
+    if not isinstance(context, spin_orbital.SOEntryContext):
+        raise ValueError(
+            "_so_run_inputs: context must be the run's SOEntryContext "
+            "(spin_orbital.build_so_entry_context), got {}".format(
+                type(context).__name__))
     # case-insensitive, like every [mode.param] key of the producers
     param = CaseInsensitiveDict(input_dict["mode"].get("param", {}) or {})
     cs = param["CellShape"]
@@ -2601,7 +2815,8 @@ def _so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat,
     nan = float("nan")
     state = fingerprint.SOState(float(beta), int(nmat), nan, nan, True,
                                 float(n_filling) * 2 * int(norb_phys), nan)
-    return _SORun(fingerprint.band_inputs(hr, extern_table, meta), state, context)
+    return _SORun(fingerprint.band_inputs(hr, extern_table, meta), state, context,
+                  bond)
 
 
 #: the producers a spin-orbital hwave_sc run names when an archive it reads
@@ -2611,18 +2826,37 @@ _SO_RPA_PRODUCER = "the spin-orbital RPA run (hwave RPA, enable_spin_orbital = t
 _SO_FLEX_PRODUCER = "the spin-orbital FLEX run (hwave FLEX, enable_spin_orbital = true)"
 
 
-def _so_check_archive(data, path, so_run, nmat_rule, kind, producer, **kw):
+def _so_check_archive(data, path, so_run, nmat_rule, kind, producer, *,
+                      need="so_onsite", run_bond=None, **kw):
     """:func:`hwave.solver.fingerprint.check_so_archive` of the ``kind``
     archive (``"chi0q"``, ``"chiq"``, ``"green"`` or ``"sigma"``) against
     ``so_run``: its band, state and the interaction fingerprints of its
-    entry context; this run consumes on-site (``"so_onsite"``) artifacts.
+    entry context. ``need`` is the capability this consumer reads:
+    ``"so_onsite"`` (the default; ``run_bond`` must then be ``None``) or
+    ``"so_bond"``, whose bond inputs are ``run_bond`` when given (it must
+    equal ``so_run.bond.inputs`` when the run carries a topology), else
+    ``so_run.bond.inputs`` (a run without a topology is refused).
     ``producer`` (:data:`_SO_RPA_PRODUCER` or :data:`_SO_FLEX_PRODUCER`)
     is the run that writes the archive."""
     from hwave.solver import fingerprint
+    if need == "so_onsite":
+        if run_bond is not None:
+            raise ValueError("_so_check_archive: run_bond applies to a so_bond "
+                             "consumer only")
+    elif need == "so_bond":
+        if run_bond is None:
+            if so_run.bond is None:
+                raise ValueError("_so_check_archive: a so_bond consumer needs the run's "
+                                 "bond topology (so_run.bond)")
+            run_bond = so_run.bond.inputs
+        elif so_run.bond is not None and not _same_bond_inputs(run_bond,
+                                                               so_run.bond.inputs):
+            raise ValueError("_so_check_archive: run_bond differs from the run's bond "
+                             "topology (so_run.bond.inputs)")
     return fingerprint.check_so_archive(
         data, path, kind=kind, run_band=so_run.band, run_state=so_run.state,
         nmat_rule=nmat_rule, run_interaction=so_run.context.interaction,
-        need="so_onsite", expected_producer=producer, **kw)
+        need=need, run_bond=run_bond, expected_producer=producer, **kw)
 
 
 def _so_own_state(eigenvalues, beta, mu, nmat, target):
@@ -2664,17 +2898,25 @@ def _so_flex_consumed_state(green_sc, epsilon_k, sigma_static, mu, beta,
                                 calc_mu=True, target=target)
 
 
-def _so_writer_members(stage, label, so_run, fp_green, state):
+def _so_writer_members(stage, label, so_run, fp_green, state, *, bond=None):
     """The fingerprint members of a hwave_sc gap archive: this run's band
     and interaction fingerprints, and the Green function and state its
     kernel used (never the producer's); ``fp_green`` is
-    :func:`_so_green_fp` of that Green function."""
+    :func:`_so_green_fp` of that Green function. A bond-resolved
+    (``"so_bond"``) stage also records its bond inputs: ``bond`` when given,
+    else ``so_run.bond.inputs``; an on-site stage takes none."""
     from hwave.solver import fingerprint
+    if fingerprint.STAGE_CAPABILITY.get(stage) == "so_bond":
+        if bond is None and so_run.bond is not None:
+            bond = so_run.bond.inputs
+    elif bond is not None:
+        raise ValueError("_so_writer_members: stage {} is so_onsite and takes no bond "
+                         "inputs".format(stage))
     return fingerprint.so_provenance_members(
         producer_stage=stage, producer_label=label,
         transfer=so_run.band.transfer, extern=so_run.band.extern,
         meta=so_run.band.meta, fp_green=fp_green, state=state,
-        interaction=so_run.context.interaction)
+        interaction=so_run.context.interaction, bond=bond)
 
 
 def _so_green_fp(green_kw):
@@ -3136,6 +3378,61 @@ def _build_bond_green(eigenvalues, eigenvectors, mu, beta, nmat,
         coeff_tail_requested=float(coeff_tail_requested),
         coeff_tail_applied=float(coeff_tail_requested),
         source="internal")
+
+
+class _SOBondGreen(NamedTuple):
+    """The Green function of a static spin-orbital bond run.
+
+    ``carrier`` is the :class:`_BondGreen` built on the canonical band
+    (``full_sc`` ``(nd, nd, Nx, Ny, Nz, nmat)`` in spin-block order, on the
+    centered fermionic grid ``w_n = (2n + 1 - nmat) pi / beta``); ``fp_green``
+    its :func:`_so_green_fp`; ``conserving`` whether the band conserves S_z
+    (then G has exactly zero S_z-off-sector entries); ``eigenvalues`` the
+    band ``(Nx, Ny, Nz, nd)``, ascending per k; ``mu`` the chemical
+    potential."""
+    carrier: object
+    fp_green: str
+    conserving: bool
+    eigenvalues: object
+    mu: float
+
+
+def _so_bond_green(epsilon_k, so_run, *, norb_phys, filling, beta, nmat,
+                   coeff_tail):
+    """The :class:`_SOBondGreen` of a static spin-orbital bond run.
+
+    ``epsilon_k`` is the run's spin-block band (:func:`_so_epsilon_k`) and
+    ``so_run`` its :class:`_SORun`. Whether the band conserves S_z is decided
+    by the Transfer table alone
+    (:func:`hwave.solver.so_bond.band_conserves_sz`; never by the layout of
+    the bond objects, so a forced dense layout gives the same G); the band is
+    then diagonalized per spin sector when it does
+    (:func:`hwave.solver.so_bond.canonical_band_eigen`). mu holds ``filling``
+    electrons per orbital per spin, counted over the ``nd = 2 norb_phys``
+    spin-orbitals. ``coeff_tail`` is the resolved ``[eliashberg]
+    bond_coeff_tail`` (:func:`_resolve_bond_coeff_tail`); it changes only
+    the deflated Green function of the bubble, never ``full_sc``. The
+    carrier's arrays are returned read-only."""
+    from hwave.solver import so_bond
+    norb_phys = int(norb_phys)
+    if coeff_tail is None:
+        raise ValueError("_so_bond_green: coeff_tail must be the resolved "
+                         "[eliashberg] bond_coeff_tail, got None")
+    conserving = bool(so_bond.band_conserves_sz(
+        so_run.band.transfer, so_run.band.extern, norb_phys).conserving)
+    eigenvalues, eigenvectors = so_bond.canonical_band_eigen(
+        epsilon_k, norb_phys, conserving=conserving)
+    mu = _determine_mu(eigenvalues, beta, filling, 2 * norb_phys)
+    carrier = _build_bond_green(eigenvalues, eigenvectors, mu, beta, nmat,
+                                coeff_tail, None, spin_orbital_mode=True)
+    del eigenvectors
+    # fp_green is taken once here and travels with the carrier to the end of
+    # the solve, so the carrier's arrays are read-only from now on
+    for a in (carrier.full_sc, carrier.deflated_kw, carrier.green0_tail):
+        if a is not None:
+            a.setflags(write=False)
+    return _SOBondGreen(carrier, _so_green_fp(carrier.full_sc), conserving,
+                        eigenvalues, float(mu))
 
 
 # ---------------------------------------------------------------------------
@@ -10608,6 +10905,10 @@ def calc_eliashberg(input_dict):
     # dynamic vertex, so warn rather than silently ignore them.
     _warn_if_static_ignores_channel_flags(eli_param)
 
+    # The bond options of a spin-orbital run are read here, before the
+    # backend is selected (the spin-orbital bond path runs on the CPU).
+    so_bond_cfg = _read_so_bond_config(eli_param) if spin_orbital_mode else None
+
     # GPU backend for the static kernel (the dynamic branch returned above and
     # handles its own gpu flag). get_backend falls back to numpy with a warning
     # when CuPy/CUDA is unusable, unless gpu_required=true (then it raises).
@@ -10636,8 +10937,14 @@ def calc_eliashberg(input_dict):
     # ignored with a warning when the flag is off; the guards themselves run
     # right after the interaction files are read (below), before any
     # chi0q/FLEX data is touched.
-    (use_bond_channels, bond_green, bond_max_shells, bond_memory_cap_gb,
-     bond_precondition_opts, bond_diagnostics) = _read_bond_config(eli_param)
+    # In spin-orbital mode the bond options were read above
+    # (_read_so_bond_config); the non-spin-orbital bond path stays off.
+    if spin_orbital_mode:
+        (use_bond_channels, bond_green, bond_max_shells, bond_memory_cap_gb,
+         bond_precondition_opts, bond_diagnostics) = (False, None, None, None, {}, False)
+    else:
+        (use_bond_channels, bond_green, bond_max_shells, bond_memory_cap_gb,
+         bond_precondition_opts, bond_diagnostics) = _read_bond_config(eli_param)
     from requests.structures import CaseInsensitiveDict
     g2_tail = _coerce_g2_tail(
         CaseInsensitiveDict(eli_param).get("g2_tail", True))

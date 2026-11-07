@@ -178,6 +178,7 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
         for eli in ({"frequency": "dynamic"},
                     {"frequency": "dynamic", "matsubara_basis": "ir"},
                     {"Bond_Channels": True},
+                    {"Frequency": "dynamic", "Bond_Channels": True},
                     {"eigenvalue_method": "subspace"}):
             with self.subTest(eli=eli):
                 with self.assertRaises(ValueError) as cm:

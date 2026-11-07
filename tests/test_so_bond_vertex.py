@@ -497,26 +497,42 @@ class TestMeshAndPlan(unittest.TestCase):
         topo = so_bond_topology(c, CELL)
         tracemalloc.start()
         self.addCleanup(tracemalloc.stop)
+        # the peak each refused call adds over what is already traced: the
+        # test runner's own bookkeeping (subtest reports, its progress line)
+        # is not the code under test
+
+        def start():
+            tracemalloc.reset_peak()
+            return tracemalloc.get_traced_memory()[0]
+
+        def added(base):
+            return tracemalloc.get_traced_memory()[1] - base
+        peaks = []
         for field, bad, plan_v, call_v in (("nd", _plan(topo, 2, (5, 1, 1)), 2, 4),
                                            ("nvol", _plan(topo, 4, (4, 1, 1)), 4, 5),
                                            ("B", _plan_B(1), 1, 5)):
             with self.subTest(field=field):
+                base = start()
                 with self.assertRaisesRegex(ValueError, exact(
                         "so_bond_vertex: the admission plan has {f} = {p} but the call has "
                         "{f} = {c} ({r})".format(f=field, p=plan_v, c=call_v, r=bad.reason))):
                     so_bond_vertex(c, topo, (5, 1, 1), plan=bad)
+                peaks.append(added(base))
         head = ("spin-orbital bond FLEX needs an estimated peak of 0.00 GiB in phase vertex "
                 "(B = 5 channels, ND = B·(2·norb_phys)² = 80, nvol = 5, Nmat = 2; one store "
                 "slot = 16·Nmat·nvol·ND² bytes = 0.00 GiB) but the cap is 0.00 GiB "
                 "(caps.host_bytes). Memory grows as Nmat · nvol · B² · norb_phys⁴. Reduce Nmat "
                 "or the k grid, or prune bond shells.\n")
+        base = start()
         with self.assertRaises(ValueError) as cm:
             plan_so_bond(nmat=2, nvol=5, B=5, nd=4, consumers=("vertex",),
                          caps=SOBondCaps(1024.0, 1e-6, None))
+        peaks.append(added(base))
         msg = str(cm.exception)
         self.assertTrue(msg.startswith(head), msg)
         self.assertIn("resident  gamma_b  512000", msg)
-        self.assertLess(tracemalloc.get_traced_memory()[1], 100 * 1024)
+        self.assertEqual(len(peaks), 4)
+        self.assertLess(max(peaks), 100 * 1024)
 
     def test_plan_argument_refusals(self):
         for kw, msg in (
@@ -757,8 +773,11 @@ def _solver_formula(dims, k, n_full_gap, n_sector_vec):
             branch = 16 * 7 * d * d + 16 * 3 * n * d + 16 * 4 * d
         else:
             ncv = min(max(2 * k + 1, 20), d)
-            branch = (16 * (ncv * d + 3 * ncv * ncv + 14 * ncv + 3 * d)
-                      + 24 * n + 6 * 16 * n + 16 * 3 * k * (d + n))
+            work = 16 * (ncv * d + 3 * ncv * ncv + 14 * ncv + 3 * d)
+            # the default (unshifted) solve keeps the spectral-radius set and the
+            # first eigenvalues; no second working set at these dimensions
+            branch = (work + 24 * n + 6 * 16 * n + 16 * 3 * k * (d + n)
+                      + 16 * (min(6, d - 2) * (d + 1) + k))
         null = 16 * (min(k, d) * (d + n) + n_full_gap)
         per.append(max(branch, null))
     return (max(per) + 16 * (k + sum(min(k, d) for d in dims)) * n_full_gap
@@ -791,15 +810,17 @@ class TestSectorEstimators(unittest.TestCase):
         self.assertEqual(estimate_sector_solver_bytes([20], 1, 40, n_sector_vec=[40]),
                          max(16 * 7 * 400 + 16 * 3 * 40 * 20 + 16 * 80, 16 * (60 + 40))
                          + 16 * 2 * 40 + 16 * 20 + tail)
+        # the retained sets: the spectral_shift="auto" spectral-radius solve (6 pairs) and the
+        # eigenvalues of the first which='LM' solve
         arp = (16 * (20 * 21 + 3 * 400 + 14 * 20 + 3 * 21) + 24 * 42 + 6 * 16 * 42
-               + 16 * 3 * (21 + 42))
+               + 16 * 3 * (21 + 42) + 16 * (6 * 22 + 1))
         self.assertEqual(estimate_sector_solver_bytes([21], 1, 42, n_sector_vec=[42]),
                          max(arp, 16 * (63 + 42)) + 16 * 2 * 42 + 16 * 21 + tail)
         self.assertEqual(estimate_sector_solver_bytes([21], 10, 42, n_sector_vec=[42]),
                          16 * 7 * 441 + 16 * 3 * 42 * 21 + 16 * 84 + 16 * 20 * 42
                          + 16 * 10 * 21 + tail)
         arp = (16 * (21 * 60 + 3 * 441 + 14 * 21 + 3 * 60) + 24 * 120 + 6 * 16 * 120
-               + 16 * 30 * (60 + 120))
+               + 16 * 30 * (60 + 120) + 16 * (6 * 61 + 10))
         self.assertEqual(estimate_sector_solver_bytes([60], 10, 120, n_sector_vec=[120]),
                          arp + 16 * 20 * 120 + 16 * 10 * 60 + tail)
 
