@@ -1479,22 +1479,22 @@ class TestBondGreenFlow(unittest.TestCase):
         """sc.py-shaped (unflattened) eigen-decomposition of a random
         Hermitian ``H0(k)``: eigenvalues ``(Nx, Ny, Nz, norb)``,
         eigenvectors ``(Nx, Ny, Nz, norb, norb)``."""
-        import hwave.sc as sc_mod
+        from hwave.solver.eliashberg import band as sc_band
 
         rng = np.random.default_rng(seed)
         raw = (rng.standard_normal((norb, norb, Nx, Ny, Nz))
                + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
         h = raw + np.conj(np.swapaxes(raw, 0, 1))  # Hermitian per k-point
-        return sc_mod._calc_eigenvalues(h)
+        return sc_band._calc_eigenvalues(h)
 
     def test_full_sc_matches_direct_sum_internal_build(self):
         """(a): carrier.full_sc vs the direct-sum oracle, abs=1e-13."""
-        import hwave.sc as sc_mod
+        from hwave.solver.eliashberg import bond as sc_bond
 
         eigenvalues, eigenvectors = self._sc_tiny_eig()
         mu, beta, nmat = 0.15, 2.0, 8
         oracle = _direct_green_sc(eigenvalues, eigenvectors, mu, beta, nmat)
-        carrier = sc_mod._build_bond_green(
+        carrier = sc_bond._build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
         assert_approx_array(carrier.full_sc, oracle, rel=0, abs=1e-13)
         self.assertEqual(carrier.coeff_tail_requested, 1.0)
@@ -1507,7 +1507,8 @@ class TestBondGreenFlow(unittest.TestCase):
         reuses the caller's already-computed ``mu`` verbatim), then pinning
         the result against the direct-sum oracle called with that SAME
         mu."""
-        import hwave.sc as sc_mod
+        from hwave.solver.eliashberg import bond as sc_bond
+        from hwave.solver.eliashberg import band as sc_band
 
         eigenvalues, eigenvectors = self._sc_tiny_eig(seed=6)
         mu, beta, nmat = -0.35, 1.5, 8
@@ -1516,13 +1517,17 @@ class TestBondGreenFlow(unittest.TestCase):
             raise AssertionError(
                 "_build_bond_green must never re-run a mu search")
 
-        orig = sc_mod._determine_mu
-        sc_mod._determine_mu = _boom
+        # bond binds no _determine_mu of its own (a module-level import would
+        # be bound before the patch below and slip past it); a lazy import at
+        # call time would read band's patched name and trip _boom
+        self.assertFalse(hasattr(sc_bond, "_determine_mu"))
+        orig = sc_band._determine_mu
+        sc_band._determine_mu = _boom
         try:
-            carrier = sc_mod._build_bond_green(
+            carrier = sc_bond._build_bond_green(
                 eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
         finally:
-            sc_mod._determine_mu = orig
+            sc_band._determine_mu = orig
         oracle = _direct_green_sc(eigenvalues, eigenvectors, mu, beta, nmat)
         assert_approx_array(carrier.full_sc, oracle, rel=0, abs=1e-13)
 
@@ -1532,7 +1537,7 @@ class TestBondGreenFlow(unittest.TestCase):
         (fed the SAME carrier's deflated_kw/green0_tail) differs from the
         tail-off bubble by more than 1e-8 -- the exact separation the
         carrier design exists to guarantee (spec 'Green data flow')."""
-        import hwave.sc as sc_mod
+        from hwave.solver.eliashberg import bond as sc_bond
         from hwave.solver import bond_channels as bc
 
         Nx, Ny, Nz, norb = 3, 2, 1, 1
@@ -1541,7 +1546,7 @@ class TestBondGreenFlow(unittest.TestCase):
         mu, beta, nmat = 0.1, 3.0, 16
 
         oracle = _direct_green_sc(eigenvalues, eigenvectors, mu, beta, nmat)
-        carrier = sc_mod._build_bond_green(
+        carrier = sc_bond._build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
 
         w_new = bc.pair_weight(carrier.full_sc, beta, g2_tail=False)
@@ -1568,17 +1573,18 @@ class TestBondGreenFlow(unittest.TestCase):
         the direct-sum oracle called with the SAME arguments the site
         used."""
         import hwave.sc as sc_mod
+        from hwave.solver.eliashberg import static as sc_static
         from tests.test_sc_bond import _base_input
 
         captured = []
-        orig = sc_mod._build_bond_green
+        orig = sc_static._build_bond_green
 
         def _capture(*args, **kwargs):
             carrier = orig(*args, **kwargs)
             captured.append((args, carrier))
             return carrier
 
-        sc_mod._build_bond_green = _capture
+        sc_static._build_bond_green = _capture
         try:
             with tempfile.TemporaryDirectory() as d:
                 # Standard RPA (bond_channels=False, chi0q_mode="calc" by
@@ -1590,7 +1596,7 @@ class TestBondGreenFlow(unittest.TestCase):
                 # output): the `chi0q_mode == "flex"` branch's `else:` arm.
                 sc_mod.calc_eliashberg(_flex_fallback_bare_green_input(d))
         finally:
-            sc_mod._build_bond_green = orig
+            sc_static._build_bond_green = orig
 
         self.assertEqual(len(captured), 2)
         for args, carrier in captured:

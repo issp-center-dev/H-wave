@@ -47,7 +47,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.qlmsio.read_input_k as read_input_k
-from hwave import sc as _sc
+from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver import bubble as bubble_mod
 from hwave.solver import rpa as rpa_mod
 from hwave.solver.bond_channels import (
@@ -1204,9 +1204,9 @@ class TestWPmBondQPhaseCrossPin(ApproxTestCase):
         C = 0.6 + 0.0j
         interactions = {"CoulombInter": {((1, 0, 0), (0, 1)): C,
                                          ((-1, 0, 0), (1, 0)): np.conj(C)}}
-        topo_l, _view, split = _sc._resolve_bond_topology(
+        topo_l, _view, split = sc_bond._resolve_bond_topology(
             interactions, {"rvec": np.eye(3)}, norb, None)
-        _S, C_bond = _sc._build_bond_vertices(topo_l, split, norb, (Nx, Ny, Nz))
+        _S, C_bond = sc_bond._build_bond_vertices(topo_l, split, norb, (Nx, Ny, Nz))
         # Hartree (aa,bb) = (00,11) slot of the channel-0 block: 2*V_01(q),
         # V_01(q) carrying the phase of the declared row (1, 0, 0), (0, 1)
         # (the bond of the Transfer row with the same (R, a, b), issue #232).

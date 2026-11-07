@@ -27,7 +27,8 @@ from unittest import mock
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import static as sc_static
 from hwave.solver import bubble
 from hwave.solver import matsubara as ms
 from tests.test_sc_spin_orbital import _input, _quiet, _run, _write_model
@@ -146,9 +147,9 @@ class TestStaticSliceEquality(_Tmp):
                                      {"chi0q_mode": "calc"}, nmat=nmat,
                                      coeff_tail=ct)
                         with _quiet():
-                            full = sc._calc_chi0q_internal(
+                            full = sc_io._calc_chi0q_internal(
                                 inp, chi0q_tensor=tensor, precomputed_mu=0.1)
-                            st = sc._calc_chi0q_internal(
+                            st = sc_io._calc_chi0q_internal(
                                 inp, chi0q_tensor=tensor, precomputed_mu=0.1,
                                 static_only=True)
                         ref = full[nmat // 2:nmat // 2 + 1]
@@ -173,7 +174,7 @@ class TestEigenvaluesUnchanged(_Tmp):
         files = _write_model(self.d, so=so, soc=0.3 if so else 0.0, **kw)
         eli = dict({"chi0q_mode": "calc", "solver_mode": "eigenvalue",
                     "num_eigenvalues": 6}, **eli)
-        real = sc._calc_chi0q_internal
+        real = sc_static._calc_chi0q_internal
         calls = []
 
         def full_path(input_dict, chi0q_tensor="auto", precomputed_mu=None,
@@ -186,7 +187,7 @@ class TestEigenvaluesUnchanged(_Tmp):
             return chi[nmat // 2:nmat // 2 + 1]
 
         new = _run(_input(self.d, files, so, eli, out="new", **param))
-        with mock.patch.object(sc, "_calc_chi0q_internal",
+        with mock.patch.object(sc_static, "_calc_chi0q_internal",
                                side_effect=full_path):
             old = _run(_input(self.d, files, so, eli, out="old", **param))
         self.assertEqual(calls, [True])
@@ -218,7 +219,7 @@ class TestEigenvaluesUnchanged(_Tmp):
 
 _MEMORY_SCRIPT = textwrap.dedent("""
     import json, sys, tempfile, tracemalloc
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     from tests.test_sc_spin_orbital import _input, _quiet, _write_model
     nmat, static_only = int(sys.argv[1]), sys.argv[2] == "1"
     d = tempfile.mkdtemp()
@@ -227,9 +228,9 @@ _MEMORY_SCRIPT = textwrap.dedent("""
                  coeff_tail=1.0, CellShape=[8, 8, 1])
     with _quiet():
         tracemalloc.start()
-        chi = sc._calc_chi0q_internal(inp, chi0q_tensor="general",
-                                      precomputed_mu=0.1,
-                                      static_only=static_only)
+        chi = sc_io._calc_chi0q_internal(inp, chi0q_tensor="general",
+                                         precomputed_mu=0.1,
+                                         static_only=static_only)
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()
     print(json.dumps({"peak": peak, "shape": list(chi.shape)}))

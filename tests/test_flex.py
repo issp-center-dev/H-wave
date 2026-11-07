@@ -631,7 +631,8 @@ class TestFLEXEliashberg(unittest.TestCase):
 
     def _build_eliashberg_inter_k(self, norb, Nx, Ny, Nz, input_dir='tests/rpa/input'):
         """Build interaction in k-space for Eliashberg tests."""
-        from hwave.sc import _read_interaction_files, _build_interaction_k
+        from hwave.solver.eliashberg.io import _read_interaction_files
+        from hwave.solver.eliashberg.vertex import _build_interaction_k
         input_dict = {
             'file': {
                 'input': {
@@ -662,17 +663,17 @@ class TestFLEXEliashberg(unittest.TestCase):
         density-pair placement, so it silently survived the fix and would have
         validated the wrong layout the moment a multi-orbital caller appeared.
         """
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         center = Nmat // 2
-        chis_eli = sc._expand_flex_chi(chi_s[center:center + 1], norb,
+        chis_eli = sc_io._expand_flex_chi(chi_s[center:center + 1], norb,
                                        Nx, Ny, Nz, "kuroki")[0]
-        chic_eli = sc._expand_flex_chi(chi_c[center:center + 1], norb,
+        chic_eli = sc_io._expand_flex_chi(chi_c[center:center + 1], norb,
                                        Nx, Ny, Nz, "kuroki")[0]
         return chis_eli, chic_eli
 
     def test_flex_eliashberg_vertex_construction(self):
         """FLEX chi_s/chi_c should produce valid Eliashberg pairing vertex."""
-        from hwave.sc import _compute_vertices_flex
+        from hwave.solver.eliashberg.vertex import _compute_vertices_flex
 
         Lx, Ly, Nmat = 4, 4, 32
         Nx, Ny, Nz = Lx, Ly, 1
@@ -728,7 +729,7 @@ class TestFLEXEliashberg(unittest.TestCase):
 
     def test_flex_vs_rpa_eliashberg_vertex(self):
         """FLEX vertex at 1st iteration should match RPA vertex."""
-        from hwave.sc import _compute_vertices_flex, _compute_vertices_general
+        from hwave.solver.eliashberg.vertex import _compute_vertices_flex, _compute_vertices_general
 
         Lx, Ly, Nmat = 4, 4, 32
         Nx, Ny, Nz = Lx, Ly, 1

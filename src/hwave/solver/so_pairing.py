@@ -210,12 +210,12 @@ def so_initial_gap(init_gap_mode, norb_phys, kx_array, ky_array, kz_array):
     (``p_*``, ``f_*``). ``"random"`` fills the whole spin-orbital matrix (the
     caller's antisymmetric projection then keeps its admissible part). The
     result has unit norm unless the form factor vanishes on the grid."""
-    from hwave import sc
+    from hwave.solver.eliashberg.eigen import _initialize_gap
     if init_gap_mode == "random":
-        return sc._initialize_gap("random", 2 * int(norb_phys),
-                                  kx_array, ky_array, kz_array)
-    phi = sc._initialize_gap(init_gap_mode, int(norb_phys),
-                             kx_array, ky_array, kz_array)
+        return _initialize_gap("random", 2 * int(norb_phys),
+                               kx_array, ky_array, kz_array)
+    phi = _initialize_gap(init_gap_mode, int(norb_phys),
+                          kx_array, ky_array, kz_array)
     spin = _SEED_SPIN_ODD if init_gap_mode in _ODD_SEEDS else _SEED_SPIN_EVEN
     n = int(norb_phys)
     gap = np.einsum("st,ab...->satb...", spin, phi).reshape(
@@ -267,10 +267,10 @@ def _check_so_dynamic_config(eli):
             "run) or \"calc\" (the spinful chi0 is computed here at every "
             "bosonic frequency). A loaded chi0q carries no Green function for "
             "the pair bubble.".format(_SO_DYN_WHAT, mode))
-    from hwave import sc
+    from hwave.solver.eliashberg.config import _bond_bool_option
     for key in ("zero_chi_s", "zero_chi_c"):
         # strict parse, as on the bond path: a typo is refused, false is fine
-        if sc._bond_bool_option(eli, key, False):
+        if _bond_bool_option(eli, key, False):
             raise ValueError(
                 "{}: [eliashberg] {} has no meaning in spin-orbital mode: the "
                 "pairing vertex is built from the single spinful channel, which "
@@ -314,8 +314,8 @@ def check_so_config(input_dict):
             "or \"dynamic\" (or remove the key).".format(_SO_WHAT, freq))
     bond = eli.get("bond_channels")
     if bond is not None:
-        from hwave import sc
-        if sc._bond_bool_option(eli, "bond_channels", False):
+        from hwave.solver.eliashberg.config import _bond_bool_option
+        if _bond_bool_option(eli, "bond_channels", False):
             raise ValueError(
                 "{}: [eliashberg] bond_channels = true is not supported; the "
                 "spin-orbital pairing vertex is on-site only. Set bond_channels = "
@@ -334,7 +334,7 @@ def check_so_config(input_dict):
             "{}: [eliashberg] eigenvalue_method = {!r} is not supported; only "
             "\"arnoldi\" is. Set eigenvalue_method = \"arnoldi\" (or remove the "
             "key).".format(_SO_WHAT, method))
-    from hwave.sc import DEFAULT_SOLVER_MODE
+    from hwave.solver.eliashberg.static import DEFAULT_SOLVER_MODE
     solver_mode = eli.get("solver_mode", DEFAULT_SOLVER_MODE)
     if solver_mode not in ("iteration", "eigenvalue", "both"):
         raise ValueError(

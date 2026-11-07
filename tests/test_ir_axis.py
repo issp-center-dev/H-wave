@@ -127,7 +127,7 @@ def test_compress_drop_constant_isolates_known_offset(caplog):
     surfaced with a warning (review follow-up: the residual alone cannot
     see it, since the augmented fit absorbs the constant exactly)."""
     import logging
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     beta, nmat = 50.0, 512
     ax = _axis("B", beta=beta)
     g = 1.7

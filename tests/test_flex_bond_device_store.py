@@ -335,7 +335,7 @@ def _solve(store, pairing="none", half=False, extra=None, cp_kw=None, setup=None
     green_info, the archives and the fake's transfer record. The record
     position where the in-process pairing started is left in
     ``_PAIRING_MARK[0]``."""
-    from hwave.solver import eliashberg_bond_io as io
+    from hwave.solver.eliashberg import bond_io as io
     from tests.test_bond_half_grid import _ELI_UNIFORM, _run
     par = {"gpu": True, "longitudinal_bond_store": store,
            "longitudinal_bond_pairing": pairing}
@@ -612,8 +612,8 @@ class TestStoreLeavesTheDeviceBeforeThePairingKernel(unittest.TestCase):
         """A solve whose device has room for the kernel only without the
         store: the device reading is large until the store exists, then a
         fixed capacity minus the store's live device slots."""
-        from hwave.solver import backend as bk, eliashberg_bond as eb
-        from hwave.solver import eliashberg_bond_io as io, flex_bond as fb
+        from hwave.solver import backend as bk, flex_bond as fb
+        from hwave.solver.eliashberg import bond_dynamic as eb, bond_io as io
         table = eb.estimate_pair_memory(
             nmat=8, ntau=0, nfreq=8, nvol=16, norb=2, B=5, num_eigenvalues=3,
             residency="auto", ir=False, L_B=0, n_channels=1, in_process=True)
@@ -666,7 +666,8 @@ class TestStoreLeavesTheDeviceBeforeThePairingKernel(unittest.TestCase):
 def _store_spy():
     """Patch the block store with a subclass that records its slot releases
     and, at every pairing kernel's construction, the state of the store."""
-    from hwave.solver import eliashberg_bond as eb, flex_bond as fb
+    from hwave.solver import flex_bond as fb
+    from hwave.solver.eliashberg import bond_dynamic as eb
     events, stores = [], []
     real_store, real_init = fb.BondBlockStore, eb.BondPairKernel.__init__
 

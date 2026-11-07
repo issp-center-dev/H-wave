@@ -33,7 +33,10 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import kernel as sc_kernel
+from hwave.solver.eliashberg import band as sc_band
 
 NN = ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0))
 
@@ -76,11 +79,11 @@ def _dense_parts(green, beta, U, V, eta, g2_tail):
     kx, ky, kz = (np.linspace(0, 2 * np.pi, n, endpoint=False) for n in (Nx, Ny, Nz))
     it = {"CoulombIntra": {((0, 0, 0), (0, 0)): U},
           "CoulombInter": {(r, (0, 0)): V for r in NN}}
-    topo, _, split = sc._resolve_bond_topology(it, {"rvec": np.eye(3)}, 1, None)
-    carrier = sc._BondGreen(full_sc=green, deflated_kw=sc._green_sc_to_canonical(green),
+    topo, _, split = sc_bond._resolve_bond_topology(it, {"rvec": np.eye(3)}, 1, None)
+    carrier = sc_kernel._BondGreen(full_sc=green, deflated_kw=sc_kernel._green_sc_to_canonical(green),
                             green0_tail=None, coeff_tail_requested=0.0, coeff_tail_applied=0.0,
                             source="external_npz")
-    (A, n), _, attr = sc._build_bond_operator(
+    (A, n), _, attr = sc_bond._build_bond_operator(
         topo, split, carrier, 1, kx, ky, kz, beta, eta,
         bond_max_shells=None, bond_memory_cap_gb=8.0, g2_tail=g2_tail)
     eye = np.eye(n)
@@ -91,15 +94,15 @@ def _dense_parts(green, beta, U, V, eta, g2_tail):
 def _small_green():
     """Bare Green function of the 4x4 ``tests/rpa/input`` model (T = 1,
     Nmat = 128, half filling of the band), sc.py layout."""
-    geom, hr, _ = sc._read_interaction_files(
+    geom, hr, _ = sc_io._read_interaction_files(
         {"file": {"input": {"interaction": {
             "path_to_input": "tests/rpa/input", "Geometry": "geom.dat",
             "Transfer": "transfer.dat"}}}})
     k = np.linspace(0, 2 * np.pi, 4, endpoint=False)
-    ev, evec = sc._calc_eigenvalues(sc._build_hamiltonian_k(k, k, np.zeros(1), hr, 1))
+    ev, evec = sc_band._calc_eigenvalues(sc_band._build_hamiltonian_k(k, k, np.zeros(1), hr, 1))
     beta = 1.0
-    mu = sc._determine_mu(ev, beta, 0.5, 1)
-    return sc._build_bond_green(ev, evec, mu, beta, 128, 0.0, None).full_sc, beta
+    mu = sc_band._determine_mu(ev, beta, 0.5, 1)
+    return sc_bond._build_bond_green(ev, evec, mu, beta, 128, 0.0, None).full_sc, beta
 
 
 def _onari_green():

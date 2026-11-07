@@ -35,9 +35,10 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
-from hwave.solver import eliashberg_dynamic as ed
-
-
+from hwave.solver.eliashberg import so_solve as sc_so
+from hwave.solver.eliashberg import static as sc_static
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import dynamic as ed
 LAM_NEG = -1.93          # largest magnitude, repulsive (on-site s-like)
 LAM_POS = 0.359          # largest real part, the physical channel eigenvalue
 LAM_REST = 0.01          # every other mode
@@ -125,7 +126,7 @@ class TestIterationNonConvergenceIsNotAnEigenvalue(unittest.TestCase):
         A = LinearOperator((n, n), matvec=matvec, dtype=complex)
         for alpha in (0.0, 0.2, 0.6):
             with self.subTest(alpha=alpha):
-                val, _vec, info = sc._solve_leading(
+                val, _vec, info = sc_eigen._solve_leading(
                     lambda: (A, n), n, "iteration", max_iter=5000,
                     convergence_tol=1.0e-8, alpha=alpha,
                     init_vec=_seed().ravel())
@@ -157,7 +158,7 @@ class TestDefaultShiftSelectsLargestRealPart(unittest.TestCase):
         from scipy.sparse.linalg import LinearOperator
         n = int(np.prod(GAP_SHAPE))
         A = LinearOperator((n, n), matvec=matvec, dtype=complex)
-        val, _vec, info = sc._solve_leading(lambda: (A, n), n, "arnoldi",
+        val, _vec, info = sc_eigen._solve_leading(lambda: (A, n), n, "arnoldi",
                                             num_eigenvalues=1)
         self.assertAlmostEqual(val.real, LAM_POS, delta=1.0e-8)
         self.assertEqual(info["selection"], "LR_retry")
@@ -167,7 +168,7 @@ class TestDefaultShiftSelectsLargestRealPart(unittest.TestCase):
         keep the largest-MAGNITUDE eigenpairs, which drops LAM_POS when it is
         the smallest in magnitude."""
         shape = (2, 2, 2, 1, 1)
-        basis = sc._SOAntisymmetricBasis(shape)
+        basis = sc_eigen._SOAntisymmetricBasis(shape)
         dim = basis.dim
         rng = np.random.default_rng(5)
         q, _ = np.linalg.qr(rng.standard_normal((dim, dim)))
@@ -182,7 +183,7 @@ class TestDefaultShiftSelectsLargestRealPart(unittest.TestCase):
             return basis.to_full(red @ basis.to_reduced(np.asarray(x).ravel()))
 
         A = LinearOperator((n, n), matvec=mv, dtype=complex)
-        vals, _gaps = sc._so_solve_eigenvalue(A, basis, dim - 1, "arnoldi")
+        vals, _gaps = sc_so._so_solve_eigenvalue(A, basis, dim - 1, "arnoldi")
         self.assertAlmostEqual(vals[0].real, LAM_POS, delta=1.0e-10)
 
 
@@ -200,7 +201,7 @@ class TestConvergedIterationReportsSignedRayleigh(unittest.TestCase):
         ref = np.max(np.linalg.eigvals(M).real)
         for shift in (None, "auto"):
             with self.subTest(shift=shift):
-                val, _vec, info = sc._solve_leading(
+                val, _vec, info = sc_eigen._solve_leading(
                     lambda: (A, n), n, "iteration", max_iter=20000,
                     convergence_tol=1.0e-12, alpha=0.5,
                     init_vec=np.ones(n, dtype=complex), spectral_shift=shift)
@@ -240,7 +241,7 @@ class TestSeedOnAnEigenvector(unittest.TestCase):
             v0 = (S[:, 1] + eps * S[:, 0]).astype(complex)
             for shift in ("none", "auto"):
                 with self.subTest(eps=eps, shift=shift):
-                    lam, _v, info = sc._solve_leading(
+                    lam, _v, info = sc_eigen._solve_leading(
                         mk, n, "iteration", max_iter=5000,
                         convergence_tol=1e-8, init_vec=v0 / np.linalg.norm(v0),
                         alpha=0.5, spectral_shift=shift)
@@ -264,7 +265,7 @@ class TestSeedOnAnEigenvector(unittest.TestCase):
         v0 = np.array([1.0, 0, 0, 0], dtype=complex)
         from tests.approx_util import _caplog
         with _caplog("WARNING", logger="hwave_sc") as records:
-            lam, _v, info = sc._solve_leading(
+            lam, _v, info = sc_eigen._solve_leading(
                 mk, n, "iteration", max_iter=5000, convergence_tol=1e-10,
                 init_vec=v0, alpha=0.5, spectral_shift="auto")
         self.assertTrue(np.isnan(lam))
@@ -276,7 +277,7 @@ class TestSeedOnAnEigenvector(unittest.TestCase):
 
     def test_kernel_that_annihilates_everything_is_not_converged(self):
         mk, n = _dense_op(np.zeros((6, 6)))
-        lam, _v, info = sc._solve_leading(
+        lam, _v, info = sc_eigen._solve_leading(
             mk, n, "iteration", max_iter=200, convergence_tol=1e-8,
             init_vec=np.ones(6, dtype=complex), alpha=0.5,
             spectral_shift="auto")
@@ -298,7 +299,7 @@ class TestSeedOnAnEigenvector(unittest.TestCase):
             v0[0], v0[1] = 1.0, w
             for shift in ("none", "auto"):
                 with self.subTest(w=w, shift=shift):
-                    lam, v, info = sc._solve_leading(
+                    lam, v, info = sc_eigen._solve_leading(
                         mk, n, "iteration", max_iter=3000,
                         convergence_tol=1e-5, init_vec=v0, alpha=0.5,
                         spectral_shift=shift)
@@ -320,7 +321,7 @@ class TestSeedOnAnEigenvector(unittest.TestCase):
         for amp in (1e-6, 2e-2):
             v0 = np.eye(n, dtype=complex)[1] + amp * np.eye(n)[0]
             with self.subTest(amp=amp):
-                lam, _v, info = sc._solve_leading(
+                lam, _v, info = sc_eigen._solve_leading(
                     mk, n, "iteration", max_iter=1000, convergence_tol=1e-5,
                     init_vec=v0, alpha=0.5, spectral_shift="auto")
                 if info["converged"]:
@@ -345,7 +346,7 @@ class TestTwoCycleDetectorNeedsASustainedCycle(unittest.TestCase):
                     M = np.diag([lneg, 2.0, 0.01]).astype(complex)
                     mk, n = _dense_op(M)
                     v0 = np.array([1.0, amp, 0.3], dtype=complex)
-                    lam, _v, info = sc._solve_leading(
+                    lam, _v, info = sc_eigen._solve_leading(
                         mk, n, "iteration", max_iter=3000,
                         convergence_tol=1e-6, init_vec=v0, alpha=0.0,
                         spectral_shift="none")
@@ -355,7 +356,7 @@ class TestTwoCycleDetectorNeedsASustainedCycle(unittest.TestCase):
         # step): 300 are not enough, and the run says so
         M = np.diag([-1.9, 2.0, 0.01]).astype(complex)
         mk, n = _dense_op(M)
-        lam, _v, info = sc._solve_leading(
+        lam, _v, info = sc_eigen._solve_leading(
             mk, n, "iteration", max_iter=300, convergence_tol=1e-6,
             init_vec=np.array([1.0, 1e-20, 0.3], dtype=complex), alpha=0.0,
             spectral_shift="none")
@@ -370,7 +371,7 @@ class TestTwoCycleDetectorNeedsASustainedCycle(unittest.TestCase):
         mk, n = _dense_op(M)
         from tests.approx_util import _caplog
         with _caplog("WARNING", logger="hwave_sc") as records:
-            lam, _v, info = sc._solve_leading(
+            lam, _v, info = sc_eigen._solve_leading(
                 mk, n, "iteration", max_iter=300, convergence_tol=1e-8,
                 init_vec=np.ones(5, dtype=complex), alpha=0.5,
                 spectral_shift="none")
@@ -382,7 +383,7 @@ class TestTwoCycleDetectorNeedsASustainedCycle(unittest.TestCase):
     def test_leading_eigenvalue_itself_complex_gives_nan_under_auto(self):
         M = np.diag([0.5 + 0.2j, -1.0, 0.05, -0.02])
         mk, n = _dense_op(M)
-        lam, _v, info = sc._solve_leading(
+        lam, _v, info = sc_eigen._solve_leading(
             mk, n, "iteration", max_iter=400, convergence_tol=1e-8,
             init_vec=np.ones(4, dtype=complex), alpha=0.5,
             spectral_shift="auto")
@@ -403,14 +404,14 @@ class TestMaxIterAdvice(unittest.TestCase):
                   alpha=0.5, spectral_shift="auto")
         from tests.approx_util import _caplog
         with _caplog("WARNING", logger="hwave_sc") as records:
-            lam, _v, info = sc._solve_leading(mk, n, "iteration",
+            lam, _v, info = sc_eigen._solve_leading(mk, n, "iteration",
                                               max_iter=1000, **kw)
         self.assertTrue(np.isnan(lam))
         msg = " ".join(r.message for r in records)
         m = re.search(r"max_iter of about (\d+)", msg)
         self.assertIsNotNone(m, msg)
         need = int(m.group(1))
-        lam, _v, info = sc._solve_leading(mk, n, "iteration",
+        lam, _v, info = sc_eigen._solve_leading(mk, n, "iteration",
                                           max_iter=int(1.2 * need), **kw)
         self.assertTrue(info["converged"])
         self.assertAlmostEqual(lam, 0.5, delta=1e-6)
@@ -438,7 +439,7 @@ class TestResidualCheckScale(unittest.TestCase):
             mk, n = _dense_op(M)
             for tol in (1e-3, 1e-5):
                 with self.subTest(case=name, tol=tol):
-                    lam, _v, info = sc._solve_leading(
+                    lam, _v, info = sc_eigen._solve_leading(
                         mk, n, "iteration", max_iter=3000,
                         convergence_tol=tol, init_vec=v0.copy(),
                         alpha=alpha, spectral_shift="auto")
@@ -456,7 +457,7 @@ class TestLargestRealSolveFailure(unittest.TestCase):
     def _run(self, dense_max):
         from unittest import mock
         import scipy.sparse.linalg as spl
-        real_eigs = sc.eigs
+        real_eigs = sc_eigen.eigs
         M, _S = _similar([-3.0, 2.5, 0.2] + [-1.0 - 0.01 * k for k in range(37)])
         mk, n = _dense_op(M)
 
@@ -465,10 +466,10 @@ class TestLargestRealSolveFailure(unittest.TestCase):
                 raise spl.ArpackNoConvergence("forced", np.array([]),
                                               np.array([]))
             return real_eigs(A, k=k, which=which, **kw)
-        with mock.patch.object(sc, "eigs", eigs), \
-                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", dense_max):
+        with mock.patch.object(sc_eigen, "eigs", eigs), \
+                mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", dense_max):
             # one LM eigenvalue: {-3}, which cannot be the largest real part
-            return sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=1), M
+            return sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=1), M
 
     def test_small_operator_falls_back_to_dense(self):
         (val, _vec, info), M = self._run(2000)
@@ -484,16 +485,16 @@ class TestLargestRealSolveFailure(unittest.TestCase):
         from tests.approx_util import _caplog
         M, _S = _similar([-3.0, 2.5, 0.2] + [-1.0 - 0.01 * k for k in range(37)])
         mk, n = _dense_op(M)
-        real_eigs = sc.eigs
+        real_eigs = sc_eigen.eigs
 
         def eigs(A, k=6, which="LM", **kw):
             if which == "LM":
                 raise spl.ArpackNoConvergence("forced", np.array([]),
                                               np.array([]))
             return real_eigs(A, k=k, which=which, **kw)
-        with mock.patch.object(sc, "eigs", eigs), \
+        with mock.patch.object(sc_eigen, "eigs", eigs), \
                 _caplog("WARNING", logger="hwave_sc") as records:
-            val, _vec, info = sc._solve_leading(mk, n, "arnoldi",
+            val, _vec, info = sc_eigen._solve_leading(mk, n, "arnoldi",
                                                 num_eigenvalues=2,
                                                 spectral_shift="auto")
         msg = " ".join(r.message for r in records)
@@ -512,7 +513,7 @@ class TestLargestRealSolveFailure(unittest.TestCase):
 class TestSpectralShiftOption(unittest.TestCase):
 
     def test_resolution(self):
-        r = sc._resolve_spectral_shift
+        r = sc_eigen._resolve_spectral_shift
         self.assertEqual(r(None, "iteration"), "auto")
         self.assertIsNone(r("none", "iteration"))
         self.assertIsNone(r("None", "iteration"))
@@ -569,7 +570,7 @@ class TestCliExitStatus(unittest.TestCase):
         path = os.path.join(tmp, "in.toml")
         with open(path, "w") as fh:
             fh.write("[mode]\nmode = \"SC\"\n")
-        with mock.patch.object(sc, "calc_eliashberg", return_value=result), \
+        with mock.patch.object(sc_static, "calc_eliashberg", return_value=result), \
                 mock.patch("sys.argv", ["hwave_sc", "-q", path]):
             try:
                 sc.main()
@@ -590,7 +591,7 @@ class TestHwaveScDefaultSolverMode(unittest.TestCase):
 
     def test_default_is_the_eigenvalue_solver(self):
         self.assertEqual(sc.DEFAULT_SOLVER_MODE, "eigenvalue")
-        from hwave.solver.eliashberg_bond_io import PairingControls
+        from hwave.solver.eliashberg.bond_io import PairingControls
         ctl = PairingControls.from_param({}, pairing_types=("singlet",))
         self.assertEqual(ctl.solver_mode, "eigenvalue")
 

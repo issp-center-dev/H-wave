@@ -149,7 +149,7 @@ class TestLoadBondArchive(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _load(self, **kw):
-        from hwave.solver.eliashberg_bond_io import load_bond_archive
+        from hwave.solver.eliashberg.bond_io import load_bond_archive
         args = dict(norb=self.s.norb, nmat_expected=self.s.nmat,
                     cell_shape_expected=tuple(int(x) for x in self.s.lattice.shape),
                     beta_expected=1.0 / self.s.T)
@@ -165,7 +165,7 @@ class TestLoadBondArchive(unittest.TestCase):
         np.testing.assert_array_equal(chi, self.gi["longitudinal_bond_chi_s_w"])
 
     def test_header_without_loading(self):
-        from hwave.solver.eliashberg_bond_io import _npz_member_header
+        from hwave.solver.eliashberg.bond_io import _npz_member_header
         shape, dtype = _npz_member_header(self.path, "chi_c_w")
         self.assertEqual(shape, (self.s.nmat, self.s.lattice.nvol, self.s._bond_S.shape[-1], self.s._bond_S.shape[-1]))
         self.assertEqual(np.dtype(dtype), np.dtype(np.complex128))
@@ -299,7 +299,7 @@ class TestLoadBondArchive(unittest.TestCase):
         """A truncated / garbage file, or one missing a required member, must
         surface as a ValueError naming the archive contract, not a bare
         KeyError / BadZipFile / EOFError from deep in numpy."""
-        from hwave.solver.eliashberg_bond_io import load_bond_archive
+        from hwave.solver.eliashberg.bond_io import load_bond_archive
 
         def call(p):
             return load_bond_archive(
@@ -364,7 +364,7 @@ class TestSidecarLoader(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _load(self, **kw):
-        from hwave.solver.eliashberg_bond_io import load_bond_archive
+        from hwave.solver.eliashberg.bond_io import load_bond_archive
         args = dict(norb=self.s.norb, nmat_expected=self.s.nmat,
                     cell_shape_expected=tuple(int(x) for x in self.s.lattice.shape),
                     beta_expected=1.0 / self.s.T)
@@ -440,7 +440,7 @@ class TestSidecarLoader(unittest.TestCase):
 
 class TestPairingControls(unittest.TestCase):
     def test_defaults_and_validation(self):
-        from hwave.solver.eliashberg_bond_io import PairingControls
+        from hwave.solver.eliashberg.bond_io import PairingControls
         c = PairingControls.from_param({}, pairing_types=("singlet",))
         self.assertEqual((c.solver_mode, c.eigenvalue_method, c.num_eigenvalues, c.max_iter, c.alpha,
                           c.convergence_tol, c.matsubara_basis, c.ir_tol, c.ir_fit_tol, c.fft_workers),
@@ -462,7 +462,7 @@ class TestPairingControls(unittest.TestCase):
         else: ``"ture"`` is not false, ``fft_workers = 1.5`` is not 1, an
         unknown ``eigenvalue_method`` is not arnoldi, and ``alpha = true`` is
         not 1.0."""
-        from hwave.solver.eliashberg_bond_io import PairingControls
+        from hwave.solver.eliashberg.bond_io import PairingControls
         for bad in ({"ir_keep_static_chi": "ture"}, {"ir_keep_static_chi": 2.5},
                     {"ir_keep_static_chi": []},
                     {"fft_workers": 1.5}, {"fft_workers": 0}, {"fft_workers": True},
@@ -500,7 +500,7 @@ class TestPairingControls(unittest.TestCase):
         uniform grid and 2e-2 with ``matsubara_basis = "ir"`` (spec 4.4: the IR
         representation of a uniform-FFT archive carries a parity asymmetry
         decaying as Nmat^-2, measured 7.6e-3 / 1.3e-3 at Nmat 64 / 128)."""
-        from hwave.solver.eliashberg_bond_io import PairingControls
+        from hwave.solver.eliashberg.bond_io import PairingControls
         c = PairingControls.from_param({}, pairing_types=("singlet",))
         self.assertIsNone(c.parity_leakage_tol)
         self.assertEqual(c.resolved_parity_leakage_tol, 1.0e-8)
@@ -534,7 +534,7 @@ class TestParityLeakageTolerance(unittest.TestCase):
 
     def setUp(self):
         from scipy.sparse.linalg import LinearOperator
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         self.ed = ed
         self.gap_shape = (1, 1, 2, 2, 1, 4)
         n = int(np.prod(self.gap_shape))
@@ -688,7 +688,7 @@ class TestPostProcessingGuards(unittest.TestCase):
         dispatch) must not silently run the scalar on-site vertex with
         ``bond_channels = true`` ignored: it delegates to the bond entry, which
         here gets as far as the missing archive."""
-        from hwave.solver import eliashberg_dynamic
+        from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
         inp = _sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1))
         with self.assertRaisesRegex(ValueError, "longitudinal_bond_output_full = true"):
             eliashberg_dynamic.solve_dynamic(inp)
@@ -712,7 +712,7 @@ class TestFrequencyBatch(unittest.TestCase):
     on the device, so it must fit a quarter of BOTH caps."""
 
     def _nb(self, host_gib, device_gib=None, nmat=64, nvol=16, ND=45):
-        from hwave.solver.eliashberg_bond_io import _frequency_batch
+        from hwave.solver.eliashberg.bond_io import _frequency_batch
         gib = 1024 ** 3
         return _frequency_batch(nmat, nvol, ND, host_gib * gib,
                                 device_cap=(None if device_gib is None else device_gib * gib))
@@ -747,7 +747,7 @@ class TestDeviceProbeFallback(unittest.TestCase):
 
     def test_entry_admission_falls_back_to_the_host_cap(self):
         from hwave.solver import backend as bk
-        from hwave.solver.eliashberg_bond_io import _device_cap
+        from hwave.solver.eliashberg.bond_io import _device_cap
         gib = 1024.0 ** 3
         with mock.patch.object(bk, "device_available_bytes", return_value=None):
             with self.assertLogs("qlms.solver.eliashberg_bond", "WARNING") as log:
@@ -1070,7 +1070,7 @@ class TestInProcessHookBoundary(unittest.TestCase):
             _pairing_controls=_t.SimpleNamespace(pairing_types=("singlet",)))
 
     def test_worker_failure_is_recorded_not_raised(self):
-        from hwave.solver import eliashberg_bond_io as io
+        from hwave.solver.eliashberg import bond_io as io
         gi = {}
         with mock.patch.object(io, "_run_inprocess_pairing",
                                side_effect=RuntimeError("worker boom")):
@@ -1082,7 +1082,8 @@ class TestInProcessHookBoundary(unittest.TestCase):
         """The backend import and the out-of-memory type tuple are built
         INSIDE the guard; built outside, a failure there would propagate and
         take the FLEX results with it."""
-        from hwave.solver import backend as bk, eliashberg_bond_io as io
+        from hwave.solver import backend as bk
+        from hwave.solver.eliashberg import bond_io as io
         gi = {}
         with mock.patch.object(bk, "oom_error_types", side_effect=RuntimeError("probe boom")):
             with self.assertLogs("qlms.solver.eliashberg_bond", "ERROR"):
@@ -1206,7 +1207,7 @@ class TestNonSU2BondWarning(_EntryNoticeCase, unittest.TestCase):
 def _bare_vertex_spy():
     """A spy on ``eliashberg_bond.offsite_singlet_bare_vertex`` that records the
     topology every call receives (and still computes the term)."""
-    from hwave.solver import eliashberg_bond as eb
+    from hwave.solver.eliashberg import bond_dynamic as eb
     return mock.patch.object(eb, "offsite_singlet_bare_vertex",
                              wraps=eb.offsite_singlet_bare_vertex)
 
@@ -1349,7 +1350,7 @@ class TestTemporaryNames(unittest.TestCase):
     a random token, and starts with a dot so it is not mistaken for output."""
 
     def test_tmp_name_is_unique_hidden_and_local(self):
-        from hwave.solver.eliashberg_bond_io import _tmp_name
+        from hwave.solver.eliashberg.bond_io import _tmp_name
         path = os.path.join("/some", "where", "gap_bond_singlet.dat")
         a = _tmp_name(path)
         b = _tmp_name(path)
@@ -1504,7 +1505,7 @@ class TestInProcess(unittest.TestCase):
                 raise OSError("disk full on the second publication")
             return real(src, dst)
 
-        with mock.patch("hwave.solver.eliashberg_bond_io.os.replace", side_effect=fake_replace):
+        with mock.patch("hwave.solver.eliashberg.bond_io.os.replace", side_effect=fake_replace):
             s.save_results(self._outputs(self.tmp), gi)
         # every previous file is byte-identical to its sentinel (restored)
         for k, p in targets.items():
@@ -1535,7 +1536,7 @@ class TestInProcess(unittest.TestCase):
                 raise OSError("disk full on the second publication")
             return real(src, dst)
 
-        with mock.patch("hwave.solver.eliashberg_bond_io.os.replace", side_effect=fake_replace):
+        with mock.patch("hwave.solver.eliashberg.bond_io.os.replace", side_effect=fake_replace):
             s.save_results(self._outputs(self.tmp), gi)
         for fn in names:
             self.assertFalse(os.path.exists(os.path.join(self.tmp, fn)), fn)
@@ -1546,8 +1547,8 @@ class TestInProcess(unittest.TestCase):
 
     def test_pairing_failure_keeps_flex_outputs(self):             # 10.2.7
         from unittest import mock
-        from hwave.solver import eliashberg_bond as eb, eliashberg_dynamic as ed, \
-            flex_bond as fb, backend as bk
+        from hwave.solver import flex_bond as fb, backend as bk
+        from hwave.solver.eliashberg import bond_dynamic as eb, dynamic as ed
         oom = bk.oom_error_types()[0] if bk.oom_error_types() else MemoryError
 
         def oom_instance():

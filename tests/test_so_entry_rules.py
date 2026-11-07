@@ -209,7 +209,7 @@ class TestTablesDigest(unittest.TestCase):
         # the hwave_sc reader and the RPA reader of the same files give one digest
         import shutil
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         import tests.test_sc_spin_orbital as S
         from hwave.qlmsio.read_input_k import QLMSkInput
         d = tempfile.mkdtemp(prefix="so_entry_readers_")
@@ -223,7 +223,7 @@ class TestTablesDigest(unittest.TestCase):
             inter = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat",
                      "coulomb": "coulomb.dat", "HUND": "hund.dat"}
             ham = QLMSkInput({"path_to_input": d, "interaction": dict(inter)}).get_param("ham")
-            _, _, sc_tables = sc._read_interaction_files(
+            _, _, sc_tables = sc_io._read_interaction_files(
                 {"file": {"input": {"interaction": dict(inter)}}})
         finally:
             shutil.rmtree(d, ignore_errors=True)
@@ -939,9 +939,9 @@ class TestVersionTwo(unittest.TestCase):
             self.assertNotIn("green_layout", s.files)
         # a run without enable_spin_orbital refuses this green archive by
         # its spin_orbital marker, which is checked first
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         with self.assertRaises(ValueError) as cm:
-            sc._refuse_so_green_file(os.path.join(root, "green.npz"))
+            sc_io._refuse_so_green_file(os.path.join(root, "green.npz"))
         self.assertTrue(str(cm.exception).startswith(
             "Green-function file '{}' was written by a spin-orbital run (spin_orbital = True)"
             .format(os.path.join(root, "green.npz"))), str(cm.exception))
@@ -1035,8 +1035,9 @@ class TestVersionTwo(unittest.TestCase):
         import contextlib
         import io
         import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         import tests.test_sc_spin_orbital as S
-        loader = sc._load_flex_so_sigma
+        loader = sc_io._load_flex_so_sigma
         lam, loaded = {}, {}
         for order in ("<", ">"):
             inp, root = _consumer_dir(self, "sc_flex")
@@ -1052,7 +1053,7 @@ class TestVersionTwo(unittest.TestCase):
                 loaded[order] = loader(*a, **k)
                 return loaded[order]
             with contextlib.redirect_stdout(io.StringIO()), S._quiet(), \
-                    mock.patch.object(sc, "_load_flex_so_sigma", side_effect=spy):
+                    mock.patch.object(sc_io, "_load_flex_so_sigma", side_effect=spy):
                 lam[order] = sc.calc_eliashberg(inp)
         self.assertTrue(eigenvalues_close(lam[">"], lam["<"]))
         self.assertEqual(loaded[">"].dtype, np.dtype(np.complex128))

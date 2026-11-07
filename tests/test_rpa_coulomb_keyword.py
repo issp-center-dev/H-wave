@@ -96,7 +96,7 @@ class TestHwaveScCoulombKeyword(unittest.TestCase):
         import os
         import shutil
         import tempfile
-        from hwave.sc import _read_interaction_files
+        from hwave.solver.eliashberg.io import _read_interaction_files
 
         d = tempfile.mkdtemp(prefix="sc_coulomb_")
         try:

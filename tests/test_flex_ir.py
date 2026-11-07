@@ -77,7 +77,7 @@ class TestChi0GateIrMatchesUniformLargeNmat(unittest.TestCase):
             raise unittest.SkipTest("sparse-ir not installed")
 
     def test_chi0_gate_ir_matches_uniform_large_nmat(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         T = 0.5
         beta = 1.0 / T
 
@@ -117,7 +117,7 @@ class TestChi0GateIrMatchesUniformLargeNmat(unittest.TestCase):
 def test_sigma_gate_one_iteration():
     """GATE: one SCF step (sigma=0 -> sigma_new) on the IR path must match
     the uniform step at large Nmat, compressed onto the fermionic nodes."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     T = 0.5
     beta = 1.0 / T
 

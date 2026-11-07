@@ -50,7 +50,7 @@ import numpy as np
 
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as solver_rpa
-import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver import bond_channels
 from hwave.solver.bond_channels import _g2_from_green, bond_bubble, dress_bond
 from tests import ed_oracle_util
@@ -210,7 +210,7 @@ def resolve_solver_bonds(closed_decls, norb, bond_max_shells=None):
     interactions = {"CoulombInter": inter}
     if intra:
         interactions["CoulombIntra"] = intra
-    topo, view, split = sc._resolve_bond_topology(
+    topo, view, split = sc_bond._resolve_bond_topology(
         interactions, {"rvec": np.eye(3)}, norb, bond_max_shells)
     return _SolverBonds(view.delta_r, view.reverse, view.n_channels,
                         int(norb), topo, split)
@@ -219,7 +219,7 @@ def resolve_solver_bonds(closed_decls, norb, bond_max_shells=None):
 def solver_vertices(bond_set, spatial_shape):
     """``(S, C)``, each ``(nvol, ND, ND)``: production's enlarged spin/charge
     vertices (``hwave.sc._build_bond_vertices``) for ``bond_set``."""
-    return sc._build_bond_vertices(bond_set.topo, bond_set.split,
+    return sc_bond._build_bond_vertices(bond_set.topo, bond_set.split,
                                    bond_set.norb, spatial_shape)
 
 
@@ -1992,7 +1992,7 @@ def solver_vpp(fx, closed_decls):
     drx = [dr[0] for dr in bond_set.delta_r]
     out = []
     for eta in ("singlet", "triplet"):
-        _A, _A_fl, A_pp, _n = sc._bond_kernel_parts(
+        _A, _A_fl, A_pp, _n = sc_bond._bond_kernel_parts(
             S, C, [("spin", zero), ("charge", zero)], green, bond_set, norb,
             shape, fx.beta, eta, topo=None)
         V = np.zeros((ND, ND), dtype=complex)

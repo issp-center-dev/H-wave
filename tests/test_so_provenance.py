@@ -738,6 +738,7 @@ def _sc(mode, inp, src=None, frequency="static", transfer_edit=None,
     change the run's input files first. Returns the gap archive and the G
     the pair bubble was built from."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import kernel as sc_kernel
     d = inp["dir"]
     if transfer_edit is not None:
         _edit_w90(os.path.join(d, inp["inter"]["Transfer"]), *transfer_edit)
@@ -757,13 +758,13 @@ def _sc(mode, inp, src=None, frequency="static", transfer_edit=None,
                  "output": {"path_to_output": out, "chi0q": "chi0q"}},
         "eliashberg": eli}
     seen = {}
-    real_g2 = sc._calc_g2
+    real_g2 = sc_kernel._calc_g2
 
     def spy_g2(green, *a, **kw):
         seen["green"] = np.array(green, copy=True)
         return real_g2(green, *a, **kw)
 
-    import hwave.solver.eliashberg_dynamic_so as dso
+    from hwave.solver.eliashberg import dynamic_so as dso
     real_g2d = dso.calc_g2_dynamic
 
     def spy_g2d(green, *a, **kw):
@@ -771,7 +772,12 @@ def _sc(mode, inp, src=None, frequency="static", transfer_edit=None,
         return real_g2d(green, *a, **kw)
 
     ctx = _quiet() if quiet else Z._quiet_info()
-    with ctx, mock.patch.object(sc, "_calc_g2", side_effect=spy_g2), \
+    # the static entry reads _calc_g2 from hwave.solver.eliashberg.static;
+    # the dynamic solvers never call _calc_g2 (calc_g2_dynamic below), so the
+    # hwave.sc patch is kept only for symmetry (dev/sc-split-plan.md, step 6)
+    from hwave.solver.eliashberg import static as sc_static
+    with ctx, mock.patch.object(sc_kernel, "_calc_g2", side_effect=spy_g2), \
+            mock.patch.object(sc_static, "_calc_g2", side_effect=spy_g2), \
             mock.patch.object(dso, "calc_g2_dynamic", side_effect=spy_g2d):
         sc.calc_eliashberg(run_inp)
     name = "gap.npz" if frequency == "static" else "gap_dynamic.npz"
@@ -829,11 +835,11 @@ class TestConsumerChecks(_Dir):
         ``coeff_extern``) case-insensitively: mixed-case keys give the same
         band metadata and digests as the canonical spelling, and an omitted
         ``SubShape`` defaults to a lowercase ``cellshape``."""
-        from hwave import sc
+        from hwave.solver.eliashberg import so_solve as sc_so
         T, E, _ = _tables_and_meta_from_input(self.inp_soc_extern)
 
         def run(param):
-            return sc._so_run_inputs({"mode": {"param": param}}, T, E, 1, 10.0, 64, 0.5)
+            return sc_so._so_run_inputs({"mode": {"param": param}}, T, E, 1, 10.0, 64, 0.5)
         canon = run({"CellShape": [4, 2], "SubShape": [1, 1, 1], "coeff_extern": 0.5})
         mixed = run({"cellshape": [4, 2], "SUBSHAPE": [1, 1, 1], "Coeff_Extern": 0.5})
         self.assertEqual(canon.band.meta.cell_shape, (4, 2, 1))

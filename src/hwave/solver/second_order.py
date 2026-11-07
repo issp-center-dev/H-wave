@@ -339,7 +339,7 @@ def build_offsite(split, lattice, norb):
     orientation of ``hwave.sc._build_interaction_k`` (transpose=True), with
     the reader's reversal closure (``symmetrise_k``). None without off-site
     density types."""
-    from hwave.sc import _build_interaction_k
+    from hwave.solver.eliashberg.vertex import _build_interaction_k
     from hwave.solver.declarations import symmetrise_k
     types = [t for t in OFFSITE_DENSITY_TYPES if split.offsite_tbl.get(t)]
     if not types:

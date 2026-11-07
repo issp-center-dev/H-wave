@@ -22,6 +22,8 @@ import tempfile
 import unittest
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import config as sc_config
+from hwave.solver.eliashberg import io as sc_io
 
 
 class TestSpinOrbitalGuardUnit(unittest.TestCase):
@@ -51,9 +53,9 @@ class TestSpinOrbitalGuardUnit(unittest.TestCase):
         """The resolver, not raw truthiness: a string "false" previously
         activated the SO branch of the chi0q convention check and diverged
         inside RPA (truthiness vs == True)."""
-        self.assertFalse(sc._resolve_spin_orbital_flag(
+        self.assertFalse(sc_config._resolve_spin_orbital_flag(
             {"mode": {"enable_spin_orbital": "false"}}))
-        self.assertTrue(sc._resolve_spin_orbital_flag(
+        self.assertTrue(sc_config._resolve_spin_orbital_flag(
             {"mode": {"Enable_Spin_Orbital": "on"}}))
 
     def test_loader_forwards_the_resolved_boolean(self):
@@ -72,16 +74,16 @@ class TestSpinOrbitalGuardUnit(unittest.TestCase):
                "file": {"input": {"path_to_flex_output": d},
                         "output": {"path_to_output": d}}}
         seen = []
-        real = sc.validate_chi0q_index_convention
+        real = sc_io.validate_chi0q_index_convention
 
         def spy(data, flag, file_name=""):
             seen.append(flag)
             return real(data, flag, file_name)
 
-        with mock.patch.object(sc, "validate_chi0q_index_convention",
+        with mock.patch.object(sc_io, "validate_chi0q_index_convention",
                                side_effect=spy):
             try:
-                sc._load_chi0q(inp)
+                sc_io._load_chi0q(inp)
             except ValueError:
                 pass  # shape/metadata checks past the spy may still fire
         self.assertEqual(seen, [False])
@@ -190,7 +192,7 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
         the spin-orbital dynamic solver, whose configuration guard fires before
         any other configuration is read (a minimal dict suffices: the default
         chi0q_mode = "load" is refused)."""
-        from hwave.solver import eliashberg_dynamic
+        from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
         with self.assertRaises(ValueError) as cm:
             eliashberg_dynamic.solve_dynamic(
                 {"mode": {"enable_spin_orbital": True}})

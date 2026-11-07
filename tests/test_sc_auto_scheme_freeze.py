@@ -24,7 +24,7 @@ class TestScAutoSchemeFreeze(unittest.TestCase):
     }
 
     def test_frozen_decisions(self):
-        from hwave.sc import _auto_chi0q_tensor_scheme
+        from hwave.solver.eliashberg.io import _auto_chi0q_tensor_scheme
         for keys, expect in self.CASES.items():
             with self.subTest(keys=keys):
                 files = {k: "{}.dat".format(k) for k in keys}

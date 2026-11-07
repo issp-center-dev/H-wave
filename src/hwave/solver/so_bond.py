@@ -32,7 +32,7 @@ c_{Y,j+d}``, row slot ``(m; x, y)`` is ``O_{m,xy}(q) = rho^{(sr dr_m)}_{xy}(q)``
 and column slot ``(m'; z, w)`` is ``rho^{(sc dr_m')}_{zw}(q)``, with the slot
 signs ``(sr, sc) = (-1, -1)``: slot ``(a, b)`` of channel ``m`` has ``a`` in
 the origin cell and ``b`` at ``-dr_m``, the geometry of
-:class:`hwave.solver.eliashberg_bond.BondPairKernel`. Then
+:class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel`. Then
 
 * ``H_int = (1/4N) sum_q sum_rc Gamma_B(q)_rc O_r(q) O_c(q)^dagger`` up to
   one-body terms, for the antisymmetrized ``Gamma_B`` (direct plus crossed
@@ -2933,7 +2933,7 @@ def so_bond_pairing_vertex_parts(gamma_b, chi_b, geom, *, plan):
 
     each ``(nvol, ND, ND)`` complex128 in the code slots of
     :data:`SLOT_CONVENTION`, which are the block layout of
-    :class:`hwave.solver.eliashberg_bond.BondPairKernel` with ``norb = nd``
+    :class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel` with ``norb = nd``
     spin-orbital modes (no instantaneous vertex: the bare part lives on all
     channel blocks). ``Gamma_B^P`` is the exchange image (:func:`gamma_p`).
 
@@ -3230,7 +3230,7 @@ class PackedBondPairKernel:
     r"""The bond-resolved pairing kernel of an S_z-packed vertex, applied one
     pair-S_z sector at a time.
 
-    The operator is that of :class:`hwave.solver.eliashberg_bond.BondPairKernel`
+    The operator is that of :class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel`
     on the uniform grid (no instantaneous vertex):
 
     .. code-block:: text
@@ -3447,7 +3447,7 @@ class PackedBondPairKernel:
         return (n_p,) + self.shape + ((self.nfreq,) if self.nfreq > 1 else ())
 
     def sector_op(self, p):
-        """The :class:`hwave.sc.SectorOp` of pp sector ``p``: the kernel on
+        """The :class:`hwave.solver.eliashberg.so_solve.SectorOp` of pp sector ``p``: the kernel on
         the sector vector (``g[pp_index(p)]``) with ``matvec`` and
         ``rmatvec``, and the fermion-antisymmetric basis of the sector
         (``_SOAntisymmetricBasis.from_subset`` on :attr:`gap_shape`, with
@@ -3458,20 +3458,22 @@ class PackedBondPairKernel:
         op = self._ops.get(s)
         if op is not None:
             return op
-        from hwave import sc
+        from hwave.solver.eliashberg.so_solve import SectorOp
+        from hwave.solver.eliashberg.eigen import (
+            _SOAntisymmetricBasis, _reverse_k_and_orbital)
         if self.nfreq == 1:
-            reverse = sc._reverse_k_and_orbital
+            reverse = _reverse_k_and_orbital
         else:
-            from . import eliashberg_dynamic
+            from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
             reverse = eliashberg_dynamic._reverse_kw_and_orbital
-        basis = sc._SOAntisymmetricBasis.from_subset(self.gap_shape, self.pp_index(p),
-                                                      reverse=reverse)
+        basis = _SOAntisymmetricBasis.from_subset(self.gap_shape, self.pp_index(p),
+                                                   reverse=reverse)
         from scipy.sparse.linalg import LinearOperator
         n = basis.n
         operator = LinearOperator((n, n), matvec=lambda x: self._apply(s, x),
                                   rmatvec=lambda y: self._apply(s, y, adjoint=True),
                                   dtype=complex)
-        op = sc.SectorOp(self.pp_sectors[s], operator, basis, True)
+        op = SectorOp(self.pp_sectors[s], operator, basis, True)
         self._ops[s] = op
         return op
 

@@ -40,6 +40,8 @@ import numpy as np
 from numpy.lib.mixins import NDArrayOperatorsMixin
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
+from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver import backend
 import tests.test_sc_spin_orbital as S
 
@@ -304,7 +306,7 @@ def _spy_iteration(cap):
     filled (``eigenvalue_validated``, ``rayleigh_residual``, ... of a shifted
     iteration). The wrapper returns the original tuple, so the production
     logging / validation / output path after the call is untouched."""
-    real = sc._so_solve_iteration
+    real = sc_static._so_solve_iteration
 
     def spy(A, basis, *a, **kw):
         out = real(A, basis, *a, **kw)
@@ -314,7 +316,10 @@ def _spy_iteration(cap):
              "info": dict(info) if info is not None else None})
         return out
 
-    with mock.patch.object(sc, "_so_solve_iteration", side_effect=spy):
+    # the static entry calls it through hwave.sc, the dynamic one from
+    # hwave.solver.eliashberg.so_solve (dev/sc-split-plan.md, step 4b)
+    with mock.patch.object(sc_static, "_so_solve_iteration", side_effect=spy), \
+            mock.patch.object(sc_so, "_so_solve_iteration", side_effect=spy):
         yield cap
 
 
@@ -334,7 +339,7 @@ def _dyn_run(inp):
     coordinates, columns) and the basis; the iteration leg as in
     :func:`_spy_iteration`."""
     cap = {}
-    real_eig = sc._so_solve_eigenvalue
+    real_eig = sc_so._so_solve_eigenvalue
 
     def eig(A, basis, *a, **kw):
         out = real_eig(A, basis, *a, **kw)
@@ -342,7 +347,7 @@ def _dyn_run(inp):
         cap["vals"], cap["vecs"] = out
         return out
 
-    with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=eig), \
+    with _quiet(), mock.patch.object(sc_so, "_so_solve_eigenvalue", side_effect=eig), \
             _spy_iteration(cap):
         cap["lam"] = sc.calc_eliashberg(inp)
     return cap

@@ -306,7 +306,8 @@ class TestBuildersAgreeOnTheDensityBlock(unittest.TestCase):
         import tempfile
 
         import hwave.qlmsio.read_input_k as read_input_k
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver.rpa import Interaction, Lattice
 
         with tempfile.TemporaryDirectory(prefix="hwave_i96_") as d:
@@ -343,10 +344,10 @@ class TestBuildersAgreeOnTheDensityBlock(unittest.TestCase):
             inter = Interaction(lattice, ham_param, info_mode)
 
             qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
-            _, _, interactions = sc._read_interaction_files(
+            _, _, interactions = sc_io._read_interaction_files(
                 {"file": {"input": {"path_to_input": d,
                                     "interaction": interaction}}})
-            ik = sc._build_interaction_k(qs, np.array([0.0]), np.array([0.0]),
+            ik = sc_vertex._build_interaction_k(qs, np.array([0.0]), np.array([0.0]),
                                          interactions, NORB)
 
         ns = 2
@@ -398,7 +399,7 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
     NOT_TRANSPOSED = ("PairHop",)
 
     def test_density_types_are_stored_pair_transposed(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
         vr = {((R, 0, 0), (a, b)): v for (R, a, b), v in BONDS.items()}
@@ -409,7 +410,7 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
 
         for itype in self.TRANSPOSED:
             with self.subTest(interaction=itype):
-                ik = sc._build_interaction_k(
+                ik = sc_vertex._build_interaction_k(
                     qs, np.array([0.0]), np.array([0.0]), {itype: vr}, NORB)
                 got = ik[itype].transpose(2, 3, 4, 0, 1).reshape(
                     NSITE, NORB, NORB)
@@ -423,7 +424,7 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
         ``irvec != (0,0,0)``, so an off-site PairHop fixture would be vacuous on
         the RPA side and must not be used to reason about the two builders.
         """
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         P = {(0, 1): 1.0, (1, 0): 0.35}          # on-site, asymmetric
         vr = {((0, 0, 0), (a, b)): v for (a, b), v in P.items()}
@@ -435,7 +436,7 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
         qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
         for itype in self.NOT_TRANSPOSED:
             with self.subTest(interaction=itype):
-                ik = sc._build_interaction_k(
+                ik = sc_vertex._build_interaction_k(
                     qs, np.array([0.0]), np.array([0.0]), {itype: vr}, NORB)
                 got = ik[itype][:, :, 0, 0, 0]    # on-site: q-independent
                 np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12)
@@ -455,7 +456,7 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
         `test_every_type_is_stored_pair_transposed`, which inspects the
         builder's input directly.
         """
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
 
         kx = np.linspace(0, 2 * np.pi, 2, endpoint=False)
@@ -464,10 +465,10 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
         asym = {((0, 0, 0), (0, 1)): 1.0, ((0, 0, 0), (1, 0)): 0.4}
 
         def charge(vr, builder):
-            ik = sc._build_interaction_k(kx, kx, kz, {"CoulombInter": vr}, NORB)
+            ik = sc_vertex._build_interaction_k(kx, kx, kz, {"CoulombInter": vr}, NORB)
             return builder(ik, NORB, 2, 2, 1)[1]
 
-        for builder in (sc._build_sc_matrices_all_q, build_sc_matrices_myo):
+        for builder in (sc_vertex._build_sc_matrices_all_q, build_sc_matrices_myo):
             with self.subTest(builder=builder.__name__):
                 c_sym = charge(sym, builder)
                 c_asym = charge(asym, builder)
@@ -1057,12 +1058,12 @@ class TestPairHopEndToEnd(unittest.TestCase):
         self.assertLess(self._worst(self.chi0, self.bubble), 1e-2)
 
     def _sc_matrix(self, mat):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         k = np.array([0.0])
         vr = {((0, 0, 0), ab): v for ab, v in mat.items()}
-        ik = sc._build_interaction_k(k, k, k, {"PairHop": vr}, NORB)
-        S, C = sc._build_sc_matrices_all_q(ik, NORB, 1, 1, 1)
+        ik = sc_vertex._build_interaction_k(k, k, k, {"PairHop": vr}, NORB)
+        S, C = sc_vertex._build_sc_matrices_all_q(ik, NORB, 1, 1, 1)
         np.testing.assert_allclose(S, C, rtol=0.0, atol=1e-14)
         return S[0, 0, 0]
 

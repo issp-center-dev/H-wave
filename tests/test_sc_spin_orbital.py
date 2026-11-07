@@ -54,6 +54,11 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import kernel as sc_kernel
+from hwave.solver.eliashberg import static as sc_static
+from hwave.solver.eliashberg import so_solve as sc_so
+from hwave.solver.eliashberg import io as sc_io
 from hwave.solver import so_pairing
 from hwave.solver.spin_orbital import ORBITAL_SITE_WARNING
 
@@ -201,8 +206,8 @@ def _run(inp):
     """``calc_eliashberg`` with the arguments of ``_save_results`` captured at
     full precision: ``(gap, eigenvalue, eigenvalues, match, provenance)``."""
     seen = {}
-    real = sc._save_results
-    real_reorder = sc._reorder_eigenpairs_by_parity
+    real = sc_static._save_results
+    real_reorder = sc_static._reorder_eigenpairs_by_parity
 
     def spy_reorder(*a, **kw):
         out = real_reorder(*a, **kw)
@@ -215,7 +220,7 @@ def _run(inp):
                     provenance=kw.get("provenance"))
         return real(output_dir, sigma, eigenvalue, eigenvalues_eig, *a, **kw)
 
-    real_listing = sc._listing_with_leader
+    real_listing = sc_static._listing_with_leader
 
     def spy_listing(*a, **kw):
         # the non-spin-orbital static table is the reported channel leader
@@ -224,10 +229,10 @@ def _run(inp):
         seen["global"] = (np.asarray(a[0]), np.asarray(a[1]))
         return real_listing(*a, **kw)
 
-    with _quiet(), mock.patch.object(sc, "_save_results", side_effect=spy), \
-            mock.patch.object(sc, "_reorder_eigenpairs_by_parity",
+    with _quiet(), mock.patch.object(sc_static, "_save_results", side_effect=spy), \
+            mock.patch.object(sc_static, "_reorder_eigenpairs_by_parity",
                               side_effect=spy_reorder), \
-            mock.patch.object(sc, "_listing_with_leader",
+            mock.patch.object(sc_static, "_listing_with_leader",
                               side_effect=spy_listing):
         sc.calc_eliashberg(inp)
     if "global" in seen:
@@ -251,7 +256,7 @@ def _spin_weights(gap, n):
 
 
 def _reverse(gap):
-    return sc._reverse_k_and_orbital(gap)
+    return sc_eigen._reverse_k_and_orbital(gap)
 
 
 def _clusters(vals, vecs, rtol=1e-8):
@@ -271,7 +276,7 @@ def _clusters(vals, vecs, rtol=1e-8):
         V = np.stack([vecs[i].ravel() for i in idx], axis=1)
         dims = []
         for ch in ("singlet", "triplet"):
-            P = np.stack([sc._project_gap_parity(vecs[i], ch).ravel()
+            P = np.stack([sc_eigen._project_gap_parity(vecs[i], ch).ravel()
                           for i in idx], axis=1)
             sv = np.linalg.svd(P, compute_uv=False)
             dims.append(int(np.sum(sv > 1e-6 * np.linalg.norm(V, 2))))
@@ -381,7 +386,7 @@ class TestStaticEntry(_TmpDir):
                          out="out_so"))
         # every physical mode: the antisymmetric space has dimension 120
         # (36 even singlet + 3 x 28 odd triplet) and all 120 are returned
-        self.assertEqual(sc._SOAntisymmetricBasis((ND, ND) + tuple(CELL)).dim,
+        self.assertEqual(sc_eigen._SOAntisymmetricBasis((ND, ND) + tuple(CELL)).dim,
                          120)
         self.assertEqual(len(so["evs"]), 120)
         _assert_su2_multiplicities(self, res, so)
@@ -616,7 +621,7 @@ class TestRefusals(_TmpDir):
         # refused right after loading, before the Green function is built
         with self.assertRaisesRegex(ValueError, r"general \(4-index\)"):
             with _quiet(), mock.patch.object(
-                    sc, "_build_bond_green",
+                    sc_static, "_build_bond_green",
                     side_effect=AssertionError("Green built before the check")):
                 sc.calc_eliashberg(inp)
         self.assertEqual(os.listdir(out), ["chi0q.npz"])
@@ -655,7 +660,7 @@ class TestRefusals(_TmpDir):
                 ValueError, r"(?s)chi0q\.npz' has no spin_orbital marker.*"
                             r"enable_spin_orbital = true"):
             with _quiet(), mock.patch.object(
-                    sc, "_build_bond_green",
+                    sc_static, "_build_bond_green",
                     side_effect=AssertionError("Green built before the check")):
                 sc.calc_eliashberg(inp)
         self.assertEqual(sorted(os.listdir(os.path.join(self.d, "out"))),
@@ -727,12 +732,12 @@ class TestRefusals(_TmpDir):
                         r"physical orbitals 1\.\.{}".format(
                             nm, files[nm].replace(".", r"\."), NP)), \
                         _quiet(), \
-                        mock.patch.object(sc, "_build_bond_green", side_effect=boom), \
-                        mock.patch.object(sc, "_calc_chi0q_internal", side_effect=boom), \
-                        mock.patch.object(sc, "_load_chi0q", side_effect=boom), \
-                        mock.patch.object(sc, "_load_flex_so", side_effect=boom), \
-                        mock.patch.object(sc, "_so_static_vertex", side_effect=boom), \
-                        mock.patch.object(sc, "_so_rpa_vertex", side_effect=boom):
+                        mock.patch.object(sc_static, "_build_bond_green", side_effect=boom), \
+                        mock.patch.object(sc_static, "_calc_chi0q_internal", side_effect=boom), \
+                        mock.patch.object(sc_static, "_load_chi0q", side_effect=boom), \
+                        mock.patch.object(sc_static, "_load_flex_so", side_effect=boom), \
+                        mock.patch.object(sc_static, "_so_static_vertex", side_effect=boom), \
+                        mock.patch.object(sc_static, "_so_rpa_vertex", side_effect=boom):
                     sc.calc_eliashberg(inp)
                 out = inp["file"]["output"]["path_to_output"]
                 self.assertFalse(os.path.exists(out) and os.listdir(out))
@@ -765,9 +770,13 @@ class TestRefusals(_TmpDir):
                 inp["file"]["input"][key] = "mf.npz"
                 boom = mock.Mock(side_effect=AssertionError("heavy work reached"))
                 read = mock.Mock(side_effect=AssertionError("input files read"))
-                with mock.patch.object(sc, "_so_rpa_vertex", boom), \
+                # chi0q_mode = "calc" builds the vertex inside
+                # hwave.solver.eliashberg.so_solve._so_static_vertex
+                # (dev/sc-split-plan.md, step 4): guard both namespaces
+                with mock.patch.object(sc_static, "_so_rpa_vertex", boom), \
+                        mock.patch.object(sc_so, "_so_rpa_vertex", boom), \
                         mock.patch("hwave.solver.rpa.RPA.read_init", boom), \
-                        mock.patch.object(sc, "_read_interaction_files", read):
+                        mock.patch.object(sc_static, "_read_interaction_files", read):
                     with self.assertRaisesRegex(ValueError, name + r".*#273"):
                         with _quiet():
                             sc.calc_eliashberg(inp)
@@ -800,7 +809,7 @@ class TestRefusals(_TmpDir):
                          CellShape=[1, 1, 1], out=out)
             with self.subTest(init_gap=seed), _quiet():
                 if refused:
-                    with mock.patch.object(sc, "_make_kernel_operator", boom), \
+                    with mock.patch.object(sc_static, "_make_kernel_operator", boom), \
                             self.assertRaisesRegex(
                                 ValueError, r"init_gap = 'p_x' has no fermion-"
                                             r"antisymmetric component"):
@@ -827,7 +836,7 @@ class TestRefusals(_TmpDir):
                             r"\"load\" needs the general \(4-index\) spinful "
                             r"chi0q of a spin-orbital RPA run over nd = 4"):
             with _quiet(), mock.patch.object(
-                    sc, "_build_bond_green",
+                    sc_static, "_build_bond_green",
                     side_effect=AssertionError("Green built before the check")):
                 sc.calc_eliashberg(inp)
         self.assertEqual(os.listdir(out), ["chi0q.npz"])
@@ -835,7 +844,7 @@ class TestRefusals(_TmpDir):
     def test_dynamic_entry_checks_the_configuration_first(self):
         """A direct solve_dynamic call reaches the spin-orbital dynamic solver,
         whose configuration checks run before anything else is read."""
-        from hwave.solver import eliashberg_dynamic
+        from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
         with self.assertRaisesRegex(ValueError, "enable_spin_orbital.*chi0q_mode"):
             eliashberg_dynamic.solve_dynamic({"mode": {"enable_spin_orbital": True}})
 
@@ -857,13 +866,13 @@ class TestStaticVertexLayouts(_TmpDir):
             4, 5, 6, 7, 1, 2, 3, 0)
         for si in (None, 1):
             with self.subTest(static_index=si), _quiet():
-                v_raw = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, si)
-                v_ref = sc._so_static_vertex(inp, ref, NP, Nx, Ny, Nz, si)
+                v_raw = sc_so._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, si)
+                v_ref = sc_so._so_static_vertex(inp, ref, NP, Nx, Ny, Nz, si)
                 self.assertGreater(np.abs(v_raw).max(), 0.0)
                 np.testing.assert_array_equal(v_raw, v_ref)
         with _quiet():
-            v0 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, None)
-            v1 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, 1)
+            v0 = sc_so._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, None)
+            v1 = sc_so._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, 1)
         self.assertGreater(np.abs(v0 - v1).max(), 1e-6)
 
 
@@ -901,15 +910,15 @@ class TestFlexVertexCheck(unittest.TestCase):
                 with _quiet(), self.assertRaisesRegex(
                         ValueError, r"do not reproduce the vertex .*\(backward "
                                     r"error 3\.00\de-08 >"):
-                    sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+                    sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz")
                 # the error itself, through the tolerance-free path
-                with _quiet(), mock.patch.object(sc, "_SO_FLEX_GAMMA_TOL", np.inf):
-                    errs.append(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"))
+                with _quiet(), mock.patch.object(sc_so, "_SO_FLEX_GAMMA_TOL", np.inf):
+                    errs.append(sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz"))
                 if nvol >= 16:
                     # non-vacuity: a global norm would let this pass
                     self.assertLess(self._global_error(gam, C, C0),
-                                    sc._SO_FLEX_GAMMA_TOL)
-        self.assertGreater(errs[0], sc._SO_FLEX_GAMMA_TOL)
+                                    sc_so._SO_FLEX_GAMMA_TOL)
+        self.assertGreater(errs[0], sc_so._SO_FLEX_GAMMA_TOL)
         np.testing.assert_allclose(errs, errs[0], rtol=1e-10)
 
     def test_one_bad_block_among_many(self):
@@ -919,11 +928,11 @@ class TestFlexVertexCheck(unittest.TestCase):
         C = np.broadcast_to(chi, (nvol,) + c0.shape).copy()
         C[nvol // 3] += 3.0e-8 * d
         with _quiet(), self.assertRaisesRegex(ValueError, r"do not reproduce"):
-            sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+            sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz")
         with _quiet():
             C[nvol // 3] = chi
-            self.assertLess(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
-                            sc._SO_FLEX_GAMMA_TOL)
+            self.assertLess(sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
+                            sc_so._SO_FLEX_GAMMA_TOL)
 
     def test_zero_scale_block(self):
         """A block with ``chi0_q = 0``: passes when ``chi_q = 0`` too, and is
@@ -932,11 +941,11 @@ class TestFlexVertexCheck(unittest.TestCase):
         C0 = np.stack([c0, np.zeros_like(c0)])
         C = np.stack([chi, np.zeros_like(chi)])
         with _quiet(), np.errstate(all="raise"):
-            self.assertLess(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
-                            sc._SO_FLEX_GAMMA_TOL)
+            self.assertLess(sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
+                            sc_so._SO_FLEX_GAMMA_TOL)
             C[1] = 1e-3 * d
             with self.assertRaisesRegex(ValueError, r"backward error inf"):
-                sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+                sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz")
 
     def test_nan_is_refused(self):
         gam, c0, chi, d = self._block()
@@ -944,7 +953,7 @@ class TestFlexVertexCheck(unittest.TestCase):
         C = np.stack([chi, chi])
         C[1, 0, 0] = np.nan
         with _quiet(), self.assertRaisesRegex(ValueError, r"backward error nan"):
-            sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+            sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz")
 
 
 def _dense_P(shape):
@@ -952,7 +961,7 @@ def _dense_P(shape):
     column from ``_project_gap_parity`` (independent of the basis)."""
     n = int(np.prod(shape))
     eye = np.eye(n, dtype=complex)
-    return np.stack([sc._project_gap_parity(eye[:, j].reshape(shape),
+    return np.stack([sc_eigen._project_gap_parity(eye[:, j].reshape(shape),
                                             "triplet").ravel()
                      for j in range(n)], axis=1)
 
@@ -992,7 +1001,7 @@ class TestAntisymmetricBasis(unittest.TestCase):
             with self.subTest(grid=grid):
                 shape = (nd, nd) + grid
                 n = int(np.prod(shape))
-                b = sc._SOAntisymmetricBasis(shape)
+                b = sc_eigen._SOAntisymmetricBasis(shape)
                 P = _dense_P(shape)
                 rank = int(round(np.trace(P).real))
                 self.assertEqual(b.dim, rank)
@@ -1010,7 +1019,7 @@ class TestAntisymmetricBasis(unittest.TestCase):
                 c = rng.standard_normal(b.dim) + 1j * rng.standard_normal(b.dim)
                 g = b.to_full(c).reshape(shape)
                 np.testing.assert_array_equal(g, -self._partner(g))
-                self.assertEqual(sc._so_antisymmetry_residual(g), 0.0)
+                self.assertEqual(sc_so._so_antisymmetry_residual(g), 0.0)
                 np.testing.assert_allclose(b.to_reduced(g.ravel()), c,
                                            rtol=0, atol=1e-14)
                 # E^dagger annihilates the symmetric sector
@@ -1029,7 +1038,7 @@ class TestAntisymmetryResidual(unittest.TestCase):
         shape = (4, 4, 4, 4, 1)
         rng = np.random.default_rng(11)
         x = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
-        a = sc._project_gap_parity(x, "triplet")
+        a = sc_eigen._project_gap_parity(x, "triplet")
         s_ = x - a
         a, s_ = a / np.linalg.norm(a), s_ / np.linalg.norm(s_)
         for keep, accepted in ((0.89, False), (0.95, False),
@@ -1039,15 +1048,15 @@ class TestAntisymmetryResidual(unittest.TestCase):
             if keep > 0.999:
                 g = a + 1e-13 * s_
             with self.subTest(keep=keep):
-                self.assertEqual(sc._so_is_antisymmetric(g), accepted)
-                self.assertAlmostEqual(sc._so_antisymmetry_residual(g),
-                                       np.linalg.norm(g - sc._project_gap_parity(
+                self.assertEqual(sc_so._so_is_antisymmetric(g), accepted)
+                self.assertAlmostEqual(sc_so._so_antisymmetry_residual(g),
+                                       np.linalg.norm(g - sc_eigen._project_gap_parity(
                                            g, "triplet")) / np.linalg.norm(g),
                                        delta=1e-15)
         # the dominant-sector test (non-SO semantics, unchanged) accepts 95 %
-        self.assertTrue(sc._is_gap_parity(0.95 * a + np.sqrt(1 - 0.95 ** 2)
+        self.assertTrue(sc_eigen._is_gap_parity(0.95 * a + np.sqrt(1 - 0.95 ** 2)
                                           * s_, "triplet"))
-        self.assertEqual(sc._so_antisymmetry_residual(np.zeros(shape)),
+        self.assertEqual(sc_so._so_antisymmetry_residual(np.zeros(shape)),
                          float("inf"))
 
 
@@ -1066,7 +1075,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
     def _lowered_run(self, eli):
         from scipy.sparse.linalg import LinearOperator
         files = _write_model(self.d, so=True, soc=0.4)
-        real = sc._make_kernel_operator
+        real = sc_static._make_kernel_operator
         built = {}
 
         def lowered(*a, **kw):
@@ -1076,7 +1085,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
                 dtype=complex)
             return built["op"], n
 
-        with mock.patch.object(sc, "_make_kernel_operator",
+        with mock.patch.object(sc_static, "_make_kernel_operator",
                                side_effect=lowered):
             seen = _run(_input(self.d, files, True, eli))
         return seen, built
@@ -1133,13 +1142,13 @@ class TestRepulsiveSpectralShift(_TmpDir):
         B = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
         M = -(B @ B.conj().T) / n - 0.5 * np.eye(n)
         A = aslinearoperator(M)
-        basis = sc._SOAntisymmetricBasis(shape)
+        basis = sc_eigen._SOAntisymmetricBasis(shape)
         dense, m = _dense_antisymmetric_spectrum(M, shape)
         self.assertEqual(basis.dim, m)
         self.assertAlmostEqual(dense[0].real, -0.8376, delta=1e-3)
         for shift in (0.01, 0.3, 10.0):
             with self.subTest(spectral_shift=shift), _quiet():
-                vals, gaps = sc._so_solve_eigenvalue(
+                vals, gaps = sc_so._so_solve_eigenvalue(
                     A, basis, 3, "arnoldi", spectral_shift=shift)
                 np.testing.assert_allclose(vals, dense[:3], rtol=0, atol=1e-9)
                 for g in gaps:
@@ -1149,13 +1158,13 @@ class TestRepulsiveSpectralShift(_TmpDir):
         # dense leading eigenvalues as the shifted runs
         with _quiet():
             info = {}
-            vals, _ = sc._so_solve_eigenvalue(A, basis, 3, "arnoldi",
+            vals, _ = sc_so._so_solve_eigenvalue(A, basis, 3, "arnoldi",
                                               info_out=info)
         self.assertEqual(info["selection"], "LR_retry")
         np.testing.assert_allclose(vals, dense[:3], rtol=0, atol=1e-9)
         seed = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
         with _quiet():
-            g, lam, conv, _ = sc._so_solve_iteration(
+            g, lam, conv, _ = sc_so._so_solve_iteration(
                 A, basis, seed / np.linalg.norm(seed), 5000, 0.5, 1e-11,
                 spectral_shift=10.0)
         self.assertTrue(conv)
@@ -1175,7 +1184,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
         rng = np.random.default_rng(21)
         M = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
         A = aslinearoperator(M)
-        basis = sc._SOAntisymmetricBasis(shape)
+        basis = sc_eigen._SOAntisymmetricBasis(shape)
         self.assertEqual(basis.dim, 5)
         dense, m = _dense_antisymmetric_spectrum(M, shape)
         self.assertEqual(m, 5)
@@ -1183,7 +1192,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
             for req in (3, 4, 5, 7):
                 with self.subTest(spectral_shift=shift, num_eigenvalues=req), \
                         _quiet():
-                    vals, gaps = sc._so_solve_eigenvalue(
+                    vals, gaps = sc_so._so_solve_eigenvalue(
                         A, basis, req, "arnoldi", spectral_shift=shift)
                     k = min(req, 5)
                     self.assertEqual(len(vals), k)
@@ -1198,23 +1207,23 @@ class TestRepulsiveSpectralShift(_TmpDir):
                     np.testing.assert_allclose(vals, want, rtol=0, atol=1e-10)
                     for v, g in zip(vals, gaps):
                         r = (M @ g.ravel()).reshape(shape)
-                        r = sc._project_gap_parity(r, "triplet")
+                        r = sc_eigen._project_gap_parity(r, "triplet")
                         np.testing.assert_allclose(r, v * g, rtol=0, atol=1e-10)
 
     def test_dense_branch_warns_about_sigma_shift(self):
         from scipy.sparse.linalg import aslinearoperator
-        basis = sc._SOAntisymmetricBasis((2, 2, 3, 1, 1))
+        basis = sc_eigen._SOAntisymmetricBasis((2, 2, 3, 1, 1))
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
-            sc._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 5,
+            sc_so._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 5,
                                     "arnoldi", sigma_shift=0.2)
         self.assertTrue(any("sigma_shift is ignored" in m for m in cm.output))
 
     def test_non_arnoldi_method_is_refused(self):
         from scipy.sparse.linalg import aslinearoperator
-        basis = sc._SOAntisymmetricBasis((2, 2, 3, 1, 1))
+        basis = sc_eigen._SOAntisymmetricBasis((2, 2, 3, 1, 1))
         with self.assertRaisesRegex(ValueError, "supports only eigenvalue_"
                                                 "method = \"arnoldi\""):
-            sc._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 2,
+            sc_so._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 2,
                                     "subspace")
 
     def test_non_antisymmetric_solver_output_is_refused(self):
@@ -1225,11 +1234,11 @@ class TestRepulsiveSpectralShift(_TmpDir):
         shape = (ND, ND) + tuple(CELL)
         rng = np.random.default_rng(5)
         x = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
-        a = sc._project_gap_parity(x, "triplet")
+        a = sc_eigen._project_gap_parity(x, "triplet")
         s_ = x - a
         mixed = (0.95 * a / np.linalg.norm(a)
                  + np.sqrt(1 - 0.95 ** 2) * s_ / np.linalg.norm(s_))
-        self.assertTrue(sc._is_gap_parity(mixed, "triplet"))
+        self.assertTrue(sc_eigen._is_gap_parity(mixed, "triplet"))
         cases = (
             ("eigenvalue", "_so_solve_eigenvalue",
              lambda *_a, **_k: (np.array([0.5, 0.1]),
@@ -1243,7 +1252,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
                          {"chi0q_mode": "calc", "solver_mode": mode,
                           "num_eigenvalues": 2}, out=out)
             with self.subTest(solver_mode=mode), _quiet(), \
-                    mock.patch.object(sc, name, side_effect=fake):
+                    mock.patch.object(sc_static, name, side_effect=fake):
                 with self.assertRaisesRegex(ValueError,
                                             "not fermion-antisymmetric"):
                     sc.calc_eliashberg(inp)
@@ -1269,17 +1278,17 @@ class TestStaticKernelBridge(_TmpDir):
 
     def test_production_operator_equals_validated_kernel(self):
         import types
-        from hwave.solver.eliashberg_bond import (
+        from hwave.solver.eliashberg.bond_dynamic import (
             ArrayBlockSource, BondPairKernel, PairVertexUniform, _vinst_as_block)
-        from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+        from hwave.solver.eliashberg.dynamic import calc_g2_dynamic
         files = _write_model(self.d, so=True, soc=0.3)
         inp = _input(self.d, files, True,
                      {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
                       "num_eigenvalues": 2, "g2_tail": False}, nmat=16)
         cap = {}
-        real_green = sc._build_bond_green
-        real_vertex = sc._so_static_vertex_from_chi
-        real_solve = sc._so_solve_eigenvalue
+        real_green = sc_static._build_bond_green
+        real_vertex = sc_so._so_static_vertex_from_chi
+        real_solve = sc_static._so_solve_eigenvalue
 
         def spy_green(*a, **kw):
             out = real_green(*a, **kw)
@@ -1296,10 +1305,10 @@ class TestStaticKernelBridge(_TmpDir):
             return real_solve(A, basis, *a, **kw)
 
         with _quiet(), \
-                mock.patch.object(sc, "_build_bond_green", side_effect=spy_green), \
-                mock.patch.object(sc, "_so_static_vertex_from_chi",
+                mock.patch.object(sc_static, "_build_bond_green", side_effect=spy_green), \
+                mock.patch.object(sc_so, "_so_static_vertex_from_chi",
                                   side_effect=spy_vertex), \
-                mock.patch.object(sc, "_so_solve_eigenvalue",
+                mock.patch.object(sc_static, "_so_solve_eigenvalue",
                                   side_effect=spy_solve):
             sc.calc_eliashberg(inp)
         Nx, Ny, Nz = CELL
@@ -1331,9 +1340,9 @@ class TestStaticKernelBridge(_TmpDir):
             # a general gap too: then the raw kernel is compared off range(P)
             D = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
             if antisym:
-                D = sc._project_gap_parity(D, "triplet")
+                D = sc_eigen._project_gap_parity(D, "triplet")
             raw = cap["A"].matvec(D.ravel()).reshape(shape)
-            want = sc._project_gap_parity(raw, "triplet")
+            want = sc_eigen._project_gap_parity(raw, "triplet")
             if antisym:
                 # what the solver iterates, mapped back
                 want = basis.to_full(red.matvec(
@@ -1348,7 +1357,7 @@ class TestStaticKernelBridge(_TmpDir):
                 for n in range(nmat):
                     np.testing.assert_allclose(
                         out[..., n], raw, rtol=0, atol=1e-12 * np.abs(raw).max())
-                    got = sc._project_gap_parity(out[..., n], "triplet")
+                    got = sc_eigen._project_gap_parity(out[..., n], "triplet")
                     np.testing.assert_allclose(
                         got, want, rtol=0, atol=1e-12 * np.abs(want).max())
 
@@ -1406,7 +1415,7 @@ class TestTransferUnderSOC(_TmpDir):
         inp = _input(self.d, files, True, {"chi0q_mode": "calc",
                                            "solver_mode": "eigenvalue"},
                      out="out" + tag, **param)
-        with _quiet(), mock.patch.object(sc, "_calc_eigenvalues",
+        with _quiet(), mock.patch.object(sc_static, "_calc_eigenvalues",
                                          side_effect=spy_eig):
             with self.assertRaises(_Stop):
                 sc.calc_eliashberg(inp)
@@ -1552,11 +1561,11 @@ class TestFlexMode(unittest.TestCase):
         nmat = green.shape[0]
         g = green.reshape(nmat, Nx, Ny, Nz, ND, ND).transpose(4, 5, 1, 2, 3, 0)
         with _quiet():
-            gam = sc._so_rpa_vertex(inp)
-        Vs = sc._so_static_vertex_from_chi(gam, chi_static, ND, (Nx, Ny, Nz))
-        G2 = sc._calc_g2(np.ascontiguousarray(g), 1.0 / 0.25, tail=True)
+            gam = sc_so._so_rpa_vertex(inp)
+        Vs = sc_so._so_static_vertex_from_chi(gam, chi_static, ND, (Nx, Ny, Nz))
+        G2 = sc_kernel._calc_g2(np.ascontiguousarray(g), 1.0 / 0.25, tail=True)
         n = ND * ND * Nx * Ny * Nz
-        A, _ = sc._make_kernel_operator(Vs, G2, ND, Nx, Ny, Nz)
+        A, _ = sc_kernel._make_kernel_operator(Vs, G2, ND, Nx, Ny, Nz)
         M = A.matmat(np.eye(n, dtype=complex))
         return _dense_antisymmetric_spectrum(M, (ND, ND, Nx, Ny, Nz))[0]
 
@@ -1692,7 +1701,7 @@ class TestFlexMode(unittest.TestCase):
             _resave(os.path.join(self.flex, name), os.path.join(bad, name),
                     drop, **replace)
             with self.subTest(case=tag), mock.patch.object(
-                    sc, "_so_rpa_vertex",
+                    sc_static, "_so_rpa_vertex",
                     side_effect=AssertionError("vertex built before the check")):
                 self._refused(pattern, _flex_input(
                     self.d, self.files, bad, out=self._out("out_bad_" + tag)))
@@ -1726,10 +1735,10 @@ class TestFlexMode(unittest.TestCase):
         shutil.copytree(self.flex, bad)
         os.remove(os.path.join(bad, "chi0q.npz"))
         with mock.patch.object(
-                sc, "_load_flex_green",
+                sc_io, "_load_flex_green",
                 side_effect=AssertionError("green read before the check")), \
                 mock.patch.object(
-                    sc, "_so_rpa_vertex",
+                    sc_static, "_so_rpa_vertex",
                     side_effect=AssertionError("vertex built before the check")):
             self._refused(r"chi0q\.npz' not found.*\[file\.output\] chi0q.*"
                           r"\[eliashberg\] flex_chi0q",
@@ -1863,16 +1872,16 @@ class TestFlexMode(unittest.TestCase):
             with np.load(src) as a, np.load(dst) as b:
                 self.assertEqual(a["chi0q"].shape, b["chi0q"].shape)
             with self.subTest(case=label, marker=tag), mock.patch.object(
-                    sc, "_load_flex_green", side_effect=green_boom), \
+                    sc_io, "_load_flex_green", side_effect=green_boom), \
                     mock.patch.object(
-                        sc, "_so_flex_static_slice",
+                        sc_io, "_so_flex_static_slice",
                         side_effect=AssertionError("array sliced before the check")), \
                     mock.patch.object(
-                        sc, "_so_rpa_vertex",
+                        sc_static, "_so_rpa_vertex",
                         side_effect=AssertionError("vertex built before the check")):
                 self._refused(pattern, _flex_input(
                     d, files, bad, out=self._out("out_{}_{}".format(label, tag))))
-        with mock.patch.object(sc, "_load_flex_green", side_effect=green_boom), \
+        with mock.patch.object(sc_io, "_load_flex_green", side_effect=green_boom), \
                 self.assertRaisesRegex(AssertionError, "green read"), _quiet():
             sc.calc_eliashberg(_flex_input(d, files, flex,
                                            out=self._out("out_" + label + "_ok")))
@@ -1888,7 +1897,7 @@ class TestFlexMode(unittest.TestCase):
         _resave(os.path.join(self.flex, "chi0q.npz"),
                 os.path.join(bad, "chi0q.npz"), spin_orbital=False)
         with mock.patch.object(
-                sc, "_so_flex_static_slice",
+                sc_io, "_so_flex_static_slice",
                 side_effect=AssertionError("array sliced before the check")):
             self._refused(r"chiq\.npz': momentum_convention must be a single "
                           r"value", _flex_input(self.d, self.files, bad,
@@ -1915,8 +1924,8 @@ class TestFlexMode(unittest.TestCase):
             chi0 = z0["chi0q"][si].reshape(nvol, 4, 4)
         # the vertex check passes vacuously here
         with _quiet():
-            self.assertLess(sc._check_so_flex_vertex(
-                np.zeros((4, 4)), chi, chi0, "chiq.npz"), sc._SO_FLEX_GAMMA_TOL)
+            self.assertLess(sc_so._check_so_flex_vertex(
+                np.zeros((4, 4)), chi, chi0, "chiq.npz"), sc_so._SO_FLEX_GAMMA_TOL)
         self._assert_chi0q_marker_refused(d, files, flex, "g0")
 
     def test_refuses_non_so_and_reduced(self):
@@ -1930,10 +1939,10 @@ class TestFlexMode(unittest.TestCase):
             with np.load(os.path.join(flex, "chiq.npz")) as z:
                 self.assertEqual(str(z["chi_convention"]), tag)
             with self.subTest(scheme=scheme), mock.patch.object(
-                    sc, "_load_flex_green",
+                    sc_io, "_load_flex_green",
                     side_effect=AssertionError("green read before the check")), \
                     mock.patch.object(
-                        sc, "_so_rpa_vertex",
+                        sc_static, "_so_rpa_vertex",
                         side_effect=AssertionError("vertex built before the check")):
                 self._refused(r"chi_convention = '{}'".format(tag),
                               _flex_input(self.d, self.files, flex,
@@ -2036,7 +2045,7 @@ class TestChi0qInitProvenance(_TmpDir):
                                            "solver_mode": "eigenvalue"})
         inp["file"]["output"]["path_to_output"] = out
         with self.assertRaisesRegex(ValueError, pattern), _quiet(), \
-                mock.patch.object(sc, "_build_bond_green",
+                mock.patch.object(sc_static, "_build_bond_green",
                                   side_effect=AssertionError("Green built")):
             sc.calc_eliashberg(inp)
 
@@ -2209,7 +2218,7 @@ class TestInitialGap(unittest.TestCase):
 
     def test_even_seed_is_singlet_structured(self):
         gap = so_pairing.so_initial_gap("cos", NP, *self.K)
-        proj = sc._project_gap_parity(gap, "triplet")
+        proj = sc_eigen._project_gap_parity(gap, "triplet")
         self.assertGreater(np.linalg.norm(proj), 0.99)
         np.testing.assert_allclose(proj, gap, atol=1e-14)
         w = _spin_weights(gap, NP)
@@ -2217,7 +2226,7 @@ class TestInitialGap(unittest.TestCase):
 
     def test_odd_seed_is_sz0_triplet(self):
         gap = so_pairing.so_initial_gap("p_x", NP, *self.K)
-        np.testing.assert_allclose(sc._project_gap_parity(gap, "triplet"), gap,
+        np.testing.assert_allclose(sc_eigen._project_gap_parity(gap, "triplet"), gap,
                                    atol=1e-14)
         w = _spin_weights(gap, NP)
         self.assertAlmostEqual(w[3], 1.0, places=12)
@@ -2415,7 +2424,7 @@ class TestOutputs(_TmpDir):
                      {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
                       "output_gap": "res.dat", "output_eigenvalue": "res.npz"})
         with _quiet(), mock.patch.object(
-                sc, "_read_interaction_files",
+                sc_static, "_read_interaction_files",
                 side_effect=AssertionError("input read before the check")):
             with self.assertRaisesRegex(ValueError,
                                         "output_gap.*output_eigenvalue"):
@@ -2423,9 +2432,9 @@ class TestOutputs(_TmpDir):
         self.assertFalse(os.path.exists(inp["file"]["output"]["path_to_output"]))
 
     def test_npz_name(self):
-        self.assertEqual(sc._so_gap_npz_name("gap.dat"), "gap.npz")
-        self.assertEqual(sc._so_gap_npz_name("gap"), "gap.npz")
-        self.assertEqual(sc._so_gap_npz_name("gap.npz"), "gap.npz.npz")
+        self.assertEqual(sc_so._so_gap_npz_name("gap.dat"), "gap.npz")
+        self.assertEqual(sc_so._so_gap_npz_name("gap"), "gap.npz")
+        self.assertEqual(sc_so._so_gap_npz_name("gap.npz"), "gap.npz.npz")
 
 
 if __name__ == "__main__":
