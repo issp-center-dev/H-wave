@@ -352,7 +352,7 @@ def _read_static_options(run):
     # for triplet) when the user did not specify one. For a centrosymmetric
     # system the kernel preserves parity in exact arithmetic, but numerical
     # noise leaks the wrong parity; _solve_iteration projects every iterate back
-    # onto the channel's sector (pairing_type, _prepare_solvers), so the seed stays in -- and
+    # onto the channel's sector (pairing_type, handed to it by _iteration_leg), so the seed stays in -- and
     # converges within -- the physical sector. (For a non-centrosymmetric kernel
     # _solve_iteration detects [A,P] != 0 and disables the projection.)
     run.init_gap_mode = _resolve_init_gap(run.eli_param.get("init_gap"), run.pairing_type)
@@ -532,7 +532,7 @@ def _build_one_body(run):
         # the Transfer file is interleaved; everything downstream is
         # spin-block. Extern adds coeff_extern * sigma^z H_ab(k), exactly as
         # in the spin-orbital RPA band (spin-orbital mode refuses trans_mod /
-        # green_init, so it never takes the mean-field band of _build_one_body)
+        # green_init, so it never takes the mean-field band of the branch below)
         logger.info("Building Hamiltonian in k-space...")
         run.epsilon_k = _so_epsilon_k(run.input_dict, run.kx_array, run.ky_array, run.kz_array,
                                   run.hr, run.so_extern_table, run.norb_phys)
@@ -914,7 +914,7 @@ def _build_g2_and_seed(run):
 
     # GPU: park the two large invariants (pairing vertex and pair bubble) on the
     # device once; each matvec then only moves the gap vector across PCIe. The
-    # solver legs (_iteration_leg, _eigenvalue_leg) pass Vs_q/G2 straight to _make_kernel_operator,
+    # solver legs (_iteration_leg, _eigenvalue_leg) hand Vs_q/G2 to the kernel operator,
     # which derives its backend from them, so no other change is needed here.
     if run.gpu_active and not run.use_bond_channels:
         # Resident device tensors are more than the two inputs: the operator

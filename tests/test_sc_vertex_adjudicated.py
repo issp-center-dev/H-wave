@@ -26,7 +26,6 @@ import os
 import unittest
 
 import numpy as np
-import hwave.sc as sc
 from hwave.solver.eliashberg import vertex as sc_vertex
 
 
@@ -154,10 +153,6 @@ class TestOffsiteVqPreservation(unittest.TestCase):
     cos-collapse or conjugation error changes the answer.
     """
 
-    def _sc(self):
-
-        return sc
-
     def _interactions(self):
         # one-dimensional bond declared from both ends, as an interaction
         # file does; its complex phase must survive verbatim
@@ -165,7 +160,6 @@ class TestOffsiteVqPreservation(unittest.TestCase):
                                  ((-1, 0, 0), (1, 0)): 0.7}}
 
     def test_offsite_vq_is_preserved_with_full_complex_phase(self):
-        sc = self._sc()
         kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
         kz = np.array([0.0])
         ik = sc_vertex._build_interaction_k(kx, kx, kz, self._interactions(), 2)
@@ -188,7 +182,6 @@ class TestOffsiteVqPreservation(unittest.TestCase):
                     msg="%s[%d,%d] phase" % (name, i, j))
 
     def test_per_q_builder_matches_all_q_including_negative_index(self):
-        sc = self._sc()
         kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
         kz = np.array([0.0])
         ik = sc_vertex._build_interaction_k(kx, kx, kz, self._interactions(), 2)
@@ -206,7 +199,6 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         # PairHop's partner is the HERMITIAN entry (-R, (b,a), conj(p)); the
         # same-q conjugated transpose must be an identity for that closure
         # off-site too, keeping the full complex phase
-        sc = self._sc()
         kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
         kz = np.array([0.0])
         p = 0.7 * np.exp(0.3j)
@@ -227,7 +219,6 @@ class TestOffsiteVqPreservation(unittest.TestCase):
     def test_reversal_on_mixed_odd_even_grid(self):
         # (Nx, Ny, Nz) = (5, 4, 3): odd sizes pair i <-> n-i, even sizes make
         # 0 and n/2 self-partners; the both-ends identity must hold per axis
-        sc = self._sc()
         kx = np.linspace(0, 2 * np.pi, 5, endpoint=False)
         ky = np.linspace(0, 2 * np.pi, 4, endpoint=False)
         kz = np.linspace(0, 2 * np.pi, 3, endpoint=False)
@@ -250,7 +241,6 @@ class TestOffsiteVqPreservation(unittest.TestCase):
         # a single-direction declaration means (jab + jba)/2 in this codebase:
         # half the weight at e^{-iq}, half at e^{+iq} on the transposed slot
         # (the vertex carries e^{-iqR}, issue #232)
-        sc = self._sc()
         kx = np.linspace(0, 2 * np.pi, 4, endpoint=False)
         kz = np.array([0.0])
         ik = sc_vertex._build_interaction_k(

@@ -1517,6 +1517,10 @@ class TestBondGreenFlow(unittest.TestCase):
             raise AssertionError(
                 "_build_bond_green must never re-run a mu search")
 
+        # bond binds no _determine_mu of its own (a module-level import would
+        # be bound before the patch below and slip past it); a lazy import at
+        # call time would read band's patched name and trip _boom
+        self.assertFalse(hasattr(sc_bond, "_determine_mu"))
         orig = sc_band._determine_mu
         sc_band._determine_mu = _boom
         try:

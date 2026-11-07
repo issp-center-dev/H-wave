@@ -69,8 +69,11 @@ def _module_imports_hwave_sc(path):
                 return True
             if node.module == "hwave" and any(a.name == "sc" for a in node.names):
                 return True
-            # ``from .. import sc`` inside hwave/solver
-            if node.level == 2 and node.module is None and any(a.name == "sc" for a in node.names):
+            # ``from .. import sc`` / ``from ..sc import x`` inside hwave/solver,
+            # and the three-dot forms from inside hwave/solver/eliashberg
+            if node.level >= 2 and (
+                    (node.module is None and any(a.name == "sc" for a in node.names))
+                    or node.module == "sc"):
                 return True
         elif isinstance(node, ast.Call):
             # importlib.import_module("hwave.sc") / __import__("hwave.sc")
