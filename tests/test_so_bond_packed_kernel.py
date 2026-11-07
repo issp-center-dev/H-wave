@@ -32,6 +32,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
 from hwave import sc
+from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver import eliashberg_dynamic
 from hwave.solver.so_bond import (PackedArrays, PackedBondBlockStore, PackedBondPairKernel,
                                   estimate_packed_kernel_workspace_bytes, plan_so_bond)
@@ -603,7 +604,7 @@ def _spy_sector_solves():
         calls.append({"basis": basis, "seed": kw.get("seed_vec"), "vals": np.array(vals),
                       "selection": None if info is None else info.get("selection")})
         return vals, vecs
-    with mock.patch.object(sc, "_so_solve_eigenvalue", spy):
+    with mock.patch.object(sc_so, "_so_solve_eigenvalue", spy):
         yield calls
 
 

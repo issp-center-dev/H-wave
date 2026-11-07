@@ -24,6 +24,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
 from tests.approx_util import ApproxTestCase, _caplog, assert_approx_array
 
 
@@ -2455,11 +2456,11 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 "_load_green_npz called -- checking that the preflight seen so "
                 "far already used the file's Nmat, not the configured one")
 
-        orig_load = sc._load_green_npz
+        orig_load = sc_bond._load_green_npz
         self.addCleanup(setattr, sc, "_bond_resource_preflight", orig_preflight)
-        self.addCleanup(setattr, sc, "_load_green_npz", orig_load)
+        self.addCleanup(setattr, sc_bond, "_load_green_npz", orig_load)
         sc._bond_resource_preflight = _record
-        sc._load_green_npz = _boom
+        sc_bond._load_green_npz = _boom
 
         inp = _base_input(os.path.join(self.tmp_path, "npy3_run"), coulomb_inter=ci,
                           bond_channels=True, bond_green=gpath)
@@ -2503,9 +2504,9 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 "the bond_green array must not be materialised before the "
                 "resource preflight has passed")
 
-        orig_load = sc._load_green_npz
-        self.addCleanup(setattr, sc, "_load_green_npz", orig_load)
-        sc._load_green_npz = _boom
+        orig_load = sc_bond._load_green_npz
+        self.addCleanup(setattr, sc_bond, "_load_green_npz", orig_load)
+        sc_bond._load_green_npz = _boom
         with self.assertRaisesRegex(ValueError, r"(?i)bond_memory_cap_gb"):
             sc.calc_eliashberg(inp)
 
@@ -2601,9 +2602,9 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 "preflight / any large allocation")
 
         orig_preflight = sc._bond_resource_preflight
-        orig_load = sc._load_green_npz
+        orig_load = sc_bond._load_green_npz
         self.addCleanup(setattr, sc, "_bond_resource_preflight", orig_preflight)
-        self.addCleanup(setattr, sc, "_load_green_npz", orig_load)
+        self.addCleanup(setattr, sc_bond, "_load_green_npz", orig_load)
 
         for nfreq in [0, 1, 7, 129]:
             with self.subTest(nfreq=nfreq):
@@ -2613,7 +2614,7 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 np.savez(bad, green=np.zeros((1, nfreq, 16, 1, 1), dtype=complex))
 
                 sc._bond_resource_preflight = _boom
-                sc._load_green_npz = _boom
+                sc_bond._load_green_npz = _boom
 
                 inp = _base_input(os.path.join(self.tmp_path, "o_{}".format(nfreq)),
                                   coulomb_inter=ci, bond_channels=True,

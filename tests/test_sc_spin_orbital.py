@@ -54,6 +54,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import io as sc_io
 from hwave.solver import so_pairing
 from hwave.solver.spin_orbital import ORBITAL_SITE_WARNING
@@ -766,7 +767,11 @@ class TestRefusals(_TmpDir):
                 inp["file"]["input"][key] = "mf.npz"
                 boom = mock.Mock(side_effect=AssertionError("heavy work reached"))
                 read = mock.Mock(side_effect=AssertionError("input files read"))
+                # chi0q_mode = "calc" builds the vertex inside
+                # hwave.solver.eliashberg.so_solve._so_static_vertex
+                # (dev/sc-split-plan.md, step 4): guard both namespaces
                 with mock.patch.object(sc, "_so_rpa_vertex", boom), \
+                        mock.patch.object(sc_so, "_so_rpa_vertex", boom), \
                         mock.patch("hwave.solver.rpa.RPA.read_init", boom), \
                         mock.patch.object(sc, "_read_interaction_files", read):
                     with self.assertRaisesRegex(ValueError, name + r".*#273"):
@@ -904,7 +909,7 @@ class TestFlexVertexCheck(unittest.TestCase):
                                     r"error 3\.00\de-08 >"):
                     sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
                 # the error itself, through the tolerance-free path
-                with _quiet(), mock.patch.object(sc, "_SO_FLEX_GAMMA_TOL", np.inf):
+                with _quiet(), mock.patch.object(sc_so, "_SO_FLEX_GAMMA_TOL", np.inf):
                     errs.append(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"))
                 if nvol >= 16:
                     # non-vacuity: a global norm would let this pass
@@ -1298,7 +1303,7 @@ class TestStaticKernelBridge(_TmpDir):
 
         with _quiet(), \
                 mock.patch.object(sc, "_build_bond_green", side_effect=spy_green), \
-                mock.patch.object(sc, "_so_static_vertex_from_chi",
+                mock.patch.object(sc_so, "_so_static_vertex_from_chi",
                                   side_effect=spy_vertex), \
                 mock.patch.object(sc, "_so_solve_eigenvalue",
                                   side_effect=spy_solve):

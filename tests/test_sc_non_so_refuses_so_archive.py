@@ -21,6 +21,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver.eliashberg import io as sc_io
 from hwave import qlms
 from hwave.solver import eliashberg_dynamic
@@ -321,7 +322,7 @@ class TestBondGreen(_Base):
     def test_non_so_bond_path_refuses_so_green(self):
         inp = self._bond_inp(os.path.join(self.flex, "green.npz"))
         with _quiet(), mock.patch.object(
-                sc, "_build_bond_vertices",
+                sc_bond, "_build_bond_vertices",
                 side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(
                     ValueError, r"spin_orbital = True.*enable_spin_orbital"):
@@ -344,7 +345,7 @@ class TestBondGreen(_Base):
             with self.subTest(fixture=name):
                 p = self._green_with(name, drop=drop)
                 with mock.patch.object(
-                        sc, "_load_green_npz",
+                        sc_bond, "_load_green_npz",
                         side_effect=AssertionError("array read")):
                     with self.assertRaisesRegex(ValueError, pattern):
                         sc._build_bond_green(
@@ -380,7 +381,7 @@ class TestBondGreen(_Base):
     def test_so_mode_flag_skips_the_check(self):
         p = os.path.join(self.flex, "green.npz")
         with mock.patch.object(
-                sc, "_load_green_npz",
+                sc_bond, "_load_green_npz",
                 side_effect=RuntimeError("reached loader")):
             with self.assertRaisesRegex(RuntimeError, "reached loader"):
                 sc._build_bond_green(

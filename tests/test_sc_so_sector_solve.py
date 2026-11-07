@@ -25,6 +25,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
 from hwave import sc
+from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver import eliashberg_dynamic
 from tests.so_bond_fixtures import exact, pp_flat_index, quiet, subset_bases
 from tests.so_bond_fixtures import sector_op_of as _sector
@@ -337,7 +338,7 @@ class TestStateTable(unittest.TestCase):
                 self.assertTrue(np.array_equal(s1.gaps[i], want))
                 self.assertAlmostEqual(np.linalg.norm(s1.gaps[i]), 1.0, delta=1e-15)
             self.assertTrue(np.array_equal(s1.gaps, s2.gaps))
-            with mock.patch.object(sc, "_solve_leading", wraps=sc._solve_leading) as spy:
+            with mock.patch.object(sc_so, "_solve_leading", wraps=sc._solve_leading) as spy:
                 it = _iterate([op])
             self.assertEqual(spy.call_count, 0)
             lead = it.leaders[0]
@@ -354,7 +355,7 @@ class TestStateTable(unittest.TestCase):
         b1, b0 = _bases((22, 5))
         ops = [_sector(1, b1, _normal(np.concatenate([[5.0], np.linspace(-1, 1, 21)]), 1)),
                _sector(0, b0, _normal([0.9, 0.5, 0.1, -0.3, -1], 2))]
-        with mock.patch.object(sc, "_solve_leading", _failing_arnoldi(22)), \
+        with mock.patch.object(sc_so, "_solve_leading", _failing_arnoldi(22)), \
                 self.assertLogs(sc.logger, level="WARNING") as cm:
             s = _solve(ops)
         self.assertEqual(_messages(cm), ["spin-orbital sector +1: the eigen solve did not "
@@ -387,7 +388,7 @@ class TestStateTable(unittest.TestCase):
         b1, b0 = _bases((5, 4))
         M1 = _normal([2.0, 1.0, 0.5, -0.5, -1.0], 3)
         ops = [_sector(1, b1, M1), _sector(0, b0, _normal([0.7, 0.2, -0.1, -0.6], 4))]
-        with mock.patch.object(sc, "_so_dense_reduced_eigen", _perturbed_dense(5, which=1)), \
+        with mock.patch.object(sc_so, "_so_dense_reduced_eigen", _perturbed_dense(5, which=1)), \
                 self.assertLogs(sc.logger, level="WARNING") as cm:
             s = _solve(ops)
         self.assertEqual(len(cm.records), 1)
@@ -443,14 +444,14 @@ class TestStateTable(unittest.TestCase):
         b1, b0 = _bases((5, 0))
         ops = [_sector(1, b1, _normal([2.0, 1.0, 0.5, -0.5, -1.0], 3)),
                _sector(0, b0, np.zeros((0, 0)))]
-        with mock.patch.object(sc, "_so_dense_reduced_eigen", _perturbed_dense(5)), \
+        with mock.patch.object(sc_so, "_so_dense_reduced_eigen", _perturbed_dense(5)), \
                 self.assertLogs(sc.logger, level="WARNING") as cm:
             s = _solve(ops)
         self.assertNotIn(_EMPTY_MSG, _messages(cm))
         self.assertEqual((s.vals.shape, s.gaps.shape), ((0,), (0,) + GAP))
         self.assertFalse(s.converged)
         self.assertEqual(s.failed_sectors, (1,))
-        with mock.patch.object(sc, "_solve_leading", _failing_iteration(5)):
+        with mock.patch.object(sc_so, "_solve_leading", _failing_iteration(5)):
             it = _iterate(ops)
         self.assertEqual(it.failed_sectors, (1,))
         r = _report("eigenvalue", s)
@@ -490,7 +491,7 @@ class TestStateTable(unittest.TestCase):
         ops = [_sector(1, b1, _normal([0.8, 0.1, -0.2, -0.5, -1], 6)),
                _sector(0, b0, _normal([1.5, 0.4, 0.2, -0.3, -0.7, -1.2], 7))]
         s = _solve(ops)
-        with mock.patch.object(sc, "_solve_leading", _failing_iteration(5)):
+        with mock.patch.object(sc_so, "_solve_leading", _failing_iteration(5)):
             it = _iterate(ops)
         self.assertFalse(it.converged)
         r = _report("both", s, it)
@@ -618,7 +619,7 @@ class TestSectorIteration(unittest.TestCase):
         b1, b0, bm = _bases((0, 4, 5))
         ops = [_sector(1, b1, np.zeros((0, 0))), _sector(0, b0, np.zeros((4, 4))),
                _sector(-1, bm, _normal([1.0, 0.5, 0.2, -0.3, -0.6], 10))]
-        with mock.patch.object(sc, "_solve_leading", _failing_iteration(5)):
+        with mock.patch.object(sc_so, "_solve_leading", _failing_iteration(5)):
             it = _iterate(ops)
         e, z, f = it.leaders
         self.assertEqual((e.pp_sector, e.status, e.gap, e.n_iter), (1, "empty", None, 0))
@@ -633,7 +634,7 @@ class TestSectorIteration(unittest.TestCase):
     def test_dim_one_exact(self):
         b1, b0 = _bases((1, 1))
         ops = [_sector(1, b1, [[0.25]]), _sector(0, b0, [[-0.5]])]
-        with mock.patch.object(sc, "_solve_leading", wraps=sc._solve_leading) as spy:
+        with mock.patch.object(sc_so, "_solve_leading", wraps=sc._solve_leading) as spy:
             it = _iterate(ops)
         self.assertEqual(spy.call_count, 0)
         self.assertEqual([lead.status for lead in it.leaders], ["converged", "converged"])
@@ -687,7 +688,7 @@ class TestSectorIteration(unittest.TestCase):
                     return bad, _last_iterate(6), {"converged": True, "n_iter": 3}
                 return _REAL_SOLVE_LEADING(make_operator, vec_size, solver_mode, *a, **kw)
             with self.subTest(value=bad):
-                with mock.patch.object(sc, "_solve_leading", fake):
+                with mock.patch.object(sc_so, "_solve_leading", fake):
                     it = _iterate(ops)
                 lead = it.leaders[1]
                 self.assertEqual((lead.pp_sector, lead.status, lead.n_iter), (0, "failed", 3))
@@ -733,7 +734,7 @@ class TestSectorIteration(unittest.TestCase):
         ops = [_sector(1, b1, _normal([3.0, 0.3, -0.2, -0.4, -0.5], 8)),
                _sector(0, b0, _normal([2.0, 0.5, 0.3, -0.1, -0.4, -0.6], 9)),
                _sector(-1, bm, _normal([1.0, 0.5, 0.3, -0.1], 12))]
-        with mock.patch.object(sc, "_solve_leading", _failing_iteration(6)):
+        with mock.patch.object(sc_so, "_solve_leading", _failing_iteration(6)):
             it = _iterate(ops)
         self.assertEqual(it.failed_sectors, (0,))
         self.assertFalse(it.converged)
@@ -745,7 +746,7 @@ class TestSectorIteration(unittest.TestCase):
         self.assertFalse(r.eigen_converged)
         self.assertEqual((r.gap_status, r.pp_sector, r.failed_sectors), ("uncertified", 0, (0,)))
         # two failed sectors: the gap is the first one's in the order (+1, 0, -1)
-        with mock.patch.object(sc, "_solve_leading", _failing_iteration(4, 6)):
+        with mock.patch.object(sc_so, "_solve_leading", _failing_iteration(4, 6)):
             it = _iterate(ops[::-1])
         self.assertEqual(it.failed_sectors, (0, -1))
         self.assertEqual(it.pp_sector, 0)
@@ -830,8 +831,8 @@ class TestSectorSolve(unittest.TestCase):
         seed = _seed().ravel().copy()
         seed[bm.indices] = 0.0
         seed = seed.reshape(GAP)
-        with mock.patch.object(sc, "_so_dense_reduced_eigen", wraps=sc._so_dense_reduced_eigen) as d, \
-                mock.patch.object(sc, "_so_solve_eigenvalue", wraps=sc._so_solve_eigenvalue) as a, \
+        with mock.patch.object(sc_so, "_so_dense_reduced_eigen", wraps=sc._so_dense_reduced_eigen) as d, \
+                mock.patch.object(sc_so, "_so_solve_eigenvalue", wraps=sc._so_solve_eigenvalue) as a, \
                 self.assertLogs(sc.logger, level="WARNING") as cm:
             s = _solve(ops, k=4, seed_vec=seed)
         # a random seed: no selected eigenvector is near it
@@ -855,7 +856,7 @@ class TestSectorSolve(unittest.TestCase):
                _sector(0, b0, _normal([2.0, 0.5, 0.3, -0.1, -0.4, -0.6], 2))]
         seed = _seed().ravel().copy()
         seed[b0.indices] = 0.0
-        with mock.patch.object(sc, "_solve_leading", wraps=sc._solve_leading) as spy:
+        with mock.patch.object(sc_so, "_solve_leading", wraps=sc._solve_leading) as spy:
             _iterate(ops, sigma_init=seed.reshape(GAP))
         inits = [c.kwargs["init_vec"] for c in spy.call_args_list]
         np.testing.assert_array_equal(inits[0], b1.to_reduced(seed[b1.indices]))
@@ -876,7 +877,7 @@ class TestSectorSolve(unittest.TestCase):
         for scale, seeded_plus in ((1e-12, False), (1e-9, False), (1e-7, True)):
             with self.subTest(scale=scale):
                 seed = base + scale * noise
-                with mock.patch.object(sc, "_so_dense_reduced_eigen", wraps=real) as d, \
+                with mock.patch.object(sc_so, "_so_dense_reduced_eigen", wraps=real) as d, \
                         self.assertLogs(sc.logger, level="INFO") as cm:
                     sc.logger.info("start")
                     s = _solve(ops, k=4, seed_vec=seed.reshape(GAP))
@@ -973,7 +974,7 @@ class TestSectorSolve(unittest.TestCase):
             vals = np.array(vals)
             vals[1] += 1e-6
             return vals, vecs
-        with mock.patch.object(sc, "_so_solve_eigenvalue", perturbed), \
+        with mock.patch.object(sc_so, "_so_solve_eigenvalue", perturbed), \
                 self.assertLogs(sc.logger, level="WARNING") as cm:
             s = _solve([op], k=4)
         lead = s.leaders[0]
@@ -993,7 +994,7 @@ class TestSectorSolve(unittest.TestCase):
         def unconverged(red, dim, adjoint):
             est, steps, change, _ = real(red, dim, adjoint)
             return est, steps, change, False
-        with mock.patch.object(sc, "_so_sector_norm_estimate", unconverged), \
+        with mock.patch.object(sc_so, "_so_sector_norm_estimate", unconverged), \
                 self.assertLogs(sc.logger, level="INFO") as cm:
             s = _solve([op], k=4)
         self.assertTrue(s.converged)
@@ -1010,7 +1011,7 @@ class TestSectorSolve(unittest.TestCase):
         seed[b0.indices] = 0.0
         unseeded = _solve(ops, k=4)
         for s_vec in (seed, np.zeros_like(seed)):
-            with mock.patch.object(sc, "_so_solve_eigenvalue",
+            with mock.patch.object(sc_so, "_so_solve_eigenvalue",
                                    wraps=sc._so_solve_eigenvalue) as a, quiet():
                 s = _solve(ops, k=4, seed_vec=s_vec.reshape(GAP))
             self.assertEqual(a.call_count, 1)
