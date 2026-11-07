@@ -23,6 +23,8 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import static as sc_static
 
 #: the spin-polarized pointer of every spin-dependent-band refusal (#88)
 _SO_POINTER = ("run it with [mode] enable_spin_orbital = true (see the "
@@ -181,12 +183,12 @@ class _Capture:
         self._saved = {}
 
         def wrap(name, hook):
-            orig = getattr(sc, name)
+            orig = getattr(sc_static, name)
             self._saved[name] = orig
 
             def f(*a, **k):
                 return hook(orig, *a, **k)
-            setattr(sc, name, f)
+            setattr(sc_static, name, f)
 
         def solve_eig(orig, *a, **k):
             r = orig(*a, **k)
@@ -221,7 +223,7 @@ class _Capture:
 
     def __exit__(self, *exc):
         for name, orig in self._saved.items():
-            setattr(sc, name, orig)
+            setattr(sc_static, name, orig)
         return False
 
 
@@ -262,9 +264,9 @@ class _ForbidDownstream:
     def __enter__(self):
         import hwave.solver.rpa as rpa
         self._targets = [
-            (sc, "_calc_chi0q_internal"), (sc, "_load_chi0q"),
-            (sc, "_chi0q_from_prepared_solver"), (sc, "_calc_g2"),
-            (sc, "_build_bond_green"), (sc, "_make_kernel_operator"),
+            (sc_static, "_calc_chi0q_internal"), (sc_static, "_load_chi0q"),
+            (sc_io, "_chi0q_from_prepared_solver"), (sc_static, "_calc_g2"),
+            (sc_static, "_build_bond_green"), (sc_static, "_make_kernel_operator"),
             (rpa.RPA, "_calc_green"), (rpa.RPA, "_calc_chi0q")]
         self._saved = [(obj, name, getattr(obj, name))
                        for obj, name in self._targets]
@@ -668,9 +670,9 @@ class TestFlexPathsUnchanged(unittest.TestCase):
     def test_dynamic_warns(self):
         from hwave.solver import eliashberg_dynamic
         saved_solve = eliashberg_dynamic.solve_dynamic
-        saved_prereq = sc._validate_dynamic_prereqs
+        saved_prereq = sc_static._validate_dynamic_prereqs
         eliashberg_dynamic.solve_dynamic = lambda inp: "solved"
-        sc._validate_dynamic_prereqs = lambda inp: None
+        sc_static._validate_dynamic_prereqs = lambda inp: None
         try:
             inp = {"mode": {"param": {"T": 0.1, "CellShape": [4, 4, 1],
                                       "SubShape": [1, 1, 1],
@@ -683,7 +685,7 @@ class TestFlexPathsUnchanged(unittest.TestCase):
                 self.assertEqual(sc.calc_eliashberg(inp), "solved")
         finally:
             eliashberg_dynamic.solve_dynamic = saved_solve
-            sc._validate_dynamic_prereqs = saved_prereq
+            sc_static._validate_dynamic_prereqs = saved_prereq
         self.assertTrue(any("green_init is ignored" in m
                             for m in logs.output), logs.output)
 

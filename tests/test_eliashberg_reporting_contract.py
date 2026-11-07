@@ -22,6 +22,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import eigen as sc_eigen
 
 
@@ -98,12 +99,12 @@ class TestBothModeFollowsTheEigenvalueAnalysis(unittest.TestCase):
         self.assertIn("# eigen_converged = true", text)
 
     def test_good_iteration_failed_eigenanalysis(self):
-        real = sc._channel_eigenpairs
+        real = sc_static._channel_eigenpairs
 
         def failed(*a, **k):
             vals, gaps, _lead, _gap, _found, _note, _sv = real(*a, **k)
             return vals, gaps, complex(np.nan, np.nan), None, False, None, None
-        with mock.patch.object(sc, "_channel_eigenpairs", failed):
+        with mock.patch.object(sc_static, "_channel_eigenpairs", failed):
             lam, text = self._run("b", solver_mode="both", num_eigenvalues=6,
                                   max_iter=3000)
         self.assertTrue(np.isnan(lam))
@@ -126,7 +127,7 @@ class TestDefaultSolverThroughThePublicEntry(unittest.TestCase):
         inp = _load_generator().build_input(out)
         inp["eliashberg"]["g2_tail"] = False
         inp["eliashberg"].pop("solver_mode")
-        with mock.patch.object(sc, "_solve_iteration",
+        with mock.patch.object(sc_static, "_solve_iteration",
                                side_effect=AssertionError("iteration ran")):
             lam = sc.calc_eliashberg(inp)
         self.assertAlmostEqual(lam, 0.237711293, delta=1e-8)
@@ -139,7 +140,7 @@ class TestDefaultSolverThroughThePublicEntry(unittest.TestCase):
         inp = S._input(self.tmp, files, True, {"chi0q_mode": "calc",
                                                "num_eigenvalues": 4})
         with S._quiet(), mock.patch.object(
-                sc, "_so_solve_iteration",
+                sc_static, "_so_solve_iteration",
                 side_effect=AssertionError("iteration ran")):
             lam = sc.calc_eliashberg(inp)
         self.assertTrue(np.isfinite(lam))
@@ -219,7 +220,7 @@ class TestChannelLeaderFromTheSectorSolve(unittest.TestCase):
         # calc_eliashberg builds the sector operator itself, and the global
         # solve builds its own inside hwave.solver.eliashberg.eigen
         # (dev/sc-split-plan.md, step 2): both call sites see the kernel
-        with mock.patch.object(sc, "_make_kernel_operator",
+        with mock.patch.object(sc_static, "_make_kernel_operator",
                                return_value=(aslinearoperator(M), n)), \
                 mock.patch.object(sc_eigen, "_make_kernel_operator",
                                   return_value=(aslinearoperator(M), n)):
@@ -394,12 +395,12 @@ class TestBothModeThreeValues(unittest.TestCase):
         t.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, t.tmp, ignore_errors=True)
         M = t._kernel([-10.0, 5.0], [100.0])
-        real = sc._solve_iteration
+        real = sc_static._solve_iteration
 
         def fake_iteration(*a, **k):
             gap, _ev, _conv, n = real(*a, **dict(k, max_iter=2))
             return gap, 0.42, True, 7
-        with mock.patch.object(sc, "_solve_iteration", fake_iteration):
+        with mock.patch.object(sc_static, "_solve_iteration", fake_iteration):
             lam, text = t._run(M, solver_mode="both", num_eigenvalues=2)
         self.assertAlmostEqual(lam, 5.0, delta=1e-9)
         lines = text.splitlines()

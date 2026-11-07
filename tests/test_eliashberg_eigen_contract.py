@@ -35,6 +35,7 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import eigen as sc_eigen
 from hwave.solver import eliashberg_dynamic as ed
 
@@ -570,7 +571,7 @@ class TestCliExitStatus(unittest.TestCase):
         path = os.path.join(tmp, "in.toml")
         with open(path, "w") as fh:
             fh.write("[mode]\nmode = \"SC\"\n")
-        with mock.patch.object(sc, "calc_eliashberg", return_value=result), \
+        with mock.patch.object(sc_static, "calc_eliashberg", return_value=result), \
                 mock.patch("sys.argv", ["hwave_sc", "-q", path]):
             try:
                 sc.main()

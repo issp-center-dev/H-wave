@@ -28,6 +28,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
 from hwave.solver import bubble
 from hwave.solver import matsubara as ms
 from tests.test_sc_spin_orbital import _input, _quiet, _run, _write_model
@@ -173,7 +174,7 @@ class TestEigenvaluesUnchanged(_Tmp):
         files = _write_model(self.d, so=so, soc=0.3 if so else 0.0, **kw)
         eli = dict({"chi0q_mode": "calc", "solver_mode": "eigenvalue",
                     "num_eigenvalues": 6}, **eli)
-        real = sc._calc_chi0q_internal
+        real = sc_static._calc_chi0q_internal
         calls = []
 
         def full_path(input_dict, chi0q_tensor="auto", precomputed_mu=None,
@@ -186,7 +187,7 @@ class TestEigenvaluesUnchanged(_Tmp):
             return chi[nmat // 2:nmat // 2 + 1]
 
         new = _run(_input(self.d, files, so, eli, out="new", **param))
-        with mock.patch.object(sc, "_calc_chi0q_internal",
+        with mock.patch.object(sc_static, "_calc_chi0q_internal",
                                side_effect=full_path):
             old = _run(_input(self.d, files, so, eli, out="old", **param))
         self.assertEqual(calls, [True])

@@ -143,6 +143,7 @@ def test_static_channel_flags_warn_through_calc_eliashberg(caplog, monkeypatch, 
     import logging
 
     import hwave.sc as sc
+    from hwave.solver.eliashberg import static as sc_static
 
     class _Stop(Exception):
         pass
@@ -150,7 +151,7 @@ def test_static_channel_flags_warn_through_calc_eliashberg(caplog, monkeypatch, 
     def stop(*args, **kwargs):
         raise _Stop()
 
-    monkeypatch.setattr(sc, "_read_interaction_files", stop)
+    monkeypatch.setattr(sc_static, "_read_interaction_files", stop)
 
     eli = {"zero_chi_s": True}
     if freq is not None:
@@ -180,6 +181,7 @@ def test_dynamic_path_does_not_warn_about_channel_flags(monkeypatch):
     zero_chi_s/zero_chi_c are honored (not warned about) in dynamic mode. Locks
     the invariant against a future reordering of the dispatch vs. the warning."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import static as sc_static
     from hwave.solver import eliashberg_dynamic as ed
 
     called = {"warn": False}
@@ -187,7 +189,7 @@ def test_dynamic_path_does_not_warn_about_channel_flags(monkeypatch):
     def flag_warn(eli_param):
         called["warn"] = True
 
-    monkeypatch.setattr(sc, "_warn_if_static_ignores_channel_flags", flag_warn)
+    monkeypatch.setattr(sc_static, "_warn_if_static_ignores_channel_flags", flag_warn)
     monkeypatch.setattr(ed, "solve_dynamic", lambda input_dict: "DYNAMIC_OK")
 
     inp = {

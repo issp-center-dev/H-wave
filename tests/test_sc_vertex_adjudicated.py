@@ -604,6 +604,7 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         failure)."""
         from unittest import mock
         import hwave.sc as sc
+        from hwave.solver.eliashberg import static as sc_static
         from hwave.solver import eliashberg_dynamic as ed
 
         base = {"mode": {"param": {"T": 1.0, "CellShape": [4, 4, 1],
@@ -615,7 +616,7 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
         # calc_eliashberg reads through hwave.sc; solve_dynamic reads from
         # hwave.solver.eliashberg.io (dev/sc-split-plan.md, step 3b)
         from hwave.solver.eliashberg import io as sc_io
-        with mock.patch.object(sc, "_read_interaction_files",
+        with mock.patch.object(sc_static, "_read_interaction_files",
                                side_effect=AssertionError(
                                    "reader must not run")) as spy, \
                 mock.patch.object(sc_io, "_read_interaction_files",

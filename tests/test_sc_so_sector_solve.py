@@ -967,7 +967,7 @@ class TestSectorSolve(unittest.TestCase):
     def test_arpack_residual_failure(self):
         (b,) = _bases((30,))
         op = _sector(0, b, _normal(np.linspace(-1, 2, 30), 6))
-        real = sc._so_solve_eigenvalue
+        real = sc_so._so_solve_eigenvalue
 
         def perturbed(*a, **kw):
             vals, vecs = real(*a, **kw)

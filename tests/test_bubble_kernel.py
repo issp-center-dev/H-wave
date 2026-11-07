@@ -1568,17 +1568,18 @@ class TestBondGreenFlow(unittest.TestCase):
         the direct-sum oracle called with the SAME arguments the site
         used."""
         import hwave.sc as sc_mod
+        from hwave.solver.eliashberg import static as sc_static
         from tests.test_sc_bond import _base_input
 
         captured = []
-        orig = sc_mod._build_bond_green
+        orig = sc_static._build_bond_green
 
         def _capture(*args, **kwargs):
             carrier = orig(*args, **kwargs)
             captured.append((args, carrier))
             return carrier
 
-        sc_mod._build_bond_green = _capture
+        sc_static._build_bond_green = _capture
         try:
             with tempfile.TemporaryDirectory() as d:
                 # Standard RPA (bond_channels=False, chi0q_mode="calc" by
@@ -1590,7 +1591,7 @@ class TestBondGreenFlow(unittest.TestCase):
                 # output): the `chi0q_mode == "flex"` branch's `else:` arm.
                 sc_mod.calc_eliashberg(_flex_fallback_bare_green_input(d))
         finally:
-            sc_mod._build_bond_green = orig
+            sc_static._build_bond_green = orig
 
         self.assertEqual(len(captured), 2)
         for args, carrier in captured:

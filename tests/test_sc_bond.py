@@ -24,6 +24,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import bond as sc_bond
 from tests.approx_util import ApproxTestCase, _caplog, assert_approx_array
 
@@ -438,9 +439,9 @@ class TestS5Guards(_ApproxTestCase):
                 "_build_bond_green must not be called before the "
                 "bond-channel resource preflight (I-2)")
 
-        orig_build_bond_green = sc._build_bond_green
-        self.addCleanup(setattr, sc, "_build_bond_green", orig_build_bond_green)
-        sc._build_bond_green = _boom
+        orig_build_bond_green = sc_static._build_bond_green
+        self.addCleanup(setattr, sc_static, "_build_bond_green", orig_build_bond_green)
+        sc_static._build_bond_green = _boom
         with self.assertRaisesRegex(ValueError, r"(?i)bond_memory_cap_gb"):
             sc.calc_eliashberg(inp)
 
@@ -2375,8 +2376,8 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
         _write_w90(ci, 1, _nn_entries(0.5))
         gpath = self._green_file_with_nmat(ci, 32)
 
-        orig = sc._bond_resource_preflight
-        self.addCleanup(setattr, sc, "_bond_resource_preflight", orig)
+        orig = sc_static._bond_resource_preflight
+        self.addCleanup(setattr, sc_static, "_bond_resource_preflight", orig)
         for configured in (128, 16):
             seen = []
 
@@ -2386,7 +2387,7 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 return _o(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb,
                          tail_on=tail_on)
 
-            sc._bond_resource_preflight = _record
+            sc_static._bond_resource_preflight = _record
             inp = _base_input(os.path.join(self.tmp_path, "run%d" % configured),
                               coulomb_inter=ci, bond_channels=True,
                               bond_green=gpath)
@@ -2442,7 +2443,7 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
         gpath = self._green_file_with_nmat(ci, 24, "g24_npy3.npz")
         self._rewrite_green_npz_at_npy_version(gpath, (3, 0))
 
-        orig_preflight = sc._bond_resource_preflight
+        orig_preflight = sc_static._bond_resource_preflight
         seen = []
 
         def _record(norb, bond_set, Nx, Ny, Nz, nmat, cap_gb, *,
@@ -2457,9 +2458,9 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 "far already used the file's Nmat, not the configured one")
 
         orig_load = sc_bond._load_green_npz
-        self.addCleanup(setattr, sc, "_bond_resource_preflight", orig_preflight)
+        self.addCleanup(setattr, sc_static, "_bond_resource_preflight", orig_preflight)
         self.addCleanup(setattr, sc_bond, "_load_green_npz", orig_load)
-        sc._bond_resource_preflight = _record
+        sc_static._bond_resource_preflight = _record
         sc_bond._load_green_npz = _boom
 
         inp = _base_input(os.path.join(self.tmp_path, "npy3_run"), coulomb_inter=ci,
@@ -2601,9 +2602,9 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 "the bond_green Nmat must be validated BEFORE the resource "
                 "preflight / any large allocation")
 
-        orig_preflight = sc._bond_resource_preflight
+        orig_preflight = sc_static._bond_resource_preflight
         orig_load = sc_bond._load_green_npz
-        self.addCleanup(setattr, sc, "_bond_resource_preflight", orig_preflight)
+        self.addCleanup(setattr, sc_static, "_bond_resource_preflight", orig_preflight)
         self.addCleanup(setattr, sc_bond, "_load_green_npz", orig_load)
 
         for nfreq in [0, 1, 7, 129]:
@@ -2613,7 +2614,7 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 bad = os.path.join(self.tmp_path, "bad_nmat_{}.npz".format(nfreq))
                 np.savez(bad, green=np.zeros((1, nfreq, 16, 1, 1), dtype=complex))
 
-                sc._bond_resource_preflight = _boom
+                sc_static._bond_resource_preflight = _boom
                 sc_bond._load_green_npz = _boom
 
                 inp = _base_input(os.path.join(self.tmp_path, "o_{}".format(nfreq)),

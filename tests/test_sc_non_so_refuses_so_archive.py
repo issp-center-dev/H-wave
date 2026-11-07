@@ -21,6 +21,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver.eliashberg import io as sc_io
 from hwave import qlms
@@ -87,9 +88,9 @@ class TestMarkerIsReal(_Base):
 
 class TestLoadMode(_Base):
     def _boom(self):
-        return (mock.patch.object(sc, "_convert_chi0q_to_ref_format",
+        return (mock.patch.object(sc_static, "_convert_chi0q_to_ref_format",
                                   side_effect=AssertionError("heavy work")),
-                mock.patch.object(sc, "_compute_vertices",
+                mock.patch.object(sc_static, "_compute_vertices",
                                   side_effect=AssertionError("heavy work")))
 
     def test_loader_refuses_and_names_file(self):
@@ -113,9 +114,9 @@ class TestLoadMode(_Base):
         inp = self._inp({"chi0q_mode": "load", "solver_mode": "eigenvalue",
                          "num_eigenvalues": 4})
         with _quiet(), \
-                mock.patch.object(sc, "_calc_eigenvalues",
+                mock.patch.object(sc_static, "_calc_eigenvalues",
                                   side_effect=AssertionError("heavy work")), \
-                mock.patch.object(sc, "_build_bond_green",
+                mock.patch.object(sc_static, "_build_bond_green",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
@@ -175,7 +176,7 @@ class TestFlexMode(_Base):
     def test_static_flex_refuses_before_heavy_work(self):
         inp = self._flex_inp()
         with _quiet(), \
-                mock.patch.object(sc, "_compute_vertices_flex",
+                mock.patch.object(sc_static, "_compute_vertices_flex",
                                   side_effect=AssertionError("heavy work")), \
                 mock.patch.object(sc_io, "_load_flex_green",
                                   side_effect=AssertionError("heavy work")):
@@ -185,7 +186,7 @@ class TestFlexMode(_Base):
     def test_static_flex_refusal_precedes_diagonalization(self):
         inp = self._flex_inp()
         with _quiet(), \
-                mock.patch.object(sc, "_calc_eigenvalues",
+                mock.patch.object(sc_static, "_calc_eigenvalues",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
@@ -216,7 +217,7 @@ class TestFlexMode(_Base):
         with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
             sc._read_flex_chi_raw(inp)
         with _quiet(), mock.patch.object(
-                sc, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
+                sc_static, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
 
@@ -239,7 +240,7 @@ class TestFlexMode(_Base):
         self.assertIn(c, str(cm.exception))
         self.assertIn("spin_orbital = True", str(cm.exception))
         with _quiet(), mock.patch.object(
-                sc, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
+                sc_static, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
 

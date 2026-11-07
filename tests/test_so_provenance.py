@@ -771,7 +771,11 @@ def _sc(mode, inp, src=None, frequency="static", transfer_edit=None,
         return real_g2d(green, *a, **kw)
 
     ctx = _quiet() if quiet else Z._quiet_info()
+    # the static entry reads _calc_g2 from hwave.solver.eliashberg.static,
+    # the dynamic solver off hwave.sc (dev/sc-split-plan.md, step 5b)
+    from hwave.solver.eliashberg import static as sc_static
     with ctx, mock.patch.object(sc, "_calc_g2", side_effect=spy_g2), \
+            mock.patch.object(sc_static, "_calc_g2", side_effect=spy_g2), \
             mock.patch.object(dso, "calc_g2_dynamic", side_effect=spy_g2d):
         sc.calc_eliashberg(run_inp)
     name = "gap.npz" if frequency == "static" else "gap_dynamic.npz"

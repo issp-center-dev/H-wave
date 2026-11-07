@@ -596,7 +596,7 @@ def _spy_sector_solves():
     received (reduced coordinates or None), the returned eigenvalues and the
     selection."""
     calls = []
-    real = sc._so_solve_eigenvalue
+    real = sc_so._so_solve_eigenvalue
 
     def spy(A, basis, num, method, **kw):
         vals, vecs = real(A, basis, num, method, **kw)

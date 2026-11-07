@@ -54,6 +54,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import io as sc_io
 from hwave.solver import so_pairing
@@ -203,8 +204,8 @@ def _run(inp):
     """``calc_eliashberg`` with the arguments of ``_save_results`` captured at
     full precision: ``(gap, eigenvalue, eigenvalues, match, provenance)``."""
     seen = {}
-    real = sc._save_results
-    real_reorder = sc._reorder_eigenpairs_by_parity
+    real = sc_static._save_results
+    real_reorder = sc_static._reorder_eigenpairs_by_parity
 
     def spy_reorder(*a, **kw):
         out = real_reorder(*a, **kw)
@@ -217,7 +218,7 @@ def _run(inp):
                     provenance=kw.get("provenance"))
         return real(output_dir, sigma, eigenvalue, eigenvalues_eig, *a, **kw)
 
-    real_listing = sc._listing_with_leader
+    real_listing = sc_static._listing_with_leader
 
     def spy_listing(*a, **kw):
         # the non-spin-orbital static table is the reported channel leader
@@ -226,10 +227,10 @@ def _run(inp):
         seen["global"] = (np.asarray(a[0]), np.asarray(a[1]))
         return real_listing(*a, **kw)
 
-    with _quiet(), mock.patch.object(sc, "_save_results", side_effect=spy), \
-            mock.patch.object(sc, "_reorder_eigenpairs_by_parity",
+    with _quiet(), mock.patch.object(sc_static, "_save_results", side_effect=spy), \
+            mock.patch.object(sc_static, "_reorder_eigenpairs_by_parity",
                               side_effect=spy_reorder), \
-            mock.patch.object(sc, "_listing_with_leader",
+            mock.patch.object(sc_static, "_listing_with_leader",
                               side_effect=spy_listing):
         sc.calc_eliashberg(inp)
     if "global" in seen:
@@ -618,7 +619,7 @@ class TestRefusals(_TmpDir):
         # refused right after loading, before the Green function is built
         with self.assertRaisesRegex(ValueError, r"general \(4-index\)"):
             with _quiet(), mock.patch.object(
-                    sc, "_build_bond_green",
+                    sc_static, "_build_bond_green",
                     side_effect=AssertionError("Green built before the check")):
                 sc.calc_eliashberg(inp)
         self.assertEqual(os.listdir(out), ["chi0q.npz"])
@@ -657,7 +658,7 @@ class TestRefusals(_TmpDir):
                 ValueError, r"(?s)chi0q\.npz' has no spin_orbital marker.*"
                             r"enable_spin_orbital = true"):
             with _quiet(), mock.patch.object(
-                    sc, "_build_bond_green",
+                    sc_static, "_build_bond_green",
                     side_effect=AssertionError("Green built before the check")):
                 sc.calc_eliashberg(inp)
         self.assertEqual(sorted(os.listdir(os.path.join(self.d, "out"))),
@@ -729,12 +730,12 @@ class TestRefusals(_TmpDir):
                         r"physical orbitals 1\.\.{}".format(
                             nm, files[nm].replace(".", r"\."), NP)), \
                         _quiet(), \
-                        mock.patch.object(sc, "_build_bond_green", side_effect=boom), \
-                        mock.patch.object(sc, "_calc_chi0q_internal", side_effect=boom), \
-                        mock.patch.object(sc, "_load_chi0q", side_effect=boom), \
-                        mock.patch.object(sc, "_load_flex_so", side_effect=boom), \
-                        mock.patch.object(sc, "_so_static_vertex", side_effect=boom), \
-                        mock.patch.object(sc, "_so_rpa_vertex", side_effect=boom):
+                        mock.patch.object(sc_static, "_build_bond_green", side_effect=boom), \
+                        mock.patch.object(sc_static, "_calc_chi0q_internal", side_effect=boom), \
+                        mock.patch.object(sc_static, "_load_chi0q", side_effect=boom), \
+                        mock.patch.object(sc_static, "_load_flex_so", side_effect=boom), \
+                        mock.patch.object(sc_static, "_so_static_vertex", side_effect=boom), \
+                        mock.patch.object(sc_static, "_so_rpa_vertex", side_effect=boom):
                     sc.calc_eliashberg(inp)
                 out = inp["file"]["output"]["path_to_output"]
                 self.assertFalse(os.path.exists(out) and os.listdir(out))
@@ -770,10 +771,10 @@ class TestRefusals(_TmpDir):
                 # chi0q_mode = "calc" builds the vertex inside
                 # hwave.solver.eliashberg.so_solve._so_static_vertex
                 # (dev/sc-split-plan.md, step 4): guard both namespaces
-                with mock.patch.object(sc, "_so_rpa_vertex", boom), \
+                with mock.patch.object(sc_static, "_so_rpa_vertex", boom), \
                         mock.patch.object(sc_so, "_so_rpa_vertex", boom), \
                         mock.patch("hwave.solver.rpa.RPA.read_init", boom), \
-                        mock.patch.object(sc, "_read_interaction_files", read):
+                        mock.patch.object(sc_static, "_read_interaction_files", read):
                     with self.assertRaisesRegex(ValueError, name + r".*#273"):
                         with _quiet():
                             sc.calc_eliashberg(inp)
@@ -806,7 +807,7 @@ class TestRefusals(_TmpDir):
                          CellShape=[1, 1, 1], out=out)
             with self.subTest(init_gap=seed), _quiet():
                 if refused:
-                    with mock.patch.object(sc, "_make_kernel_operator", boom), \
+                    with mock.patch.object(sc_static, "_make_kernel_operator", boom), \
                             self.assertRaisesRegex(
                                 ValueError, r"init_gap = 'p_x' has no fermion-"
                                             r"antisymmetric component"):
@@ -833,7 +834,7 @@ class TestRefusals(_TmpDir):
                             r"\"load\" needs the general \(4-index\) spinful "
                             r"chi0q of a spin-orbital RPA run over nd = 4"):
             with _quiet(), mock.patch.object(
-                    sc, "_build_bond_green",
+                    sc_static, "_build_bond_green",
                     side_effect=AssertionError("Green built before the check")):
                 sc.calc_eliashberg(inp)
         self.assertEqual(os.listdir(out), ["chi0q.npz"])
@@ -1072,7 +1073,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
     def _lowered_run(self, eli):
         from scipy.sparse.linalg import LinearOperator
         files = _write_model(self.d, so=True, soc=0.4)
-        real = sc._make_kernel_operator
+        real = sc_static._make_kernel_operator
         built = {}
 
         def lowered(*a, **kw):
@@ -1082,7 +1083,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
                 dtype=complex)
             return built["op"], n
 
-        with mock.patch.object(sc, "_make_kernel_operator",
+        with mock.patch.object(sc_static, "_make_kernel_operator",
                                side_effect=lowered):
             seen = _run(_input(self.d, files, True, eli))
         return seen, built
@@ -1249,7 +1250,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
                          {"chi0q_mode": "calc", "solver_mode": mode,
                           "num_eigenvalues": 2}, out=out)
             with self.subTest(solver_mode=mode), _quiet(), \
-                    mock.patch.object(sc, name, side_effect=fake):
+                    mock.patch.object(sc_static, name, side_effect=fake):
                 with self.assertRaisesRegex(ValueError,
                                             "not fermion-antisymmetric"):
                     sc.calc_eliashberg(inp)
@@ -1283,9 +1284,9 @@ class TestStaticKernelBridge(_TmpDir):
                      {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
                       "num_eigenvalues": 2, "g2_tail": False}, nmat=16)
         cap = {}
-        real_green = sc._build_bond_green
+        real_green = sc_static._build_bond_green
         real_vertex = sc._so_static_vertex_from_chi
-        real_solve = sc._so_solve_eigenvalue
+        real_solve = sc_static._so_solve_eigenvalue
 
         def spy_green(*a, **kw):
             out = real_green(*a, **kw)
@@ -1302,10 +1303,10 @@ class TestStaticKernelBridge(_TmpDir):
             return real_solve(A, basis, *a, **kw)
 
         with _quiet(), \
-                mock.patch.object(sc, "_build_bond_green", side_effect=spy_green), \
+                mock.patch.object(sc_static, "_build_bond_green", side_effect=spy_green), \
                 mock.patch.object(sc_so, "_so_static_vertex_from_chi",
                                   side_effect=spy_vertex), \
-                mock.patch.object(sc, "_so_solve_eigenvalue",
+                mock.patch.object(sc_static, "_so_solve_eigenvalue",
                                   side_effect=spy_solve):
             sc.calc_eliashberg(inp)
         Nx, Ny, Nz = CELL
@@ -1412,7 +1413,7 @@ class TestTransferUnderSOC(_TmpDir):
         inp = _input(self.d, files, True, {"chi0q_mode": "calc",
                                            "solver_mode": "eigenvalue"},
                      out="out" + tag, **param)
-        with _quiet(), mock.patch.object(sc, "_calc_eigenvalues",
+        with _quiet(), mock.patch.object(sc_static, "_calc_eigenvalues",
                                          side_effect=spy_eig):
             with self.assertRaises(_Stop):
                 sc.calc_eliashberg(inp)
@@ -1698,7 +1699,7 @@ class TestFlexMode(unittest.TestCase):
             _resave(os.path.join(self.flex, name), os.path.join(bad, name),
                     drop, **replace)
             with self.subTest(case=tag), mock.patch.object(
-                    sc, "_so_rpa_vertex",
+                    sc_static, "_so_rpa_vertex",
                     side_effect=AssertionError("vertex built before the check")):
                 self._refused(pattern, _flex_input(
                     self.d, self.files, bad, out=self._out("out_bad_" + tag)))
@@ -1735,7 +1736,7 @@ class TestFlexMode(unittest.TestCase):
                 sc_io, "_load_flex_green",
                 side_effect=AssertionError("green read before the check")), \
                 mock.patch.object(
-                    sc, "_so_rpa_vertex",
+                    sc_static, "_so_rpa_vertex",
                     side_effect=AssertionError("vertex built before the check")):
             self._refused(r"chi0q\.npz' not found.*\[file\.output\] chi0q.*"
                           r"\[eliashberg\] flex_chi0q",
@@ -1874,7 +1875,7 @@ class TestFlexMode(unittest.TestCase):
                         sc_io, "_so_flex_static_slice",
                         side_effect=AssertionError("array sliced before the check")), \
                     mock.patch.object(
-                        sc, "_so_rpa_vertex",
+                        sc_static, "_so_rpa_vertex",
                         side_effect=AssertionError("vertex built before the check")):
                 self._refused(pattern, _flex_input(
                     d, files, bad, out=self._out("out_{}_{}".format(label, tag))))
@@ -1939,7 +1940,7 @@ class TestFlexMode(unittest.TestCase):
                     sc_io, "_load_flex_green",
                     side_effect=AssertionError("green read before the check")), \
                     mock.patch.object(
-                        sc, "_so_rpa_vertex",
+                        sc_static, "_so_rpa_vertex",
                         side_effect=AssertionError("vertex built before the check")):
                 self._refused(r"chi_convention = '{}'".format(tag),
                               _flex_input(self.d, self.files, flex,
@@ -2042,7 +2043,7 @@ class TestChi0qInitProvenance(_TmpDir):
                                            "solver_mode": "eigenvalue"})
         inp["file"]["output"]["path_to_output"] = out
         with self.assertRaisesRegex(ValueError, pattern), _quiet(), \
-                mock.patch.object(sc, "_build_bond_green",
+                mock.patch.object(sc_static, "_build_bond_green",
                                   side_effect=AssertionError("Green built")):
             sc.calc_eliashberg(inp)
 
@@ -2421,7 +2422,7 @@ class TestOutputs(_TmpDir):
                      {"chi0q_mode": "calc", "solver_mode": "eigenvalue",
                       "output_gap": "res.dat", "output_eigenvalue": "res.npz"})
         with _quiet(), mock.patch.object(
-                sc, "_read_interaction_files",
+                sc_static, "_read_interaction_files",
                 side_effect=AssertionError("input read before the check")):
             with self.assertRaisesRegex(ValueError,
                                         "output_gap.*output_eigenvalue"):

@@ -324,8 +324,8 @@ def _failing_largest_real():
 def _run(inp, spy_solve=True):
     """``calc_eliashberg`` with the operator, basis and eigenpairs captured."""
     cap = {}
-    real_solve = sc._so_solve_eigenvalue
-    real_green = sc._build_bond_green
+    real_solve = sc_so._so_solve_eigenvalue
+    real_green = sc_bond._build_bond_green
 
     def solve(A, basis, *a, **kw):
         cap["A"], cap["basis"] = A, basis
@@ -516,7 +516,7 @@ class TestCalcMode(_FlexFixture):
                                 convergence_tol=1e-10),
                        nmat=_NMAT_E2E, out=out)
         seen = {}
-        real = sc._so_solve_iteration
+        real = sc_so._so_solve_iteration
 
         def spy(A, basis, sigma_init, *a, **kw):
             seen["init"] = np.array(sigma_init)
@@ -1052,7 +1052,7 @@ class TestSecondaryRetryFailure(_FlexFixture):
 
     def test_failed_retry_is_not_labelled_lr_retry(self):
         import scipy.sparse.linalg as spl
-        real_solve = sc._so_solve_eigenvalue
+        real_solve = sc_so._so_solve_eigenvalue
         real_eigs = sc.eigs
         calls = []
 

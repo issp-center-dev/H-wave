@@ -671,6 +671,7 @@ def _capture_sc_band(soc=0.0, transfer_zeeman=0.0, extern=None, coeff_extern=1.0
     spin-orbital hwave_sc run diagonalizes (``chi0q_mode = "calc"``);
     log records up to ``silence`` are dropped."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import static as sc_static
     seen = {}
 
     def spy_eig(eps, *a, **kw):
@@ -681,7 +682,7 @@ def _capture_sc_band(soc=0.0, transfer_zeeman=0.0, extern=None, coeff_extern=1.0
         d = t.new()
         files = _sc_model(d, soc=soc, transfer_zeeman=transfer_zeeman, extern=extern, key=key)
         inp = _sc_input(d, files, coeff_extern=coeff_extern, coeff_key=coeff_key)
-        with _quiet_info(silence), mock.patch.object(sc, "_calc_eigenvalues",
+        with _quiet_info(silence), mock.patch.object(sc_static, "_calc_eigenvalues",
                                                      side_effect=spy_eig):
             try:
                 sc.calc_eliashberg(inp)
@@ -767,7 +768,7 @@ def _run_sc_dynamic_calc(extern=None, transfer_zeeman=0.0, transfer_onsite_symme
     from hwave.solver.eliashberg import so_solve as sc_so
     assert transfer_onsite_symmetric == (transfer_zeeman == 0.0)
     cap = {}
-    real_solve = sc._so_solve_eigenvalue
+    real_solve = sc_so._so_solve_eigenvalue
 
     def solve(*a, **kw):
         out = real_solve(*a, **kw)
@@ -862,12 +863,13 @@ class TestScBand(unittest.TestCase):
         WARNING either (the spin-orbital FLEX band includes Extern); the run
         is stopped where the FLEX archives would be read."""
         import hwave.sc as sc
+        from hwave.solver.eliashberg import static as sc_static
         with _TmpDirs() as t:
             d = t.new()
             files = _sc_model(d, soc=0.3, extern=0.1)
             inp = _sc_input(d, files, eli={"chi0q_mode": "flex"})
             with self.assertNoLogs(level="WARNING"), _quiet_info(), \
-                    mock.patch.object(sc, "_load_flex_so", side_effect=_Stop()):
+                    mock.patch.object(sc_static, "_load_flex_so", side_effect=_Stop()):
                 with self.assertRaises(_Stop):
                     sc.calc_eliashberg(inp)
 
@@ -891,11 +893,12 @@ def _sc_static_dense(h, soc=0.0, route="extern"):
     ``{"evs", "M", "shape"}`` -- the eigenvalues it reports and the dense
     matrix of the kernel operator it built. Cached per arguments."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import static as sc_static
     key = (h, soc, route)
     if key in _SPECTRA:
         return _SPECTRA[key]
     cap = {}
-    real_solve = sc._so_solve_eigenvalue
+    real_solve = sc_static._so_solve_eigenvalue
 
     def solve(A, basis, *a, **kw):
         cap["A"] = A
@@ -911,7 +914,7 @@ def _sc_static_dense(h, soc=0.0, route="extern"):
         kw = {"extern": h} if route == "extern" else {"transfer_zeeman": h}
         files = _sc_model(d, soc=soc, **kw)
         inp = _sc_input(d, files, eli={"num_eigenvalues": n}, nmat=32)
-        with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=solve):
+        with _quiet(), mock.patch.object(sc_static, "_so_solve_eigenvalue", side_effect=solve):
             sc.calc_eliashberg(inp)
     M = cap["A"].matmat(np.eye(n, dtype=complex))
     _SPECTRA[key] = {"evs": cap["evs"], "M": M, "shape": shape}
@@ -1216,8 +1219,9 @@ def _sc_dense_operator(h, filling):
     """The dense kernel operator the production static spin-orbital run
     builds (field ``h`` in Transfer, ``filling``), and its gap shape."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import static as sc_static
     cap = {}
-    real_solve = sc._so_solve_eigenvalue
+    real_solve = sc_static._so_solve_eigenvalue
 
     def solve(A, basis, *a, **kw):
         cap["A"] = A
@@ -1230,7 +1234,7 @@ def _sc_dense_operator(h, filling):
         d = t.new()
         files = _sc_model(d, transfer_zeeman=h)
         inp = _sc_input(d, files, eli={"num_eigenvalues": n}, nmat=32, filling=filling)
-        with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=solve):
+        with _quiet(), mock.patch.object(sc_static, "_so_solve_eigenvalue", side_effect=solve):
             sc.calc_eliashberg(inp)
     return cap["A"].matmat(np.eye(n, dtype=complex)), shape
 
@@ -1425,6 +1429,7 @@ def _gen_model(d, route, types=S._SU2_TYPES):
 def _gen_sc_band(route):
     """hwave_sc epsilon(k) of the general model, RPA layout ``(nvol, nd, nd)``."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import static as sc_static
     seen = {}
 
     def spy_eig(eps, *a, **kw):
@@ -1435,7 +1440,7 @@ def _gen_sc_band(route):
         d = t.new()
         files = _gen_model(d, route)
         inp = _sc_input(d, files, coeff_extern=_GEN_COEFF, CellShape=list(_GEN_CELL))
-        with _quiet(), mock.patch.object(sc, "_calc_eigenvalues", side_effect=spy_eig):
+        with _quiet(), mock.patch.object(sc_static, "_calc_eigenvalues", side_effect=spy_eig):
             try:
                 sc.calc_eliashberg(inp)
             except _Stop:

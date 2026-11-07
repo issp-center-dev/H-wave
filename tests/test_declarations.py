@@ -321,6 +321,7 @@ class TestClosureGate(unittest.TestCase):
         import tempfile
         from unittest import mock
         import hwave.sc as sc
+        from hwave.solver.eliashberg import static as sc_static
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -366,10 +367,10 @@ class TestClosureGate(unittest.TestCase):
         # symmetriser and the simple vertex from inside
         # hwave.solver.eliashberg.vertex (dev/sc-split-plan.md, step 1).
         from hwave.solver.eliashberg import vertex as sc_vertex
-        real_closed = sc._declarations_partner_closed
+        real_closed = sc_static._declarations_partner_closed
         real_symm = sc._symmetrise_interactions_k
         real_simple = sc._compute_vertices_simple
-        with mock.patch.object(sc, "_declarations_partner_closed",
+        with mock.patch.object(sc_static, "_declarations_partner_closed",
                                side_effect=real_closed) as det_spy, \
                 mock.patch.object(sc_vertex, "_symmetrise_interactions_k",
                                   side_effect=real_symm) as sym_spy, \
