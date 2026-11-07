@@ -1364,10 +1364,10 @@ class TestLoadersRefuseSpinResolvedInput(unittest.TestCase):
                 "eliashberg": {"chi0q_mode": "flex"}}, norb, Nx, Ny, Nz
 
     def _run(self, loader, **kw):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         with tempfile.TemporaryDirectory() as d:
             inp, norb, Nx, Ny, Nz = self._write(d, **kw)
-            return getattr(sc, loader)(inp, norb, Nx, Ny, Nz)
+            return getattr(sc_io, loader)(inp, norb, Nx, Ny, Nz)
 
     def test_static_loader_accepts_paramagnetic(self):
         self._run("_load_flex_susceptibilities")

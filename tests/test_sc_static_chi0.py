@@ -219,7 +219,7 @@ class TestEigenvaluesUnchanged(_Tmp):
 
 _MEMORY_SCRIPT = textwrap.dedent("""
     import json, sys, tempfile, tracemalloc
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     from tests.test_sc_spin_orbital import _input, _quiet, _write_model
     nmat, static_only = int(sys.argv[1]), sys.argv[2] == "1"
     d = tempfile.mkdtemp()
@@ -228,9 +228,9 @@ _MEMORY_SCRIPT = textwrap.dedent("""
                  coeff_tail=1.0, CellShape=[8, 8, 1])
     with _quiet():
         tracemalloc.start()
-        chi = sc._calc_chi0q_internal(inp, chi0q_tensor="general",
-                                      precomputed_mu=0.1,
-                                      static_only=static_only)
+        chi = sc_io._calc_chi0q_internal(inp, chi0q_tensor="general",
+                                         precomputed_mu=0.1,
+                                         static_only=static_only)
         peak = tracemalloc.get_traced_memory()[1]
         tracemalloc.stop()
     print(json.dumps({"peak": peak, "shape": list(chi.shape)}))

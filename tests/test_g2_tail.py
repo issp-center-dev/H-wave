@@ -327,7 +327,7 @@ class TestG2TailGuards(unittest.TestCase):
         import sys
         code = (
             "import numpy as np\n"
-            "from hwave.sc import _calc_g2\n"
+            "from hwave.solver.eliashberg.kernel import _calc_g2\n"
             "g = np.ones((1, 1, 2, 1, 1, 3), dtype=complex)\n"
             "try:\n"
             "    _calc_g2(g, 10.0)\n"

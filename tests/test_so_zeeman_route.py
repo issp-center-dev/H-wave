@@ -72,6 +72,7 @@ import numpy as np
 
 import hwave.qlmsio.wan90 as wan90
 import tests.test_sc_spin_orbital as S        # the shared two-orbital model
+from hwave.solver.eliashberg import static as sc_static
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SPIN_DIR = os.path.join(_HERE, "equivalence_input", "spin")
@@ -748,9 +749,11 @@ def _run_sc(mode, extern_rows, extern_header_dim=S.NP, key="Extern"):
         inp = _sc_input(d, files, eli={"chi0q_mode": mode})
         with contextlib.ExitStack() as st:
             st.enter_context(_quiet())
+            # the static entry reads every heavy step from
+            # hwave.solver.eliashberg.static (dev/sc-split-plan.md, step 7)
             for name in _HEAVY_MOCKS:
                 st.enter_context(mock.patch.object(
-                    sc, name, side_effect=AssertionError("heavy work reached: " + name)))
+                    sc_static, name, side_effect=AssertionError("heavy work reached: " + name)))
             try:
                 sc.calc_eliashberg(inp)
             finally:
