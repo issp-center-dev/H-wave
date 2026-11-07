@@ -391,11 +391,13 @@ def _check_vertex_every_frequency(gam, chi_w, chi0_w, chi_path, T):
     """``sc._check_so_flex_vertex`` at every bosonic frequency: the stored
     chi must solve ``(1 + chi0 Gamma) chi = chi0`` with the stored chi0 and
     the Gamma of this run's interaction files, frequency by frequency."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.so_solve import (
+        _SO_FLEX_GAMMA_TOL,
+        _so_flex_backward_error)
     nmat = chi_w.shape[0]
-    errs = np.array([sc._so_flex_backward_error(gam, chi_w[m], chi0_w[m])
+    errs = np.array([_so_flex_backward_error(gam, chi_w[m], chi0_w[m])
                      for m in range(nmat)])
-    bad = np.where(~(errs <= sc._SO_FLEX_GAMMA_TOL))[0]
+    bad = np.where(~(errs <= _SO_FLEX_GAMMA_TOL))[0]
     worst = float(np.nanmax(errs)) if np.any(np.isfinite(errs)) else float("nan")
     logger.info("spin-orbital FLEX: vertex consistency backward error, max over "
                 "%d bosonic frequencies %.3e", nmat, worst)
@@ -407,7 +409,7 @@ def _check_vertex_every_frequency(gam, chi_w, chi0_w, chi_path, T):
             "(1 + chi0 Gamma) chi = chi0 at bosonic index {}, nu = {:.6g}; {} of "
             "{} bosonic frequencies fail). Use the same interaction files and "
             "[mode.param] as the FLEX run.".format(
-                chi_path, errs[m], sc._SO_FLEX_GAMMA_TOL, m,
+                chi_path, errs[m], _SO_FLEX_GAMMA_TOL, m,
                 (2 * m - nmat) * np.pi * T, bad.size, nmat))
     return worst
 
@@ -448,7 +450,7 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
     ``eigen_converged`` (bool, optional) is written as the npz key and as an
     ``# eigen_converged=<true|false>`` line; false means the power iteration
     did not converge (``lam`` is NaN, the gap is not an eigenvector)."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.so_solve import _so_provenance_lines
     from hwave.solver import so_pairing, spin_orbital
     os.makedirs(output_dir, exist_ok=True)
     comps = so_pairing.SPIN_COMPONENTS
@@ -484,7 +486,7 @@ def write_outputs(output_dir, gap_file, eigenvalue_file, *, gap_w, lam,
         "pauli_leakage": "{:.3e}".format(leakage),
     }
     prov.update(extra_prov or {})
-    prov.update(sc._so_provenance_lines(provenance_members))
+    prov.update(_so_provenance_lines(provenance_members))
     with open(os.path.join(output_dir, eigenvalue_file), "w") as fw:
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
         if eigen_converged is not None:
@@ -588,6 +590,18 @@ def solve_dynamic_so(input_dict):
     Returns the leading eigenvalue (the real part of the eigenvalue analysis'
     first eigenvalue, or the power iteration's value)."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg.bond import _build_bond_green
+    from hwave.solver.eliashberg.so_solve import (
+        _SO_ANTISYM_TOL,
+        _so_check_antisymmetric_eigenpairs,
+        _so_epsilon_k,
+        _so_flex_writer_members,
+        _so_own_state,
+        _so_rpa_vertex,
+        _so_run_inputs,
+        _so_solve_eigenvalue,
+        _so_solve_iteration,
+        _so_writer_members)
     from hwave.solver.eliashberg.io import (_DEFAULT_NMAT, _read_interaction_files, _read_so_extern, _resolve_flex_dir, _load_flex_so, _so_green_fp, _calc_chi0q_internal)
     from hwave.solver.eliashberg.output import _shifted_eigenvalue_note
     from hwave.solver.eliashberg.eigen import _resolve_spectral_shift
@@ -670,8 +684,8 @@ def solve_dynamic_so(input_dict):
             "[mode.param] filling must be specified (the spin-orbital archive "
             "checks compare the filling target).")
     # this run's band and state, for the archive checks (#88)
-    so_run = sc._so_run_inputs(input_dict, hr, extern_table, norb_phys, beta,
-                               nmat, n_filling, context=so_context)
+    so_run = _so_run_inputs(input_dict, hr, extern_table, norb_phys, beta,
+                            nmat, n_filling, context=so_context)
     logger.info("=== Spin-orbital dynamic Eliashberg solver (issue #284) ===")
     logger.info("T = %s, beta = %.6g, grid %dx%dx%d, Nmat = %d, nd = %d "
                 "spin-orbitals (%d physical orbitals), chi0q_mode = %s, "
@@ -707,7 +721,7 @@ def solve_dynamic_so(input_dict):
     kz = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
 
     # --- inputs: chi at every bosonic frequency, and G ---
-    gam = sc._so_rpa_vertex(input_dict, so_context=so_run.context)
+    gam = _so_rpa_vertex(input_dict, so_context=so_run.context)
     if chi0q_mode == "flex":
         chi_w, green_w, chi0_w, chi_path, borrowed = _load_flex_so(
             input_dict, nd, Nx, Ny, Nz, interactions=interactions, full=True,
@@ -716,27 +730,27 @@ def solve_dynamic_so(input_dict):
                     "frequencies) and dressed Green's function", nmat)
         # the borrowed G as consumed: its digest, mu and closure density on
         # this run's band (equal to the FLEX run's: the band was checked)
-        so_members = sc._so_flex_writer_members(
+        so_members = _so_flex_writer_members(
             "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run, borrowed, green_w,
-            sc._so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table, norb_phys),
+            _so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table, norb_phys),
             beta)
         consistency = _check_vertex_every_frequency(gam, chi_w, chi0_w,
                                                     chi_path, T)
         del chi0_w
     else:
         # spin-block band, Extern included (the band of the spinful RPA chi0)
-        epsilon_k = sc._so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table,
-                                     norb_phys)
+        epsilon_k = _so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table,
+                                  norb_phys)
         eigenvalues, eigenvectors = sc._calc_eigenvalues(epsilon_k)
         mu = sc._determine_mu(eigenvalues, beta, n_filling, nd)
         logger.info("mu = %.6f", mu)
-        green_w = sc._build_bond_green(
+        green_w = _build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None,
             spin_orbital_mode=True).full_sc
         # the kernel's own G and state
-        so_members = sc._so_writer_members(
+        so_members = _so_writer_members(
             "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run, _so_green_fp(green_w),
-            sc._so_own_state(eigenvalues, beta, mu, nmat, so_run.state.target))
+            _so_own_state(eigenvalues, beta, mu, nmat, so_run.state.target))
         chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
                                          precomputed_mu=mu,
                                          so_context=so_run.context)
@@ -803,7 +817,7 @@ def solve_dynamic_so(input_dict):
     if solver_mode == "iteration":
         sigma_init = initial_gap(init_gap_mode, norb_phys, kx, ky, kz, gap_shape)
         info = {}
-        gap, lam, converged, n_iter = sc._so_solve_iteration(
+        gap, lam, converged, n_iter = _so_solve_iteration(
             A, basis, sigma_init, int(eli.get("max_iter", 1000)),
             eli.get("alpha", 0.5), eli.get("convergence_tol", 1.0e-5),
             spectral_shift=spectral_shift, info_out=info)
@@ -824,7 +838,7 @@ def solve_dynamic_so(input_dict):
                 "an eigenvector. Use solver_mode = \"eigenvalue\" or "
                 "spectral_shift = \"auto\".")
         gap_w = _fix_gauge(gap)
-        if not antisymmetry_residual(gap_w) <= sc._SO_ANTISYM_TOL:
+        if not antisymmetry_residual(gap_w) <= _SO_ANTISYM_TOL:
             raise ValueError(
                 "[mode] enable_spin_orbital = true: the power iteration returned "
                 "a gap that is not fermion-antisymmetric (Delta_AB(k, iw_n) = "
@@ -838,7 +852,7 @@ def solve_dynamic_so(input_dict):
         eigen_converged = True
         seed_red = basis.to_reduced(seed_full) if seed_full is not None else None
         sel_info = {}
-        vals, vecs = sc._so_solve_eigenvalue(
+        vals, vecs = _so_solve_eigenvalue(
             A, basis, num_eigenvalues, eigenvalue_method,
             sigma_shift=eli.get("sigma_shift"), spectral_shift=spectral_shift,
             seed_vec=seed_red, map_back=False, info_out=sel_info)
@@ -890,7 +904,7 @@ def solve_dynamic_so(input_dict):
                     "Spin-orbital dynamic Eliashberg", num_eigenvalues,
                     "fermion-antisymmetric", leading_re)
                 retry_info = {}
-                vals, vecs = sc._so_solve_eigenvalue(
+                vals, vecs = _so_solve_eigenvalue(
                     A, basis, num_eigenvalues, eigenvalue_method,
                     sigma_shift=eli.get("sigma_shift"), spectral_shift="auto",
                     seed_vec=None, map_back=False, info_out=retry_info)
@@ -915,14 +929,14 @@ def solve_dynamic_so(input_dict):
         gap_w = None
         for i in range(len(vals)):
             g = _fix_gauge(basis.to_full(vecs[:, i]).reshape(gap_shape))
-            match.append(antisymmetry_residual(g) <= sc._SO_ANTISYM_TOL)
+            match.append(antisymmetry_residual(g) <= _SO_ANTISYM_TOL)
             wi = gap_weights(g, norb_phys)
             rows.append(np.concatenate([wi["spin"], wi["parity"]]))
             sz_weights.append(so_pairing.so_sz_decomposition(g, norb_phys))
             if i == 0:
                 gap_w = g
         match = np.array(match, dtype=bool)
-        sc._so_check_antisymmetric_eigenpairs(vals, match)
+        _so_check_antisymmetric_eigenpairs(vals, match)
         eigenvalues_eig, eig_weights = np.asarray(vals), np.array(rows)
         lam = float(np.real(vals[0]))
         # NaN only when the largest-real-part solve failed on an operator

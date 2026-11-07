@@ -40,6 +40,7 @@ import numpy as np
 from numpy.lib.mixins import NDArrayOperatorsMixin
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver import backend
 import tests.test_sc_spin_orbital as S
 
@@ -314,7 +315,10 @@ def _spy_iteration(cap):
              "info": dict(info) if info is not None else None})
         return out
 
-    with mock.patch.object(sc, "_so_solve_iteration", side_effect=spy):
+    # the static entry calls it through hwave.sc, the dynamic one from
+    # hwave.solver.eliashberg.so_solve (dev/sc-split-plan.md, step 4b)
+    with mock.patch.object(sc, "_so_solve_iteration", side_effect=spy), \
+            mock.patch.object(sc_so, "_so_solve_iteration", side_effect=spy):
         yield cap
 
 
@@ -342,7 +346,7 @@ def _dyn_run(inp):
         cap["vals"], cap["vecs"] = out
         return out
 
-    with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=eig), \
+    with _quiet(), mock.patch.object(sc_so, "_so_solve_eigenvalue", side_effect=eig), \
             _spy_iteration(cap):
         cap["lam"] = sc.calc_eliashberg(inp)
     return cap

@@ -444,10 +444,10 @@ def _declared_topology_of_archive(arch, interactions, norb, shape, path):
     that reproduces the archive's channels is used. The comparison is exact,
     so that a change of any coefficient is caught, however small next to the
     others."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.bond import _bond_locality_split, _build_bond_vertices
     from hwave.solver import bond_channels as _bc
     want = np.asarray(arch.delta_r)
-    split = sc._bond_locality_split(interactions)
+    split = _bond_locality_split(interactions)
     for shells in list(range(want.shape[0])) + [None]:
         try:
             topo = _bc.gate_bond_topology(split, norb, max_shells=shells)
@@ -460,7 +460,7 @@ def _declared_topology_of_archive(arch, interactions, norb, shape, path):
             "bond archive {}: its bond channels {} are not the ones the interaction files "
             "declare; the post-processing must read the interaction files of the FLEX run "
             "that wrote the archive".format(path, [tuple(int(x) for x in r) for r in want]))
-    S, C = sc._build_bond_vertices(topo, split, norb, shape)
+    S, C = _build_bond_vertices(topo, split, norb, shape)
     for name, mine, theirs in (("S", S, arch.S_bond), ("C", C, arch.C_bond)):
         mine = np.asarray(mine).reshape(np.shape(theirs))
         dev = float(np.abs(mine - theirs).max())
@@ -536,6 +536,7 @@ def solve_dynamic_bond(input_dict):
         The leading eigenvalue lambda.
     """
     import hwave.sc as sc
+    from hwave.solver.eliashberg.bond import _resolve_bond_topology
     from hwave.solver.eliashberg.io import (_read_interaction_files, _resolve_flex_dir, _load_flex_green)
     from . import backend as _bk
     from . import bond_channels as _bc
@@ -578,7 +579,7 @@ def solve_dynamic_bond(input_dict):
     # the notices read the declared interactions (and the off-site bare
     # pairing terms read them too, once they are checked against the archive:
     # _declared_topology_of_archive)
-    topo_decl, _, _ = sc._resolve_bond_topology(interactions, geom_info, norb, None)
+    topo_decl, _, _ = _resolve_bond_topology(interactions, geom_info, norb, None)
     _bc.warn_pairing_approximations(
         topo_decl, "[eliashberg] bond_channels=true (frequency='dynamic')", log=logger)
     del topo_decl

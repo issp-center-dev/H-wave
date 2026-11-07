@@ -43,6 +43,8 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.eliashberg import eigen as sc_eigen
 from hwave.solver import backend, bubble
@@ -336,8 +338,8 @@ def _run(inp, spy_solve=True):
         cap["green"] = np.array(out.full_sc)
         return out
 
-    with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=solve), \
-            mock.patch.object(sc, "_build_bond_green", side_effect=green):
+    with _quiet(), mock.patch.object(sc_so, "_so_solve_eigenvalue", side_effect=solve), \
+            mock.patch.object(sc_bond, "_build_bond_green", side_effect=green):
         cap["lam"] = sc.calc_eliashberg(inp)
     return cap
 
@@ -521,7 +523,7 @@ class TestCalcMode(_FlexFixture):
             seen["A"], seen["basis"] = A, basis
             return real(A, basis, sigma_init, *a, **kw)
 
-        with _quiet(), mock.patch.object(sc, "_so_solve_iteration", side_effect=spy):
+        with _quiet(), mock.patch.object(sc_so, "_so_solve_iteration", side_effect=spy):
             lam = sc.calc_eliashberg(inp)
         w = dso.gap_weights(seen["init"], S.NP)
         self.assertGreater(min(w["parity"]), 0.1)        # both frequency parities
@@ -1072,7 +1074,7 @@ class TestSecondaryRetryFailure(_FlexFixture):
         out = self._out("retryfail")
         inp = S._input(self.d, self.files, True, _dyn_eli(chi0q_mode="calc"),
                        nmat=_NMAT_E2E, out=out)
-        with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", solve), \
+        with _quiet(), mock.patch.object(sc_so, "_so_solve_eigenvalue", solve), \
                 mock.patch.object(sc_eigen, "eigs", eigs), \
                 mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             lam = sc.calc_eliashberg(inp)

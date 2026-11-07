@@ -764,6 +764,7 @@ def _run_sc_dynamic_calc(extern=None, transfer_zeeman=0.0, transfer_onsite_symme
     (callers check the WARNINGs). ``transfer_onsite_symmetric`` asserts the
     Transfer file has no spin-dependent on-site entry (Route 1 off)."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import so_solve as sc_so
     assert transfer_onsite_symmetric == (transfer_zeeman == 0.0)
     cap = {}
     real_solve = sc._so_solve_eigenvalue
@@ -778,7 +779,7 @@ def _run_sc_dynamic_calc(extern=None, transfer_zeeman=0.0, transfer_onsite_symme
         files = _sc_model(d, soc=soc, transfer_zeeman=transfer_zeeman, extern=extern)
         inp = _sc_input(d, files, eli={"frequency": "dynamic", "num_eigenvalues": 4,
                                        "spectral_shift": "auto"}, nmat=8)
-        with _quiet_info(), mock.patch.object(sc, "_so_solve_eigenvalue", side_effect=solve):
+        with _quiet_info(), mock.patch.object(sc_so, "_so_solve_eigenvalue", side_effect=solve):
             sc.calc_eliashberg(inp)
     return cap["vals"]
 

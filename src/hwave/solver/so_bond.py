@@ -3447,7 +3447,7 @@ class PackedBondPairKernel:
         return (n_p,) + self.shape + ((self.nfreq,) if self.nfreq > 1 else ())
 
     def sector_op(self, p):
-        """The :class:`hwave.sc.SectorOp` of pp sector ``p``: the kernel on
+        """The :class:`hwave.solver.eliashberg.so_solve.SectorOp` of pp sector ``p``: the kernel on
         the sector vector (``g[pp_index(p)]``) with ``matvec`` and
         ``rmatvec``, and the fermion-antisymmetric basis of the sector
         (``_SOAntisymmetricBasis.from_subset`` on :attr:`gap_shape`, with
@@ -3458,7 +3458,7 @@ class PackedBondPairKernel:
         op = self._ops.get(s)
         if op is not None:
             return op
-        from hwave import sc
+        from hwave.solver.eliashberg.so_solve import SectorOp
         from hwave.solver.eliashberg.eigen import (
             _SOAntisymmetricBasis, _reverse_k_and_orbital)
         if self.nfreq == 1:
@@ -3473,7 +3473,7 @@ class PackedBondPairKernel:
         operator = LinearOperator((n, n), matvec=lambda x: self._apply(s, x),
                                   rmatvec=lambda y: self._apply(s, y, adjoint=True),
                                   dtype=complex)
-        op = sc.SectorOp(self.pp_sectors[s], operator, basis, True)
+        op = SectorOp(self.pp_sectors[s], operator, basis, True)
         self._ops[s] = op
         return op
 
