@@ -24,6 +24,10 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+# The G2 size-guard thresholds are read by _warn_if_g2_indefinite in
+# hwave.solver.eliashberg.config (dev/sc-split-plan.md, step 1); the tests
+# that rebind them do so on that module. hwave.sc still re-exports them.
+from hwave.solver.eliashberg import config as _cfg
 from hwave.sc import _calc_g2, _warn_if_g2_indefinite
 
 
@@ -374,14 +378,14 @@ class TestG2TailGuards(unittest.TestCase):
         g2 = _calc_g2(_green(H, self.beta, 32), self.beta)
         for attr in ("_G2_CHECK_MAX_WORK", "_G2_CHECK_MAX_BYTES"):
             with self.subTest(threshold=attr):
-                saved = getattr(sc, attr)
-                setattr(sc, attr, 1)
+                saved = getattr(_cfg, attr)
+                setattr(_cfg, attr, 1)
                 try:
                     with self.assertLogs("hwave_sc", level="INFO") as cm:
                         result = _warn_if_g2_indefinite(
                             g2, 2, tail_enabled=True)
                 finally:
-                    setattr(sc, attr, saved)
+                    setattr(_cfg, attr, saved)
                 self.assertIsNone(result)
                 self.assertTrue(any("skipped" in m for m in cm.output))
 
@@ -394,21 +398,21 @@ class TestG2TailGuards(unittest.TestCase):
         norb, nvol = 2, 4
         self.assertEqual(norb**6 * nvol, 256)
         self.assertEqual(3 * 16 * norb**4 * nvol, 3072)
-        saved = (sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES)
+        saved = (_cfg._G2_CHECK_MAX_WORK, _cfg._G2_CHECK_MAX_BYTES)
         try:
             # both estimates below their own thresholds -> the check RUNS
-            sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES = 1000, 4000
+            _cfg._G2_CHECK_MAX_WORK, _cfg._G2_CHECK_MAX_BYTES = 1000, 4000
             self.assertIsNotNone(
                 _warn_if_g2_indefinite(g2, norb, tail_enabled=True))
             # byte budget must count THREE copies: 3072 > 2500 skips,
             # a two-copy budget (2048) would not
-            sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES = 1000, 2500
+            _cfg._G2_CHECK_MAX_WORK, _cfg._G2_CHECK_MAX_BYTES = 1000, 2500
             with self.assertLogs("hwave_sc", level="INFO") as cm:
                 self.assertIsNone(
                     _warn_if_g2_indefinite(g2, norb, tail_enabled=True))
             self.assertTrue(any("skipped" in m for m in cm.output))
         finally:
-            sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES = saved
+            _cfg._G2_CHECK_MAX_WORK, _cfg._G2_CHECK_MAX_BYTES = saved
 
     def test_flex_loaded_green_with_odd_grid_is_rejected(self):
         """An odd uniform frequency axis cannot be a centered fermionic
@@ -612,14 +616,14 @@ class TestG2DiagnosticThresholds(unittest.TestCase):
         here): a scale or exponent drift flips one of these outcomes."""
         H = _model(Nx=2, Ny=2)
         g2 = _calc_g2(_green(H, self.beta, 32), self.beta)
-        saved = (sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES)
+        saved = (_cfg._G2_CHECK_MAX_WORK, _cfg._G2_CHECK_MAX_BYTES)
         try:
             for work_thr, byte_thr, runs in ((256, 3072, True),
                                              (255, 3072, False),
                                              (256, 3071, False)):
                 with self.subTest(work=work_thr, bytes=byte_thr):
-                    sc._G2_CHECK_MAX_WORK = work_thr
-                    sc._G2_CHECK_MAX_BYTES = byte_thr
+                    _cfg._G2_CHECK_MAX_WORK = work_thr
+                    _cfg._G2_CHECK_MAX_BYTES = byte_thr
                     result = _warn_if_g2_indefinite(g2, 2,
                                                     tail_enabled=True)
                     if runs:
@@ -627,7 +631,7 @@ class TestG2DiagnosticThresholds(unittest.TestCase):
                     else:
                         self.assertIsNone(result)
         finally:
-            sc._G2_CHECK_MAX_WORK, sc._G2_CHECK_MAX_BYTES = saved
+            _cfg._G2_CHECK_MAX_WORK, _cfg._G2_CHECK_MAX_BYTES = saved
 
 
 class TestG2TailStrictParsing(unittest.TestCase):

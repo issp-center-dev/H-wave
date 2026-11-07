@@ -191,9 +191,12 @@ class TestProductionAnchoring(unittest.TestCase):
         import hwave.sc as sc
         from hwave.solver import declarations
 
+        # symmetrise_k is read by the builders in
+        # hwave.solver.eliashberg.vertex (dev/sc-split-plan.md, step 1)
+        from hwave.solver.eliashberg import vertex as sc_vertex
         M = _rand((2, 2, 2, 2, 1), 9)
         with mock.patch.object(
-                sc, "symmetrise_k",
+                sc_vertex, "symmetrise_k",
                 side_effect=declarations.symmetrise_k) as spy:
             sc._build_sc_matrices_all_q({"Hund": M}, 2, 2, 2, 1)
             self.assertEqual(spy.call_count, 1)
@@ -358,14 +361,19 @@ class TestClosureGate(unittest.TestCase):
                            "output_eigenvalue": "eig.dat",
                            "output_gap": "gap.dat"},
         }
+        # Each spy sits on the module whose code makes the call: the
+        # detector is called from calc_eliashberg (hwave.sc), the
+        # symmetriser and the simple vertex from inside
+        # hwave.solver.eliashberg.vertex (dev/sc-split-plan.md, step 1).
+        from hwave.solver.eliashberg import vertex as sc_vertex
         real_closed = sc._declarations_partner_closed
         real_symm = sc._symmetrise_interactions_k
         real_simple = sc._compute_vertices_simple
         with mock.patch.object(sc, "_declarations_partner_closed",
                                side_effect=real_closed) as det_spy, \
-                mock.patch.object(sc, "_symmetrise_interactions_k",
+                mock.patch.object(sc_vertex, "_symmetrise_interactions_k",
                                   side_effect=real_symm) as sym_spy, \
-                mock.patch.object(sc, "_compute_vertices_simple",
+                mock.patch.object(sc_vertex, "_compute_vertices_simple",
                                   side_effect=real_simple) as simple_spy:
             sc.calc_eliashberg(inp)
         # the run really took the simple path, the detector fired and
