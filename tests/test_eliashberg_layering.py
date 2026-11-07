@@ -34,15 +34,12 @@ SOLVER = os.path.join(SRC, "solver")
 #: the split removes). Edit this set only to REMOVE an entry.
 SOLVER_MODULES_IMPORTING_SC = frozenset({
     # step 1 (leaf layers) released _sc_matrices_myo, offsite and
-    # second_order; step 4 (bond, spin-orbital solve) released so_bond.
-    # These five still read the entry (calc_eliashberg,
-    # reject_spin_orbital_mode, the public solver-mode constants, the
-    # spin-orbital labels) and a few step-1 names
-    "eliashberg_bond_io",
-    "eliashberg_dynamic",
-    "eliashberg_dynamic_so",
-    "flex",
-    "so_pairing",
+    # second_order; step 4 (bond, spin-orbital solve) released so_bond;
+    # step 6 released eliashberg_bond_io, eliashberg_dynamic,
+    # eliashberg_dynamic_so, flex and so_pairing (they read the entry's
+    # constants and functions from hwave.solver.eliashberg.static now).
+    # The layer inversion is gone: nothing under hwave/solver/ imports
+    # hwave.sc.
 })
 
 #: The public surface of ``hwave.sc`` that must outlive the split: the

@@ -24,6 +24,7 @@ import hwave.sc as sc
 from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import vertex as sc_vertex
 from hwave import qlms
 from hwave.solver import eliashberg_dynamic
 from tests.test_sc_spin_orbital import (_input, _quiet, _run_flex,
@@ -193,8 +194,9 @@ class TestFlexMode(_Base):
 
     def test_dynamic_refusal_precedes_interaction_build(self):
         inp = self._flex_inp(dynamic=True)
+        # the dynamic solver reads the builder from vertex (step 6a)
         with _quiet(), \
-                mock.patch.object(sc, "_build_interaction_k_for_sites",
+                mock.patch.object(sc_vertex, "_build_interaction_k_for_sites",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 eliashberg_dynamic.solve_dynamic(inp)

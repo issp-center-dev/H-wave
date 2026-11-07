@@ -932,7 +932,7 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
 def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
                                   Nx, Ny, Nz, pairing_type, convention,
                                   sc_matrices=None):
-    """Full-frequency pairing vertex: apply sc._compute_vertices_flex per
+    """Full-frequency pairing vertex: apply _compute_vertices_flex per
     bosonic Matsubara frequency and stack along the trailing axis.
 
     Parameters
@@ -949,7 +949,7 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
     convention : str
         "kuroki" or "myo" — MUST match the orbital convention chis_w/chic_w
         were produced in (chi_convention from the FLEX loader); forwarded
-        unchanged to sc._compute_vertices_flex so the matching S/C matrices
+        unchanged to _compute_vertices_flex so the matching S/C matrices
         are used at every frequency.
 
     Returns
@@ -957,31 +957,35 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
     Vs_q_w : ndarray
         Pairing vertex, shape (norb, norb, norb, norb, Nx, Ny, Nz, nmat).
     """
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.vertex import (
+        _build_vertex_sc_matrices,
+        _compute_vertices_flex,
+        _reject_reduced_flex_unsupported,
+        _warn_reduced_flex_missing_components)
     nmat = chis_w.shape[-1]
 
     # Reject BEFORE the S/C build: the pair is O(Nq * norb^4) and an
     # unsupported calculation must not allocate heavily on its way to the
     # validation error (round-10 review).
-    sc._reject_reduced_flex_unsupported(inter_k, convention)
+    _reject_reduced_flex_unsupported(inter_k, convention)
 
     # The S/C matrices are frequency-independent: build ONE pair for the
     # whole run (or take the caller's) and hand it to the diagnostic and to
     # every per-frequency contraction. Previously each of the ~nmat calls
     # rebuilt an identical full-grid pair (round-9 review).
     if sc_matrices is None:
-        sc_matrices = sc._build_vertex_sc_matrices(convention, inter_k,
-                                                   norb, Nx, Ny, Nz)
+        sc_matrices = _build_vertex_sc_matrices(convention, inter_k,
+                                                norb, Nx, Ny, Nz)
 
     # Once for the whole run: _compute_vertices_flex below is called per
     # frequency, so warning inside it would repeat nmat (~1000) times.
-    sc._warn_reduced_flex_missing_components(
+    _warn_reduced_flex_missing_components(
         inter_k, norb, Nx, Ny, Nz, convention,
         sc_matrices=(sc_matrices if str(convention).lower() == "kuroki"
                      else None))
 
     def _one(l):
-        return sc._compute_vertices_flex(
+        return _compute_vertices_flex(
             chis_w[..., l], chic_w[..., l], inter_k, norb, Nx, Ny, Nz,
             pairing_type=pairing_type, convention=convention,
             sc_matrices=sc_matrices)
@@ -1380,21 +1384,21 @@ def _ir_auto_wmax(hr, inter_k, norb, beta, mu=None, filling=None):
     returns the grand total of |t| over every (R, orbital-pair), a large
     overestimate on realistic multi-hopping models (issue #57)."""
     try:
-        import hwave.sc as sc
+        from hwave.solver.eliashberg.band import _build_hamiltonian_k, _determine_mu
 
         # Even nk includes the zone boundary (k = pi); a coarse but tight
         # bound on the spectral range for the heuristic. The interaction adds
         # an extra spectral scale on top of the band.
         nk = 16
         kaxis = np.linspace(0.0, 2.0 * np.pi, nk, endpoint=False)
-        eps_k = sc._build_hamiltonian_k(kaxis, kaxis, kaxis, hr, norb)
+        eps_k = _build_hamiltonian_k(kaxis, kaxis, kaxis, hr, norb)
         # (norb, norb, Nx, Ny, Nz) -> (Nx, Ny, Nz, norb, norb); Hermitize
         # (guards against tiny asymmetry in the input) and diagonalize.
         hk = np.moveaxis(eps_k, (0, 1), (-2, -1))
         hk = 0.5 * (hk + np.conjugate(np.swapaxes(hk, -1, -2)))
         evals = np.linalg.eigvalsh(hk)
         if mu is None:
-            mu = (sc._determine_mu(evals, beta, float(filling), norb)
+            mu = (_determine_mu(evals, beta, float(filling), norb)
                   if filling is not None else 0.0)
         u = 0.0
         for arr in inter_k.values():
@@ -1563,7 +1567,7 @@ def _ir_vertex_to_rtau(V_nodes, axB, axF, workers=1):
 def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
                           convention, sc_matrices=None):
     """The frequency-INDEPENDENT part of the pairing vertex: the bare
-    ``0.5*(S+C)``-type term of ``sc._compute_vertices_flex``, obtained by
+    ``0.5*(S+C)``-type term of ``_compute_vertices_flex``, obtained by
     evaluating the vertex formula at chi_s = chi_c = 0. For a pure-Hubbard
     (CoulombIntra-only) model the Kuroki matrices have S = C = U on the
     intra-orbital element, so the SINGLET bare term ``0.5 (S + C)`` is the
@@ -1581,12 +1585,12 @@ def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
     itself (``sc._reject_reduced_flex_unsupported``), so this route is
     guarded even when called directly. ``sc_matrices`` forwards a
     precomputed (S, C) pair so the run's single build is reused."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.vertex import _compute_vertices_flex
     zero = np.zeros((Nx, Ny, Nz, norb ** 2, norb ** 2), dtype=complex)
-    return sc._compute_vertices_flex(zero, zero, inter_k, norb, Nx, Ny, Nz,
-                                     pairing_type=pairing_type,
-                                     convention=convention,
-                                     sc_matrices=sc_matrices)
+    return _compute_vertices_flex(zero, zero, inter_k, norb, Nx, Ny, Nz,
+                                  pairing_type=pairing_type,
+                                  convention=convention,
+                                  sc_matrices=sc_matrices)
 
 
 def eliashberg_kernel_ir(V_rt_tau, G2_nodes, phi_nodes, axF, beta,
@@ -1712,9 +1716,9 @@ def build_seed(eli_param, pairing_type, norb, kx, ky, kz, gap_shape, use_ir, axF
     onto the IR fermionic nodes so it lives in the same eigenvector
     space.
     """
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.config import _resolve_init_gap
     from hwave.solver.eliashberg.eigen import _initialize_gap
-    init_gap_mode = sc._resolve_init_gap(eli_param.get("init_gap"), pairing_type)
+    init_gap_mode = _resolve_init_gap(eli_param.get("init_gap"), pairing_type)
     sigma_static = _initialize_gap(init_gap_mode, norb, kx, ky, kz)
     phi0 = np.broadcast_to(sigma_static[..., np.newaxis], gap_shape).copy().astype(complex)
     n0 = np.linalg.norm(phi0)
@@ -1795,7 +1799,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     with ``spectral_shift = "auto"`` (``"none"`` keeps it unshifted).
     """
     from scipy.sparse.linalg import LinearOperator
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.static import DEFAULT_SOLVER_MODE
     from hwave.solver.eliashberg.output import _shifted_eigenvalue_note
     from hwave.solver.eliashberg.eigen import _resolve_spectral_shift, _solve_leading
 
@@ -1816,7 +1820,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     leakage = None
 
     vec_size = int(np.prod(gap_shape))
-    solver_mode = eli_param.get("solver_mode", sc.DEFAULT_SOLVER_MODE)
+    solver_mode = eli_param.get("solver_mode", DEFAULT_SOLVER_MODE)
     eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
     num_eigenvalues = eli_param.get("num_eigenvalues", 10)
     max_iter = eli_param.get("max_iter", 1000)
@@ -2322,20 +2326,30 @@ def solve_dynamic(input_dict):
         computed eigenpair passed the requested channel's match in an
         unseeded eigenvalue run.
     """
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.config import (
+        _bond_bool_option,
+        _check_nonbond_offsite,
+        _coerce_run_beta,
+        _resolve_spin_orbital_flag)
+    from hwave.solver.eliashberg.vertex import (
+        _build_interaction_k_for_sites,
+        _build_vertex_sc_matrices,
+        _compute_vertices_flex,
+        _nonbond_site,
+        _reject_reduced_flex_unsupported)
     from hwave.solver.eliashberg.io import _read_interaction_files, _preflight_refuse_so_archives
 
     # spin-orbital mode has its own solver (issue #284); solve_dynamic is
     # publicly callable, so route a direct call there too (its configuration
     # checks run first, before any file is read)
-    if sc._resolve_spin_orbital_flag(input_dict):
+    if _resolve_spin_orbital_flag(input_dict):
         from hwave.solver import eliashberg_dynamic_so
         return eliashberg_dynamic_so.solve_dynamic_so(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     # shared validated conversion (round-7 review): an unchecked 1/T here
     # let a subnormal T reach the dynamic solver as beta = inf
-    beta = sc._coerce_run_beta(T)
+    beta = _coerce_run_beta(T)
     cell_shape = mode_param["CellShape"]
     # Resolve SubShape by the PACKAGE convention (documented default:
     # CellShape, i.e. the whole cell as one supercell) and guard the
@@ -2388,7 +2402,7 @@ def solve_dynamic(input_dict):
     # which must not be able to fall through to the scalar on-site vertex with
     # the flag silently ignored. The flag goes through the same strict reader as
     # every other bond option, so a typo is refused rather than read as false.
-    if sc._bond_bool_option(eli_param, "bond_channels", False):
+    if _bond_bool_option(eli_param, "bond_channels", False):
         from hwave.solver import eliashberg_bond_io
         return eliashberg_bond_io.solve_dynamic_bond(input_dict)
     pairing_type = eli_param.get("pairing_type", "singlet")
@@ -2412,12 +2426,12 @@ def solve_dynamic(input_dict):
     kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
     ky_array = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
     kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
-    sc._check_nonbond_offsite(interactions, "hwave_sc dynamic (bond_channels = false)",
-                              sc._nonbond_site(input_dict, norb))
+    _check_nonbond_offsite(interactions, "hwave_sc dynamic (bond_channels = false)",
+                           _nonbond_site(input_dict, norb))
     # a spin-orbital archive is refused before the k-space table is built (#271)
     _preflight_refuse_so_archives(input_dict, "flex")
-    inter_k = sc._build_interaction_k_for_sites(kx_array, ky_array, kz_array,
-                                                interactions, norb, input_dict)
+    inter_k = _build_interaction_k_for_sites(kx_array, ky_array, kz_array,
+                                             interactions, norb, input_dict)
 
     # --- FLEX inputs (full frequency) ---
     if use_ir:
@@ -2545,11 +2559,11 @@ def solve_dynamic(input_dict):
     logger.info("Computing dynamic FLEX pairing vertex (pairing_type=%s, "
                 "convention=%s)...", pairing_type, chi_convention)
     # Reject before allocating the O(Nq * norb^4) pair (round-10 review).
-    sc._reject_reduced_flex_unsupported(inter_k, chi_convention)
+    _reject_reduced_flex_unsupported(inter_k, chi_convention)
     # One S/C build for the whole solve: reused by every per-frequency
     # contraction and by the IR instantaneous vertex below (round-9 review).
-    sc_mats = sc._build_vertex_sc_matrices(chi_convention, inter_k,
-                                           norb, Nx, Ny, Nz)
+    sc_mats = _build_vertex_sc_matrices(chi_convention, inter_k,
+                                        norb, Nx, Ny, Nz)
     Vs_q_w = compute_vertices_flex_dynamic(
         chis_w, chic_w, inter_k, norb, Nx, Ny, Nz,
         pairing_type=pairing_type, convention=chi_convention,
@@ -2614,7 +2628,7 @@ def solve_dynamic(input_dict):
                               dtype=np.complex128)
             cs = chi_static_s if chi_static_s is not None else zero_c
             cc = chi_static_c if chi_static_c is not None else zero_c
-            V_flat = sc._compute_vertices_flex(
+            V_flat = _compute_vertices_flex(
                 cs, cc, inter_k, norb, Nx, Ny, Nz,
                 pairing_type=pairing_type, convention=chi_convention,
                 sc_matrices=sc_mats)

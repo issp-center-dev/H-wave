@@ -589,7 +589,9 @@ def solve_dynamic_so(input_dict):
     enable_spin_orbital`` is set and ``[eliashberg] frequency = "dynamic"``.
     Returns the leading eigenvalue (the real part of the eigenvalue analysis'
     first eigenvalue, or the power iteration's value)."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.static import DEFAULT_SOLVER_MODE, _SO_DYNAMIC_LABEL
+    from hwave.solver.eliashberg.band import _calc_eigenvalues, _determine_mu
+    from hwave.solver.eliashberg.config import _coerce_run_beta
     from hwave.solver.eliashberg.bond import _build_bond_green
     from hwave.solver.eliashberg.so_solve import (
         _SO_ANTISYM_TOL,
@@ -618,7 +620,7 @@ def solve_dynamic_so(input_dict):
     eli = CaseInsensitiveDict(eli_raw)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
-    beta = sc._coerce_run_beta(T)
+    beta = _coerce_run_beta(T)
     Nx, Ny, Nz = _grid(mode_param)
     Nk = Nx * Ny * Nz
     nmat = int(mode_param.get("Nmat", _DEFAULT_NMAT))
@@ -627,7 +629,7 @@ def solve_dynamic_so(input_dict):
             "[mode] enable_spin_orbital = true with frequency = \"dynamic\" "
             "requires an even, positive [mode.param] Nmat; got {}".format(nmat))
     chi0q_mode = eli.get("chi0q_mode")
-    solver_mode = eli.get("solver_mode", sc.DEFAULT_SOLVER_MODE)
+    solver_mode = eli.get("solver_mode", DEFAULT_SOLVER_MODE)
     num_eigenvalues = int(eli.get("num_eigenvalues", 10))
     eigenvalue_method = eli.get("eigenvalue_method", "arnoldi")
     # an absent spectral_shift means "auto" for the power iteration and no
@@ -731,7 +733,7 @@ def solve_dynamic_so(input_dict):
         # the borrowed G as consumed: its digest, mu and closure density on
         # this run's band (equal to the FLEX run's: the band was checked)
         so_members = _so_flex_writer_members(
-            "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run, borrowed, green_w,
+            "sc_so_dynamic", _SO_DYNAMIC_LABEL, so_run, borrowed, green_w,
             _so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table, norb_phys),
             beta)
         consistency = _check_vertex_every_frequency(gam, chi_w, chi0_w,
@@ -741,15 +743,15 @@ def solve_dynamic_so(input_dict):
         # spin-block band, Extern included (the band of the spinful RPA chi0)
         epsilon_k = _so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table,
                                   norb_phys)
-        eigenvalues, eigenvectors = sc._calc_eigenvalues(epsilon_k)
-        mu = sc._determine_mu(eigenvalues, beta, n_filling, nd)
+        eigenvalues, eigenvectors = _calc_eigenvalues(epsilon_k)
+        mu = _determine_mu(eigenvalues, beta, n_filling, nd)
         logger.info("mu = %.6f", mu)
         green_w = _build_bond_green(
             eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None,
             spin_orbital_mode=True).full_sc
         # the kernel's own G and state
         so_members = _so_writer_members(
-            "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run, _so_green_fp(green_w),
+            "sc_so_dynamic", _SO_DYNAMIC_LABEL, so_run, _so_green_fp(green_w),
             _so_own_state(eigenvalues, beta, mu, nmat, so_run.state.target))
         chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
                                          precomputed_mu=mu,

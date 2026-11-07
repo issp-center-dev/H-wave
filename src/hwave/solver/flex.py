@@ -678,7 +678,7 @@ class FLEX(RPA):
         :class:`~hwave.solver.eliashberg_bond_io.PairingControls` when the
         in-process pairing step is requested and ``None`` otherwise."""
         from hwave.solver.eliashberg_bond_io import PairingControls
-        from hwave.sc import IN_PROCESS_DEFAULT_SOLVER_MODE
+        from hwave.solver.eliashberg.static import IN_PROCESS_DEFAULT_SOLVER_MODE
         self._pairing_controls = None
         types = self.longitudinal_bond_pairing
         if types == "none":

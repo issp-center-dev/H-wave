@@ -50,7 +50,7 @@ class PairingControls:
         ``hwave.sc.IN_PROCESS_DEFAULT_SOLVER_MODE``
         (``FLEX._install_pairing_controls``)."""
         if default_solver_mode is None:
-            from hwave.sc import DEFAULT_SOLVER_MODE as default_solver_mode
+            from hwave.solver.eliashberg.static import DEFAULT_SOLVER_MODE as default_solver_mode
         p = dict(eli_param or {})
         for eta in pairing_types:
             if eta not in ("singlet", "triplet"):
@@ -535,7 +535,7 @@ def solve_dynamic_bond(input_dict):
     float
         The leading eigenvalue lambda.
     """
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.static import reject_spin_orbital_mode
     from hwave.solver.eliashberg.bond import _resolve_bond_topology
     from hwave.solver.eliashberg.io import (_read_interaction_files, _resolve_flex_dir, _load_flex_green)
     from . import backend as _bk
@@ -545,7 +545,7 @@ def solve_dynamic_bond(input_dict):
     from . import flex_bond as _fb
 
     # publicly callable, so guard the unsupported mode here too (issue #83)
-    sc.reject_spin_orbital_mode(input_dict)
+    reject_spin_orbital_mode(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     from hwave.solver.eliashberg.config import _coerce_run_beta

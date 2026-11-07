@@ -203,11 +203,14 @@ class TestEntries(unittest.TestCase):
         dynamic = self._input({"CoulombInter": 0.2}, "dynamic")
         dynamic["eliashberg"]["bond_channels"] = True
         # the static entry reads both from hwave.solver.eliashberg.static,
-        # the dynamic solver off hwave.sc (dev/sc-split-plan.md, step 5b)
+        # the dynamic solver from vertex / config (dev/sc-split-plan.md,
+        # steps 5b and 6a)
         from hwave.solver.eliashberg import static as sc_static
-        with mock.patch.object(sc, "_build_interaction_k_for_sites",
+        from hwave.solver.eliashberg import vertex as sc_vertex
+        from hwave.solver.eliashberg import config as sc_config
+        with mock.patch.object(sc_vertex, "_build_interaction_k_for_sites",
                                side_effect=AssertionError("built on the bond path")), \
-                mock.patch.object(sc, "_check_nonbond_offsite",
+                mock.patch.object(sc_config, "_check_nonbond_offsite",
                                   side_effect=AssertionError("checked on the bond path")), \
                 mock.patch.object(sc_static, "_build_interaction_k_for_sites",
                                   side_effect=AssertionError("built on the bond path")), \
