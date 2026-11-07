@@ -44,10 +44,10 @@ class PairingControls:
     @classmethod
     def from_param(cls, eli_param, *, pairing_types, default_solver_mode=None):
         """``default_solver_mode`` is the ``solver_mode`` of an input that does
-        not set one: ``None`` means ``hwave.sc.DEFAULT_SOLVER_MODE`` (the
+        not set one: ``None`` means ``hwave.solver.eliashberg.static.DEFAULT_SOLVER_MODE`` (the
         ``hwave_sc`` file entry, as the on-site solver); the in-process
         pairing step of the FLEX run passes
-        ``hwave.sc.IN_PROCESS_DEFAULT_SOLVER_MODE``
+        ``hwave.solver.eliashberg.static.IN_PROCESS_DEFAULT_SOLVER_MODE``
         (``FLEX._install_pairing_controls``)."""
         if default_solver_mode is None:
             from hwave.solver.eliashberg.static import DEFAULT_SOLVER_MODE as default_solver_mode
@@ -490,7 +490,7 @@ class _ArchiveView:
 
 def _device_cap(host_cap, where):
     """The device byte cap of an entry-level admission, with the fallback of
-    :func:`~hwave.solver.eliashberg_bond.device_cap_or_host` and this module's
+    :func:`~hwave.solver.eliashberg.bond_dynamic.device_cap_or_host` and this module's
     logger: the device probe is allowed to have no answer (it returns ``None``
     when the query fails, not only when there is no device), and an admission
     that multiplied that would lose the run to a ``TypeError``."""

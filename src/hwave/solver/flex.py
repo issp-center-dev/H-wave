@@ -675,7 +675,7 @@ class FLEX(RPA):
     def _install_pairing_controls(self, eliashberg_param):
         """The ``[eliashberg]`` table of the FLEX input, evaluated once at
         construction (spec 7). ``self._pairing_controls`` is a
-        :class:`~hwave.solver.eliashberg_bond_io.PairingControls` when the
+        :class:`~hwave.solver.eliashberg.bond_io.PairingControls` when the
         in-process pairing step is requested and ``None`` otherwise."""
         from hwave.solver.eliashberg.bond_io import PairingControls
         from hwave.solver.eliashberg.static import IN_PROCESS_DEFAULT_SOLVER_MODE

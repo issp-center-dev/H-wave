@@ -583,7 +583,7 @@ class HalfGridDressing:
     """The conditioning of the mirrored slices of a half-grid dressing pass
     (issue #223), shared by the FLEX map (:func:`dress_and_build_w`) and the
     in-process pairing's re-dressing
-    (:meth:`~hwave.solver.eliashberg_bond.PairVertexAccumulator.add_dressed`),
+    (:meth:`~hwave.solver.eliashberg.bond_dynamic.PairVertexAccumulator.add_dressed`),
     so that both apply ONE rule.
 
     The mirrored slices ``l' = nmat - l`` are skipped only where that is

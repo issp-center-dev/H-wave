@@ -288,7 +288,7 @@ def _build_bond_vertices(topo, split, norb, spatial_shape):
 def _bond_kernel_parts(S, C, dressed, green_kw, view, norb, spatial_shape,
                        beta, pairing_type, *, topo, g2_tail=False):
     """The static bond Eliashberg operator and its two parts, built from the
-    bond pairing pieces of ``hwave.solver.eliashberg_bond``.
+    bond pairing pieces of ``hwave.solver.eliashberg.bond_dynamic``.
 
     Parameters
     ----------

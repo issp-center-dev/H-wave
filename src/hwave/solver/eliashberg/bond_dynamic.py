@@ -604,8 +604,8 @@ def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape, *, topo):
     ``0.5 (S_0 + C_0)`` (singlet) / ``0.5 (C_0 - S_0)`` (triplet) built from the
     CHANNEL-0 blocks of the enlarged bond vertices and crossed into the on-site
     ``(l1, l2, l3, l4)`` layout by the shared
-    :func:`~hwave.solver.eliashberg_dynamic._instantaneous_vertex` (which
-    evaluates ``sc._compute_vertices_flex`` at ``chi_s = chi_c = 0``), so the
+    :func:`~hwave.solver.eliashberg.dynamic._instantaneous_vertex` (which
+    evaluates ``vertex._compute_vertices_flex`` at ``chi_s = chi_c = 0``), so the
     bond path and the on-site path carry bit-identical bare terms; plus, in the
     singlet channel, the bare pairing of the off-site ``Exchange`` and
     ``PairHop`` rows of ``topo`` (:func:`offsite_singlet_bare_vertex`), which
@@ -706,7 +706,7 @@ def block_to_rtau_uniform(blk, spatial_shape, norb, workers, xp):
     bosonic grid -> ``(a, b, c, d, x, y, z, tau)`` on the module ``xp``.
 
     The same two transforms the on-site vertex leg
-    (:func:`~hwave.solver.eliashberg_dynamic.vertex_qw_to_rt`) applies -- boson
+    (:func:`~hwave.solver.eliashberg.dynamic.vertex_qw_to_rt`) applies -- boson
     -> tau on the frequency axis, ``ifftn`` (which carries the single spatial
     fold's ``1/N``) on the spatial axes -- written for the block's own axis
     order and transposed into the kernel's ``(a, b, c, d, x, y, z, t)`` layout.
@@ -808,10 +808,10 @@ class BondPairKernel:
     that is exactly the ``delta(tau)`` its Fourier transform represents.
 
     Normalization follows the on-site uniform kernel
-    (:func:`~hwave.solver.eliashberg_dynamic.eliashberg_kernel_dynamic`): the
+    (:func:`~hwave.solver.eliashberg.dynamic.eliashberg_kernel_dynamic`): the
     ``1/beta`` lives inside ``G2``, the ``-(1/N)`` in the single ``ifftn``, and
     no explicit ``beta`` is applied. The IR branch follows
-    :func:`~hwave.solver.eliashberg_dynamic.eliashberg_kernel_ir` instead (the
+    :func:`~hwave.solver.eliashberg.dynamic.eliashberg_kernel_ir` instead (the
     IR transforms are physical, so the operator carries one explicit ``beta``).
 
     Parameters

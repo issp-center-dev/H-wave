@@ -1582,7 +1582,7 @@ def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
     fixtures, whose gaps are flat in frequency.
 
     The Kuroki Exchange/PairHop rejection is enforced by the delegate
-    itself (``sc._reject_reduced_flex_unsupported``), so this route is
+    itself (``vertex._reject_reduced_flex_unsupported``), so this route is
     guarded even when called directly. ``sc_matrices`` forwards a
     precomputed (S, C) pair so the run's single build is reused."""
     from hwave.solver.eliashberg.vertex import _compute_vertices_flex

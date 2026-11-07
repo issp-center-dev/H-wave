@@ -32,7 +32,7 @@ c_{Y,j+d}``, row slot ``(m; x, y)`` is ``O_{m,xy}(q) = rho^{(sr dr_m)}_{xy}(q)``
 and column slot ``(m'; z, w)`` is ``rho^{(sc dr_m')}_{zw}(q)``, with the slot
 signs ``(sr, sc) = (-1, -1)``: slot ``(a, b)`` of channel ``m`` has ``a`` in
 the origin cell and ``b`` at ``-dr_m``, the geometry of
-:class:`hwave.solver.eliashberg_bond.BondPairKernel`. Then
+:class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel`. Then
 
 * ``H_int = (1/4N) sum_q sum_rc Gamma_B(q)_rc O_r(q) O_c(q)^dagger`` up to
   one-body terms, for the antisymmetrized ``Gamma_B`` (direct plus crossed
@@ -2933,7 +2933,7 @@ def so_bond_pairing_vertex_parts(gamma_b, chi_b, geom, *, plan):
 
     each ``(nvol, ND, ND)`` complex128 in the code slots of
     :data:`SLOT_CONVENTION`, which are the block layout of
-    :class:`hwave.solver.eliashberg_bond.BondPairKernel` with ``norb = nd``
+    :class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel` with ``norb = nd``
     spin-orbital modes (no instantaneous vertex: the bare part lives on all
     channel blocks). ``Gamma_B^P`` is the exchange image (:func:`gamma_p`).
 
@@ -3230,7 +3230,7 @@ class PackedBondPairKernel:
     r"""The bond-resolved pairing kernel of an S_z-packed vertex, applied one
     pair-S_z sector at a time.
 
-    The operator is that of :class:`hwave.solver.eliashberg_bond.BondPairKernel`
+    The operator is that of :class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel`
     on the uniform grid (no instantaneous vertex):
 
     .. code-block:: text
