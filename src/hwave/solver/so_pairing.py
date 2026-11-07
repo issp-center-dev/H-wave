@@ -232,6 +232,12 @@ def _ci(mapping):
 _SO_WHAT = "[mode] enable_spin_orbital = true (hwave_sc, issue #83)"
 _SO_DYN_WHAT = ("[mode] enable_spin_orbital = true with frequency = \"dynamic\" "
                 "(hwave_sc, issue #284)")
+#: the refusal of bond_channels = true with frequency = "dynamic" in
+#: spin-orbital mode (raised by :func:`check_so_config` before the static one)
+_SO_DYNAMIC_BOND_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] bond_channels = true with frequency = \"dynamic\" "
+    "is not available yet (issue #270); use frequency = \"static\", or "
+    "bond_channels = false for on-site interactions.")
 
 
 def so_frequency(input_dict):
@@ -316,6 +322,8 @@ def check_so_config(input_dict):
     if bond is not None:
         from hwave import sc
         if sc._bond_bool_option(eli, "bond_channels", False):
+            if freq == "dynamic":
+                raise ValueError(_SO_DYNAMIC_BOND_REFUSAL)
             raise ValueError(
                 "{}: [eliashberg] bond_channels = true is not supported; the "
                 "spin-orbital pairing vertex is on-site only. Set bond_channels = "

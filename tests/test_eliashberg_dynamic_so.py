@@ -43,7 +43,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
-from hwave.solver import backend, bubble
+from hwave.solver import backend, bubble, so_pairing
 from hwave.solver import eliashberg_dynamic as dyn
 from hwave.solver import eliashberg_dynamic_so as dso
 from hwave.solver.so_pairing import so_pairing_vertex, so_pairing_vertex_parts
@@ -838,7 +838,8 @@ class TestRefusals(unittest.TestCase):
         self.assertFalse(os.path.exists(out) and os.listdir(out))
 
     def test_bond_channels(self):
-        self._refused("bond_channels", {"bond_channels": True})
+        self._refused("^" + re.escape(so_pairing._SO_DYNAMIC_BOND_REFUSAL) + "$",
+                      {"bond_channels": True})
 
     def test_offsite_row(self):
         files = S._write_model(self.d, so=True, extra_rows={

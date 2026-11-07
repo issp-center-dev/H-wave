@@ -22,6 +22,7 @@ import logging
 import os
 import struct
 import subprocess
+import types
 import zipfile
 from typing import Iterable, NamedTuple, Optional
 
@@ -103,6 +104,34 @@ GREEN_LAYOUT = "b_f_k_o_o_v1"
 #: payload members that are 0-d strings, not complex arrays: checked by
 #: value, never by their npy header
 _STRING_PAYLOADS = frozenset({"green_layout"})
+
+#: the layout members of a bond-resolved archive: ``block_layout`` (the slot
+#: layout, ``"dense"`` or ``"sz_packed"``) and the three sector-map members a
+#: packed slot archive carries (``so_bond._MAP_MEMBERS``)
+LAYOUT_MEMBERS = ("block_layout", "sz_sector_order", "sz_sector_offsets", "sz_sector_index")
+#: the reserved member-name prefix: a member whose name starts with it is
+#: refused wherever the sector-map members are not allowed, and a packed slot
+#: archive admits only the three sector-map members under it. Every other
+#: member not named by a rule is accepted and ignored (forward compatible).
+RESERVED_PREFIX = "sz_sector_"
+_SLOT_LAYOUTS = ("dense", "sz_packed")
+
+
+class SlotRules(NamedTuple):
+    """The archive kinds whose payloads are code-slot arrays in a
+    ``block_layout`` (dense ``<p>``, or packed ``<p>@0``, ``<p>@+1``,
+    ``<p>@-1``): ``slot_kinds``; per kind the required ``payloads`` and the
+    ``optional`` payloads; ``ranks[(kind, stage)][payload]`` the admitted
+    ranks of each payload block."""
+    slot_kinds: frozenset
+    payloads: dict
+    optional: dict
+    ranks: dict
+
+
+#: the slot kinds this version reads: none (the bond-resolved slot archives
+#: arrive with the stages of :data:`DEFERRED_STAGES`)
+PRODUCTION_SLOT_RULES = SlotRules(frozenset(), {}, {}, {})
 
 logger = logging.getLogger(__name__)
 
@@ -1017,11 +1046,24 @@ def _zip_of(data, archive):
                      .format(type(archive).__name__))
 
 
+def _read_header(zf, member, p, malformed):
+    """``(npy header, data offset)`` of the zip member ``member`` (payload
+    ``p`` in the messages); the array is never read."""
+    from . import npy_header
+    try:
+        with zf.open(member) as fh:
+            h = npy_header.read_npy_header(fh)
+            return h, fh.tell()
+    except (ValueError, OSError, zipfile.BadZipFile,
+            npy_header.UnsupportedNpyHeaderVersion) as exc:
+        malformed("payload member {} has an unreadable npy header".format(p),
+                  repr(str(exc)), "a valid npy header")
+
+
 def _check_payload_headers(zf, kind, stage, malformed):
     """The payload header check: dtype complex128, C order and the recorded rank of each
     payload member, from its npy header, and its stored size (header plus the declared
     data), from the zip directory; the array is never read."""
-    from . import npy_header
     names = set(zf.namelist())
     for p in PAYLOAD_MEMBERS[kind]:
         if p in _STRING_PAYLOADS:
@@ -1030,14 +1072,7 @@ def _check_payload_headers(zf, kind, stage, malformed):
         if member not in names:
             malformed("payload member {} of a {} archive is missing".format(p, kind),
                       "absent", "present")
-        try:
-            with zf.open(member) as fh:
-                h = npy_header.read_npy_header(fh)
-                data_offset = fh.tell()
-        except (ValueError, OSError, zipfile.BadZipFile,
-                npy_header.UnsupportedNpyHeaderVersion) as exc:
-            malformed("payload member {} has an unreadable npy header".format(p),
-                      repr(str(exc)), "a valid npy header")
+        h, data_offset = _read_header(zf, member, p, malformed)
         if not _schema_dtype_ok(np.dtype(h.dtype), "complex128"):
             malformed("payload member {} has the wrong dtype".format(p),
                       str(h.dtype), "complex128")
@@ -1053,6 +1088,175 @@ def _check_payload_headers(zf, kind, stage, malformed):
         want = data_offset + int(np.prod(h.shape, dtype=np.int64)) * np.dtype(h.dtype).itemsize
         if size != want:
             malformed("payload member {} has the wrong size".format(p), str(size), str(want))
+
+
+# ------------------------------------------------- the slot layout (step 1)
+def _check_rules(rules, kind, stage):
+    """A :class:`SlotRules` table is complete for the archive's ``kind`` and
+    ``stage``: every slot kind has its ``payloads`` entry, and a slot kind
+    has a ``ranks`` entry for ``stage`` naming every required and optional
+    payload. An incomplete table is a programming error: a ``ValueError``
+    before any archive member is read."""
+    def missing(k, what):
+        raise ValueError("SlotRules: slot kind {} has no {} entry".format(k, what))
+
+    for k in sorted(rules.slot_kinds):
+        if k not in rules.payloads:
+            missing(k, "payloads")
+    if kind in rules.slot_kinds:
+        ranks = rules.ranks.get((kind, stage))
+        if ranks is None:
+            missing(kind, "ranks for stage {}".format(stage))
+        for p in tuple(rules.payloads[kind]) + tuple(rules.optional.get(kind, ())):
+            if p not in ranks:
+                missing(kind, "rank for payload {} on stage {}".format(p, stage))
+
+
+def _is_reserved(name):
+    return isinstance(name, str) and name.startswith(RESERVED_PREFIX)
+
+
+def check_layout_members(data, names, *, kind, stage, B, nd, malformed, path, label,
+                         rules=PRODUCTION_SLOT_RULES) -> Optional[str]:
+    """The layout members of an archive of ``kind`` written by ``stage``;
+    returns its ``block_layout`` (``"dense"`` or ``"sz_packed"``), or
+    ``None`` for a stage that is not bond-resolved.
+
+    ``names`` are the archive's member names, ``B`` its channel count
+    (``len(delta_r)``) and ``nd = 2 norb_phys``; ``malformed`` raises the
+    single-line refusal. The rules, each naming the first offending member
+    in sorted order:
+
+    * a ``so_onsite`` stage carries neither ``block_layout`` nor any name
+      with the reserved prefix :data:`RESERVED_PREFIX`;
+    * a ``so_bond`` stage carries ``block_layout``, a 0-d string
+      ``"dense"`` or ``"sz_packed"``;
+    * a gap (always stored full) carries no reserved name;
+    * a slot kind of ``rules``: a dense archive carries no reserved name; a
+      packed one carries only the three sector-map members under the
+      prefix, and they equal the map of ``(B, nd)``
+      (``so_bond.check_sector_map_members``).
+
+    Any other member is accepted (forward compatible)."""
+    _check_rules(rules, kind, stage)
+    reserved = sorted(n for n in names if _is_reserved(n))
+    if STAGE_CAPABILITY[stage] != "so_bond":
+        bad = sorted((["block_layout"] if "block_layout" in names else []) + reserved)
+        if bad:
+            malformed("member {} is not written by a so_onsite stage".format(bad[0]),
+                      "present", "absent")
+        return None
+    if "block_layout" not in names:
+        malformed("member block_layout is missing", "absent", "present")
+    v = np.asarray(data["block_layout"])
+    if v.ndim != 0 or v.dtype.kind != "U" or str(v[()]) not in _SLOT_LAYOUTS:
+        malformed("block_layout is not a known layout", repr(v.tolist()),
+                  "'dense' or 'sz_packed'")
+    layout = str(v[()])
+    if kind == "gap":
+        if reserved:
+            malformed("member {} is not written by a gap archive".format(reserved[0]),
+                      "present", "absent")
+        return layout
+    if kind in rules.slot_kinds:
+        if layout == "dense":
+            if reserved:
+                malformed("member {} is not written by a dense slot archive"
+                          .format(reserved[0]), "present", "absent")
+            return layout
+        stray = [n for n in reserved if n not in LAYOUT_MEMBERS[1:]]
+        if stray:
+            malformed("member {} is not a sector-map member (the prefix {} is reserved)"
+                      .format(stray[0], RESERVED_PREFIX), "present", "absent")
+        from . import so_bond
+        try:
+            so_bond.check_sector_map_members(data, B, nd, file=path, producer_label=label)
+        except SOArchiveError:
+            raise
+        except ValueError as exc:
+            raise SOArchiveError(str(exc)) from None
+    return layout
+
+
+def check_slot_payloads(data, names, zf, *, kind, stage, layout, B, nd, sector_dims,
+                        malformed, rules) -> None:
+    """The payload members of a slot archive of ``kind`` (a slot kind of
+    ``rules``) in ``layout`` (from :func:`check_layout_members`).
+
+    Names: every required payload ``p``, and every optional one present
+    under any of its names, is stored as exactly ``<p>`` (dense) or exactly
+    ``<p>@0``, ``<p>@+1``, ``<p>@-1`` (packed). Then each block's metadata:
+    complex128 (either byte order), C order, a rank of
+    ``rules.ranks[(kind, stage)]``, the stored size (zip only) and the
+    trailing pair ``(ND, ND)`` (``ND = B nd**2``; dense) or ``(n_s, n_s)``
+    (``n_s = sector_dims[i]`` in sector order ``0, +1, -1``; packed). With
+    a zip ``zf`` the metadata comes from the npy headers and no payload is
+    read; for a plain mapping (``zf is None``) from its arrays, so the shape
+    check is never skipped."""
+    _check_rules(rules, kind, stage)
+    if layout not in _SLOT_LAYOUTS:
+        raise ValueError("check_slot_payloads: layout must be 'dense' or 'sz_packed', got "
+                         "{!r}".format(layout))
+    packed = layout == "sz_packed"
+    if packed:
+        from . import so_bond
+        order = so_bond.SECTOR_ORDER
+        if sector_dims is None or len(sector_dims) != len(order):
+            raise ValueError("check_slot_payloads: a packed archive needs the {} sector "
+                             "dimensions, got {!r}".format(len(order), sector_dims))
+        pairs = [(int(n), int(n)) for n in sector_dims]
+    ND = int(B) * int(nd) ** 2
+    ranks = rules.ranks[(kind, stage)]
+
+    def stored_as(p):
+        return sorted(n for n in names
+                      if isinstance(n, str) and (n == p or n.startswith(p + "@")))
+
+    present_optional = tuple(p for p in rules.optional.get(kind, ()) if stored_as(p))
+    blocks = []
+    for p in tuple(rules.payloads[kind]) + present_optional:
+        if packed:
+            expected = [so_bond._packed_key(p, s) for s in order]
+            blocks.extend((name, p, pair) for name, pair in zip(expected, pairs))
+        else:
+            expected = [p]
+            blocks.append((p, p, (ND, ND)))
+        found = stored_as(p)
+        if found != sorted(expected):
+            malformed("payload member {} does not follow block_layout {}".format(p, layout),
+                      str(found), str(expected))
+
+    zip_names = set(zf.namelist()) if zf is not None else None
+    for name, p, pair in blocks:
+        if zf is not None:
+            member = name + ".npy" if name + ".npy" in zip_names else name
+            if member not in zip_names:
+                malformed("payload member {} of a {} archive is missing".format(name, kind),
+                          "absent", "present")
+            h, data_offset = _read_header(zf, member, name, malformed)
+            dtype, shape, order_c = np.dtype(h.dtype), tuple(h.shape), not h.fortran_order
+            stored = "Fortran"
+        else:
+            a = np.asarray(data[name])
+            dtype, shape, order_c = a.dtype, tuple(a.shape), bool(a.flags.c_contiguous)
+            stored = "Fortran" if a.flags.f_contiguous else "not contiguous"
+        if not _schema_dtype_ok(dtype, "complex128"):
+            malformed("payload member {} has the wrong dtype".format(name), str(dtype),
+                      "complex128")
+        if not order_c:
+            malformed("payload member {} is in Fortran order".format(name), stored, "C")
+        if len(shape) not in ranks[p]:
+            malformed("payload member {} has the wrong rank".format(name), str(len(shape)),
+                      " or ".join(str(r) for r in ranks[p]))
+        if zf is not None:
+            size = zf.getinfo(member).file_size
+            want = data_offset + int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
+            if size != want:
+                malformed("payload member {} has the wrong size".format(name), str(size),
+                          str(want))
+        if shape[-2:] != pair:
+            malformed("payload member {} has the wrong slot shape".format(name),
+                      str(shape[-2:]), str(pair))
 
 
 def _first_non_finite(a):
@@ -1213,8 +1417,15 @@ def _validate(data, path, kind, archive, label, expected_producer):
         if n.ndim != 0 or n.dtype.kind not in "iu" or int(n[()]) != norb_phys:
             malformed("norb_phys differs from prov_norb_phys", repr(n.tolist()), norb_phys)
 
+    # the layout members: block_layout of a bond-resolved stage, read first;
+    # the reserved sz_sector_ names
+    nd = 2 * norb_phys
+    n_bonds = int(m["delta_r"].shape[0]) if is_bond else None
+    layout = check_layout_members(data, names, kind=kind, stage=stage, B=n_bonds, nd=nd,
+                                  malformed=malformed, path=path, label=label)
+
     # (b) the payload names and markers
-    for p in PAYLOAD_MEMBERS[kind]:
+    for p in PAYLOAD_MEMBERS.get(kind, ()):
         if p not in names:
             malformed("payload member {} of a {} archive is missing".format(p, kind),
                       "absent", "present")
@@ -1240,12 +1451,22 @@ def _validate(data, path, kind, archive, label, expected_producer):
 
     # (c) the payload headers
     zf, close = _zip_of(data, archive)
-    if zf is not None:
-        try:
+    try:
+        if kind in PRODUCTION_SLOT_RULES.slot_kinds:
+            # a slot archive is checked from its arrays when there is no zip
+            sector_dims = None
+            if layout == "sz_packed":
+                from . import so_bond
+                sector_dims = so_bond.sz_sector_map(types.SimpleNamespace(
+                    reverse=m["reverse"]), nd).sizes
+            check_slot_payloads(data, names, zf, kind=kind, stage=stage, layout=layout,
+                                B=n_bonds, nd=nd, sector_dims=sector_dims,
+                                malformed=malformed, rules=PRODUCTION_SLOT_RULES)
+        elif zf is not None:
             _check_payload_headers(zf, kind, stage, malformed)
-        finally:
-            if close:
-                zf.close()
+    finally:
+        if close:
+            zf.close()
     return kind, stage, version
 
 
@@ -1271,6 +1492,10 @@ def validate_structure(data, path: str, *, kind: str, archive=None,
       hex, the capability and resolved topology agree with the stage, the
       recorded state is consistent and the duplicated fields (``beta``,
       ``nmat``, ``norb_phys``, ``index_convention``) agree with it;
+    * the layout members (:func:`check_layout_members`): a bond-resolved
+      stage records ``block_layout`` (``"dense"`` or ``"sz_packed"``), a
+      gap carries no member with the reserved prefix ``sz_sector_``, and an
+      on-site stage carries none of these members;
     * (b) the kind's payload names (:data:`PAYLOAD_MEMBERS`) and the
       ``index_convention`` and ``spin_orbital`` markers are present,
       ``spin_orbital`` is true and a green archive's ``green_layout`` is the
@@ -1279,7 +1504,9 @@ def validate_structure(data, path: str, *, kind: str, archive=None,
       (or ``data`` is an ``NpzFile``), each complex payload member's npy
       header says complex128, C order and the recorded rank
       (:data:`PAYLOAD_RANKS`); the payload itself is never read. For a
-      plain mapping (c) is skipped.
+      plain mapping the headers of the on-site kinds are not checked; a slot
+      kind (:func:`check_slot_payloads`) is checked from the mapping's
+      arrays, so its shapes and dtypes are never skipped.
     """
     label = _readable_label(data, _members(data))
     if label == UNKNOWN_PRODUCER and expected_producer:

@@ -444,6 +444,8 @@ def _archive(kind="chiq", stage="rpa_so", payload=None, **kw):
     d.update(_PAYLOAD[kind] if payload is None else payload)
     d["spin_orbital"] = np.bool_(True)
     d["index_convention"] = np.str_("spin_block")
+    if stage == "sc_so_bond_static":
+        d["block_layout"] = np.str_("dense")
     return d
 
 

@@ -1705,15 +1705,16 @@ def _grid_sz_transfer(*, spin_symmetric=False):
     return tr
 
 
-def _grid_sz_tables():
+def _grid_sz_tables(*, y_bond=True):
     """CoulombIntra on site; every other S_z-conserving type on the x bond
-    (``v``) and the y bond (``0.8 v``), Hermitian-closed."""
+    (``v``) and the y bond (``0.8 v``), Hermitian-closed. ``y_bond=False``
+    keeps the x bond only."""
     out = {"CoulombIntra": {((0, 0, 0), (0, 0)): BASE["CoulombIntra"]}}
     for t in TYPES_OFFSITE:
         if t == "PairLift":
             continue
         tbl = {}
-        for R, f in zip(GRID_BONDS[:2], (1.0, 0.8)):
+        for R, f in zip(GRID_BONDS[:2 if y_bond else 1], (1.0, 0.8)):
             tbl.update(closed_row(R, 0, 0, f * BASE[t]))
         out[t] = tbl
     return out
@@ -1723,6 +1724,15 @@ def _grid_sz_tables():
 #: every S_z-conserving type, spin-diagonal hopping and Zeeman 0.15
 FIXTURE_SZ_GRID = FixtureSpec.make((5, 3, 1), 1, 2.0, 0.2, _grid_sz_transfer(),
                                    _grid_sz_tables(), zeeman=0.15)
+
+#: the 4x2 mesh (norb_phys = 1) with an even extent on both axes (N_TRIM = 4):
+#: the spin-diagonal hopping of :data:`FIXTURE_SZ_GRID` on the x and y bonds
+#: (hopping enters only the band, where the folding of +-y at L_y = 2 is
+#: harmless), the interactions on site and on the x bond only, so the
+#: topology has B = 3 channels (on site, +-x; +-y channels would coincide on
+#: this mesh), Zeeman 0.15
+FIXTURE_SZ_GRID_4X2 = FixtureSpec.make((4, 2, 1), 1, 2.0, 0.2, _grid_sz_transfer(),
+                                       _grid_sz_tables(y_bond=False), zeeman=0.15)
 
 #: the spin-diagonal inter-orbital term ``i lambda s_z`` (``s_z = +-1``) of
 #: :data:`FIXTURE_LZSZ`: ``R -> lambda`` for ``c+_{0 s}(0) c_{1 s}(R)``
