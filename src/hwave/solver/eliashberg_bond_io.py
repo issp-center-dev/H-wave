@@ -536,6 +536,7 @@ def solve_dynamic_bond(input_dict):
         The leading eigenvalue lambda.
     """
     import hwave.sc as sc
+    from hwave.solver.eliashberg.io import (_read_interaction_files, _resolve_flex_dir, _load_flex_green)
     from . import backend as _bk
     from . import bond_channels as _bc
     from . import eliashberg_bond as _eb
@@ -570,7 +571,7 @@ def solve_dynamic_bond(input_dict):
     xp, _gpu_active = _bk.get_backend(_ed._gpu_requested(eli_param), logger=logger,
                                       required=_ed._gpu_required_requested(eli_param))
 
-    geom_info, hr, interactions = sc._read_interaction_files(input_dict)
+    geom_info, hr, interactions = _read_interaction_files(input_dict)
     norb = int(geom_info["norb"])
     nd = norb * norb
     # the archive carries the topology but not the per-type coefficients, so
@@ -583,7 +584,7 @@ def solve_dynamic_bond(input_dict):
     del topo_decl
 
     # --- the archive (validated before any large member is touched) --------
-    flex_dir = sc._resolve_flex_dir(input_dict)
+    flex_dir = _resolve_flex_dir(input_dict)
     arch_name = str(eli_param.get("flex_bond_archive", "longitudinal_bond.npz"))
     arch_path = arch_name if os.path.isabs(arch_name) else os.path.join(flex_dir, arch_name)
     arch = load_bond_archive(arch_path, norb=norb, nmat_expected=nmat,
@@ -594,8 +595,8 @@ def solve_dynamic_bond(input_dict):
     topo_arch = _declared_topology_of_archive(arch, interactions, norb, (Nx, Ny, Nz),
                                               arch_path)
 
-    green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz,
-                                interactions=interactions)
+    green = _load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                             interactions=interactions)
     if green is None:
         raise ValueError(
             "dynamic bond Eliashberg requires the dressed green.npz of the same "

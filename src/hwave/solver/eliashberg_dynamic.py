@@ -829,7 +829,7 @@ def _npz_is_ir_native(path):
 
 def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
                           interactions=None):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.io import _resolve_flex_paths, _load_flex_susceptibilities_full
     cfg_nmat = int(input_dict["mode"]["param"].get("Nmat", 1024))
     if cfg_nmat % 2 != 0:
         raise ValueError("dynamic Eliashberg requires even Nmat; got {}".format(cfg_nmat))
@@ -839,7 +839,7 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
     # the memory guard on the actual files. Using only the config Nmat would let
     # a larger on-disk grid slip past the guard and OOM inside the loader before
     # the post-load grid check could fire.
-    chi_s_path, chi_c_path, green_path = sc._resolve_flex_paths(input_dict)
+    chi_s_path, chi_c_path, green_path = _resolve_flex_paths(input_dict)
     # Stage 3, D-1 FIRST (design Sec. 4.1): for IR-native files the stored
     # frequency-axis length is the sparse node count, not Nmat, so the
     # uniform-grid equality check below must not see them.
@@ -895,13 +895,13 @@ def load_flex_chi_dynamic(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
     # reuse the exact static path/name/convention/spin-orbital-expansion logic
     if allow_ir:
         chis_w, chic_w, green_w, chi_convention, ir_meta = \
-            sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
-                                                allow_ir=True,
-                                                interactions=interactions)
+            _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
+                                             allow_ir=True,
+                                             interactions=interactions)
     else:
         chis_w, chic_w, green_w, chi_convention = \
-            sc._load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
-                                                interactions=interactions)
+            _load_flex_susceptibilities_full(input_dict, norb, Nx, Ny, Nz,
+                                             interactions=interactions)
         ir_meta = None
     # Belt-and-suspenders: the header check above already rejected a mismatch,
     # but keep a post-load assertion in case the loader reshapes unexpectedly.
@@ -1796,6 +1796,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     """
     from scipy.sparse.linalg import LinearOperator
     import hwave.sc as sc
+    from hwave.solver.eliashberg.output import _shifted_eigenvalue_note
     from hwave.solver.eliashberg.eigen import _resolve_spectral_shift, _solve_leading
 
     if parity_leakage_policy not in ("warn", "refuse"):
@@ -1944,7 +1945,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
         # converged run (spectral_shift = "none") keeps the historical
         # note-free file.
         if iteration_spectral_shift is not None or not eigen_converged:
-            eigenvalue_note = sc._shifted_eigenvalue_note(
+            eigenvalue_note = _shifted_eigenvalue_note(
                 "iteration", iteration_spectral_shift,
                 eigen_converged, info.get("n_iter"), info,
                 kernel_label="dynamic kernel")
@@ -2322,6 +2323,7 @@ def solve_dynamic(input_dict):
         unseeded eigenvalue run.
     """
     import hwave.sc as sc
+    from hwave.solver.eliashberg.io import _read_interaction_files, _preflight_refuse_so_archives
 
     # spin-orbital mode has its own solver (issue #284); solve_dynamic is
     # publicly callable, so route a direct call there too (its configuration
@@ -2404,7 +2406,7 @@ def solve_dynamic(input_dict):
     zero_chi_s = backend.as_bool(eli_param.get("zero_chi_s", False))
 
     # --- Geometry / interactions (norb from the geometry file) ---
-    geom_info, hr, interactions = sc._read_interaction_files(input_dict)
+    geom_info, hr, interactions = _read_interaction_files(input_dict)
     norb = geom_info["norb"]
 
     kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
@@ -2413,7 +2415,7 @@ def solve_dynamic(input_dict):
     sc._check_nonbond_offsite(interactions, "hwave_sc dynamic (bond_channels = false)",
                               sc._nonbond_site(input_dict, norb))
     # a spin-orbital archive is refused before the k-space table is built (#271)
-    sc._preflight_refuse_so_archives(input_dict, "flex")
+    _preflight_refuse_so_archives(input_dict, "flex")
     inter_k = sc._build_interaction_k_for_sites(kx_array, ky_array, kz_array,
                                                 interactions, norb, input_dict)
 

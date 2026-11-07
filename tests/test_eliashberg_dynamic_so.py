@@ -43,6 +43,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.eliashberg import eigen as sc_eigen
 from hwave.solver import backend, bubble
 from hwave.solver import eliashberg_dynamic as dyn
@@ -480,7 +481,7 @@ class TestFlexMode(_FlexFixture):
         inp["mode"]["param"]["Nmat"] = 2 * _NMAT_E2E
         with self.assertRaisesRegex(ValueError, "Nmat"):
             with _quiet(), mock.patch.object(
-                    sc, "_load_flex_so", side_effect=AssertionError("loaded")):
+                    sc_io, "_load_flex_so", side_effect=AssertionError("loaded")):
                 sc.calc_eliashberg(inp)
         self.assertFalse(os.path.exists(out) and os.listdir(out))
 
@@ -832,7 +833,7 @@ class TestRefusals(unittest.TestCase):
         inp = S._input(self.d, files, True, base, nmat=_NMAT_E2E, **kw)
         with self.assertRaisesRegex(exc, pattern):
             with _quiet(), mock.patch.object(
-                    sc, "_calc_chi0q_internal",
+                    sc_io, "_calc_chi0q_internal",
                     side_effect=AssertionError("chi0q computed before the check")):
                 sc.calc_eliashberg(inp)
         out = inp["file"]["output"]["path_to_output"]
@@ -893,7 +894,7 @@ class TestRefusals(unittest.TestCase):
             with self.subTest(key=key):
                 with self.assertRaisesRegex(AssertionError, "reached"):
                     with _quiet(), mock.patch.object(
-                            sc, "_calc_chi0q_internal",
+                            sc_io, "_calc_chi0q_internal",
                             side_effect=AssertionError("reached")):
                         sc.calc_eliashberg(inp)
 
@@ -930,7 +931,7 @@ class TestRefusals(unittest.TestCase):
         for eli in cases:
             with self.subTest(**eli):
                 with mock.patch.object(
-                        sc, "_read_interaction_files",
+                        sc_io, "_read_interaction_files",
                         side_effect=AssertionError("model read before the check")):
                     self._refused("resolve to the same file", eli, files=files)
 

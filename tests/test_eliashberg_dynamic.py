@@ -166,7 +166,7 @@ def test_grid_mismatch_detected_before_loading(monkeypatch, tmp_path):
     """Issue #41: a FLEX file whose stored nmat exceeds the config Nmat must be
     rejected from the NPZ headers BEFORE the full arrays are allocated -- the
     memory guard sizes on the real file, not the smaller config."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     from hwave.solver import eliashberg_dynamic as ed
     _write_flex_fixture(tmp_path, nmat=16, norb=1, Nx=2, Ny=2, Nz=1)
 
@@ -176,7 +176,7 @@ def test_grid_mismatch_detected_before_loading(monkeypatch, tmp_path):
         called["loaded"] = True
         raise AssertionError("loader ran before the header-based grid check")
 
-    monkeypatch.setattr(sc, "_load_flex_susceptibilities_full", _must_not_run)
+    monkeypatch.setattr(sc_io, "_load_flex_susceptibilities_full", _must_not_run)
 
     inp = {"mode": {"param": {"Nmat": 8}},   # config < file (16)
            "file": {"output": {"path_to_output": str(tmp_path)}},
@@ -507,7 +507,7 @@ def test_memory_guard_runs_before_loading(monkeypatch):
     """The memory guard must abort BEFORE _load_flex_susceptibilities_full
     allocates the full-frequency chi/green arrays (fail-before-allocating):
     a too-tight mem_limit must raise MemoryError without the loader running."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     from hwave.solver import eliashberg_dynamic as ed
 
     called = {"loaded": False}
@@ -516,7 +516,7 @@ def test_memory_guard_runs_before_loading(monkeypatch):
         called["loaded"] = True
         raise AssertionError("loader ran before the memory guard")
 
-    monkeypatch.setattr(sc, "_load_flex_susceptibilities_full", _must_not_run)
+    monkeypatch.setattr(sc_io, "_load_flex_susceptibilities_full", _must_not_run)
 
     inp = {"mode": {"param": {"Nmat": 512}},
            "file": {"output": {"path_to_output": "."}},

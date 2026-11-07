@@ -612,14 +612,21 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
                 "file": {"input": {"interaction": {}},
                          "output": {"path_to_output": "."}},
                 "eliashberg": {}}
+        # calc_eliashberg reads through hwave.sc; solve_dynamic reads from
+        # hwave.solver.eliashberg.io (dev/sc-split-plan.md, step 3b)
+        from hwave.solver.eliashberg import io as sc_io
         with mock.patch.object(sc, "_read_interaction_files",
                                side_effect=AssertionError(
-                                   "reader must not run")) as spy:
+                                   "reader must not run")) as spy, \
+                mock.patch.object(sc_io, "_read_interaction_files",
+                                  side_effect=AssertionError(
+                                      "reader must not run")) as spy_io:
             with self.assertRaises(ValueError):
                 sc.calc_eliashberg(dict(base))
             with self.assertRaises(ValueError):
                 ed.solve_dynamic(dict(base))
         self.assertEqual(spy.call_count, 0)
+        self.assertEqual(spy_io.call_count, 0)
 
     def test_subshape_is_rejected_with_an_actionable_error(self):
         """Sublattice folding is unsupported by the Eliashberg module

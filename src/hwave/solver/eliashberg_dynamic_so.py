@@ -588,6 +588,8 @@ def solve_dynamic_so(input_dict):
     Returns the leading eigenvalue (the real part of the eigenvalue analysis'
     first eigenvalue, or the power iteration's value)."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg.io import (_DEFAULT_NMAT, _read_interaction_files, _read_so_extern, _resolve_flex_dir, _load_flex_so, _so_green_fp, _calc_chi0q_internal)
+    from hwave.solver.eliashberg.output import _shifted_eigenvalue_note
     from hwave.solver.eliashberg.eigen import _resolve_spectral_shift
     from hwave.solver import so_pairing, spin_orbital
 
@@ -605,7 +607,7 @@ def solve_dynamic_so(input_dict):
     beta = sc._coerce_run_beta(T)
     Nx, Ny, Nz = _grid(mode_param)
     Nk = Nx * Ny * Nz
-    nmat = int(mode_param.get("Nmat", sc._DEFAULT_NMAT))
+    nmat = int(mode_param.get("Nmat", _DEFAULT_NMAT))
     if nmat <= 0 or nmat % 2 != 0:
         raise ValueError(
             "[mode] enable_spin_orbital = true with frequency = \"dynamic\" "
@@ -648,7 +650,7 @@ def solve_dynamic_so(input_dict):
                         resolved[i], _OUTPUT_NPZ))
 
     # --- model (no heavy work yet) ---
-    geom_info, hr, interactions = sc._read_interaction_files(input_dict)
+    geom_info, hr, interactions = _read_interaction_files(input_dict)
     nd = geom_info["norb"]
     norb_phys = spin_orbital.physical_norb(
         nd, True, source="the Geometry file ({})".format(
@@ -661,7 +663,7 @@ def solve_dynamic_so(input_dict):
         input_dict["mode"].get("param"), interactions, norb_phys, logger)
     # the Zeeman field of an Extern file (issue #88), read and checked in
     # every chi0q_mode before any heavy work
-    extern_table, _extern_file = sc._read_so_extern(input_dict, norb_phys)
+    extern_table, _extern_file = _read_so_extern(input_dict, norb_phys)
     n_filling = mode_param.get("filling")
     if n_filling is None:
         raise ValueError(
@@ -679,7 +681,7 @@ def solve_dynamic_so(input_dict):
     # --- memory guard, from the configuration and the archive headers ---
     nmat_est = nmat
     if chi0q_mode == "flex":
-        flex_dir = sc._resolve_flex_dir(input_dict)
+        flex_dir = _resolve_flex_dir(input_dict)
         for fname, keys, axis in (
                 (eli.get("flex_chiq", "chiq.npz"), ("chiq",), 0),
                 (eli.get("flex_chi0q", "chi0q.npz"), ("chi0q",), 0),
@@ -707,7 +709,7 @@ def solve_dynamic_so(input_dict):
     # --- inputs: chi at every bosonic frequency, and G ---
     gam = sc._so_rpa_vertex(input_dict, so_context=so_run.context)
     if chi0q_mode == "flex":
-        chi_w, green_w, chi0_w, chi_path, borrowed = sc._load_flex_so(
+        chi_w, green_w, chi0_w, chi_path, borrowed = _load_flex_so(
             input_dict, nd, Nx, Ny, Nz, interactions=interactions, full=True,
             so_run=so_run)
         logger.info("Using the spin-orbital FLEX chiq (all %d bosonic "
@@ -733,11 +735,11 @@ def solve_dynamic_so(input_dict):
             spin_orbital_mode=True).full_sc
         # the kernel's own G and state
         so_members = sc._so_writer_members(
-            "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run, sc._so_green_fp(green_w),
+            "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run, _so_green_fp(green_w),
             sc._so_own_state(eigenvalues, beta, mu, nmat, so_run.state.target))
-        chi0q_raw = sc._calc_chi0q_internal(input_dict, chi0q_tensor="general",
-                                            precomputed_mu=mu,
-                                            so_context=so_run.context)
+        chi0q_raw = _calc_chi0q_internal(input_dict, chi0q_tensor="general",
+                                         precomputed_mu=mu,
+                                         so_context=so_run.context)
         nvol, nd2 = Nk, nd * nd
         if np.shape(chi0q_raw) != (nmat, nvol) + (nd,) * 4:
             raise ValueError(
@@ -811,7 +813,7 @@ def solve_dynamic_so(input_dict):
         eigen_converged = bool(converged)
         if spectral_shift is not None or not eigen_converged:
             # the SIGNED (validated) eigenvalue, or NaN and why
-            note = sc._shifted_eigenvalue_note(
+            note = _shifted_eigenvalue_note(
                 "iteration", spectral_shift, eigen_converged, n_iter, info,
                 kernel_label="dynamic kernel")
         if not eigen_converged:
