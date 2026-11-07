@@ -72,6 +72,10 @@ def _module_imports_hwave_sc(path):
             # ``from .. import sc`` inside hwave/solver
             if node.level == 2 and node.module is None and any(a.name == "sc" for a in node.names):
                 return True
+        elif isinstance(node, ast.Call):
+            # importlib.import_module("hwave.sc") / __import__("hwave.sc")
+            if node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "hwave.sc":
+                return True
     return False
 
 
@@ -101,6 +105,12 @@ def _names_reached_through_sc(paths):
                     for a in node.names:
                         if a.name == "sc":
                             aliases.add(a.asname or "sc")
+        # string patch targets need no alias: mock.patch("hwave.sc.x")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant):
+                v = node.args[0].value
+                if isinstance(v, str) and v.startswith("hwave.sc."):
+                    names.add(v[len("hwave.sc."):].split(".")[0])
         if not aliases:
             continue
         for node in ast.walk(tree):
@@ -108,6 +118,15 @@ def _names_reached_through_sc(paths):
                     and isinstance(node.value, ast.Name)
                     and node.value.id in aliases):
                 names.add(node.attr)
+            # getattr(sc, "x") / setattr(sc, "x", v) / mock.patch.object(sc, "x")
+            # / monkeypatch.setattr(sc, "x", v): the alias is the first argument
+            # and the name a string constant in the second
+            elif (isinstance(node, ast.Call) and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Name)
+                    and node.args[0].id in aliases
+                    and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, str)):
+                names.add(node.args[1].value)
     return names
 
 
