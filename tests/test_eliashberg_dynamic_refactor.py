@@ -510,7 +510,7 @@ class TestSecondaryRetryFailure(unittest.TestCase):
             return real_eigs(A, k=k, which=which, **kw)
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        with mock.patch.object(sc, "_solve_leading", leading), \
+        with mock.patch.object(sc_eigen, "_solve_leading", leading), \
                 mock.patch.object(sc_eigen, "eigs", eigs), \
                 mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             _run(tmp, "eigenvalue", None, fixture="random")

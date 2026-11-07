@@ -210,12 +210,12 @@ def so_initial_gap(init_gap_mode, norb_phys, kx_array, ky_array, kz_array):
     (``p_*``, ``f_*``). ``"random"`` fills the whole spin-orbital matrix (the
     caller's antisymmetric projection then keeps its admissible part). The
     result has unit norm unless the form factor vanishes on the grid."""
-    from hwave import sc
+    from hwave.solver.eliashberg.eigen import _initialize_gap
     if init_gap_mode == "random":
-        return sc._initialize_gap("random", 2 * int(norb_phys),
-                                  kx_array, ky_array, kz_array)
-    phi = sc._initialize_gap(init_gap_mode, int(norb_phys),
-                             kx_array, ky_array, kz_array)
+        return _initialize_gap("random", 2 * int(norb_phys),
+                               kx_array, ky_array, kz_array)
+    phi = _initialize_gap(init_gap_mode, int(norb_phys),
+                          kx_array, ky_array, kz_array)
     spin = _SEED_SPIN_ODD if init_gap_mode in _ODD_SEEDS else _SEED_SPIN_EVEN
     n = int(norb_phys)
     gap = np.einsum("st,ab...->satb...", spin, phi).reshape(

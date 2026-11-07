@@ -718,6 +718,7 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
     sc._solve_leading (the arnoldi eigenvalue path)."""
     import os
     import hwave.sc as sc
+    from hwave.solver.eliashberg import eigen as sc_eigen
     from hwave.solver import eliashberg_dynamic as ed
     input_dir = str(tmp_path / "input")
     output_dir = str(tmp_path / "output")
@@ -731,7 +732,7 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
     def spy(*args, **kwargs):
         captured["spectral_shift"] = kwargs.get("spectral_shift")
         return real_solve(*args, **kwargs)
-    monkeypatch.setattr(sc, "_solve_leading", spy)
+    monkeypatch.setattr(sc_eigen, "_solve_leading", spy)
 
     inp = {
         "mode": {"param": {"T": 0.5, "CellShape": [2, 2, 1],
@@ -2216,6 +2217,7 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
         # the projected operator exactly once (the scale preliminary is a raw
         # ARPACK pass, not a _solve_leading call).
         import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         matvec = self._masked_positive_kernel()
         calls = []
         real_solve = sc._solve_leading
@@ -2224,7 +2226,7 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
             calls.append(1)
             return real_solve(*a, **k)
 
-        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+        with _mock.patch.object(sc_eigen, "_solve_leading", side_effect=counting):
             self._run(matvec, {"solver_mode": "eigenvalue",
                                "num_eigenvalues": 3})
         self.assertEqual(len(calls), 1, "projected path must not re-solve")
@@ -2233,13 +2235,14 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
         matvec = self._non_conserving_kernel()
         calls = []
         import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         real_solve = sc._solve_leading
 
         def counting(*a, **k):
             calls.append(k.get("spectral_shift"))
             return real_solve(*a, **k)
 
-        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+        with _mock.patch.object(sc_eigen, "_solve_leading", side_effect=counting):
             with _capture_dynamic_warnings() as recs:
                 out = self._run(matvec, {"solver_mode": "eigenvalue",
                                          "num_eigenvalues": 2})
@@ -2273,6 +2276,7 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
         # on the unprojected path so the dense selection is what is reported.
         from hwave.solver import eliashberg_dynamic as ed
         import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         shape = (1, 1, 1, 1, 1, 2)
         M = np.array([[0.3, 0.1], [0.05, 0.2]], dtype=complex)
 
@@ -2289,7 +2293,7 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
             calls.append(1)
             return real_solve(*a, **k)
 
-        with _mock.patch.object(sc, "_solve_leading", side_effect=counting):
+        with _mock.patch.object(sc_eigen, "_solve_leading", side_effect=counting):
             with _capture_dynamic_warnings() as recs:
                 out = ed.run_leading_eigenproblem(
                     matvec, shape, {"solver_mode": "eigenvalue",
@@ -2381,6 +2385,7 @@ def _solve_dynamic_lambda(indir, outdir, basis="uniform", keep_static=False,
     issue #203 comparison is about -- is read from the driver's record."""
     from unittest import mock
     import hwave.sc as sc
+    from hwave.solver.eliashberg import eigen as sc_eigen
     from hwave.solver import eliashberg_dynamic as ed
     records = []
     real = sc._solve_leading
@@ -2407,7 +2412,7 @@ def _solve_dynamic_lambda(indir, outdir, basis="uniform", keep_static=False,
                         "CoulombIntra": "coulombintra.dat"}},
                     "output": {"path_to_output": outdir}},
            "eliashberg": eli}
-    with mock.patch.object(sc, "_solve_leading", spy):
+    with mock.patch.object(sc_eigen, "_solve_leading", spy):
         lam = ed.solve_dynamic(inp)
     info = records[-1]
     if info.get("two_cycle"):
@@ -2633,6 +2638,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
 
     def test_solve_runs_on_the_sector_dimension(self):
         import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         from hwave.solver import eliashberg_dynamic as ed
         for pairing_type in ("singlet", "triplet"):
             with self.subTest(pairing_type=pairing_type):
@@ -2645,7 +2651,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
                 def spy(make_operator, vec_size, *a, **k):
                     sizes.append(vec_size)
                     return real_solve(make_operator, vec_size, *a, **k)
-                with _mock.patch.object(sc, "_solve_leading", side_effect=spy):
+                with _mock.patch.object(sc_eigen, "_solve_leading", side_effect=spy):
                     out, _info = self._run(M, pairing_type)
                 self.assertEqual(out[8], "LR_projected")
                 _f, _r, dim = ed._channel_sector_basis(self.SHAPE,
@@ -2833,6 +2839,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
         """The sector solve uses the user's spectral_shift (largest real part
         of the shifted sector operator), like the static sector solve."""
         import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         M, B = _sector_conserving_kernel(
             self.SHAPE, "singlet", self._random_block(9),
             self._random_block(10, scale=2.0))
@@ -2846,7 +2853,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
                     seen.append(k.get("spectral_shift"))
                     return real_solve(*a, **k)
                 eli = {} if shift is None else {"spectral_shift": shift}
-                with _mock.patch.object(sc, "_solve_leading", side_effect=spy):
+                with _mock.patch.object(sc_eigen, "_solve_leading", side_effect=spy):
                     out, _info = self._run(M, "singlet", **eli)
                 self.assertEqual(seen, [shift])
                 self.assertLess(abs(out[0] - ev.real.max()), 1e-10)

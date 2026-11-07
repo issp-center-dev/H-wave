@@ -243,7 +243,7 @@ def make_operator(Vs_rt, G2_w, beta, workers=1):
     hoisted vertex ``Vs_rt``; a cupy ``G2_w`` / ``Vs_rt`` runs it on the
     device, the vector crosses as a host array) and the fermion-antisymmetric
     basis of that space with the frequency-reversing Pauli map."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.eigen import _SOAntisymmetricBasis
     nd = int(G2_w.shape[0])
     gap_shape = (nd, nd) + tuple(int(x) for x in G2_w.shape[4:8])
     n = int(np.prod(gap_shape))
@@ -255,7 +255,7 @@ def make_operator(Vs_rt, G2_w, beta, workers=1):
         return np.asarray(backend.to_host(out)).ravel()
 
     A = LinearOperator((n, n), matvec=_matvec, dtype=complex)
-    basis = sc._SOAntisymmetricBasis(gap_shape, reverse=_reverse_kw_and_orbital)
+    basis = _SOAntisymmetricBasis(gap_shape, reverse=_reverse_kw_and_orbital)
     return A, basis
 
 
@@ -588,6 +588,7 @@ def solve_dynamic_so(input_dict):
     Returns the leading eigenvalue (the real part of the eigenvalue analysis'
     first eigenvalue, or the power iteration's value)."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg.eigen import _resolve_spectral_shift
     from hwave.solver import so_pairing, spin_orbital
 
     t_start = time.time()
@@ -615,7 +616,7 @@ def solve_dynamic_so(input_dict):
     eigenvalue_method = eli.get("eigenvalue_method", "arnoldi")
     # an absent spectral_shift means "auto" for the power iteration and no
     # shift for the eigenvalue solver; "none" means no shift for both
-    spectral_shift = sc._resolve_spectral_shift(
+    spectral_shift = _resolve_spectral_shift(
         eli.get("spectral_shift"),
         "iteration" if solver_mode == "iteration" else "eigenvalue")
     init_gap_mode = eli.get("init_gap", DEFAULT_INIT_GAP)

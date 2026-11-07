@@ -287,9 +287,9 @@ def _parity_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
     # pairing_type is unused by design: the guard probes BOTH parity sectors
     # (even and odd), exactly as sc._solve_iteration does, so the leakage
     # measure is independent of the requested channel.
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.eigen import _PARITY_GUARD_PROBES
     if n_probe is None:
-        n_probe = sc._PARITY_GUARD_PROBES
+        n_probe = _PARITY_GUARD_PROBES
     rng = np.random.default_rng(seed)
     leakage = 0.0
     for _ in range(n_probe):
@@ -328,9 +328,9 @@ def _channel_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
     points or fewer per periodic axis) and there is a single orbital: no
     odd-k function exists at all.
     """
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.eigen import _PARITY_GUARD_PROBES
     if n_probe is None:
-        n_probe = sc._PARITY_GUARD_PROBES
+        n_probe = _PARITY_GUARD_PROBES
     rng = np.random.default_rng(seed)
     leakage = None
     for _ in range(n_probe):
@@ -577,7 +577,7 @@ def _solve_channel_projected(matvec, vec_size, gap_shape, pairing_type,
     columns) lifted back to the full flat gap space, so the caller reorders and
     gauge-fixes it exactly as the unprojected result.
     """
-    import hwave.sc as sc
+    from hwave.solver.eliashberg.eigen import _solve_leading
     from scipy.sparse.linalg import LinearOperator
 
     to_full, to_reduced, dim = _channel_sector_basis(gap_shape, pairing_type)
@@ -600,7 +600,7 @@ def _solve_channel_projected(matvec, vec_size, gap_shape, pairing_type,
     # warn_negative_leading=False: the shared driver certifies the largest
     # real part itself (the LM bound and its re-solve), and in a sector a
     # negative leader is the channel's own (repulsive) answer
-    eigenvalue, cvec, info = sc._solve_leading(
+    eigenvalue, cvec, info = _solve_leading(
         make_reduced, dim, "arnoldi", num_eigenvalues=num_eigenvalues,
         spectral_shift=spectral_shift, seed_vec=None,
         warn_negative_leading=False)
@@ -1713,8 +1713,9 @@ def build_seed(eli_param, pairing_type, norb, kx, ky, kz, gap_shape, use_ir, axF
     space.
     """
     import hwave.sc as sc
+    from hwave.solver.eliashberg.eigen import _initialize_gap
     init_gap_mode = sc._resolve_init_gap(eli_param.get("init_gap"), pairing_type)
-    sigma_static = sc._initialize_gap(init_gap_mode, norb, kx, ky, kz)
+    sigma_static = _initialize_gap(init_gap_mode, norb, kx, ky, kz)
     phi0 = np.broadcast_to(sigma_static[..., np.newaxis], gap_shape).copy().astype(complex)
     n0 = np.linalg.norm(phi0)
     if n0 > 0:
@@ -1795,6 +1796,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     """
     from scipy.sparse.linalg import LinearOperator
     import hwave.sc as sc
+    from hwave.solver.eliashberg.eigen import _resolve_spectral_shift, _solve_leading
 
     if parity_leakage_policy not in ("warn", "refuse"):
         raise ValueError("parity_leakage_policy must be 'warn' or 'refuse', got {!r}"
@@ -1923,9 +1925,9 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
         # the eigenvalue below is still the signed eigenvalue of K.
         # An absent spectral_shift means "auto" here (sc._resolve_spectral_shift);
         # "none" keeps the historical unshifted iteration.
-        iteration_spectral_shift = sc._resolve_spectral_shift(
+        iteration_spectral_shift = _resolve_spectral_shift(
             eli_param.get("spectral_shift"), "iteration")
-        eigenvalue, sigma_flat, info = sc._solve_leading(
+        eigenvalue, sigma_flat, info = _solve_leading(
             make_operator, vec_size, "iteration",
             max_iter=max_iter, convergence_tol=tol, alpha=alpha,
             init_vec=phi0.ravel(), project_fn=project_fn,
@@ -1954,7 +1956,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
             logger.warning(
                 "Dynamic solver_mode='both' runs the eigenvalue leg only; "
                 "the power-iteration cross-check is skipped.")
-        user_spectral_shift = sc._resolve_spectral_shift(
+        user_spectral_shift = _resolve_spectral_shift(
             eli_param.get("spectral_shift"), "eigenvalue")
 
         # Issue #202: when the kernel CONSERVES the channel's even-frequency
@@ -2018,7 +2020,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
             # alone by design, so neither is re-solved.
             retry_eligible = (user_spectral_shift is None and seed_vec is None
                               and eigenvalue_method == "arnoldi")
-            eigenvalue, sigma_flat, info = sc._solve_leading(
+            eigenvalue, sigma_flat, info = _solve_leading(
                 make_operator, vec_size, eigenvalue_method,
                 num_eigenvalues=num_eigenvalues,
                 sigma_shift=eli_param.get("sigma_shift"),
@@ -2073,7 +2075,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                         "= \"auto\" or use solver_mode = \"iteration\" to avoid "
                         "the extra solve",
                         logger_label, num_eigenvalues, pairing_type, leading_re)
-                    eigenvalue, sigma_flat, info = sc._solve_leading(
+                    eigenvalue, sigma_flat, info = _solve_leading(
                         make_operator, vec_size, eigenvalue_method,
                         num_eigenvalues=num_eigenvalues,
                         sigma_shift=eli_param.get("sigma_shift"),
