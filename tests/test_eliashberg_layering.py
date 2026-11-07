@@ -33,13 +33,12 @@ SOLVER = os.path.join(SRC, "solver")
 #: Solver-side modules that import ``hwave.sc`` today (the layer inversion
 #: the split removes). Edit this set only to REMOVE an entry.
 SOLVER_MODULES_IMPORTING_SC = frozenset({
-    "_sc_matrices_myo",
+    # step 1 (leaf layers) released _sc_matrices_myo, offsite and
+    # second_order; these six still need names that have not moved yet
     "eliashberg_bond_io",
     "eliashberg_dynamic",
     "eliashberg_dynamic_so",
     "flex",
-    "offsite",
-    "second_order",
     "so_bond",
     "so_pairing",
 })

@@ -268,7 +268,7 @@ def _placement_sensitive_types(interactions, cell_shape):
     holds a different Hamiltonian."""
     if not interactions:
         return []
-    from hwave.sc import _offsite_mirror_asymmetry
+    from hwave.solver.eliashberg.vertex import _offsite_mirror_asymmetry
     # the types the archive's bond channels are built from (an aggregate
     # Coulomb table carries CoulombInter rows)
     return [t for t in ("Coulomb", "CoulombInter", "Hund", "Ising")
@@ -546,7 +546,8 @@ def solve_dynamic_bond(input_dict):
     sc.reject_spin_orbital_mode(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
-    beta = sc._coerce_run_beta(T)
+    from hwave.solver.eliashberg.config import _coerce_run_beta
+    beta = _coerce_run_beta(T)
     cell = list(mode_param["CellShape"])
     cell = cell + [1] * (3 - len(cell))
     sub = list(mode_param.get("SubShape", cell))
@@ -611,7 +612,8 @@ def solve_dynamic_bond(input_dict):
     # --- IR axes (optional) -------------------------------------------------
     axF = axB = None
     if use_ir:
-        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+        from hwave.solver.eliashberg.vertex import _build_interaction_k
+        inter_k = _build_interaction_k(kx, ky, kz, interactions, norb)
         axF, axB = _ed._ir_axes_for_run({"ir_tol": ctl.ir_tol, "ir_wmax": ctl.ir_wmax},
                                         beta, hr, inter_k, norb, mu=mode_param.get("mu"),
                                         filling=mode_param.get("filling"))

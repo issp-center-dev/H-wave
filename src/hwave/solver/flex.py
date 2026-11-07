@@ -1259,7 +1259,7 @@ class FLEX(RPA):
         correction of issue #232 when this run's declaration is
         placement-sensitive (judged on the PRE-fold declaration and the
         CellShape grid): such a seed belongs to a different Hamiltonian."""
-        from hwave.sc import check_placement_stamp
+        from hwave.solver.eliashberg.vertex import check_placement_stamp
         hi = getattr(self, "ham_info", None)
         decl = (getattr(hi, "param_ham_orig", None) or getattr(hi, "param_ham", None)
                 if hi is not None else None)
@@ -3075,7 +3075,7 @@ class FLEX(RPA):
         if self._ir_axF is not None:
             return
         from hwave.solver.ir_axis import IRAxis, auto_wmax
-        import hwave.sc as sc
+        from hwave.solver.eliashberg.band import _determine_mu
         wmax = self.ir_wmax
         if wmax is None:
             ew = _bk.to_host(self.H0_eigenvalue)
@@ -3094,7 +3094,7 @@ class FLEX(RPA):
                 Ncond_target = (self.Ncond / 2 if self.spin_mode == "spin-free"
                                 else self.Ncond)
                 filling = float(Ncond_target) / float(ew.size)
-                mu = sc._determine_mu(
+                mu = _determine_mu(
                     np.asarray(ew).reshape(-1, 1, 1, 1), beta, filling, 1)
             else:
                 mu = float(self.mu_value)

@@ -39,7 +39,7 @@ vertex (#181, Tier 3). ``hwave.sc``'s own callers (Eliashberg) keep the
 shared builder unchanged.
 """
 
-from hwave.sc import _build_sc_matrices_all_q
+from hwave.solver.eliashberg.vertex import _build_sc_matrices_all_q
 
 # The interaction types whose off-site content has a q-only representation
 # in the pair-space S/C matrices: density-density on each site, so the

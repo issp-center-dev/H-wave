@@ -267,10 +267,10 @@ def _check_so_dynamic_config(eli):
             "run) or \"calc\" (the spinful chi0 is computed here at every "
             "bosonic frequency). A loaded chi0q carries no Green function for "
             "the pair bubble.".format(_SO_DYN_WHAT, mode))
-    from hwave import sc
+    from hwave.solver.eliashberg.config import _bond_bool_option
     for key in ("zero_chi_s", "zero_chi_c"):
         # strict parse, as on the bond path: a typo is refused, false is fine
-        if sc._bond_bool_option(eli, key, False):
+        if _bond_bool_option(eli, key, False):
             raise ValueError(
                 "{}: [eliashberg] {} has no meaning in spin-orbital mode: the "
                 "pairing vertex is built from the single spinful channel, which "
@@ -314,8 +314,8 @@ def check_so_config(input_dict):
             "or \"dynamic\" (or remove the key).".format(_SO_WHAT, freq))
     bond = eli.get("bond_channels")
     if bond is not None:
-        from hwave import sc
-        if sc._bond_bool_option(eli, "bond_channels", False):
+        from hwave.solver.eliashberg.config import _bond_bool_option
+        if _bond_bool_option(eli, "bond_channels", False):
             raise ValueError(
                 "{}: [eliashberg] bond_channels = true is not supported; the "
                 "spin-orbital pairing vertex is on-site only. Set bond_channels = "
