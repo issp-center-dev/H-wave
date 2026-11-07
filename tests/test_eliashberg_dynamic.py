@@ -2703,6 +2703,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
         reports NaN, "not-converged", eigen_converged = false, with a finite
         gap in the channel sector."""
         import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         import scipy.sparse.linalg as spl
         from hwave.solver import eliashberg_dynamic as ed
 
@@ -2727,9 +2728,9 @@ class TestReducedChannelSolve(_unittest.TestCase):
                     with self.subTest(pairing_type=pairing_type,
                                       failing=failing.__name__,
                                       dense_max=dense_max), \
-                            _mock.patch.object(sc, "eigs", failing), \
+                            _mock.patch.object(sc_eigen, "eigs", failing), \
                             _mock.patch.object(spl, "eigs", failing), \
-                            _mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                            _mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX",
                                                dense_max):
                         out, info = self._run(M, pairing_type)
                         if dense_max > 1:
@@ -2807,6 +2808,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
     def test_no_listing_note_without_a_listing(self):
         """A failed sector solve (NaN, "not-converged") names no set."""
         import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         import scipy.sparse.linalg as spl
         M, _B = _sector_conserving_kernel(self.SHAPE, "singlet",
                                           self._random_block(12), 0.5)
@@ -2814,14 +2816,14 @@ class TestReducedChannelSolve(_unittest.TestCase):
         def failing(A, k=6, **kw):
             raise spl.ArpackNoConvergence("forced", np.array([]),
                                           np.array([]))
-        with _mock.patch.object(sc, "eigs", failing), \
-                _mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+        with _mock.patch.object(sc_eigen, "eigs", failing), \
+                _mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             out, _info = self._run(M, "singlet")
         self.assertEqual(out[8], "not-converged")
         self.assertTrue(out[4] is None or "eigenvalue listing" not in out[4])
         # below the dense limit the same failure is diagonalized densely,
         # and the listing says so
-        with _mock.patch.object(sc, "eigs", failing):
+        with _mock.patch.object(sc_eigen, "eigs", failing):
             out, _info = self._run(M, "singlet")
         self.assertEqual(out[8], "LR_projected")
         self.assertIn("largest-real-part eigenvalues of the 'singlet' channel "

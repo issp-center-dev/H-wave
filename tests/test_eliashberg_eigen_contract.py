@@ -35,6 +35,7 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
 from hwave.solver import eliashberg_dynamic as ed
 
 
@@ -465,8 +466,8 @@ class TestLargestRealSolveFailure(unittest.TestCase):
                 raise spl.ArpackNoConvergence("forced", np.array([]),
                                               np.array([]))
             return real_eigs(A, k=k, which=which, **kw)
-        with mock.patch.object(sc, "eigs", eigs), \
-                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", dense_max):
+        with mock.patch.object(sc_eigen, "eigs", eigs), \
+                mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", dense_max):
             # one LM eigenvalue: {-3}, which cannot be the largest real part
             return sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=1), M
 
@@ -491,7 +492,7 @@ class TestLargestRealSolveFailure(unittest.TestCase):
                 raise spl.ArpackNoConvergence("forced", np.array([]),
                                               np.array([]))
             return real_eigs(A, k=k, which=which, **kw)
-        with mock.patch.object(sc, "eigs", eigs), \
+        with mock.patch.object(sc_eigen, "eigs", eigs), \
                 _caplog("WARNING", logger="hwave_sc") as records:
             val, _vec, info = sc._solve_leading(mk, n, "arnoldi",
                                                 num_eigenvalues=2,

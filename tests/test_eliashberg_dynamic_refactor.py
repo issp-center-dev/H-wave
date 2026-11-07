@@ -486,6 +486,7 @@ class TestSecondaryRetryFailure(unittest.TestCase):
     def test_failed_retry_is_not_labelled_lr_retry(self):
         from unittest import mock
         import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         import scipy.sparse.linalg as spl
         real_leading = sc._solve_leading
         real_eigs = sc.eigs
@@ -510,8 +511,8 @@ class TestSecondaryRetryFailure(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         with mock.patch.object(sc, "_solve_leading", leading), \
-                mock.patch.object(sc, "eigs", eigs), \
-                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                mock.patch.object(sc_eigen, "eigs", eigs), \
+                mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             _run(tmp, "eigenvalue", None, fixture="random")
         self.assertEqual(calls, [None, "auto"])
         txt = open(os.path.join(tmp, "eigenvalue.dat")).read()

@@ -43,6 +43,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
 from hwave.solver import backend, bubble
 from hwave.solver import eliashberg_dynamic as dyn
 from hwave.solver import eliashberg_dynamic_so as dso
@@ -313,8 +314,8 @@ def _failing_largest_real():
         if which == "LR":
             raise spl.ArpackNoConvergence("forced", np.array([]), np.array([]))
         return real_eigs(A, k=k, which=which, **kw)
-    return (mock.patch.object(sc, "eigs", eigs),
-            mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1))
+    return (mock.patch.object(sc_eigen, "eigs", eigs),
+            mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1))
 
 
 def _run(inp, spy_solve=True):
@@ -1071,8 +1072,8 @@ class TestSecondaryRetryFailure(_FlexFixture):
         inp = S._input(self.d, self.files, True, _dyn_eli(chi0q_mode="calc"),
                        nmat=_NMAT_E2E, out=out)
         with _quiet(), mock.patch.object(sc, "_so_solve_eigenvalue", solve), \
-                mock.patch.object(sc, "eigs", eigs), \
-                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                mock.patch.object(sc_eigen, "eigs", eigs), \
+                mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             lam = sc.calc_eliashberg(inp)
         self.assertEqual(calls, [None, "auto"])
         self.assertTrue(np.isnan(lam))
@@ -1107,7 +1108,7 @@ class TestNullOperatorLabel(_FlexFixture):
                        nmat=_NMAT_E2E, out=out)
         with _quiet(), mock.patch.object(dso, "make_operator", zero_make), \
                 _forced_arpack_error(-9), \
-                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             lam = sc.calc_eliashberg(inp)
         self.assertEqual(lam, 0.0)
         txt = open(os.path.join(out, "eigenvalue.dat")).read()

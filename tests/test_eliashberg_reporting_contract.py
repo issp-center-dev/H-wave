@@ -22,6 +22,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
 
 
 class TestStaticChannelLeader(unittest.TestCase):
@@ -215,8 +216,13 @@ class TestChannelLeaderFromTheSectorSolve(unittest.TestCase):
         inp["eliashberg"]["g2_tail"] = False
         inp["eliashberg"].update(eli)
         n = M.shape[0]
+        # calc_eliashberg builds the sector operator itself, and the global
+        # solve builds its own inside hwave.solver.eliashberg.eigen
+        # (dev/sc-split-plan.md, step 2): both call sites see the kernel
         with mock.patch.object(sc, "_make_kernel_operator",
-                               return_value=(aslinearoperator(M), n)):
+                               return_value=(aslinearoperator(M), n)), \
+                mock.patch.object(sc_eigen, "_make_kernel_operator",
+                                  return_value=(aslinearoperator(M), n)):
             lam = sc.calc_eliashberg(inp)
         with open(os.path.join(out, "eigenvalue.dat")) as fh:
             return lam, fh.read()
@@ -618,7 +624,7 @@ class TestChannelLeaderAlwaysFromTheSectorSolve(unittest.TestCase):
         def spy(*a, **k):
             calls.append(a)
             return real(*a, **k)
-        with mock.patch.object(sc, "_parity_sector_basis", side_effect=spy):
+        with mock.patch.object(sc_eigen, "_parity_sector_basis", side_effect=spy):
             lam, text = t._run(M, solver_mode="eigenvalue",
                                num_eigenvalues=num_eigenvalues,
                                pairing_type=pairing_type)
@@ -718,8 +724,8 @@ def _failing_first_lm(fail_lr=False):
         if which == "LR" and fail_lr:
             raise spl.ArpackNoConvergence("forced", np.array([]), np.array([]))
         return real_eigs(A, k=k, which=which, **kw)
-    return (mock.patch.object(sc, "eigs", eigs),
-            mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1), state)
+    return (mock.patch.object(sc_eigen, "eigs", eigs),
+            mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1), state)
 
 
 def _dyn_channel_kernel(channel_vals, other_val, shape=(1, 1, 4, 1, 1, 4)):
@@ -800,7 +806,7 @@ class TestProjectedSolveFailureContract(unittest.TestCase):
         M, shape = _dyn_channel_kernel([-10.0, -12.0], 0.5)
         for kind in self.KINDS:
             with self.subTest(kind=kind), \
-                    mock.patch.object(sc, "eigs", _all_eigs_failing(kind)):
+                    mock.patch.object(sc_eigen, "eigs", _all_eigs_failing(kind)):
                 out, info = _run_dynamic(M, shape)
             self.assertAlmostEqual(out[0], -10.0, delta=1e-10)
             self.assertIs(info["eigen_converged"], True)
@@ -812,9 +818,9 @@ class TestProjectedSolveFailureContract(unittest.TestCase):
             M, shape = _dyn_channel_kernel(vals, other)
             for kind in self.KINDS:
                 with self.subTest(vals=vals, kind=kind), \
-                        mock.patch.object(sc, "eigs",
+                        mock.patch.object(sc_eigen, "eigs",
                                           _all_eigs_failing(kind)), \
-                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                        mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
                     out, info = _run_dynamic(M, shape)
                 self.assertTrue(np.isnan(out[0]))
                 self.assertIs(info["eigen_converged"], False)
@@ -835,12 +841,12 @@ class TestProjectedSolveFailureContract(unittest.TestCase):
                 raise spl.ArpackNoConvergence("forced", np.array([]),
                                               np.array([]))
             return real_eigs(A, k=k, which=which, **kw)
-        with mock.patch.object(sc, "eigs", eigs):
+        with mock.patch.object(sc_eigen, "eigs", eigs):
             out, info = _run_dynamic(M, shape)
         self.assertAlmostEqual(out[0], 0.1, delta=1e-10)
         self.assertEqual(out[8], "LR_projected")
-        with mock.patch.object(sc, "eigs", eigs), \
-                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+        with mock.patch.object(sc_eigen, "eigs", eigs), \
+                mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             out, info = _run_dynamic(M, shape)
         self.assertTrue(np.isnan(out[0]))
         self.assertIs(info["eigen_converged"], False)
@@ -860,10 +866,10 @@ class TestProjectedSolveFailureContract(unittest.TestCase):
             raise spl.ArpackError(-9)
         for forced in (False, True):
             for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
-                patches = [mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                patches = [mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX",
                                              dense_max)]
                 if forced:
-                    patches.append(mock.patch.object(sc, "eigs", minus_9))
+                    patches.append(mock.patch.object(sc_eigen, "eigs", minus_9))
                 with self.subTest(forced=forced, dense_max=dense_max), \
                         patches[0], (patches[1] if forced
                                      else contextlib.nullcontext()):
@@ -889,7 +895,7 @@ def _forced_arpack_error(code):
 
     def eigs(A, k=6, **kw):
         raise spl.ArpackError(code)
-    return mock.patch.object(sc, "eigs", eigs)
+    return mock.patch.object(sc_eigen, "eigs", eigs)
 
 
 class TestExactlyZeroOperator(unittest.TestCase):
@@ -909,7 +915,7 @@ class TestExactlyZeroOperator(unittest.TestCase):
                 with self.subTest(method=method, shift=shift,
                                   dense_max=dense_max), \
                         _forced_arpack_error(-9), \
-                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                        mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX",
                                           dense_max):
                     lam, vec, info = sc._solve_leading(
                         lambda: (_zero_op(n), n), n, method,
@@ -942,7 +948,7 @@ class TestExactlyZeroOperator(unittest.TestCase):
             for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
                 with self.subTest(name=name, dense_max=dense_max), \
                         _forced_arpack_error(-9), \
-                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                        mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX",
                                           dense_max):
                     A = LinearOperator((n, n), matvec=lambda v, m=mat: m @ v,
                                        dtype=complex)
@@ -986,7 +992,7 @@ class TestExactlyZeroOperator(unittest.TestCase):
         seed = phi0.ravel() / np.linalg.norm(phi0)
         for forced in (False, True):
             with self.subTest(forced=forced), \
-                    mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1), \
+                    mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1), \
                     (_forced_arpack_error(-9) if forced
                      else contextlib.nullcontext()):
                 info = {}
@@ -1014,7 +1020,7 @@ class TestExactlyZeroOperator(unittest.TestCase):
             return (np.full(k, np.nan + 0j),
                     np.full((A.shape[0], k), np.nan + 0j))
         calls = []
-        stand_in = mock.patch.object(sc, "eigs", nan_eigs)
+        stand_in = mock.patch.object(sc_eigen, "eigs", nan_eigs)
         stand_in.start()
         self.addCleanup(stand_in.stop)
         for n in (2, 30):
@@ -1024,7 +1030,7 @@ class TestExactlyZeroOperator(unittest.TestCase):
                 for shift in (None, "auto"):
                     kw = {} if shift is None else {"spectral_shift": shift}
                     with self.subTest(n=n, dense_max=dense_max, shift=shift), \
-                            mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                            mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX",
                                               dense_max):
                         lam, vec, info = sc._solve_leading(
                             lambda: (op, n), n, "arnoldi", num_eigenvalues=4,
@@ -1040,7 +1046,7 @@ class TestExactlyZeroOperator(unittest.TestCase):
     def test_other_error_on_a_zero_operator_is_a_failed_solve(self):
         n = 30
         with _forced_arpack_error(-3), \
-                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             lam, vec, info = sc._solve_leading(
                 lambda: (_zero_op(n), n), n, "arnoldi", num_eigenvalues=4)
         self.assertTrue(np.isnan(lam))
@@ -1254,7 +1260,7 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
             for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
                 with self.subTest(method=method, shift=shift,
                                   dense_max=dense_max), \
-                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX",
+                        mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX",
                                           dense_max):
                     lam, vec, info = sc._solve_leading(
                         mk, n, method, num_eigenvalues=4, **kw)
@@ -1287,14 +1293,14 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
         for method, shift in self.CASES:
             kw = {} if shift is None else {"spectral_shift": shift}
             with self.subTest(method=method, shift=shift, side="dense"), \
-                    mock.patch.object(sc, "eigs", eigs):
+                    mock.patch.object(sc_eigen, "eigs", eigs):
                 lam, _v, info = sc._solve_leading(mk, n, method,
                                                   num_eigenvalues=4, **kw)
                 self.assertAlmostEqual(float(np.real(lam)), 0.5, delta=1e-12)
                 self.assertEqual(info["selection"], "dense-LR")
             with self.subTest(method=method, shift=shift, side="above"), \
-                    mock.patch.object(sc, "eigs", eigs), \
-                    mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                    mock.patch.object(sc_eigen, "eigs", eigs), \
+                    mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
                 lam, vec, info = sc._solve_leading(mk, n, method,
                                                    num_eigenvalues=4, **kw)
                 self.assertTrue(np.isnan(lam))
@@ -1324,16 +1330,16 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
             return vals, vecs
         for method, kw, patch in (
                 ("shift-invert-gmres", {}, mock.patch.object(
-                    sc, "_eigs_shift_invert", si)),
+                    sc_eigen, "_eigs_shift_invert", si)),
                 ("arnoldi", {"spectral_shift": "auto"}, mock.patch.object(
-                    sc, "eigs", eigs))):
+                    sc_eigen, "eigs", eigs))):
             with self.subTest(method=method, side="dense"), patch:
                 lam, _v, info = sc._solve_leading(mk, n, method,
                                                   num_eigenvalues=4, **kw)
                 self.assertAlmostEqual(lam, 1.0, delta=1e-12)
                 self.assertEqual(info["selection"], "dense-LR")
             with self.subTest(method=method, side="above"), patch, \
-                    mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                    mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
                 lam, vec, info = sc._solve_leading(mk, n, method,
                                                    num_eigenvalues=4, **kw)
                 self.assertTrue(np.isnan(lam))
@@ -1356,8 +1362,8 @@ class TestArpackErrorsInTheSharedDriver(unittest.TestCase):
                         return np.full_like(vals, bad), vecs
                     return real_eigs(A, k=k, which=which, **kw)
                 with self.subTest(method=method, bad=bad), \
-                        mock.patch.object(sc, "eigs", eigs), \
-                        mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                        mock.patch.object(sc_eigen, "eigs", eigs), \
+                        mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
                     lam, vec, info = sc._solve_leading(mk, n, method,
                                                        num_eigenvalues=4)
                     self.assertTrue(np.isnan(lam))
@@ -1384,15 +1390,15 @@ class TestRound15Contracts(unittest.TestCase):
                     vals = np.full_like(vals, bad)
                 return vals, vecs
             with self.subTest(bad=bad, side="dense"), \
-                    mock.patch.object(sc, "eigs", eigs):
+                    mock.patch.object(sc_eigen, "eigs", eigs):
                 lam, _v, info = sc._solve_leading(
                     mk, n, "arnoldi", num_eigenvalues=4,
                     spectral_shift="auto")
                 self.assertAlmostEqual(lam, 1.0, delta=1e-12)
                 self.assertEqual(info["selection"], "dense-LR")
             with self.subTest(bad=bad, side="above"), \
-                    mock.patch.object(sc, "eigs", eigs), \
-                    mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+                    mock.patch.object(sc_eigen, "eigs", eigs), \
+                    mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
                 lam, vec, info = sc._solve_leading(
                     mk, n, "arnoldi", num_eigenvalues=4,
                     spectral_shift="auto")
