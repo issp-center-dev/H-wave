@@ -21,6 +21,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
 from hwave import qlms
 from hwave.solver import eliashberg_dynamic
 from tests.test_sc_spin_orbital import (_input, _quiet, _run_flex,
@@ -175,7 +176,7 @@ class TestFlexMode(_Base):
         with _quiet(), \
                 mock.patch.object(sc, "_compute_vertices_flex",
                                   side_effect=AssertionError("heavy work")), \
-                mock.patch.object(sc, "_load_flex_green",
+                mock.patch.object(sc_io, "_load_flex_green",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
@@ -199,7 +200,7 @@ class TestFlexMode(_Base):
     def test_dynamic_refuses_before_heavy_work(self):
         inp = self._flex_inp(dynamic=True)
         with _quiet(), \
-                mock.patch.object(sc, "_load_flex_green",
+                mock.patch.object(sc_io, "_load_flex_green",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 eliashberg_dynamic.solve_dynamic(inp)

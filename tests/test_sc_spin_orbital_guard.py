@@ -22,6 +22,7 @@ import tempfile
 import unittest
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
 
 
 class TestSpinOrbitalGuardUnit(unittest.TestCase):
@@ -78,7 +79,7 @@ class TestSpinOrbitalGuardUnit(unittest.TestCase):
             seen.append(flag)
             return real(data, flag, file_name)
 
-        with mock.patch.object(sc, "validate_chi0q_index_convention",
+        with mock.patch.object(sc_io, "validate_chi0q_index_convention",
                                side_effect=spy):
             try:
                 sc._load_chi0q(inp)

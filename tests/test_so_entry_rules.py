@@ -1035,6 +1035,7 @@ class TestVersionTwo(unittest.TestCase):
         import contextlib
         import io
         import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         import tests.test_sc_spin_orbital as S
         loader = sc._load_flex_so_sigma
         lam, loaded = {}, {}
@@ -1052,7 +1053,7 @@ class TestVersionTwo(unittest.TestCase):
                 loaded[order] = loader(*a, **k)
                 return loaded[order]
             with contextlib.redirect_stdout(io.StringIO()), S._quiet(), \
-                    mock.patch.object(sc, "_load_flex_so_sigma", side_effect=spy):
+                    mock.patch.object(sc_io, "_load_flex_so_sigma", side_effect=spy):
                 lam[order] = sc.calc_eliashberg(inp)
         self.assertTrue(eigenvalues_close(lam[">"], lam["<"]))
         self.assertEqual(loaded[">"].dtype, np.dtype(np.complex128))

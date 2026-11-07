@@ -54,6 +54,7 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
 from hwave.solver import so_pairing
 from hwave.solver.spin_orbital import ORBITAL_SITE_WARNING
 
@@ -1726,7 +1727,7 @@ class TestFlexMode(unittest.TestCase):
         shutil.copytree(self.flex, bad)
         os.remove(os.path.join(bad, "chi0q.npz"))
         with mock.patch.object(
-                sc, "_load_flex_green",
+                sc_io, "_load_flex_green",
                 side_effect=AssertionError("green read before the check")), \
                 mock.patch.object(
                     sc, "_so_rpa_vertex",
@@ -1863,16 +1864,16 @@ class TestFlexMode(unittest.TestCase):
             with np.load(src) as a, np.load(dst) as b:
                 self.assertEqual(a["chi0q"].shape, b["chi0q"].shape)
             with self.subTest(case=label, marker=tag), mock.patch.object(
-                    sc, "_load_flex_green", side_effect=green_boom), \
+                    sc_io, "_load_flex_green", side_effect=green_boom), \
                     mock.patch.object(
-                        sc, "_so_flex_static_slice",
+                        sc_io, "_so_flex_static_slice",
                         side_effect=AssertionError("array sliced before the check")), \
                     mock.patch.object(
                         sc, "_so_rpa_vertex",
                         side_effect=AssertionError("vertex built before the check")):
                 self._refused(pattern, _flex_input(
                     d, files, bad, out=self._out("out_{}_{}".format(label, tag))))
-        with mock.patch.object(sc, "_load_flex_green", side_effect=green_boom), \
+        with mock.patch.object(sc_io, "_load_flex_green", side_effect=green_boom), \
                 self.assertRaisesRegex(AssertionError, "green read"), _quiet():
             sc.calc_eliashberg(_flex_input(d, files, flex,
                                            out=self._out("out_" + label + "_ok")))
@@ -1888,7 +1889,7 @@ class TestFlexMode(unittest.TestCase):
         _resave(os.path.join(self.flex, "chi0q.npz"),
                 os.path.join(bad, "chi0q.npz"), spin_orbital=False)
         with mock.patch.object(
-                sc, "_so_flex_static_slice",
+                sc_io, "_so_flex_static_slice",
                 side_effect=AssertionError("array sliced before the check")):
             self._refused(r"chiq\.npz': momentum_convention must be a single "
                           r"value", _flex_input(self.d, self.files, bad,
@@ -1930,7 +1931,7 @@ class TestFlexMode(unittest.TestCase):
             with np.load(os.path.join(flex, "chiq.npz")) as z:
                 self.assertEqual(str(z["chi_convention"]), tag)
             with self.subTest(scheme=scheme), mock.patch.object(
-                    sc, "_load_flex_green",
+                    sc_io, "_load_flex_green",
                     side_effect=AssertionError("green read before the check")), \
                     mock.patch.object(
                         sc, "_so_rpa_vertex",

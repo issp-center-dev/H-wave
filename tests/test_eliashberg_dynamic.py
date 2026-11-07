@@ -424,6 +424,7 @@ def test_static_flex_loader_expands_single_frequency(tmp_path, monkeypatch):
     expansion -- expanding one frequency, not the full Nmat axis (the memory
     regression). The full loader still expands the whole axis."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     m = _write_flex_so_fixture(tmp_path, nmat=8)
     inp = _flex_input(tmp_path, m["nmat"])
 
@@ -434,7 +435,7 @@ def test_static_flex_loader_expands_single_frequency(tmp_path, monkeypatch):
         seen.append(chi_raw.shape[0])    # leading axis = frequency count
         return real_expand(chi_raw, *a, **k)
 
-    monkeypatch.setattr(sc, "_expand_flex_chi", _spy)
+    monkeypatch.setattr(sc_io, "_expand_flex_chi", _spy)
     sc._load_flex_susceptibilities(inp, m["norb"], m["Nx"], m["Ny"], m["Nz"])
 
     assert seen and max(seen) == 1, \
