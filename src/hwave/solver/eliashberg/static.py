@@ -334,8 +334,8 @@ def _read_static_options(run):
     # dynamic vertex, so warn rather than silently ignore them.
     _warn_if_static_ignores_channel_flags(run.eli_param)
 
-    # GPU backend for the static kernel (the dynamic branch returned above and
-    # handles its own gpu flag). get_backend falls back to numpy with a warning
+    # GPU backend for the static kernel (the dynamic branch returned from
+    # calc_eliashberg before this stage and handles its own gpu flag). get_backend falls back to numpy with a warning
     # when CuPy/CUDA is unusable, unless gpu_required=true (then it raises).
     run.use_gpu = backend.as_bool(run.eli_param.get("gpu", False))
     gpu_required = backend.as_bool(run.eli_param.get("gpu_required", False))
@@ -352,7 +352,7 @@ def _read_static_options(run):
     # for triplet) when the user did not specify one. For a centrosymmetric
     # system the kernel preserves parity in exact arithmetic, but numerical
     # noise leaks the wrong parity; _solve_iteration projects every iterate back
-    # onto the channel's sector (pairing_type below), so the seed stays in -- and
+    # onto the channel's sector (pairing_type, _prepare_solvers), so the seed stays in -- and
     # converges within -- the physical sector. (For a non-centrosymmetric kernel
     # _solve_iteration detects [A,P] != 0 and disables the projection.)
     run.init_gap_mode = _resolve_init_gap(run.eli_param.get("init_gap"), run.pairing_type)
@@ -360,8 +360,8 @@ def _read_static_options(run):
     run.chi0q_tensor = run.eli_param.get("chi0q_tensor", "auto")
     # Bond-resolved interaction channels (opt-in, spec S5). The options are
     # ignored with a warning when the flag is off; the guards themselves run
-    # right after the interaction files are read (below), before any
-    # chi0q/FLEX data is touched.
+    # right after the interaction files are read (_check_bond_and_archives),
+    # before any chi0q/FLEX data is touched.
     (run.use_bond_channels, run.bond_green, run.bond_max_shells, run.bond_memory_cap_gb,
      run.bond_precondition_opts, run.bond_diagnostics) = _read_bond_config(run.eli_param)
     from requests.structures import CaseInsensitiveDict
@@ -497,7 +497,7 @@ def _prepare_band(run):
         band_sources = _one_body_band_sources(run.input_dict)
         if band_sources:
             if run.chi0q_mode == "calc" and not run.use_bond_channels:
-                # the same solver computes chi0q below
+                # the same solver computes chi0q in _vertex_rpa
                 band_scheme = _chi0q_tensor_scheme(
                     run.chi0q_tensor,
                     run.input_dict["file"]["input"].get("interaction", {}))
@@ -532,7 +532,7 @@ def _build_one_body(run):
         # the Transfer file is interleaved; everything downstream is
         # spin-block. Extern adds coeff_extern * sigma^z H_ab(k), exactly as
         # in the spin-orbital RPA band (spin-orbital mode refuses trans_mod /
-        # green_init, so it never takes the mean-field band below)
+        # green_init, so it never takes the mean-field band of _build_one_body)
         logger.info("Building Hamiltonian in k-space...")
         run.epsilon_k = _so_epsilon_k(run.input_dict, run.kx_array, run.ky_array, run.kz_array,
                                   run.hr, run.so_extern_table, run.norb_phys)
@@ -801,7 +801,7 @@ def _vertex_rpa(run):
 
     # Step 6: Calculate bare Green's function
     logger.info("Calculating Green's function G(k, iwn)...")
-    # Same rationale as the FLEX-fallback branch above: only full_sc is
+    # Same rationale as the FLEX-fallback branch (_vertex_flex): only full_sc is
     # consumed here, and it is independent of coeff_tail. Also same
     # transient-memory caveat: _build_bond_green briefly holds the
     # canonical build_green output alongside its sc-layout conversion
@@ -914,7 +914,7 @@ def _build_g2_and_seed(run):
 
     # GPU: park the two large invariants (pairing vertex and pair bubble) on the
     # device once; each matvec then only moves the gap vector across PCIe. The
-    # solver entry points below pass Vs_q/G2 straight to _make_kernel_operator,
+    # solver legs (_iteration_leg, _eigenvalue_leg) pass Vs_q/G2 straight to _make_kernel_operator,
     # which derives its backend from them, so no other change is needed here.
     if run.gpu_active and not run.use_bond_channels:
         # Resident device tensors are more than the two inputs: the operator
@@ -944,7 +944,7 @@ def _prepare_solvers(run):
     run.eigenvalues_eig = None
     run.eigenvectors_eig = None
     run.eigenvalue_match = None
-    # Live only on the iteration path; kept in scope so the output artifact can
+    # Live only on the iteration path; kept on the run record so that _write_results can
     # record WHICH quantity the written number is and whether it converged
     # (review fix C1).
     run.converged = None
@@ -953,7 +953,7 @@ def _prepare_solvers(run):
     # Spectral shift of the POWER ITERATION (None unless requested). When set,
     # the iteration runs on K + sigma*I and its reported eigenvalue is the
     # signed eigenvalue of K, which changes how the result must be labelled
-    # below; keep it in scope for that.
+    # in _write_results; it is kept on the run record for that.
     # An absent spectral_shift means "auto" for the power iteration
     # (_resolve_spectral_shift); "none" keeps it unshifted.
     run.iteration_spectral_shift = (
@@ -968,7 +968,7 @@ def _prepare_solvers(run):
     run.iteration_info = {}
 
     if run.spin_orbital_mode:
-        # both solvers below work on the antisymmetric coordinates of the
+        # both solver legs (_iteration_leg, _eigenvalue_leg) work on the antisymmetric coordinates of the
         # gap (E^dagger K E): the Pauli-forbidden sector is not in the space
         run.so_basis = _SOAntisymmetricBasis((run.norb, run.norb, run.Nx, run.Ny, run.Nz))
         run.A_so, _ = _make_kernel_operator(run.Vs_q, run.G2, run.norb, run.Nx, run.Ny, run.Nz)
@@ -1335,7 +1335,7 @@ def calc_eliashberg(input_dict):
     # [mode] enable_spin_orbital (issue #83): the static entry solves the
     # spin-orbital gap equation; every combination it does not support is
     # refused here, before any file is read (check_so_config), and after the
-    # interaction files are read (check_so_supported, below).
+    # interaction files are read (check_so_supported, _read_model).
     spin_orbital_mode = _resolve_spin_orbital_flag(input_dict)
     if spin_orbital_mode:
         from hwave.solver import so_pairing

@@ -1,22 +1,21 @@
-"""Layering guard for the sc.py split (dev/sc-split-plan.md, step 0).
+"""Layering guard for the sc.py split (dev/sc-split-plan.md, steps 0 and 7).
 
-``hwave.sc`` is being taken apart into ``hwave/solver/eliashberg/``, one
-layer per pull request, each a pure move. Two things must hold throughout:
+``hwave.sc`` was taken apart into ``hwave/solver/eliashberg/``, one layer per
+pull request, each a pure move; it is now the entry shell. Two things must
+hold from here on:
 
-1. **The shell stays complete.** Every name that the tests or the solver
-   modules reach through ``hwave.sc`` (``sc._load_chi0q``,
-   ``sc._solve_leading``, ...) is still an attribute of ``hwave.sc`` after a
-   move, because the shell re-exports it. The set of names is read from the
-   source tree at test time, so a new reference is covered the moment it is
-   written and a dropped re-export fails here instead of in some test that
-   runs an hour later.
+1. **The shell is the public API and nothing else.** The only names reached
+   through ``hwave.sc`` anywhere in the tree are :data:`PUBLIC_API` and
+   :data:`PUBLIC_CONSTANTS` (the console script, the temperature sweep and
+   external scripts use them); a private name is read from the module that
+   owns it. The set of names is read from the source tree at test time, so a
+   new ``sc._x`` reference fails here instead of waiting for the shell to
+   lose it.
 
-2. **The layer inversion only shrinks.** Modules under ``hwave/solver/`` are
-   the layer ``hwave.sc`` is built on; the ones that import ``hwave.sc`` back
-   invert that. ``SOLVER_MODULES_IMPORTING_SC`` is the exact set allowed
-   today. A module that stops importing ``hwave.sc`` must be removed from the
-   set (the test fails otherwise), so the set can only go down; a module that
-   starts importing it fails the test.
+2. **The layer inversion stays gone.** Modules under ``hwave/solver/`` are
+   the layer ``hwave.sc`` is built on; none of them imports ``hwave.sc``.
+   ``SOLVER_MODULES_IMPORTING_SC`` is the exact set allowed today: empty. A
+   module that starts importing ``hwave.sc`` fails the test.
 
 Both checks parse the sources with ``ast`` rather than importing the
 modules, so they run in milliseconds and in the fast gate.
@@ -42,10 +41,12 @@ SOLVER_MODULES_IMPORTING_SC = frozenset({
     # hwave.sc.
 })
 
-#: The public surface of ``hwave.sc`` that must outlive the split: the
-#: console script (``hwave_sc = "hwave.sc:main"``), tsweep and external
-#: scripts call these.
+#: The public surface of ``hwave.sc`` that outlives the split: the console
+#: script (``hwave_sc = "hwave.sc:main"``), tsweep and external scripts call
+#: these.
 PUBLIC_API = ("calc_eliashberg", "main", "reject_spin_orbital_mode")
+PUBLIC_CONSTANTS = ("DEFAULT_SOLVER_MODE", "IN_PROCESS_DEFAULT_SOLVER_MODE",
+                    "EXIT_EIGEN_NOT_CONVERGED")
 
 def _python_files(*roots):
     for root in roots:
@@ -129,31 +130,33 @@ def _names_reached_through_sc(paths):
     return names
 
 
-class TestShellStaysComplete(unittest.TestCase):
+class TestShellIsThePublicApi(unittest.TestCase):
 
-    def test_every_referenced_name_is_an_attribute_of_hwave_sc(self):
+    def test_only_the_public_api_is_reached_through_hwave_sc(self):
         import hwave.sc as sc
 
         paths = [p for p in _python_files(HERE, SRC)
                  if os.path.abspath(p) != os.path.abspath(sc.__file__)
                  and os.path.basename(p) != os.path.basename(__file__)]
         referenced = _names_reached_through_sc(paths)
-        # step 7b: the tests read the private names from their modules, so
-        # only the public API (and tsweep's two helpers, until step 7c) is
-        # left; the scan must still find at least that
-        self.assertGreaterEqual(len(referenced), len(PUBLIC_API),
-                                "the scan found suspiciously few references; "
-                                "has the import form of the tests changed?")
-        missing = sorted(n for n in referenced if not hasattr(sc, n))
-        self.assertEqual(missing, [],
-                         "names reached through hwave.sc that hwave.sc no longer "
-                         "exposes (re-export them from the module they moved to): "
-                         + ", ".join(missing))
+        self.assertIn("calc_eliashberg", referenced,
+                      "the scan found no reference to hwave.sc.calc_eliashberg; "
+                      "has the import form of the tests changed?")
+        allowed = set(PUBLIC_API) | set(PUBLIC_CONSTANTS)
+        private = sorted(n for n in referenced
+                         if n not in allowed and not n.startswith("__"))
+        self.assertEqual(private, [],
+                         "private names reached through hwave.sc (read them from "
+                         "the hwave.solver.eliashberg module that owns them): "
+                         + ", ".join(private))
 
     def test_public_api_present(self):
         import hwave.sc as sc
         for name in PUBLIC_API:
             self.assertTrue(callable(getattr(sc, name, None)), name)
+        for name in PUBLIC_CONSTANTS:
+            self.assertTrue(hasattr(sc, name), name)
+        self.assertEqual(sorted(sc.__all__), sorted(PUBLIC_API + PUBLIC_CONSTANTS))
 
 
 class TestLayerInversionOnlyShrinks(unittest.TestCase):

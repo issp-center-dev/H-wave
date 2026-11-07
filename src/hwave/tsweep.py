@@ -120,7 +120,7 @@ def preflight(base, cont):
     # spin-orbital FLEX accepts no sigma_init seed (#83), so the warm start
     # that chains each rung's self-energy into the next would refuse rung 1
     # after rung 0 has run. Fail here instead, naming the setting.
-    from hwave.sc import _resolve_spin_orbital_flag
+    from hwave.solver.eliashberg.config import _resolve_spin_orbital_flag
     if _resolve_spin_orbital_flag(base) and cont.get("warm_start", True):
         raise ValueError(
             "[mode] enable_spin_orbital = true: the spin-orbital FLEX accepts no "
@@ -344,7 +344,7 @@ def config_fingerprint(base, run_eli, base_dir="."):
     # (None marks those states and still fingerprints distinctly from
     # True/False).
     if run_eli and eliashberg_frequency(base) != "dynamic":
-        from hwave.sc import _coerce_g2_tail
+        from hwave.solver.eliashberg.config import _coerce_g2_tail
         g2_tail_resolved = _coerce_g2_tail(
             CaseInsensitiveDict(base.get("eliashberg", {})).get(
                 "g2_tail", True))
