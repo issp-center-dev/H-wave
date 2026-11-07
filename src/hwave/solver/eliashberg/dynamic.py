@@ -2343,7 +2343,7 @@ def solve_dynamic(input_dict):
     # publicly callable, so route a direct call there too (its configuration
     # checks run first, before any file is read)
     if _resolve_spin_orbital_flag(input_dict):
-        from hwave.solver import eliashberg_dynamic_so
+        from hwave.solver.eliashberg import dynamic_so as eliashberg_dynamic_so
         return eliashberg_dynamic_so.solve_dynamic_so(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
@@ -2403,7 +2403,7 @@ def solve_dynamic(input_dict):
     # the flag silently ignored. The flag goes through the same strict reader as
     # every other bond option, so a typo is refused rather than read as false.
     if _bond_bool_option(eli_param, "bond_channels", False):
-        from hwave.solver import eliashberg_bond_io
+        from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
         return eliashberg_bond_io.solve_dynamic_bond(input_dict)
     pairing_type = eli_param.get("pairing_type", "singlet")
     use_gpu = _gpu_requested(eli_param)

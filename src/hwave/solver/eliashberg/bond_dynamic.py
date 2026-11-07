@@ -6,11 +6,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import backend as _bk
-from . import bond_channels as _bc
-from . import flex_bond as _fb
-from . import matsubara as _ms
-from . import half_grid as _hg
+from hwave.solver import backend as _bk
+from hwave.solver import bond_channels as _bc
+from hwave.solver import flex_bond as _fb
+from hwave.solver import matsubara as _ms
+from hwave.solver import half_grid as _hg
 
 logger = logging.getLogger("qlms").getChild("eliashberg_bond")
 
@@ -630,7 +630,7 @@ def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape, *, topo):
     -------
     ndarray, shape ``(norb, norb, norb, norb, Nx, Ny, Nz)``
     """
-    from . import eliashberg_dynamic as _ed
+    from hwave.solver.eliashberg import dynamic as _ed
     nx, ny, nz = (int(x) for x in spatial_shape)
     norb = int(round(nd ** 0.5))
     S0 = np.asarray(S)[:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
@@ -674,7 +674,7 @@ def offsite_singlet_bare_vertex(topo, norb, spatial_shape):
     ph = topo.coeffs.get("PairHop")
     if ex is None and ph is None:
         return Vr
-    from .bond_channels import is_real_coefficient
+    from hwave.solver.bond_channels import is_real_coefficient
     for t, arr in (("Exchange", ex), ("PairHop", ph)):
         if arr is not None:
             bad = [v for v in np.asarray(arr).ravel() if not is_real_coefficient(v)]
@@ -725,7 +725,7 @@ def block_to_rtau_uniform(blk, spatial_shape, norb, workers, xp):
 
 def _host_available_bytes():
     """Host memory the admission model may spend (the shared probe)."""
-    from . import eliashberg_dynamic as _ed
+    from hwave.solver.eliashberg import dynamic as _ed
     return _ed._available_ram_bytes()
 
 

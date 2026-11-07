@@ -494,7 +494,7 @@ def _device_cap(host_cap, where):
     logger: the device probe is allowed to have no answer (it returns ``None``
     when the query fails, not only when there is no device), and an admission
     that multiplied that would lose the run to a ``TypeError``."""
-    from . import eliashberg_bond as _eb
+    from hwave.solver.eliashberg import bond_dynamic as _eb
     return _eb.device_cap_or_host(host_cap, where, log=logger)
 
 
@@ -538,11 +538,11 @@ def solve_dynamic_bond(input_dict):
     from hwave.solver.eliashberg.static import reject_spin_orbital_mode
     from hwave.solver.eliashberg.bond import _resolve_bond_topology
     from hwave.solver.eliashberg.io import (_read_interaction_files, _resolve_flex_dir, _load_flex_green)
-    from . import backend as _bk
-    from . import bond_channels as _bc
-    from . import eliashberg_bond as _eb
-    from . import eliashberg_dynamic as _ed
-    from . import flex_bond as _fb
+    from hwave.solver import backend as _bk
+    from hwave.solver import bond_channels as _bc
+    from hwave.solver.eliashberg import bond_dynamic as _eb
+    from hwave.solver.eliashberg import dynamic as _ed
+    from hwave.solver import flex_bond as _fb
 
     # publicly callable, so guard the unsupported mode here too (issue #83)
     reject_spin_orbital_mode(input_dict)
@@ -721,8 +721,8 @@ def _inprocess_axes(solver):
     (the diagonalised H0 and the momentum-space interaction), so the auto value
     does not depend on files this entry never reads.
     """
-    from . import backend as _bk
-    from .ir_axis import IRAxis
+    from hwave.solver import backend as _bk
+    from hwave.solver.ir_axis import IRAxis
     ctl = solver._pairing_controls
     beta = 1.0 / solver.T
     wmax = ctl.ir_wmax
@@ -759,8 +759,8 @@ def pairing_preflight(solver):
     (``pairing_redress`` row), so the kernel rows here are measured against
     the device without the store.
     """
-    from . import backend as _bk
-    from . import eliashberg_bond as _eb
+    from hwave.solver import backend as _bk
+    from hwave.solver.eliashberg import bond_dynamic as _eb
     ctl = solver._pairing_controls
     nmat, nvol, norb = solver.nmat, solver.lattice.nvol, solver.norb
     B = solver._bond_view.n_channels
@@ -839,7 +839,7 @@ def run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
     # out-of-memory types part of the match once they are known.
     caught = (Exception,)
     try:
-        from . import backend as _bk
+        from hwave.solver import backend as _bk
         caught = (Exception,) + tuple(_bk.oom_error_types())
         _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info)
     except caught as exc:
@@ -863,7 +863,7 @@ def _release_device_store(store, *, last_group, xp):
     released after the last group also when an earlier group already moved
     the store to the host (or the store was a host store), so it is not
     held through the last kernel and its eigensolver."""
-    from . import backend as _bk
+    from hwave.solver import backend as _bk
     if getattr(store, "resident", None) is None:
         return                       # not a BondBlockStore (no residency)
     if last_group:
@@ -883,10 +883,10 @@ def _release_device_store(store, *, last_group, xp):
 
 
 def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
-    from . import backend as _bk
-    from . import bond_channels as _bc
-    from . import eliashberg_bond as _eb
-    from . import eliashberg_dynamic as _ed
+    from hwave.solver import backend as _bk
+    from hwave.solver import bond_channels as _bc
+    from hwave.solver.eliashberg import bond_dynamic as _eb
+    from hwave.solver.eliashberg import dynamic as _ed
     ctl = solver._pairing_controls
     xp = dev.xp
     nmat, nvol, norb = solver.nmat, solver.lattice.nvol, solver.norb
@@ -1125,8 +1125,8 @@ def _rollback_publication(order, names, tmps, done, backups):
 
 
 def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
-    from . import eliashberg_dynamic as _ed
-    from . import flex_bond as _fb
+    from hwave.solver.eliashberg import dynamic as _ed
+    from hwave.solver import flex_bond as _fb
     ctl = solver._pairing_controls
     shape = tuple(int(x) for x in solver.lattice.shape)
     kx, ky, kz = (np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) for n in shape)

@@ -51,7 +51,7 @@ from requests.structures import CaseInsensitiveDict
 from scipy.sparse.linalg import LinearOperator
 
 from hwave.solver import backend
-from hwave.solver.eliashberg_dynamic import (
+from hwave.solver.eliashberg.dynamic import (
     _available_ram_bytes, _fix_gauge, _npz_freq_size, _reverse_kw_and_orbital,
     _reverse_w_dynamic, calc_g2_dynamic, eliashberg_kernel_dynamic)
 

@@ -1343,7 +1343,7 @@ def calc_eliashberg(input_dict):
         if so_pairing.so_frequency(input_dict) == "dynamic":
             # the spin-orbital dynamic solver (issue #284); [eliashberg] is
             # read case-insensitively there, as the checks above read it
-            from hwave.solver import eliashberg_dynamic_so
+            from hwave.solver.eliashberg import dynamic_so as eliashberg_dynamic_so
             return eliashberg_dynamic_so.solve_dynamic_so(input_dict)
     run = _read_mode_params(input_dict, spin_orbital_mode)
 
@@ -1354,9 +1354,9 @@ def calc_eliashberg(input_dict):
         if _bond_bool_option(run.eli_param, "bond_channels", False):
             # bond-resolved dynamic pairing kernel, fed by the FLEX run's
             # bond archive (the on-site solver below reads chiq_s/chiq_c)
-            from hwave.solver import eliashberg_bond_io
+            from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
             return eliashberg_bond_io.solve_dynamic_bond(input_dict)
-        from hwave.solver import eliashberg_dynamic
+        from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
         return eliashberg_dynamic.solve_dynamic(input_dict)
 
     _read_static_options(run)

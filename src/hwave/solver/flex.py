@@ -677,7 +677,7 @@ class FLEX(RPA):
         construction (spec 7). ``self._pairing_controls`` is a
         :class:`~hwave.solver.eliashberg_bond_io.PairingControls` when the
         in-process pairing step is requested and ``None`` otherwise."""
-        from hwave.solver.eliashberg_bond_io import PairingControls
+        from hwave.solver.eliashberg.bond_io import PairingControls
         from hwave.solver.eliashberg.static import IN_PROCESS_DEFAULT_SOLVER_MODE
         self._pairing_controls = None
         types = self.longitudinal_bond_pairing
@@ -1418,7 +1418,7 @@ class FLEX(RPA):
                 # allocation, so the pairing step is admitted here -- after
                 # H0 is diagonalised (the IR auto-wmax reads its bands) and
                 # before the first map.
-                from hwave.solver import eliashberg_bond_io
+                from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
                 eliashberg_bond_io.pairing_preflight(self)
         else:
             self._calc_epsilon_k(green_info)
@@ -2719,7 +2719,7 @@ class FLEX(RPA):
                             # spec 7: NON-THROWING. The store (chibar of the
                             # last map), the bond device context and the
                             # final-state green_kw on xp are all alive here.
-                            from hwave.solver import eliashberg_bond_io
+                            from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
                             eliashberg_bond_io.run_inprocess_pairing(
                                 self, store, dev, green_kw, beta, green_info)
                 else:
@@ -5649,6 +5649,6 @@ class FLEX(RPA):
         # In-process pairing (spec 7): AFTER every FLEX artifact, in its own
         # guarded block -- a failure here never costs the FLEX outputs.
         if getattr(self, "_pairing_controls", None) is not None:
-            from hwave.solver import eliashberg_bond_io
+            from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
             eliashberg_bond_io.write_pairing_outputs(self, info_outputfile, green_info,
                                                      path_to_output)

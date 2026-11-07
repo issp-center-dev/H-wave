@@ -337,7 +337,7 @@ def _bond_kernel_parts(S, C, dressed, green_kw, view, norb, spatial_shape,
         ``norb**2 * Nx * Ny * Nz``.
     """
     from types import SimpleNamespace
-    from hwave.solver import eliashberg_bond as _eb
+    from hwave.solver.eliashberg import bond_dynamic as _eb
     from hwave.solver import flex_bond as _fb
 
     Nx, Ny, Nz = (int(x) for x in spatial_shape)

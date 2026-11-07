@@ -3464,7 +3464,7 @@ class PackedBondPairKernel:
         if self.nfreq == 1:
             reverse = _reverse_k_and_orbital
         else:
-            from . import eliashberg_dynamic
+            from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
             reverse = eliashberg_dynamic._reverse_kw_and_orbital
         basis = _SOAntisymmetricBasis.from_subset(self.gap_shape, self.pp_index(p),
                                                    reverse=reverse)
