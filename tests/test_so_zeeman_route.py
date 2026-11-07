@@ -295,7 +295,7 @@ def _sc_chi0_general(route):
     """The spin-orbital chi0 of the Eliashberg front end on the 0-E2 fixture:
     ``hwave.sc._calc_chi0q_internal(chi0q_tensor="general")``, shape
     ``(nmat, nvol, nd, nd, nd, nd)`` in spin-block order (``nd = 4``)."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     with _TmpDirs() as t:
         d = t.new()
         inter = _so_2orb_fixture(d, route)
@@ -304,7 +304,7 @@ def _sc_chi0_general(route):
                "mode": {"mode": "RPA", "enable_spin_orbital": True, "param": dict(_E2_PARAM)},
                "file": {"input": {"path_to_input": d, "interaction": inter}}}
         with _quiet():
-            return np.asarray(sc._calc_chi0q_internal(inp, chi0q_tensor="general"))
+            return np.asarray(sc_io._calc_chi0q_internal(inp, chi0q_tensor="general"))
 
 
 def _sc_chi_general(route, types=("CoulombIntra",), spinful=True):

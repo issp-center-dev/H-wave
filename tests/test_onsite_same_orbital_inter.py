@@ -57,8 +57,8 @@ class TestReaders(unittest.TestCase):
             key: "coulombinter.dat"}})
 
     def _sc_reader(self, key="CoulombInter"):
-        from hwave import sc
-        return sc._read_interaction_files({"file": {"input": {"interaction": {
+        from hwave.solver.eliashberg import io as sc_io
+        return sc_io._read_interaction_files({"file": {"input": {"interaction": {
             "path_to_input": self.d, "Geometry": "geom.dat", "Transfer": "transfer.dat",
             key: "coulombinter.dat"}}}})
 

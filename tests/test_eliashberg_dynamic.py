@@ -13,30 +13,30 @@ def _min_input(**eli):
 
 
 def test_frequency_default_is_static(monkeypatch):
-    import hwave.sc as sc
-    assert sc._eliashberg_frequency(_min_input()) == "static"
+    from hwave.solver.eliashberg import config as sc_config
+    assert sc_config._eliashberg_frequency(_min_input()) == "static"
 
 
 def test_frequency_invalid_value_raises():
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import config as sc_config
     with pytest.raises(ValueError, match="frequency"):
-        sc._eliashberg_frequency(_min_input(frequency="dynamical"))
+        sc_config._eliashberg_frequency(_min_input(frequency="dynamical"))
 
 
 def test_dynamic_requires_flex():
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import config as sc_config
     inp = _min_input(frequency="dynamic")
     inp["eliashberg"]["chi0q_mode"] = "load"
     with pytest.raises(ValueError, match="flex"):
-        sc._validate_dynamic_prereqs(inp)
+        sc_config._validate_dynamic_prereqs(inp)
 
 
 def test_dynamic_requires_even_nmat():
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import config as sc_config
     inp = _min_input(frequency="dynamic")
     inp["mode"]["param"]["Nmat"] = 7
     with pytest.raises(ValueError, match="even"):
-        sc._validate_dynamic_prereqs(inp)
+        sc_config._validate_dynamic_prereqs(inp)
 
 
 def test_gpu_requested_parses_bool_and_string():
@@ -223,14 +223,14 @@ def test_expand_flex_chi_kuroki_norb2_extracts_spin_orbital_block():
     chi_{(a,a),(b,b)} and belongs at flat position [a*norb+a, b*norb+b]. See
     tests/test_flex_reduced_eliashberg.py for the placement rationale and the
     physical regression that pins it."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     norb, ns, Nx, Ny, Nz, nfreq = 2, 2, 2, 2, 1, 3
     nvol, nd_so, nd = Nx * Ny * Nz, norb * 2, norb * norb
     rng = np.random.default_rng(11)
     chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
                + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
 
-    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+    out = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
 
     # expected: extract up-spin block [:norb, :norb], embed at density pairs
     chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
@@ -247,14 +247,14 @@ def test_expand_flex_chi_kuroki_norb2_extracts_spin_orbital_block():
 def test_expand_flex_chi_myo_norb2_is_orbital_pair():
     """A norb=2 general (myo) FLEX chi is already orbital-pair (nd_chi=norb^2);
     _expand_flex_chi must pass it through unchanged."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 3
     nvol, nd = Nx * Ny * Nz, norb * norb
     rng = np.random.default_rng(12)
     chi_raw = (rng.standard_normal((nfreq, nvol, nd, nd))
                + 1j * rng.standard_normal((nfreq, nvol, nd, nd)))
 
-    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="myo")
+    out = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="myo")
     np.testing.assert_allclose(out, chi_raw.reshape(nfreq, Nx, Ny, Nz, nd, nd))
 
 
@@ -262,23 +262,23 @@ def test_expand_flex_chi_norb2_unknown_convention_raises():
     """For the shape-ambiguous norb=2 case, an unknown/typo convention must
     raise -- not silently fall through to the spin-orbital extraction (which
     would corrupt the pairing vertex)."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
     nvol, nd = Nx * Ny * Nz, norb * norb
     chi_raw = np.zeros((nfreq, nvol, nd, nd), dtype=complex)
     with pytest.raises(ValueError, match="chi_convention"):
-        sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="bogus")
+        sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="bogus")
 
 
 def test_expand_flex_chi_dimension_matches_neither_raises():
     """A chi dimension matching neither norb^2 nor norb*ns must raise clearly
     (e.g. norb=3 with nd_chi=5)."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     norb, Nx, Ny, Nz, nfreq = 3, 2, 1, 1, 2
     nvol, nd_bad = Nx * Ny * Nz, 5
     chi_raw = np.zeros((nfreq, nvol, nd_bad, nd_bad), dtype=complex)
     with pytest.raises(ValueError, match="matches neither"):
-        sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+        sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
 
 
 # --- unambiguous-shape-vs-tag agreement (norb != 2, so shape alone already
@@ -291,13 +291,13 @@ def test_expand_flex_chi_unambiguous_spin_orbital_tagged_myo_raises(
     """Shape says spin-orbital (nd_chi == norb*ns != norb^2) but the file is
     tagged 'myo' (orbital-pair): must raise, not silently extract-and-forward
     the contradicting 'myo' tag to the S/C-matrix selection downstream."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     nvol, nd_so, nfreq = Nx * Ny * Nz, norb * 2, 2
     rng = np.random.default_rng(100 + norb)
     chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
                + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
     with pytest.raises(ValueError, match="chi_convention"):
-        sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="myo")
+        sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="myo")
 
 
 @pytest.mark.parametrize("norb,Nx,Ny,Nz", [(1, 2, 1, 1), (3, 2, 1, 1)])
@@ -306,13 +306,13 @@ def test_expand_flex_chi_unambiguous_orbital_pair_tagged_kuroki_raises(
     """Shape says orbital-pair (nd_chi == norb^2 != norb*ns) but the file is
     tagged 'kuroki' (spin-orbital): must raise, not silently pass the raw
     matrix through under the contradicting 'kuroki' tag."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     nvol, nd, nfreq = Nx * Ny * Nz, norb * norb, 2
     rng = np.random.default_rng(200 + norb)
     chi_raw = (rng.standard_normal((nfreq, nvol, nd, nd))
                + 1j * rng.standard_normal((nfreq, nvol, nd, nd)))
     with pytest.raises(ValueError, match="chi_convention"):
-        sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+        sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
 
 
 @pytest.mark.parametrize("norb,Nx,Ny,Nz", [(1, 2, 1, 1), (3, 2, 1, 1)])
@@ -320,13 +320,13 @@ def test_expand_flex_chi_unambiguous_spin_orbital_tagged_kuroki_still_works(
         norb, Nx, Ny, Nz):
     """Shape says spin-orbital and the tag agrees ('kuroki'): extraction must
     still succeed exactly as before this guard was added."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     nvol, nd_so, nd, nfreq = Nx * Ny * Nz, norb * 2, norb * norb, 2
     rng = np.random.default_rng(300 + norb)
     chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
                + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
 
-    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+    out = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
 
     chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
     orb = chi6[:, :, :, :, :norb, :norb]
@@ -343,13 +343,13 @@ def test_expand_flex_chi_unambiguous_orbital_pair_tagged_myo_still_works(
         norb, Nx, Ny, Nz):
     """Shape says orbital-pair and the tag agrees ('myo'): pass-through must
     still succeed exactly as before this guard was added."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     nvol, nd, nfreq = Nx * Ny * Nz, norb * norb, 2
     rng = np.random.default_rng(400 + norb)
     chi_raw = (rng.standard_normal((nfreq, nvol, nd, nd))
                + 1j * rng.standard_normal((nfreq, nvol, nd, nd)))
 
-    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="myo")
+    out = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="myo")
 
     assert out.shape == (nfreq, Nx, Ny, Nz, nd, nd)
     np.testing.assert_allclose(out, chi_raw.reshape(nfreq, Nx, Ny, Nz, nd, nd))
@@ -359,7 +359,7 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
     """A legacy untagged norb=2 chi (nd_chi=4) defaults to 'kuroki' and MUST be
     spin-orbital-extracted at the loader level -- the regression the shape-only
     heuristic missed."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     norb, ns, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 1, 4
     nvol, nd_so, nd = Nx * Ny * Nz, norb * 2, norb * norb
     rng = np.random.default_rng(21)
@@ -383,7 +383,7 @@ def test_static_loader_untagged_norb2_defaults_kuroki_and_extracts(tmp_path):
            "file": {"output": {"path_to_output": str(tmp_path)}},
            "eliashberg": {"chi0q_mode": "flex"}}
 
-    chis, chic, _, conv = sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+    chis, chic, _, conv = sc_io._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
     assert conv == "kuroki"
     assert chis.shape == (Nx, Ny, Nz, nd, nd)
     # verify it is the spin-orbital extraction, not the raw 4x4 passthrough
@@ -406,12 +406,12 @@ def _flex_input(tmp_path, nmat):
 def test_static_flex_loader_matches_full_then_slice(tmp_path):
     """The static FLEX loader must return exactly the static-frequency slice of
     the full-frequency loader (correctness preserved by the slice-first path)."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     m = _write_flex_so_fixture(tmp_path)
     inp = _flex_input(tmp_path, m["nmat"])
-    chis, chic, _, conv = sc._load_flex_susceptibilities(
+    chis, chic, _, conv = sc_io._load_flex_susceptibilities(
         inp, m["norb"], m["Nx"], m["Ny"], m["Nz"])
-    chis_w, chic_w, _, conv_w = sc._load_flex_susceptibilities_full(
+    chis_w, chic_w, _, conv_w = sc_io._load_flex_susceptibilities_full(
         inp, m["norb"], m["Nx"], m["Ny"], m["Nz"])
     center = m["nmat"] // 2
     np.testing.assert_allclose(chis, chis_w[..., center])
@@ -423,20 +423,19 @@ def test_static_flex_loader_expands_single_frequency(tmp_path, monkeypatch):
     """The static loader must slice the static frequency BEFORE the spin-orbital
     expansion -- expanding one frequency, not the full Nmat axis (the memory
     regression). The full loader still expands the whole axis."""
-    import hwave.sc as sc
     from hwave.solver.eliashberg import io as sc_io
     m = _write_flex_so_fixture(tmp_path, nmat=8)
     inp = _flex_input(tmp_path, m["nmat"])
 
     seen = []
-    real_expand = sc._expand_flex_chi
+    real_expand = sc_io._expand_flex_chi
 
     def _spy(chi_raw, *a, **k):
         seen.append(chi_raw.shape[0])    # leading axis = frequency count
         return real_expand(chi_raw, *a, **k)
 
     monkeypatch.setattr(sc_io, "_expand_flex_chi", _spy)
-    sc._load_flex_susceptibilities(inp, m["norb"], m["Nx"], m["Ny"], m["Nz"])
+    sc_io._load_flex_susceptibilities(inp, m["norb"], m["Nx"], m["Ny"], m["Nz"])
 
     assert seen and max(seen) == 1, \
         "static loader expanded {} frequencies (want 1)".format(max(seen))
@@ -452,7 +451,7 @@ def test_full_loader_embeds_kuroki_chi_on_density_pairs(tmp_path):
     case there is no 'load' route to cross-check it against. See
     tests/test_flex_reduced_eliashberg.py for why the density-pair placement is
     the only faithful one."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     # norb=2: with the default norb=1 the old and new embeddings coincide and
     # the off-density assertion below iterates over an EMPTY index list, so this
     # regression asserted nothing about the placement it advertises.
@@ -461,7 +460,7 @@ def test_full_loader_embeds_kuroki_chi_on_density_pairs(tmp_path):
     norb, Nx, Ny, Nz = m["norb"], m["Nx"], m["Ny"], m["Nz"]
     nd, nd_so = norb * norb, norb * 2
 
-    chis_w, chic_w, _, conv = sc._load_flex_susceptibilities_full(
+    chis_w, chic_w, _, conv = sc_io._load_flex_susceptibilities_full(
         inp, norb, Nx, Ny, Nz)
     assert conv == "kuroki"
 
@@ -487,11 +486,11 @@ def test_expand_flex_chi_returns_host_numpy(tmp_path):
     host numpy before anything is moved to the device (the static path builds
     Vs_q first and transfers afterwards). Returning a host ndarray is what makes
     the GPU and CPU runs bit-identical here, so pin it."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     norb, Nx, Ny, Nz, nfreq = 2, 2, 1, 1, 2
     nd_so = norb * 2
     chi_raw = np.zeros((nfreq, Nx * Ny * Nz, nd_so, nd_so), dtype=complex)
-    out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
+    out = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, convention="kuroki")
     assert isinstance(out, np.ndarray)
     assert type(out).__module__ == "numpy"
 
@@ -526,7 +525,7 @@ def test_memory_guard_runs_before_loading(monkeypatch):
 
 
 def test_dynamic_vertex_matches_static_per_frequency():
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import vertex as sc_vertex
     from hwave.solver.eliashberg import dynamic as ed
     norb, Nx, Ny, Nz, nmat = 1, 2, 2, 1, 4
     nd = norb*norb
@@ -540,7 +539,7 @@ def test_dynamic_vertex_matches_static_per_frequency():
                                           convention="kuroki")
     # compare frequency l against the static routine fed that single slice
     for l in range(nmat):
-        Vstat = sc._compute_vertices_flex(chis_w[..., l], chic_w[..., l], inter_k,
+        Vstat = sc_vertex._compute_vertices_flex(chis_w[..., l], chic_w[..., l], inter_k,
                                           norb, Nx, Ny, Nz, pairing_type="singlet",
                                           convention="kuroki")
         assert np.allclose(Vw[..., l], Vstat, atol=1e-12)
@@ -632,7 +631,7 @@ def test_frequency_inner_is_full_vdot():
 
 @pytest.mark.parametrize("norb", [1, 2])
 def test_g2_dynamic_sums_to_static(norb):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import kernel as sc_kernel
     from hwave.solver.eliashberg import dynamic as ed
     Nx, Ny, Nz, nmat = 2, 2, 1, 8
     rng = np.random.default_rng(6)
@@ -646,7 +645,7 @@ def test_g2_dynamic_sums_to_static(norb):
     # tail=False: the summand pin is about the shared construction, and the
     # static tail correction (issue #86) is a property of the frequency SUM,
     # which the dynamic path never takes.
-    g2_static = sc._calc_g2(green, beta, tail=False)
+    g2_static = sc_kernel._calc_g2(green, beta, tail=False)
     assert np.allclose(g2w.sum(axis=-1), g2_static, atol=1e-12)
     # component check (independent of the sum): reproduce a single element
     green_inv = np.roll(green[:, :, ::-1, ::-1, ::-1, ::-1], (1, 1, 1), (2, 3, 4))
@@ -717,7 +716,6 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
     """[eliashberg] spectral_shift must plumb through solve_dynamic into
     sc._solve_leading (the arnoldi eigenvalue path)."""
     import os
-    import hwave.sc as sc
     from hwave.solver.eliashberg import eigen as sc_eigen
     from hwave.solver.eliashberg import dynamic as ed
     input_dir = str(tmp_path / "input")
@@ -727,7 +725,7 @@ def test_spectral_shift_forwarded_through_solve_dynamic(tmp_path, monkeypatch):
     m = _write_flex_fixture(tmp_path / "output", nmat=8, norb=1, Nx=2, Ny=2, Nz=1)
 
     captured = {}
-    real_solve = sc._solve_leading
+    real_solve = sc_eigen._solve_leading
 
     def spy(*args, **kwargs):
         captured["spectral_shift"] = kwargs.get("spectral_shift")
@@ -968,7 +966,7 @@ def test_static_limit_matvec_multi_k(norb):
     symmetrized), they are NOT invariant under the orbital-index swaps those
     einsums perform, so an accidental orbital transposition would change the
     result and fail this assertion."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import kernel as sc_kernel
     from hwave.solver.eliashberg import dynamic as ed
     Nx, Ny, Nz, nmat = 4, 2, 1, 4
     beta = 7.0  # unused by the kernel; G2 is passed raw to both paths
@@ -999,7 +997,7 @@ def test_static_limit_matvec_multi_k(norb):
 
     # (ii) each frequency slice equals the static matvec with G2_static
     G2_static = G2_w.sum(axis=-1)                            # sum over n
-    static_out = sc._eliashberg_kernel_fft(V0, G2_static, phi0, norb)
+    static_out = sc_kernel._eliashberg_kernel_fft(V0, G2_static, phi0, norb)
     for n in range(nmat):
         assert np.max(np.abs(out[..., n] - static_out)) < 1e-10, \
             "dynamic kernel does not match the static kernel in the flat limit"
@@ -1017,7 +1015,7 @@ def test_dense_oracle(norb, Nx, Ny, Nz, nmat):
     eigenvalue. Uses a NONZERO-nu synthetic vertex so the tau-product frequency
     structure is exercised. norb=2 catches an orbital-index transposition."""
     import scipy.linalg
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import eigen as sc_eigen
     from hwave.solver.eliashberg import dynamic as ed
     from scipy.sparse.linalg import LinearOperator
     rng = np.random.default_rng(31 + norb)
@@ -1043,7 +1041,7 @@ def test_dense_oracle(norb, Nx, Ny, Nz, nmat):
 
     # shared driver (same path solve_dynamic uses for the eigenvalue family)
     op = LinearOperator((vec_size, vec_size), matvec=_matvec, dtype=complex)
-    lam, _, info = sc._solve_leading(
+    lam, _, info = sc_eigen._solve_leading(
         lambda: (op, vec_size), vec_size, "arnoldi",
         num_eigenvalues=vec_size - 2)
 
@@ -1057,14 +1055,14 @@ def test_solve_leading_tiny_operator_uses_dense_fallback(solver_mode):
     """ARPACK cannot handle LinearOperator eigenproblems with k >= N - 1.
     The smallest dynamic grid has vec_size=2, so the shared eigenvalue driver
     must use a dense fallback instead of calling eigs."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import eigen as sc_eigen
     from scipy.sparse.linalg import LinearOperator
 
     dense = np.array([[2.0, 0.0],
                       [0.0, -3.0]], dtype=complex)
     op = LinearOperator((2, 2), matvec=lambda x: dense @ x, dtype=complex)
 
-    lam, vec, info = sc._solve_leading(
+    lam, vec, info = sc_eigen._solve_leading(
         lambda: (op, 2), 2, solver_mode, num_eigenvalues=10)
 
     assert np.isclose(lam, 2.0)
@@ -1078,7 +1076,7 @@ def test_analytic_flat_diagonal():
     the k-space kernel rank-one; its single nonzero eigenvalue is the uniform
     gap with lambda = -V0 * sum_n G2(n). (The 1/N spatial fold is cancelled by
     the sum over the Nk-fold uniform mesh.) Assert the driver reproduces it."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import eigen as sc_eigen
     from hwave.solver.eliashberg import dynamic as ed
     from scipy.sparse.linalg import LinearOperator
     norb, Nx, Ny, Nz, nmat = 1, 2, 2, 1, 4
@@ -1103,7 +1101,7 @@ def test_analytic_flat_diagonal():
             V_w, G2_w, x.reshape(gap_shape), norb, beta).ravel()
 
     op = LinearOperator((vec_size, vec_size), matvec=_matvec, dtype=complex)
-    lam, _, _ = sc._solve_leading(
+    lam, _, _ = sc_eigen._solve_leading(
         lambda: (op, vec_size), vec_size, "arnoldi",
         num_eigenvalues=vec_size - 2)
 
@@ -1973,15 +1971,15 @@ class TestIrKeepStaticChiBoolParsing:
 # ---------------------------------------------------------------------------
 
 def test_order_by_seed_overlap_picks_overlapping_branch():
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import eigen as sc_eigen
     vecs = np.eye(4, dtype=complex)[:, :3]        # e0, e1, e2
     vals = np.array([2.0 + 0j, 0.5 + 0j, 1.0 + 0j])   # largest-real is e0 (2.0)
     seed = vecs[:, 1].copy()                       # overlaps e1 (eigenvalue 0.5)
-    v, w = sc._order_by_seed_overlap(vals, vecs, seed)
+    v, w = sc_eigen._order_by_seed_overlap(vals, vecs, seed)
     assert np.isclose(v[0], 0.5)                    # picks the seeded branch, not 2.0
     assert np.allclose(w[:, 0], vecs[:, 1])
     # a zero seed falls back to real-part ordering
-    v2, _ = sc._order_by_seed_overlap(vals, vecs, np.zeros(4, dtype=complex))
+    v2, _ = sc_eigen._order_by_seed_overlap(vals, vecs, np.zeros(4, dtype=complex))
     assert np.isclose(v2[0], 2.0)
 
 
@@ -2214,11 +2212,10 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
         # "no more than one extra solve on any path": the projected path solves
         # the projected operator exactly once (the scale preliminary is a raw
         # ARPACK pass, not a _solve_leading call).
-        import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         matvec = self._masked_positive_kernel()
         calls = []
-        real_solve = sc._solve_leading
+        real_solve = sc_eigen._solve_leading
 
         def counting(*a, **k):
             calls.append(1)
@@ -2232,9 +2229,8 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
     def test_non_conserving_falls_back_to_unprojected_retry(self):
         matvec = self._non_conserving_kernel()
         calls = []
-        import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
-        real_solve = sc._solve_leading
+        real_solve = sc_eigen._solve_leading
 
         def counting(*a, **k):
             calls.append(k.get("spectral_shift"))
@@ -2273,7 +2269,6 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
         # no redundant re-solve may run (should_fix #3/#4). A seed keeps the run
         # on the unprojected path so the dense selection is what is reported.
         from hwave.solver.eliashberg import dynamic as ed
-        import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         shape = (1, 1, 1, 1, 1, 2)
         M = np.array([[0.3, 0.1], [0.05, 0.2]], dtype=complex)
@@ -2285,7 +2280,7 @@ class TestDynamicArnoldiSelection(_unittest.TestCase):
         phi0 /= np.linalg.norm(phi0)
         seed = np.array([1.0, 0.0], dtype=complex)
         calls = []
-        real_solve = sc._solve_leading
+        real_solve = sc_eigen._solve_leading
 
         def counting(*a, **k):
             calls.append(1)
@@ -2382,11 +2377,10 @@ def _solve_dynamic_lambda(indir, outdir, basis="uniform", keep_static=False,
     Rayleigh quotient of the cycling iterate -- the dominant eigenvalue the
     issue #203 comparison is about -- is read from the driver's record."""
     from unittest import mock
-    import hwave.sc as sc
     from hwave.solver.eliashberg import eigen as sc_eigen
     from hwave.solver.eliashberg import dynamic as ed
     records = []
-    real = sc._solve_leading
+    real = sc_eigen._solve_leading
 
     def spy(*a, **k):
         out = real(*a, **k)
@@ -2635,7 +2629,6 @@ class TestReducedChannelSolve(_unittest.TestCase):
         return make
 
     def test_solve_runs_on_the_sector_dimension(self):
-        import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         from hwave.solver.eliashberg import dynamic as ed
         for pairing_type in ("singlet", "triplet"):
@@ -2644,7 +2637,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
                     self.SHAPE, pairing_type, self._random_block(1),
                     self._random_block(2, scale=3.0))
                 sizes = []
-                real_solve = sc._solve_leading
+                real_solve = sc_eigen._solve_leading
 
                 def spy(make_operator, vec_size, *a, **k):
                     sizes.append(vec_size)
@@ -2706,7 +2699,6 @@ class TestReducedChannelSolve(_unittest.TestCase):
         diagonalized densely up to _DENSE_FALLBACK_MAX; above it the run
         reports NaN, "not-converged", eigen_converged = false, with a finite
         gap in the channel sector."""
-        import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         import scipy.sparse.linalg as spl
         from hwave.solver.eliashberg import dynamic as ed
@@ -2727,7 +2719,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
             ev = np.linalg.eigvals(B.conj().T @ M @ B)
             lead = float(ev.real.max())
             for failing in (no_conv, other_error, non_finite):
-                for dense_max in (sc._DENSE_FALLBACK_MAX, 1):
+                for dense_max in (sc_eigen._DENSE_FALLBACK_MAX, 1):
                     with self.subTest(pairing_type=pairing_type,
                                       failing=failing.__name__,
                                       dense_max=dense_max), \
@@ -2809,7 +2801,6 @@ class TestReducedChannelSolve(_unittest.TestCase):
 
     def test_no_listing_note_without_a_listing(self):
         """A failed sector solve (NaN, "not-converged") names no set."""
-        import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         import scipy.sparse.linalg as spl
         M, _B = _sector_conserving_kernel(self.SHAPE, "singlet",
@@ -2834,7 +2825,6 @@ class TestReducedChannelSolve(_unittest.TestCase):
     def test_user_spectral_shift_reaches_the_sector_solve(self):
         """The sector solve uses the user's spectral_shift (largest real part
         of the shifted sector operator), like the static sector solve."""
-        import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         M, B = _sector_conserving_kernel(
             self.SHAPE, "singlet", self._random_block(9),
@@ -2843,7 +2833,7 @@ class TestReducedChannelSolve(_unittest.TestCase):
         for shift in ("auto", 7.5, None):
             with self.subTest(shift=shift):
                 seen = []
-                real_solve = sc._solve_leading
+                real_solve = sc_eigen._solve_leading
 
                 def spy(*a, **k):
                     seen.append(k.get("spectral_shift"))

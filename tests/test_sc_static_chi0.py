@@ -27,7 +27,7 @@ from unittest import mock
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.eliashberg import static as sc_static
 from hwave.solver import bubble
 from hwave.solver import matsubara as ms
@@ -147,9 +147,9 @@ class TestStaticSliceEquality(_Tmp):
                                      {"chi0q_mode": "calc"}, nmat=nmat,
                                      coeff_tail=ct)
                         with _quiet():
-                            full = sc._calc_chi0q_internal(
+                            full = sc_io._calc_chi0q_internal(
                                 inp, chi0q_tensor=tensor, precomputed_mu=0.1)
-                            st = sc._calc_chi0q_internal(
+                            st = sc_io._calc_chi0q_internal(
                                 inp, chi0q_tensor=tensor, precomputed_mu=0.1,
                                 static_only=True)
                         ref = full[nmat // 2:nmat // 2 + 1]

@@ -667,7 +667,7 @@ class TestFlexVertexNeedsNoConversion(unittest.TestCase):
     """
 
     def test_flex_sc_matches_converted_rpa_slot(self):
-        from hwave.sc import _build_interaction_k
+        from hwave.solver.eliashberg.vertex import _build_interaction_k
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

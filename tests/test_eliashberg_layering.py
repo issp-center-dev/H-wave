@@ -138,9 +138,12 @@ class TestShellStaysComplete(unittest.TestCase):
                  if os.path.abspath(p) != os.path.abspath(sc.__file__)
                  and os.path.basename(p) != os.path.basename(__file__)]
         referenced = _names_reached_through_sc(paths)
-        self.assertGreater(len(referenced), 100,
-                           "the scan found suspiciously few references; "
-                           "has the import form of the tests changed?")
+        # step 7b: the tests read the private names from their modules, so
+        # only the public API (and tsweep's two helpers, until step 7c) is
+        # left; the scan must still find at least that
+        self.assertGreaterEqual(len(referenced), len(PUBLIC_API),
+                                "the scan found suspiciously few references; "
+                                "has the import form of the tests changed?")
         missing = sorted(n for n in referenced if not hasattr(sc, n))
         self.assertEqual(missing, [],
                          "names reached through hwave.sc that hwave.sc no longer "

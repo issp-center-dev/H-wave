@@ -34,6 +34,8 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver import bond_channels as bc
 from tests.heavy_tests import heavy
 
@@ -109,13 +111,13 @@ def _kernel_parts(norb, eta, types):
     tables = _model(norb, types)
     g = _green(norb, nx, tables)
     shape = (nx, NY, 1)
-    topo, view, split = sc._resolve_bond_topology(_declarations(tables), {"rvec": np.eye(3)},
+    topo, view, split = sc_bond._resolve_bond_topology(_declarations(tables), {"rvec": np.eye(3)},
                                                   norb, None)
     chi_bar = bc.bond_bubble(g, view, BETA).reshape(nx * NY, view.n_channels * norb ** 2, -1)
-    S, C = sc._build_bond_vertices(topo, split, norb, shape)
+    S, C = sc_bond._build_bond_vertices(topo, split, norb, shape)
     dressed = ((ch, bc.dress_batch(chi_bar[None], W, ch, l0=0, nmat=0, spatial_shape=shape)[0][0])
                for ch, W in (("spin", S), ("charge", C)))
-    A, A_fl, A_pp, _ = sc._bond_kernel_parts(S, C, dressed, g, view, norb, shape, BETA, eta,
+    A, A_fl, A_pp, _ = sc_bond._bond_kernel_parts(S, C, dressed, g, view, norb, shape, BETA, eta,
                                              topo=topo)
     return A, A_fl, A_pp
 
@@ -175,13 +177,13 @@ def _dynamic_kernel(norb, eta):
     g = _green(norb, nx, tables, nmat=NMAT_DYN)
     shape = (nx, NY, 1)
     nvol, nd = nx * NY, norb * norb
-    topo, view, split = sc._resolve_bond_topology(_declarations(tables), {"rvec": np.eye(3)},
+    topo, view, split = sc_bond._resolve_bond_topology(_declarations(tables), {"rvec": np.eye(3)},
                                                   norb, None)
-    S, C = sc._build_bond_vertices(topo, split, norb, shape)
+    S, C = sc_bond._build_bond_vertices(topo, split, norb, shape)
     S, C = (np.asarray(W).reshape(nvol, *np.shape(W)[-2:]) for W in (S, C))
     ND = view.n_channels * nd
     chib = np.zeros((NMAT_DYN, nvol, ND, ND), complex)
-    for (m, mp), blk in bubble._iter_bond_dynamic(sc._green_sc_to_canonical(g), None, BETA,
+    for (m, mp), blk in bubble._iter_bond_dynamic(sc_kernel._green_sc_to_canonical(g), None, BETA,
                                                   view, spatial_shape=shape):
         chib[:, :, m * nd:(m + 1) * nd, mp * nd:(mp + 1) * nd] = blk.reshape(NMAT_DYN, nvol, nd, nd)
     cs, cc = COEFF[eta]

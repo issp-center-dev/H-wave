@@ -693,7 +693,7 @@ def test_static_chi0q_loader_rejects_general_ir_native(tmp_path):
     exercised for calc_scheme='reduced' in test_ir_native_readers.py) --
     the static path does not otherwise know about matsubara_basis and never
     silently misreads sparse IR nodes as a uniform grid."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     out = str(tmp_path)
     s, gi = _make_general_solver(64, "ir", T=2.0, iteration_max=1)
     s.write_densified = False
@@ -703,7 +703,7 @@ def test_static_chi0q_loader_rejects_general_ir_native(tmp_path):
                                       "chi0q": "chi0q"}},
                   "mode": {}}
     with pytest.raises(ValueError, match="write_densified"):
-        sc._load_chi0q(input_dict)
+        sc_io._load_chi0q(input_dict)
 
 
 # --- #181 follow-up: the second-order kernel on the IR path ---------------

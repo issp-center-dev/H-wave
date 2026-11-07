@@ -270,9 +270,9 @@ class TestOffsiteExchangeLongitudinalControls(unittest.TestCase):
         # the same placement as the solver's k-space builder: the (00,11)
         # slot reads mat[0, 1] of hwave.sc._build_interaction_k, i.e. the
         # pair-transposed entry (issue #96)
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         kx = 2.0 * np.pi * np.arange(fx.L) / fx.L
-        ik = sc._build_interaction_k(kx, np.array([0.0]), np.array([0.0]),
+        ik = sc_vertex._build_interaction_k(kx, np.array([0.0]), np.array([0.0]),
                                      {"CoulombInter": {((1, 0, 0), (0, 1)): 1.0,
                                                        ((-1, 0, 0), (1, 0)): 1.0}},
                                      2)["CoulombInter"]

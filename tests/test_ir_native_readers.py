@@ -54,24 +54,24 @@ def _write_run(outdir, native):
 
 
 def test_static_chi0q_loader_rejects_ir_native(tmp_path):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     out = str(tmp_path)
     _write_run(out, native=True)
     input_dict = {"file": {"output": {"path_to_output": out,
                                       "chi0q": "chi0q"}},
                   "mode": {}}
     with pytest.raises(ValueError, match="write_densified"):
-        sc._load_chi0q(input_dict)
+        sc_io._load_chi0q(input_dict)
 
 
 def test_static_flex_chi_loader_rejects_ir_native(tmp_path):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     out = str(tmp_path)
     _write_run(out, native=True)
     input_dict = {"file": {"input": {"path_to_flex_output": out}},
                   "eliashberg": {}}
     with pytest.raises(ValueError, match="write_densified"):
-        sc._read_flex_chi_raw(input_dict)
+        sc_io._read_flex_chi_raw(input_dict)
 
 
 def test_rpa_read_chi0q_rejects_ir_native(tmp_path):
@@ -93,17 +93,17 @@ def test_ir_native_sigma_init_into_uniform_run_rejected(tmp_path):
 def test_densified_files_still_load_everywhere(tmp_path):
     """Migration pin: densified IR files (and thus pre-Stage-3 files, which
     share the schema) pass every guard unchanged."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     out = str(tmp_path)
     _write_run(out, native=False)
     input_dict = {"file": {"output": {"path_to_output": out,
                                       "chi0q": "chi0q"}},
                   "mode": {}}
-    chi0q, static_index = sc._load_chi0q(input_dict)
+    chi0q, static_index = sc_io._load_chi0q(input_dict)
     assert static_index == 64 // 2
     input_dict2 = {"file": {"input": {"path_to_flex_output": out}},
                    "eliashberg": {}}
-    chi_s, chi_c, conv, _tags = sc._read_flex_chi_raw(input_dict2)
+    chi_s, chi_c, conv, _tags = sc_io._read_flex_chi_raw(input_dict2)
     assert conv == "kuroki"
     assert chi_s.shape[0] == 64
 

@@ -30,8 +30,11 @@ from types import SimpleNamespace
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver import bond_channels as bc
 from hwave.solver.offsite import sc_matrices_from_split, split_locality
+from hwave.solver.eliashberg import config as sc_config
+from hwave.solver.eliashberg import vertex as sc_vertex
 
 NORB, NX = 2, 6
 
@@ -53,9 +56,9 @@ def _tables():
 
 def _nonbond(tables):
     k = np.linspace(0, 2 * np.pi, NX, endpoint=False)
-    inter_k = sc._build_interaction_k_for_sites(k, np.zeros(1), np.zeros(1), tables, NORB,
+    inter_k = sc_vertex._build_interaction_k_for_sites(k, np.zeros(1), np.zeros(1), tables, NORB,
                                                 {"mode": {"param": {}}})
-    return sc._build_sc_matrices_all_q(inter_k, NORB, NX, 1, 1)
+    return sc_vertex._build_sc_matrices_all_q(inter_k, NORB, NX, 1, 1)
 
 
 class TestNonbondMatrices(unittest.TestCase):
@@ -66,8 +69,8 @@ class TestNonbondMatrices(unittest.TestCase):
         split = split_locality(SimpleNamespace(param_ham=tables),
                                SimpleNamespace(subshape=(1, 1, 1)))
         S_f, C_f = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES, NORB, NX, 1, 1)
-        topo, view, bsplit = sc._resolve_bond_topology(tables, {"rvec": np.eye(3)}, NORB, None)
-        S_b, C_b = sc._build_bond_vertices(topo, bsplit, NORB, (NX, 1, 1))
+        topo, view, bsplit = sc_bond._resolve_bond_topology(tables, {"rvec": np.eye(3)}, NORB, None)
+        S_b, C_b = sc_bond._build_bond_vertices(topo, bsplit, NORB, (NX, 1, 1))
         nd = NORB * NORB
         S_b = np.asarray(S_b).reshape(NX, 1, 1, *np.shape(S_b)[-2:])[..., :nd, :nd]
         C_b = np.asarray(C_b).reshape(NX, 1, 1, *np.shape(C_b)[-2:])[..., :nd, :nd]
@@ -137,7 +140,7 @@ class TestEntries(unittest.TestCase):
     def test_offsite_interorbital_density_is_warned_once(self):
         tables = _tables()
         with self.assertLogs("hwave_sc", level="WARNING") as logs:
-            sc._check_nonbond_offsite(tables, "where")
+            sc_config._check_nonbond_offsite(tables, "where")
         hit = [m for m in logs.output if "Fock" in m]
         self.assertEqual(len(hit), 1, logs.output)
         for t in ("CoulombInter", "Hund", "Ising"):
@@ -148,7 +151,7 @@ class TestEntries(unittest.TestCase):
                  "CoulombInter": {key: v for key, v in tables["CoulombInter"].items()
                                   if key[1][0] == key[1][1] or key[0] == (0, 0, 0)}}
         with self.assertNoLogs("hwave_sc", level="WARNING"):
-            sc._check_nonbond_offsite(quiet, "where")
+            sc_config._check_nonbond_offsite(quiet, "where")
 
     def test_cross_site_rows_follow_the_offsite_rules(self):
         """With orbital_site, an R = 0 row between orbitals of different sites
@@ -160,14 +163,14 @@ class TestEntries(unittest.TestCase):
             rows = {t: {((0, 0, 0), (0, 1)): 0.1, ((0, 0, 0), (1, 0)): 0.1}}
             with self.subTest(t=t):
                 with self.assertRaisesRegex(ValueError, "off-site {}".format(t)):
-                    sc._check_nonbond_offsite(rows, "where", two_sites)
-                sc._check_nonbond_offsite(rows, "where", one_site)
+                    sc_config._check_nonbond_offsite(rows, "where", two_sites)
+                sc_config._check_nonbond_offsite(rows, "where", one_site)
         rows = {"CoulombInter": {((0, 0, 0), (0, 1)): 0.5, ((0, 0, 0), (1, 0)): 0.5}}
         with self.assertLogs("hwave_sc", level="WARNING") as logs:
-            sc._check_nonbond_offsite(rows, "where", two_sites)
+            sc_config._check_nonbond_offsite(rows, "where", two_sites)
         self.assertEqual(len([m for m in logs.output if "Fock" in m]), 1, logs.output)
         with self.assertNoLogs("hwave_sc", level="WARNING"):
-            sc._check_nonbond_offsite(rows, "where", one_site)
+            sc_config._check_nonbond_offsite(rows, "where", one_site)
 
     def test_cross_site_exchange_is_refused_by_both_entries(self):
         """End to end: an R = 0 Exchange between the two sites of a dimer

@@ -24,6 +24,12 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import vertex as sc_vertex
+from hwave.solver.eliashberg import config as sc_config
+from hwave.solver.eliashberg import kernel as sc_kernel
+from hwave.solver.eliashberg import band as sc_band
 from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import bond as sc_bond
 from tests.approx_util import ApproxTestCase, _caplog, assert_approx_array
@@ -98,7 +104,7 @@ def _deterministic_input(outdir, **eli):
     """
     inp = _base_input(outdir, chi0q_mode="load", **eli)
     if "chi0q" not in _CHI0Q_CACHE:
-        _CHI0Q_CACHE["chi0q"] = sc._calc_chi0q_internal(
+        _CHI0Q_CACHE["chi0q"] = sc_io._calc_chi0q_internal(
             _base_input(outdir, chi0q_mode="calc"))
     os.makedirs(outdir, exist_ok=True)
     np.savez(os.path.join(outdir, "chi0q.npz"), chi0q=_CHI0Q_CACHE["chi0q"])
@@ -203,11 +209,11 @@ class TestDefaultPathRegression(_ApproxTestCase):
             "CoulombInter": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
             "Hund": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
         }
-        got = sc._compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
+        got = sc_vertex._compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                                            pairing_type="singlet")
 
         # --- historical inline body (sc.py:1095-1118 before the refactor) ---
-        S_all, C_all = sc._build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+        S_all, C_all = sc_vertex._build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
         si = nmat // 2
         chi0_static = chi0q[:, :, :, :, :, :, :, si].reshape(
             nd, nd, Nx, Ny, Nz).transpose(2, 3, 4, 0, 1).copy()
@@ -245,7 +251,7 @@ def _ill_conditioned_general_case(target=1.0e-3):
         "CoulombInter": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
         "Hund": rng.normal(size=(norb, norb, Nx, Ny, Nz)).astype(complex),
     }
-    S_all, C_all = sc._build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
+    S_all, C_all = sc_vertex._build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
     si = nmat // 2
 
     def _static(arr):
@@ -282,7 +288,7 @@ class TestBackwardCompatibilityOfConditioningGuard(_ApproxTestCase):
         # ... and still perfectly invertible (no vanishing singular value)
         self.assertGreater(float(sv[:, -1].min()), 1.0e-8)
 
-        got = sc._compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
+        got = sc_vertex._compute_vertices_general(chi0q, inter_k, norb, Nx, Ny, Nz, nmat,
                                            pairing_type="singlet")
 
         # historical inline computation (712b1a0 and earlier)
@@ -477,7 +483,7 @@ def _nn_x_bond_set(norb):
     CoulombInter, as the static bond path resolves it."""
     interactions = {"CoulombInter": {((1, 0, 0), (0, 0)): 0.25,
                                      ((-1, 0, 0), (0, 0)): 0.25}}
-    _, view, _ = sc._resolve_bond_topology(interactions, {"rvec": np.eye(3)},
+    _, view, _ = sc_bond._resolve_bond_topology(interactions, {"rvec": np.eye(3)},
                                            norb, 1)
     assert view.n_channels == 3
     return view
@@ -525,7 +531,7 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
 
         # bond_bubble_static's tail argument is None here (tail-off), so the
         # carrier side of the estimate must be judged at tail_on=False.
-        est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
+        est = sc_bond._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
                                        tail_on=False)
         # `canonical` itself is allocated outside the measured region and is
         # budgeted separately (est["carrier_bytes"]), so the budget
@@ -582,7 +588,7 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
         if peak is None:
             self.skipTest("tracemalloc does not track numpy array data here")
 
-        est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
+        est = sc_bond._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
                                        tail_on=True)
         budget = est["bubble_bytes"] + est["chi_bar_bytes"]
         self.assertGreaterEqual(budget, peak, (
@@ -662,11 +668,11 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
             hr[((-1, 0, 0), (orb, orb))] = 1.0
             hr[((0, 1, 0), (orb, orb))] = 1.0
             hr[((0, -1, 0), (orb, orb))] = 1.0
-        eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
-        evals, evecs = sc._calc_eigenvalues(eps)
+        eps = sc_band._build_hamiltonian_k(kx, ky, kz, hr, norb)
+        evals, evecs = sc_band._calc_eigenvalues(eps)
 
         def _run():
-            return sc._build_bond_green(evals, evecs, 0.1, beta, nmat,
+            return sc_bond._build_bond_green(evals, evecs, 0.1, beta, nmat,
                                         1.0, None)
 
         _run()     # warm up
@@ -675,7 +681,7 @@ class TestPreflightMemoryBudget(_ApproxTestCase):
             self.skipTest("tracemalloc does not track numpy array data here")
 
         bond_set = _nn_x_bond_set(norb)
-        est = sc._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
+        est = sc_bond._bond_memory_estimate(norb, bond_set, Nx, Ny, Nz, nmat,
                                        tail_on=True)
         budget = est["carrier_bytes"]
 
@@ -730,7 +736,7 @@ class TestPreflightOperatorBudget(_ApproxTestCase):
             "CoulombIntra": {((0, 0, 0), (0, 0)): 1.0},
             "CoulombInter": {((s * i, 0, 0), (0, 0)): 0.01 / i
                              for i in range(1, n_shells + 1) for s in (1, -1)}}
-        topo, view, split = sc._resolve_bond_topology(
+        topo, view, split = sc_bond._resolve_bond_topology(
             interactions, {"rvec": np.eye(3)}, norb, None)
         self.assertEqual(view.n_channels, 2 * n_shells + 1)
         kx = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
@@ -738,12 +744,12 @@ class TestPreflightOperatorBudget(_ApproxTestCase):
         kz = np.zeros(1)
         hr = {((1, 0, 0), (0, 0)): -1.0, ((-1, 0, 0), (0, 0)): -1.0,
               ((0, 1, 0), (0, 0)): -1.0, ((0, -1, 0), (0, 0)): -1.0}
-        ev, evec = sc._calc_eigenvalues(
-            sc._build_hamiltonian_k(kx, ky, kz, hr, norb))
-        carrier = sc._build_bond_green(ev, evec, 0.0, beta, nmat, 0.0, None)
+        ev, evec = sc_band._calc_eigenvalues(
+            sc_band._build_hamiltonian_k(kx, ky, kz, hr, norb))
+        carrier = sc_bond._build_bond_green(ev, evec, 0.0, beta, nmat, 0.0, None)
 
         def _run():
-            return sc._build_bond_operator(
+            return sc_bond._build_bond_operator(
                 topo, split, carrier, norb, kx, ky, kz, beta, "singlet",
                 bond_max_shells=None, bond_memory_cap_gb=8.0, g2_tail=False,
                 precondition_opts={"dense_limit": 0})
@@ -753,7 +759,7 @@ class TestPreflightOperatorBudget(_ApproxTestCase):
         if peak is None:
             self.skipTest("tracemalloc does not track numpy array data here")
 
-        est = sc._bond_memory_estimate(norb, view, Nx, Ny, Nz, nmat,
+        est = sc_bond._bond_memory_estimate(norb, view, Nx, Ny, Nz, nmat,
                                        tail_on=False)
         budget = est["q_bytes"] + est["bubble_bytes"]
         # a small, ND-independent amount of harness / ufunc bookkeeping (see
@@ -794,10 +800,10 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
                              [((-1, 0, 0), (0, 0)), ((1, 0, 0), (0, 0)),
                               ((0, -1, 0), (0, 0)), ((0, 1, 0), (0, 0))]},
         }
-        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
-        topo, view, split = sc._resolve_bond_topology(
+        inter_k = sc_vertex._build_interaction_k(kx, ky, kz, interactions, norb)
+        topo, view, split = sc_bond._resolve_bond_topology(
             interactions, {"rvec": np.eye(3)}, norb, None)
-        S, C = sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
+        S, C = sc_bond._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
         self.assertEqual(S.shape, (Nx * Ny * Nz, 5, 5))
         Vq = inter_k["CoulombInter"][0, 0].reshape(-1)
         np.testing.assert_allclose(S[:, 0, 0], U, atol=1e-13)
@@ -824,10 +830,10 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
                 ((-1, 0, 0), (1, 0)): Vbond,
             },
         }
-        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
-        topo, view, split = sc._resolve_bond_topology(
+        inter_k = sc_vertex._build_interaction_k(kx, ky, kz, interactions, norb)
+        topo, view, split = sc_bond._resolve_bond_topology(
             interactions, {"rvec": np.eye(3)}, norb, None)
-        S, C = sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
+        S, C = sc_bond._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
         nd = norb * norb
 
         i01 = 0 * norb + 1                     # (l1,l2) = (0,1)
@@ -863,23 +869,23 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
                              [((-1, 0, 0), (0, 0)), ((1, 0, 0), (0, 0)),
                               ((0, -1, 0), (0, 0)), ((0, 1, 0), (0, 0))]},
         }
-        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+        inter_k = sc_vertex._build_interaction_k(kx, ky, kz, interactions, norb)
         hr = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0,
               ((0, 1, 0), (0, 0)): 1.0, ((0, -1, 0), (0, 0)): 1.0}
-        eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
-        evals, evecs = sc._calc_eigenvalues(eps)
-        green = sc._build_bond_green(
+        eps = sc_band._build_hamiltonian_k(kx, ky, kz, hr, norb)
+        evals, evecs = sc_band._calc_eigenvalues(eps)
+        green = sc_bond._build_bond_green(
             evals, evecs, 0.1, beta, nmat, 0.0, None).full_sc
 
-        topo, bond_set, split = sc._resolve_bond_topology(
+        topo, bond_set, split = sc_bond._resolve_bond_topology(
             interactions, {"rvec": np.eye(3)}, norb, None)
         self.assertEqual(bond_set.n_channels, 5)  # declared topology survives V=0
 
         chi_bar = bond_bubble(green, bond_set, beta)
         S_bond, C_bond = (W.reshape(chi_bar.shape) for W in
-                          sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz)))
+                          sc_bond._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz)))
         chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
-        A_bond = sc._bond_kernel_parts(
+        A_bond = sc_bond._bond_kernel_parts(
             S_bond, C_bond, [("spin", chi_s), ("charge", chi_c)], green,
             bond_set, norb, (Nx, Ny, Nz), beta, "singlet", g2_tail=True, topo=topo)[0]
         n_bond = A_bond.shape[0]
@@ -887,11 +893,11 @@ class TestCase2CorrectionAndVZeroReduction(_ApproxTestCase):
         # standard path fed the SAME bubble (the m=m'=0 block of chi_bar)
         chi0q = chi_bar[:, :, :, 0, 0].transpose(0, 1, 2).reshape(
             1, 1, Nx, Ny, Nz, 1)
-        Pc, Ps = sc._compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, 1,
+        Pc, Ps = sc_vertex._compute_vertices_simple(chi0q, inter_k, norb, Nx, Ny, Nz, 1,
                                              pairing_type="singlet",
                                              static_index=0)
-        G2 = sc._calc_g2(green, beta)
-        A_std, n_std = sc._make_kernel_operator(Pc + Ps, G2, norb, Nx, Ny, Nz)
+        G2 = sc_kernel._calc_g2(green, beta)
+        A_std, n_std = sc_kernel._make_kernel_operator(Pc + Ps, G2, norb, Nx, Ny, Nz)
         self.assertEqual(n_bond, n_std)
 
         rng = np.random.default_rng(3)
@@ -1034,12 +1040,12 @@ class TestOffsiteTypesAreBondResolved(_ApproxTestCase):
             "Exchange": {(ir, (0, 0)): 0.3 for ir, _, _ in _nn_entries(0.0)},
             "Ising": {(ir, (0, 0)): 0.2 for ir, _, _ in _nn_entries(0.0)},
         }
-        topo, view, split = sc._resolve_bond_topology(
+        topo, view, split = sc_bond._resolve_bond_topology(
             interactions, {"rvec": np.eye(3)}, 1, None)
         self.assertEqual(list(topo.coeffs),
                          ["CoulombInter", "Hund", "Ising", "Exchange"])
         self.assertEqual(view.n_channels, 5)
-        S, C = sc._build_bond_vertices(topo, split, 1, (4, 4, 1))
+        S, C = sc_bond._build_bond_vertices(topo, split, 1, (4, 4, 1))
         S0, C0 = sc_matrices_from_split(split, bc._LONGITUDINAL_ACTIVE_TYPES,
                                         1, 4, 4, 1)
         np.testing.assert_array_equal(
@@ -1050,10 +1056,10 @@ class TestOffsiteTypesAreBondResolved(_ApproxTestCase):
                                         spatial_shape=(4, 4, 1)))
         # the off-site Exchange and Ising reach the bond diagonal: it differs
         # from the CoulombInter-only one
-        topo_v, _, split_v = sc._resolve_bond_topology(
+        topo_v, _, split_v = sc_bond._resolve_bond_topology(
             {k: interactions[k] for k in ("CoulombIntra", "CoulombInter")},
             {"rvec": np.eye(3)}, 1, None)
-        S_v, C_v = sc._build_bond_vertices(topo_v, split_v, 1, (4, 4, 1))
+        S_v, C_v = sc_bond._build_bond_vertices(topo_v, split_v, 1, (4, 4, 1))
         self.assertGreater(np.abs(S[:, 1:, 1:] - S_v[:, 1:, 1:]).max(), 0.1)
         self.assertGreater(np.abs(C - C_v).max(), 0.1)
 
@@ -1215,9 +1221,9 @@ def _analytic_pp_fixture():
     interactions = {"CoulombIntra": {((0, 0, 0), (0, 0)): 4.0},
                     "CoulombInter": {((1, 0, 0), (0, 0)): 1.0,
                                      ((-1, 0, 0), (0, 0)): 1.0}}
-    topo, view, split = sc._resolve_bond_topology(
+    topo, view, split = sc_bond._resolve_bond_topology(
         interactions, {"rvec": np.eye(3)}, norb, None)
-    S_bond, C_bond = sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
+    S_bond, C_bond = sc_bond._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
     chi_zero = np.zeros_like(S_bond)
     kx = 2.0 * np.pi * np.arange(Nx) / Nx
     phi = np.sin(kx).reshape(norb, norb, Nx, Ny, Nz).astype(complex)
@@ -1242,15 +1248,15 @@ def _physical_single_band(V=1.0, U=3.0, Nx=4, Ny=4, Nz=1, nmat=64, beta=2.0):
     }
     hr = {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0,
           ((0, 1, 0), (0, 0)): 1.0, ((0, -1, 0), (0, 0)): 1.0}
-    eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
-    evals, evecs = sc._calc_eigenvalues(eps)
-    green = sc._build_bond_green(
+    eps = sc_band._build_hamiltonian_k(kx, ky, kz, hr, norb)
+    evals, evecs = sc_band._calc_eigenvalues(eps)
+    green = sc_bond._build_bond_green(
         evals, evecs, 0.1, beta, nmat, 0.0, None).full_sc
-    topo, view, split = sc._resolve_bond_topology(
+    topo, view, split = sc_bond._resolve_bond_topology(
         interactions, {"rvec": np.eye(3)}, norb, None)
     chi_bar = bond_bubble(green, view, beta)
     S_bond, C_bond = (W.reshape(chi_bar.shape) for W in
-                      sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz)))
+                      sc_bond._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz)))
     chi_s, chi_c = dress_bond(chi_bar, S_bond, C_bond)
     return dict(green=green, beta=beta, bond_set=view, topo=topo, S_bond=S_bond,
                 C_bond=C_bond, chi_s=chi_s, chi_c=chi_c, norb=norb,
@@ -1260,7 +1266,7 @@ def _physical_single_band(V=1.0, U=3.0, Nx=4, Ny=4, Nz=1, nmat=64, beta=2.0):
 def _parts(f, pairing_type, chi_s=None, chi_c=None):
     """``(A, A_fl, A_pp, vec_size)`` of the static bond kernel
     (``sc._bond_kernel_parts``) on a fixture of this module."""
-    return sc._bond_kernel_parts(
+    return sc_bond._bond_kernel_parts(
         f["S_bond"], f["C_bond"],
         [("spin", f["chi_s"] if chi_s is None else chi_s),
          ("charge", f["chi_c"] if chi_c is None else chi_c)],
@@ -1337,7 +1343,7 @@ class TestLambdaAttributionAndOddSeed(_ApproxTestCase):
         # non-zero (the leading eigenvector of this fixture happens to be
         # orthogonal to every bond harmonic, so its lambda^pp vanishes exactly).
         kx, ky, kz = f["kgrid"]
-        d = sc._initialize_gap("d_x2y2", 1, kx, ky, kz).ravel().astype(complex)
+        d = sc_eigen._initialize_gap("d_x2y2", 1, kx, ky, kz).ravel().astype(complex)
         attr_d = bc.attribute_lambda(d, W, A_pp, A_fl, op_full=A)
         self.assertGreater(abs(attr_d["lambda_fl"]), 1e-6)
         self.assertGreater(abs(attr_d["lambda_pp"]), 1e-6)
@@ -1371,20 +1377,20 @@ class TestLambdaAttributionAndOddSeed(_ApproxTestCase):
         ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
         kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
         for mode in ("f_x", "f_y"):
-            sigma = sc._initialize_gap(mode, 1, kx, ky, kz)
+            sigma = sc_eigen._initialize_gap(mode, 1, kx, ky, kz)
             self.assertApprox(np.linalg.norm(sigma), 1.0)
             self.assertLess(_gap_parity_residual(sigma), 1e-12)
-            self.assertFalse(sc._is_gap_parity(sigma, "singlet"))
-            self.assertTrue(sc._is_gap_parity(sigma, "triplet"))
+            self.assertFalse(sc_eigen._is_gap_parity(sigma, "singlet"))
+            self.assertTrue(sc_eigen._is_gap_parity(sigma, "triplet"))
 
         # f_x is the specified form factor, not a p-wave in disguise
         KX, KY, _ = np.meshgrid(kx, ky, kz, indexing='ij')
         ref = np.sin(KX) * (np.cos(KX) - np.cos(KY))
         ref = ref / np.linalg.norm(ref)
-        got = sc._initialize_gap("f_x", 1, kx, ky, kz)[0, 0]
+        got = sc_eigen._initialize_gap("f_x", 1, kx, ky, kz)[0, 0]
         np.testing.assert_allclose(got, ref, atol=1e-12)
         # and it is linearly independent of p_x
-        px = sc._initialize_gap("p_x", 1, kx, ky, kz)[0, 0]
+        px = sc_eigen._initialize_gap("p_x", 1, kx, ky, kz)[0, 0]
         self.assertLess(abs(np.vdot(px.ravel(), ref.ravel())), 1e-12)
 
     def test_initialize_gap_existing_seeds_unchanged(self):
@@ -1402,14 +1408,14 @@ class TestLambdaAttributionAndOddSeed(_ApproxTestCase):
         }
         for mode, ref in cases.items():
             ref = ref / np.linalg.norm(ref)
-            got = sc._initialize_gap(mode, 1, kx, ky, kz)[0, 0]
+            got = sc_eigen._initialize_gap(mode, 1, kx, ky, kz)[0, 0]
             np.testing.assert_allclose(got, ref, atol=1e-12)
         self.assertLess(
-            _gap_parity_residual(sc._initialize_gap("p_x", 1, kx, ky, kz)), 1e-12)
+            _gap_parity_residual(sc_eigen._initialize_gap("p_x", 1, kx, ky, kz)), 1e-12)
         self.assertLess(
-            _gap_even_residual(sc._initialize_gap("d_x2y2", 1, kx, ky, kz)), 1e-12)
+            _gap_even_residual(sc_eigen._initialize_gap("d_x2y2", 1, kx, ky, kz)), 1e-12)
         with self.assertRaisesRegex(ValueError, r"(?i)unknown init_gap"):
-            sc._initialize_gap("not_a_mode", 1, kx, ky, kz)
+            sc_eigen._initialize_gap("not_a_mode", 1, kx, ky, kz)
 
 
 # --- (b) runtime Hermiticity / positivity preconditions (S4.5) -------------
@@ -1719,7 +1725,7 @@ class TestTrackSubspace(_ApproxTestCase):
         kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
         ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
         kz = np.linspace(0, 2 * np.pi, 1, endpoint=False)
-        basis = sc._odd_harmonic_basis(1, kx, ky, kz)
+        basis = sc_eigen._odd_harmonic_basis(1, kx, ky, kz)
         self.assertEqual(set(basis), {"p_x", "p_y", "f_x", "f_y"})
 
         f_x = basis["f_x"]
@@ -1832,7 +1838,7 @@ class TestKernelPartsAndMetricGuards(_ApproxTestCase):
             full = A.matvec(v)
             np.testing.assert_allclose(A_fl.matvec(v) + A_pp.matvec(v), full,
                                        atol=1e-12)
-            even = sc._project_gap_parity(v.reshape(1, 1, *f["shape"]),
+            even = sc_eigen._project_gap_parity(v.reshape(1, 1, *f["shape"]),
                                           "singlet").ravel()
             np.testing.assert_allclose(A_pp.matvec(even), 0.0, atol=1e-12)
             self.assertGreater(np.linalg.norm(A_fl.matvec(even)), 1e-6)
@@ -2169,8 +2175,8 @@ def _physical_tracked_records():
         if weight is None:
             kx, ky, kz = f["kgrid"]
             weight = bc.pair_weight(f["green"], f["beta"])
-            basis = sc._odd_harmonic_basis(f["norb"], kx, ky, kz)
-            seed = sc._initialize_gap("f_x", f["norb"], kx, ky, kz).ravel()
+            basis = sc_eigen._odd_harmonic_basis(f["norb"], kx, ky, kz)
+            seed = sc_eigen._initialize_gap("f_x", f["norb"], kx, ky, kz).ravel()
 
     recs = bc.track_subspace(points, seed=seed, weight=weight, basis=basis,
                              deg_tol=_PHYS_TRACK_DEG_TOL)
@@ -2268,15 +2274,15 @@ def _bare_green_npz(path, inp):
     beta = 1.0 / mode_param["T"]
     nmat = mode_param["Nmat"]
     Lx, Ly, Lz = mode_param["CellShape"]
-    geom_info, hr, _ = sc._read_interaction_files(inp)
+    geom_info, hr, _ = sc_io._read_interaction_files(inp)
     norb = geom_info["norb"]
     kx = np.linspace(0, 2.0 * np.pi, Lx, endpoint=False)
     ky = np.linspace(0, 2.0 * np.pi, Ly, endpoint=False)
     kz = np.linspace(0, 2.0 * np.pi, Lz, endpoint=False)
-    eps = sc._build_hamiltonian_k(kx, ky, kz, hr, norb)
-    evals, evecs = sc._calc_eigenvalues(eps)
-    mu = sc._determine_mu(evals, beta, mode_param["filling"], norb)
-    green = sc._build_bond_green(
+    eps = sc_band._build_hamiltonian_k(kx, ky, kz, hr, norb)
+    evals, evecs = sc_band._calc_eigenvalues(eps)
+    mu = sc_band._determine_mu(evals, beta, mode_param["filling"], norb)
+    green = sc_bond._build_bond_green(
         evals, evecs, mu, beta, nmat, 0.0, None).full_sc
     raw = green.transpose(5, 2, 3, 4, 0, 1).reshape(
         1, nmat, Lx * Ly * Lz, norb, norb)
@@ -2427,7 +2433,7 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
                 self.assertEqual(np.lib.format.read_magic(fh), (3, 0))
         self.assertEqual(np.load(gpath)["green"].shape[1], 24)
 
-        self.assertEqual(sc._peek_green_npz_nfreq(gpath), 24)
+        self.assertEqual(sc_io._peek_green_npz_nfreq(gpath), 24)
 
     def test_bond_green_preflight_runs_once_with_npy_format_3_0(self):
         """FIX 1 (review round 3), end-to-end: with a format-3.0 ``green``
@@ -2579,7 +2585,7 @@ class TestBondGreenExternalGreenFunction(_ApproxTestCase):
         np.savez(path, green=raw)
 
         with self.assertRaises(ValueError) as cm:
-            sc._load_green_npz(path, norb=1, Nx=1, Ny=1, Nz=1,
+            sc_io._load_green_npz(path, norb=1, Nx=1, Ny=1, Nz=1,
                                label="bond_green")
         msg = str(cm.exception)
         self.assertIn("2", msg)
@@ -2764,7 +2770,7 @@ class TestBondDiagnostics(_ApproxTestCase):
         evals = np.array([0.02, 0.02 + 1e-9, 0.87])
         kx = np.linspace(0, 2.0 * np.pi, 4, endpoint=False)
         kz = np.linspace(0, 2.0 * np.pi, 1, endpoint=False)
-        sc._bond_diagnostics_record(prov, None, evals, None, 1, kx, kx, kz)
+        sc_bond._bond_diagnostics_record(prov, None, evals, None, 1, kx, kx, kz)
 
         # the largest-Re-lambda cluster is row 2 alone ...
         self.assertEqual(eval(prov["bond_diagnostics_eigenvalue_clusters"])[0], [2])
@@ -2852,14 +2858,14 @@ class TestBondDiagnostics(_ApproxTestCase):
         kx = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
         ky = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
         kz = np.linspace(0, 2.0 * np.pi, 1, endpoint=False)
-        basis = sc._odd_harmonic_basis(1, kx, ky, kz)
+        basis = sc_eigen._odd_harmonic_basis(1, kx, ky, kz)
 
-        geom_info, hr, interactions = sc._read_interaction_files(inp)
-        eps = sc._build_hamiltonian_k(kx, ky, kz, hr, 1)
-        ev, evec = sc._calc_eigenvalues(eps)
+        geom_info, hr, interactions = sc_io._read_interaction_files(inp)
+        eps = sc_band._build_hamiltonian_k(kx, ky, kz, hr, 1)
+        ev, evec = sc_band._calc_eigenvalues(eps)
         beta = 1.0 / inp["mode"]["param"]["T"]
-        mu = sc._determine_mu(ev, beta, inp["mode"]["param"]["filling"], 1)
-        green = sc._build_bond_green(
+        mu = sc_band._determine_mu(ev, beta, inp["mode"]["param"]["filling"], 1)
+        green = sc_bond._build_bond_green(
             ev, evec, mu, beta, inp["mode"]["param"]["Nmat"], 0.0, None).full_sc
         weight = bc.pair_weight(green, beta, g2_tail=True)
 
@@ -2895,7 +2901,7 @@ class TestBondConfigValidation(_ApproxTestCase):
                 with self.subTest(key=key, bad=bad):
                     cfg = _bond_cfg(**{key: bad})
                     with self.assertRaises(ValueError) as cm:
-                        sc._read_bond_config(cfg)
+                        sc_config._read_bond_config(cfg)
                     self.assertIn(key, str(cm.exception))
                     self.assertTrue(repr(bad) in str(cm.exception)
                                     or str(bad) in str(cm.exception))
@@ -2908,10 +2914,10 @@ class TestBondConfigValidation(_ApproxTestCase):
                                    ("false", False), ("False", False), ("no", False),
                                    ("off", False), ("0", False)]:
             with self.subTest(spelling=spelling, expected=expected):
-                use_bond = sc._read_bond_config({"bond_channels": spelling})[0]
+                use_bond = sc_config._read_bond_config({"bond_channels": spelling})[0]
                 self.assertIs(use_bond, expected)
                 if expected:
-                    diagnostics = sc._read_bond_config(
+                    diagnostics = sc_config._read_bond_config(
                         {"bond_channels": True, "bond_diagnostics": spelling})[5]
                     self.assertIs(diagnostics, expected)
 
@@ -2920,7 +2926,7 @@ class TestBondConfigValidation(_ApproxTestCase):
         kernel), so a typo there must not slip a bond_channels request past the
         validation either."""
         with self.assertRaises(ValueError) as cm:
-            sc._validate_dynamic_prereqs(
+            sc_config._validate_dynamic_prereqs(
                 {"eliashberg": {"bond_channels": "ture", "chi0q_mode": "flex"},
                  "mode": {"param": {"Nmat": 8}}})
         self.assertIn("bond_channels", str(cm.exception))
@@ -2932,7 +2938,7 @@ class TestBondConfigValidation(_ApproxTestCase):
         def prereqs(**eli):
             cfg = {"eliashberg": dict({"bond_channels": True, "chi0q_mode": "flex"}, **eli),
                    "mode": {"param": {"Nmat": 8}}}
-            return sc._validate_dynamic_prereqs(cfg)
+            return sc_config._validate_dynamic_prereqs(cfg)
 
         for key in ("zero_chi_s", "zero_chi_c"):
             with self.subTest(key=key):
@@ -2958,7 +2964,7 @@ class TestBondConfigValidation(_ApproxTestCase):
                        float("inf"), -1, -2.0, "two", "1.5", []]:
                 with self.subTest(key=key, bad=bad):
                     with self.assertRaises(ValueError) as cm:
-                        sc._read_bond_config(_bond_cfg(**{key: bad}))
+                        sc_config._read_bond_config(_bond_cfg(**{key: bad}))
                     self.assertIn(key, str(cm.exception))
 
     def test_bond_integer_options_accept_integral_values(self):
@@ -2966,7 +2972,7 @@ class TestBondConfigValidation(_ApproxTestCase):
             with self.subTest(good=good, expected=expected):
                 cfg = _bond_cfg(bond_max_shells=good,
                                 bond_precondition_dense_limit=good)
-                _, _, max_shells, _, pre_opts, _ = sc._read_bond_config(cfg)
+                _, _, max_shells, _, pre_opts, _ = sc_config._read_bond_config(cfg)
                 self.assertTrue(max_shells == expected and isinstance(max_shells, int))
                 self.assertEqual(pre_opts["dense_limit"], expected)
 
@@ -2979,7 +2985,7 @@ class TestBondConfigValidation(_ApproxTestCase):
             for bad in ["abc", [], True]:
                 with self.subTest(key=key, bad=bad):
                     with self.assertRaises(ValueError) as cm:
-                        sc._read_bond_config(_bond_cfg(**{key: bad}))
+                        sc_config._read_bond_config(_bond_cfg(**{key: bad}))
                     self.assertIn(key, str(cm.exception))
 
     def test_bond_option_set_to_none_means_unset(self):
@@ -2992,14 +2998,14 @@ class TestBondConfigValidation(_ApproxTestCase):
             with self.subTest(key=key):
                 cfg = _bond_cfg(**{key: None})
                 if key == "bond_channels":
-                    self.assertIs(sc._read_bond_config(cfg)[0], False)
+                    self.assertIs(sc_config._read_bond_config(cfg)[0], False)
                     continue
                 use_bond, green, max_shells, cap, pre_opts, diag = (
-                    sc._read_bond_config(cfg))
+                    sc_config._read_bond_config(cfg))
                 self.assertIs(use_bond, True)
                 self.assertTrue(green is None and max_shells is None and diag is False)
                 self.assertTrue(
-                    cap == sc._BOND_MEMORY_CAP_GB and pre_opts == {})
+                    cap == sc_config._BOND_MEMORY_CAP_GB and pre_opts == {})
 
 
 # ---------------------------------------------------------------------------
@@ -3015,8 +3021,8 @@ class TestGreenLayoutAdapters(_ApproxTestCase):
         p, Nx, Ny, Nz, nmat = 2, 3, 2, 2, 4
         g = (rng.normal(size=(p, p, Nx, Ny, Nz, nmat))
              + 1j * rng.normal(size=(p, p, Nx, Ny, Nz, nmat)))
-        canonical = sc._green_sc_to_canonical(g)
-        back = sc._green_canonical_to_sc(canonical, (Nx, Ny, Nz))
+        canonical = sc_kernel._green_sc_to_canonical(g)
+        back = sc_kernel._green_canonical_to_sc(canonical, (Nx, Ny, Nz))
         assert_approx_array(back, g, rel=0, abs=0)
 
     def test_canonical_shape_and_values(self):
@@ -3024,7 +3030,7 @@ class TestGreenLayoutAdapters(_ApproxTestCase):
         rng = np.random.default_rng(4)
         g = (rng.normal(size=(p, p, Nx, Ny, Nz, nmat))
              + 1j * rng.normal(size=(p, p, Nx, Ny, Nz, nmat)))
-        canonical = sc._green_sc_to_canonical(g)
+        canonical = sc_kernel._green_sc_to_canonical(g)
         self.assertEqual(canonical.shape, (1, nmat, Nx * Ny * Nz, p, p))
         self.assertEqual(canonical.dtype, g.dtype)
         # Spot-check one element against the documented index mapping:
@@ -3037,28 +3043,28 @@ class TestGreenLayoutAdapters(_ApproxTestCase):
         """The spec requires "ALWAYS a copy -- never a view"."""
         p, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 4
         g = np.zeros((p, p, Nx, Ny, Nz, nmat), dtype=complex)
-        canonical = sc._green_sc_to_canonical(g)
+        canonical = sc_kernel._green_sc_to_canonical(g)
         self.assertFalse(np.shares_memory(canonical, g))
-        back = sc._green_canonical_to_sc(canonical, (Nx, Ny, Nz))
+        back = sc_kernel._green_canonical_to_sc(canonical, (Nx, Ny, Nz))
         self.assertFalse(np.shares_memory(back, canonical))
 
     def test_green_canonical_to_sc_rejects_spatial_shape_mismatch(self):
         p, nmat, nvol = 2, 4, 6
         canonical = np.zeros((1, nmat, nvol, p, p), dtype=complex)
         with self.assertRaises(ValueError):
-            sc._green_canonical_to_sc(canonical, (2, 2, 2))  # 8 != 6
+            sc_kernel._green_canonical_to_sc(canonical, (2, 2, 2))  # 8 != 6
 
     def test_green_sc_to_canonical_rejects_bad_ndim(self):
         with self.assertRaises(ValueError):
-            sc._green_sc_to_canonical(np.zeros((2, 2, 2, 2, 2)))
+            sc_kernel._green_sc_to_canonical(np.zeros((2, 2, 2, 2, 2)))
 
     def test_green_sc_to_canonical_rejects_unequal_orbital_axes(self):
         with self.assertRaises(ValueError):
-            sc._green_sc_to_canonical(np.zeros((2, 3, 2, 2, 2, 4)))
+            sc_kernel._green_sc_to_canonical(np.zeros((2, 3, 2, 2, 2, 4)))
 
     def test_green_canonical_to_sc_rejects_nonunit_block_axis(self):
         with self.assertRaises(ValueError):
-            sc._green_canonical_to_sc(np.zeros((2, 4, 6, 2, 2)), (1, 1, 6))
+            sc_kernel._green_canonical_to_sc(np.zeros((2, 4, 6, 2, 2)), (1, 1, 6))
 
 
 class TestBondCoeffTailResolution(_ApproxTestCase):
@@ -3066,36 +3072,36 @@ class TestBondCoeffTailResolution(_ApproxTestCase):
     path")."""
 
     def test_absent_key_defaults_to_one(self):
-        value, source = sc._resolve_bond_coeff_tail({})
+        value, source = sc_config._resolve_bond_coeff_tail({})
         self.assertEqual(value, 1.0)
         self.assertEqual(source, "default")
 
     def test_none_value_counts_as_absent(self):
-        value, source = sc._resolve_bond_coeff_tail({"bond_coeff_tail": None})
+        value, source = sc_config._resolve_bond_coeff_tail({"bond_coeff_tail": None})
         self.assertEqual(value, 1.0)
         self.assertEqual(source, "default")
 
     def test_present_value_is_used_verbatim(self):
         for raw in (0.0, 0.5, -2.3, 3):
             with self.subTest(raw=raw):
-                value, source = sc._resolve_bond_coeff_tail(
+                value, source = sc_config._resolve_bond_coeff_tail(
                     {"bond_coeff_tail": raw})
                 self.assertEqual(value, float(raw))
                 self.assertEqual(source, "config")
 
     def test_rejects_boolean(self):
         with self.assertRaises(ValueError):
-            sc._resolve_bond_coeff_tail({"bond_coeff_tail": True})
+            sc_config._resolve_bond_coeff_tail({"bond_coeff_tail": True})
 
     def test_rejects_nonfinite(self):
         for bad in (float("nan"), float("inf"), float("-inf")):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
-                    sc._resolve_bond_coeff_tail({"bond_coeff_tail": bad})
+                    sc_config._resolve_bond_coeff_tail({"bond_coeff_tail": bad})
 
     def test_rejects_non_numeric(self):
         with self.assertRaises(ValueError):
-            sc._resolve_bond_coeff_tail({"bond_coeff_tail": "1.0"})
+            sc_config._resolve_bond_coeff_tail({"bond_coeff_tail": "1.0"})
 
 
 class TestBondCoeffTailEndToEndProvenance(_ApproxTestCase):

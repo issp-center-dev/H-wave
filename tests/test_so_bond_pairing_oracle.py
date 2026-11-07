@@ -29,7 +29,7 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
 import tests.test_sc_bond_pairing_oracle as O
 from hwave.solver import bond_channels as bc
 from hwave.solver.so_bond import (SLOT_CONVENTION, BondSlotGeometry, SOBondCaps, gamma_p,
@@ -419,10 +419,10 @@ def _fluct_kernels(tables, gamma_q_flip=False):
         _, vf = so_bond_pairing_vertex_parts(gb, chi, geom, plan=plan)
     so_fl = _apply(_static_kernel(vf, gso, bc.BondSetView(topo), 2 * NP, SHAPE, BETA), 2 * NP)
 
-    topo_n, view_n, split = sc._resolve_bond_topology(tables, {"rvec": np.eye(3)}, NP, None)
+    topo_n, view_n, split = sc_bond._resolve_bond_topology(tables, {"rvec": np.eye(3)}, NP, None)
     pre = {"non_su2_bonds": bc.non_su2_bonds(topo_n),
            "same_channels": np.array_equal(np.asarray(topo_n.delta_r), np.asarray(topo.delta_r))}
-    S, C = sc._build_bond_vertices(topo_n, split, NP, SHAPE)
+    S, C = sc_bond._build_bond_vertices(topo_n, split, NP, SHAPE)
     B = geom.B
     # the spin-up block of the spinful code bubble is the orbital bubble
     t = chibar.reshape(NX, B, 2, NP, 2, NP, B, 2, NP, 2, NP)
@@ -432,7 +432,7 @@ def _fluct_kernels(tables, gamma_q_flip=False):
                for ch, W in (("spin", S), ("charge", C))]
     nonso = {}
     for eta in ("singlet", "triplet"):
-        _, A_fl, _, _ = sc._bond_kernel_parts(S, C, iter(dressed), g, view_n, NP, SHAPE, BETA,
+        _, A_fl, _, _ = sc_bond._bond_kernel_parts(S, C, iter(dressed), g, view_n, NP, SHAPE, BETA,
                                               eta, topo=topo_n)
         nonso[eta] = (lambda op: lambda phi: op.matvec(phi.ravel()).reshape(NP, NP, NX))(A_fl)
     return so_fl, nonso, pre

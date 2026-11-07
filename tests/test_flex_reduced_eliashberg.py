@@ -30,6 +30,7 @@ import tempfile
 import unittest
 
 import numpy as np
+from hwave.solver.eliashberg import vertex as sc_vertex
 
 
 def _write_2orb_intra_only_fixture(dirpath):
@@ -111,7 +112,7 @@ class TestExpandFlexChiDensityPlacement(unittest.TestCase):
     """``_expand_flex_chi`` must embed the reduced matrix as a density pair."""
 
     def test_kuroki_block_lands_on_density_pair_positions(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 3
         nvol, nd_so, nd = Nx * Ny * Nz, norb * 2, norb * norb
@@ -119,7 +120,7 @@ class TestExpandFlexChiDensityPlacement(unittest.TestCase):
         chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
                    + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
 
-        out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
+        out = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
                                   convention="kuroki")
 
         chi6 = chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so)
@@ -134,14 +135,14 @@ class TestExpandFlexChiDensityPlacement(unittest.TestCase):
     def test_kuroki_keeps_interorbital_density_coupling(self):
         """The specific component the delta_{l2,l4} scatter silently dropped:
         chi_{(0,0),(1,1)} = X[0,1] (flat position [0, nd-1])."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         norb, Nx, Ny, Nz, nfreq = 2, 1, 1, 1, 1
         nd_so, nd = norb * 2, norb * norb
         chi_raw = np.zeros((nfreq, 1, nd_so, nd_so), dtype=complex)
         chi_raw[0, 0, 0, 1] = 7.0 + 3.0j        # X[0,1]
 
-        out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
+        out = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
                                   convention="kuroki")
 
         self.assertAlmostEqual(out[0, 0, 0, 0, 0, nd - 1], 7.0 + 3.0j)
@@ -154,7 +155,7 @@ class TestExpandFlexChiDensityPlacement(unittest.TestCase):
         """A reduced chi carries no information about pair indices (a,b) with
         a != b, so those rows/columns must stay exactly zero rather than being
         filled with copies of the density block."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         norb, Nx, Ny, Nz, nfreq = 3, 2, 1, 1, 2
         nvol, nd_so, nd = Nx * Ny * Nz, norb * 2, norb * norb
@@ -162,7 +163,7 @@ class TestExpandFlexChiDensityPlacement(unittest.TestCase):
         chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
                    + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
 
-        out = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
+        out = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
                                   convention="kuroki")
 
         density = [a * norb + a for a in range(norb)]
@@ -187,7 +188,7 @@ class TestSingleOrbitalIsBitIdentical(unittest.TestCase):
         return out
 
     def test_expand_flex_chi_norb1_matches_old_placement_exactly(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         norb, Nx, Ny, Nz, nfreq = 1, 3, 2, 1, 4
         nvol, nd_so = Nx * Ny * Nz, norb * 2
@@ -195,7 +196,7 @@ class TestSingleOrbitalIsBitIdentical(unittest.TestCase):
         chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
                    + 1j * rng.standard_normal((nfreq, nvol, nd_so, nd_so)))
 
-        new = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
+        new = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
                                   convention="kuroki")
         old = self._old_scatter(
             chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so),
@@ -207,7 +208,7 @@ class TestSingleOrbitalIsBitIdentical(unittest.TestCase):
     def test_multi_orbital_genuinely_differs_from_old_placement(self):
         """Guard against the bit-identity test passing vacuously: for norb >= 2
         the two placements must NOT coincide."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         for norb in (2, 3):
             with self.subTest(norb=norb):
@@ -217,7 +218,7 @@ class TestSingleOrbitalIsBitIdentical(unittest.TestCase):
                 chi_raw = (rng.standard_normal((nfreq, nvol, nd_so, nd_so))
                            + 1j * rng.standard_normal(
                                (nfreq, nvol, nd_so, nd_so)))
-                new = sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
+                new = sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz,
                                           convention="kuroki")
                 old = self._old_scatter(
                     chi_raw.reshape(nfreq, Nx, Ny, Nz, nd_so, nd_so),
@@ -246,6 +247,8 @@ class TestReducedFlexVertexMatchesLoadVertex(unittest.TestCase):
 
     def _build(self):
         import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         dirpath = self._tmp.name
         flex = _make_reduced_flex(dirpath)
@@ -274,15 +277,15 @@ class TestReducedFlexVertexMatchesLoadVertex(unittest.TestCase):
             "path_to_input": dirpath,
             "Geometry": "geom.dat", "Transfer": "transfer.dat",
             "CoulombIntra": "coulombintra.dat"}}}}
-        _, _, interactions = sc._read_interaction_files(input_dict)
+        _, _, interactions = sc_io._read_interaction_files(input_dict)
         kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
         ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
         kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
-        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+        inter_k = sc_vertex._build_interaction_k(kx, ky, kz, interactions, norb)
 
-        chis_stat = sc._expand_flex_chi(chi_s[si:si + 1], norb, Nx, Ny, Nz,
+        chis_stat = sc_io._expand_flex_chi(chi_s[si:si + 1], norb, Nx, Ny, Nz,
                                         "kuroki")[0]
-        chic_stat = sc._expand_flex_chi(chi_c[si:si + 1], norb, Nx, Ny, Nz,
+        chic_stat = sc_io._expand_flex_chi(chi_c[si:si + 1], norb, Nx, Ny, Nz,
                                         "kuroki")[0]
 
         # load path consumes chi0q as (norb, norb, Nx, Ny, Nz, nmat)
@@ -297,10 +300,10 @@ class TestReducedFlexVertexMatchesLoadVertex(unittest.TestCase):
          norb, Nx, Ny, Nz, nmat, si, nd) = self._build()
 
         for pairing in ("singlet", "triplet"):
-            Vs_flex = sc._compute_vertices_flex(
+            Vs_flex = sc_vertex._compute_vertices_flex(
                 chis_stat, chic_stat, inter_k, norb, Nx, Ny, Nz,
                 pairing_type=pairing, convention="kuroki")
-            Pc_q, Ps_q = sc._compute_vertices_simple(
+            Pc_q, Ps_q = sc_vertex._compute_vertices_simple(
                 chi0q_load, inter_k, norb, Nx, Ny, Nz, nmat,
                 pairing_type=pairing, static_index=si)
             Vs_load = Pc_q + Ps_q          # (norb, norb, Nx, Ny, Nz)
@@ -322,7 +325,7 @@ class TestReducedFlexVertexMatchesLoadVertex(unittest.TestCase):
         (sc, inter_k, chis_stat, chic_stat, chi0q_load,
          norb, Nx, Ny, Nz, nmat, si, nd) = self._build()
 
-        Vs_flex = sc._compute_vertices_flex(
+        Vs_flex = sc_vertex._compute_vertices_flex(
             chis_stat, chic_stat, inter_k, norb, Nx, Ny, Nz,
             pairing_type="singlet", convention="kuroki")
 
@@ -352,7 +355,7 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
     """
 
     def _run(self, keys):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         norb, Nx, Ny, Nz, nmat = 2, 3, 2, 1, 4
         si = nmat // 2
@@ -373,10 +376,10 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
         out = {}
         for pairing in ("singlet", "triplet"):
             out[pairing] = (
-                sc._compute_vertices_general(X4, inter_k, norb, Nx, Ny, Nz,
+                sc_vertex._compute_vertices_general(X4, inter_k, norb, Nx, Ny, Nz,
                                              nmat, pairing_type=pairing,
                                              static_index=si),
-                sc._compute_vertices_general(X, inter_k, norb, Nx, Ny, Nz,
+                sc_vertex._compute_vertices_general(X, inter_k, norb, Nx, Ny, Nz,
                                              nmat, pairing_type=pairing,
                                              static_index=si))
         return out
@@ -401,13 +404,13 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
         builder gives Exchange/PairHop zero weight too, so accepting them
         silently omits the interaction (the norb shortcut used to return
         before the check -- round 7)."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         for itype in ("Exchange", "PairHop"):
             with self.subTest(interaction=itype):
                 m = np.full((1, 1, 2, 1, 1), 0.4, dtype=complex)
                 with self.assertRaises(ValueError) as cm:
-                    sc._warn_reduced_flex_missing_components(
+                    sc_vertex._warn_reduced_flex_missing_components(
                         {"CoulombIntra": m.copy(), itype: m}, 1, 2, 1, 1)
                 self.assertIn(itype, str(cm.exception))
 
@@ -415,7 +418,7 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
         """Route-level pin: _compute_vertices with a one-orbital 2-index
         chi0q must reject Exchange/PairHop (the caller's norb shortcut
         bypassed the helper entirely -- round 8)."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         norb, Nx, Ny, Nz, nmat = 1, 2, 1, 1, 4
         chi0q = np.full((norb, norb, Nx, Ny, Nz, nmat), 0.01,
@@ -424,7 +427,7 @@ class TestGeneralVertexTwoIndexEmbedding(unittest.TestCase):
         for itype in ("Exchange", "PairHop"):
             with self.subTest(interaction=itype):
                 with self.assertRaises(ValueError) as cm:
-                    sc._compute_vertices(
+                    sc_vertex._compute_vertices(
                         chi0q, {"CoulombIntra": m.copy(), itype: m.copy()},
                         norb, Nx, Ny, Nz, nmat, pairing_type="singlet")
                 self.assertIn(itype, str(cm.exception))
@@ -452,13 +455,13 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
                 for k in keys}
 
     def test_warns_for_each_unsupported_interorbital_term(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         # partial types warn; the no-density-content types are rejected
         for key in ("CoulombInter", "Hund", "Ising"):
             with self.subTest(interaction=key):
                 with self.assertLogs("hwave_sc", level="WARNING") as cm:
-                    sc._warn_reduced_flex_missing_components(
+                    sc_vertex._warn_reduced_flex_missing_components(
                         self._inter_k(["CoulombIntra", key]), 2, 2, 2, 1)
                 joined = "\n".join(cm.output)
                 self.assertIn(key, joined)
@@ -466,13 +469,13 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         for key in ("Exchange", "PairHop"):
             with self.subTest(interaction=key):
                 with self.assertRaises(ValueError) as cm:
-                    sc._warn_reduced_flex_missing_components(
+                    sc_vertex._warn_reduced_flex_missing_components(
                         self._inter_k(["CoulombIntra", key]), 2, 2, 2, 1)
                 self.assertIn(key, str(cm.exception))
                 self.assertIn("general", str(cm.exception))
 
     def test_silent_for_coulombintra_only(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         import logging
 
         records = []
@@ -481,7 +484,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._warn_reduced_flex_missing_components(
+            sc_vertex._warn_reduced_flex_missing_components(
                 self._inter_k(["CoulombIntra"]), 2, 2, 2, 1)
         finally:
             lg.removeHandler(handler)
@@ -494,7 +497,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         or J = 0 endpoint of a coupling/pressure scan -- contributes nothing to
         the off-density S/C blocks, so warning about it would be a false
         positive."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         import logging
 
         norb, Nx, Ny, Nz = 2, 2, 2, 1
@@ -509,7 +512,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
+            sc_vertex._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
         finally:
             lg.removeHandler(handler)
         warns = [r.getMessage() for r in records
@@ -527,7 +530,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         to the pair-diagonal family and no longer shares a slot with
         PairHop.) A per-term test would announce missing dressing that does
         not exist."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         import logging
 
         norb, Nx, Ny, Nz = 2, 2, 2, 1
@@ -538,7 +541,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
                                            dtype=complex),
                    "CoulombInter": jp, "Hund": jp.copy()}
         self.assertEqual(
-            sc._off_density_sc_weight(inter_k, norb, Nx, Ny, Nz), 0.0,
+            sc_vertex._off_density_sc_weight(inter_k, norb, Nx, Ny, Nz), 0.0,
             "equal CoulombInter and Hund must cancel the pair-cross "
             "off-density block under the adjudicated table")
 
@@ -548,7 +551,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
+            sc_vertex._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
         finally:
             lg.removeHandler(handler)
         self.assertEqual([r.getMessage() for r in records
@@ -557,7 +560,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
     def test_warns_when_the_terms_do_not_cancel(self):
         """Same fixture without the cancellation must still warn, so the test
         above cannot pass for the wrong reason."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         norb, Nx, Ny, Nz = 2, 2, 2, 1
         jp = np.zeros((norb, norb, Nx, Ny, Nz), dtype=complex)
@@ -570,15 +573,15 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
                                            dtype=complex),
                    "Hund": jp}
         self.assertGreater(
-            sc._off_density_sc_weight(inter_k, norb, Nx, Ny, Nz), 0.0)
+            sc_vertex._off_density_sc_weight(inter_k, norb, Nx, Ny, Nz), 0.0)
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
-            sc._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
+            sc_vertex._warn_reduced_flex_missing_components(inter_k, norb, Nx, Ny, Nz)
         self.assertIn("Hund", "\n".join(cm.output))
 
     def test_diagonal_only_interorbital_term_does_not_warn(self):
         """Only the a != b entries build the off-density blocks, so a term whose
         weight sits purely on the orbital diagonal must not warn."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         import logging
 
         norb, Nx, Ny, Nz = 2, 2, 2, 1
@@ -592,7 +595,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._warn_reduced_flex_missing_components({"Hund": diag}, norb,
+            sc_vertex._warn_reduced_flex_missing_components({"Hund": diag}, norb,
                                                      Nx, Ny, Nz)
         finally:
             lg.removeHandler(handler)
@@ -603,7 +606,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
     def test_silent_for_single_orbital(self):
         """norb=1 has no off-density pair index, so nothing can be missing even
         with an inter-orbital term configured."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         import logging
 
         records = []
@@ -612,7 +615,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._warn_reduced_flex_missing_components(
+            sc_vertex._warn_reduced_flex_missing_components(
                 self._inter_k(["CoulombIntra", "Hund"], 1, 2, 2, 1), 1, 2, 2, 1)
         finally:
             lg.removeHandler(handler)
@@ -623,7 +626,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
     def test_myo_convention_does_not_warn(self):
         """The general (myo) FLEX path stores the full orbital-pair chi, so the
         reduced-data warning must not fire there."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         import logging
 
         records = []
@@ -632,7 +635,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._warn_reduced_flex_missing_components(
+            sc_vertex._warn_reduced_flex_missing_components(
                 self._inter_k(["CoulombIntra", "Hund"]), 2, 2, 2, 1,
                 convention="myo")
         finally:
@@ -652,7 +655,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         check is hoisted to the two callers that run once per calculation.
         (The Exchange/PairHop REJECTION, by contrast, does run inside on
         every call -- it is a cheap scan and must hold on every route.)"""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         import logging
 
         norb, Nx, Ny, Nz = 2, 2, 2, 1
@@ -666,7 +669,7 @@ class TestReducedFlexMissingComponentWarning(unittest.TestCase):
         lg = logging.getLogger("hwave_sc")
         lg.addHandler(handler)
         try:
-            sc._compute_vertices_flex(chi, chi, inter_k, norb, Nx, Ny, Nz,
+            sc_vertex._compute_vertices_flex(chi, chi, inter_k, norb, Nx, Ny, Nz,
                                       pairing_type="singlet",
                                       convention="kuroki")
         finally:
@@ -720,7 +723,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
                 for k in keys}
 
     def test_compute_vertices_flex_boundary_rejects(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         for key in ("Exchange", "PairHop"):
             for norb in (1, 2):
@@ -729,7 +732,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
                     nd = norb * norb
                     chi = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
                     with self.assertRaises(ValueError) as cm:
-                        sc._compute_vertices_flex(
+                        sc_vertex._compute_vertices_flex(
                             chi, chi,
                             self._inter_k(["CoulombIntra", key],
                                           norb, Nx, Ny, Nz),
@@ -762,14 +765,14 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
     def test_general_convention_still_accepts_exchange(self):
         """Centralizing the rejection must not touch the general (myo)
         convention, which fully represents Exchange/PairHop."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz = 2, 2, 2, 1
         nd = norb * norb
         inter_k = self._inter_k(["CoulombIntra", "Exchange", "PairHop"],
                                 norb, Nx, Ny, Nz)
         chi = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
-        V = sc._compute_vertices_flex(chi, chi, inter_k, norb, Nx, Ny, Nz,
+        V = sc_vertex._compute_vertices_flex(chi, chi, inter_k, norb, Nx, Ny, Nz,
                                       convention="myo")
         self.assertEqual(V.shape, (norb, norb, norb, norb, Nx, Ny, Nz))
         V2 = ed._instantaneous_vertex(inter_k, norb, Nx, Ny, Nz,
@@ -782,20 +785,20 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         the cache skips only the BUILD, never the validation (round-10
         review reproduced convention='invalid' + cache returning a
         vertex)."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz = 2, 2, 2, 1
         nd = norb * norb
         chi = np.zeros((Nx, Ny, Nz, nd, nd), dtype=complex)
         good = self._inter_k(["CoulombIntra"], norb, Nx, Ny, Nz)
-        mats = sc._build_vertex_sc_matrices("kuroki", good,
+        mats = sc_vertex._build_vertex_sc_matrices("kuroki", good,
                                             norb, Nx, Ny, Nz)
 
         for key in ("Exchange", "PairHop"):
             with self.subTest(interaction=key):
                 bad = self._inter_k(["CoulombIntra", key], norb, Nx, Ny, Nz)
                 with self.assertRaises(ValueError) as cm:
-                    sc._compute_vertices_flex(chi, chi, bad, norb,
+                    sc_vertex._compute_vertices_flex(chi, chi, bad, norb,
                                               Nx, Ny, Nz,
                                               convention="kuroki",
                                               sc_matrices=mats)
@@ -816,7 +819,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         """The sc_matrices cache is an optimization only: cached and
         uncached myo vertices must be bit-identical on the static,
         instantaneous, and dynamic routes."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz, nmat = 2, 2, 2, 1, 3
         nd = norb * norb
@@ -826,13 +829,13 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         chi = (rng.standard_normal((Nx, Ny, Nz, nd, nd))
                + 1j * rng.standard_normal((Nx, Ny, Nz, nd, nd))) * 0.01
         chi_w = np.stack([chi] * nmat, axis=-1)
-        mats = sc._build_vertex_sc_matrices("myo", inter_k,
+        mats = sc_vertex._build_vertex_sc_matrices("myo", inter_k,
                                             norb, Nx, Ny, Nz)
 
-        v_cached = sc._compute_vertices_flex(chi, chi, inter_k, norb,
+        v_cached = sc_vertex._compute_vertices_flex(chi, chi, inter_k, norb,
                                              Nx, Ny, Nz, convention="myo",
                                              sc_matrices=mats)
-        v_plain = sc._compute_vertices_flex(chi, chi, inter_k, norb,
+        v_plain = sc_vertex._compute_vertices_flex(chi, chi, inter_k, norb,
                                             Nx, Ny, Nz, convention="myo")
         self.assertTrue(np.array_equal(v_cached, v_plain))
 
@@ -857,19 +860,19 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         """An unknown convention tag must fail closed at every boundary,
         including when the dispatcher (the only other validator) is skipped
         by a supplied cache."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver.eliashberg import dynamic as ed
         norb, Nx, Ny, Nz = 1, 2, 2, 1
         chi = np.zeros((Nx, Ny, Nz, 1, 1), dtype=complex)
         chi_w = np.zeros((Nx, Ny, Nz, 1, 1, 3), dtype=complex)
         inter_k = self._inter_k(["CoulombIntra"], norb, Nx, Ny, Nz)
-        mats = sc._build_vertex_sc_matrices("kuroki", inter_k,
+        mats = sc_vertex._build_vertex_sc_matrices("kuroki", inter_k,
                                             norb, Nx, Ny, Nz)
 
         for cache in (None, mats):
             with self.subTest(cached=cache is not None):
                 with self.assertRaises(ValueError) as cm:
-                    sc._compute_vertices_flex(chi, chi, inter_k, norb,
+                    sc_vertex._compute_vertices_flex(chi, chi, inter_k, norb,
                                               Nx, Ny, Nz,
                                               convention="invalid",
                                               sc_matrices=cache)
@@ -889,7 +892,6 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         """The S/C matrices are frequency-independent: one build per run,
         independent of nmat (round-9 review measured ~nmat identical
         full-grid builds)."""
-        import hwave.sc as sc
         from hwave.solver.eliashberg import dynamic as ed
         from unittest import mock
 
@@ -904,7 +906,7 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         # The builder is called from inside hwave.solver.eliashberg.vertex
         # (dev/sc-split-plan.md, step 1), so the spy goes on that module.
         from hwave.solver.eliashberg import vertex as sc_vertex
-        real_build = sc._build_sc_matrices_all_q
+        real_build = sc_vertex._build_sc_matrices_all_q
         with mock.patch.object(sc_vertex, "_build_sc_matrices_all_q",
                                side_effect=real_build) as spy:
             ed.compute_vertices_flex_dynamic(
@@ -960,10 +962,10 @@ class TestDiscardedSpinContentIsRefused(unittest.TestCase):
         which data the solver accepts belongs where the data enters it, not in
         the reshape, which is also exercised directly with arbitrary arrays.
         """
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
         chi = self._chi(norb, Nx, Ny, Nz, nfreq, **kw)
-        return lambda: sc._check_spin_block_discarded(chi, norb, "kuroki")
+        return lambda: sc_config._check_spin_block_discarded(chi, norb, "kuroki")
 
     def test_paramagnetic_chi_passes_silently(self):
         self.assertEqual(self._capture(self._expand()), [])
@@ -1000,37 +1002,37 @@ class TestDiscardedSpinContentIsRefused(unittest.TestCase):
         """A difference within double-precision noise must not abort a
         legitimate paramagnetic run on a backend whose solve is not
         bit-symmetric."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
         chi = self._chi(norb, Nx, Ny, Nz, nfreq)
         scale = float(np.max(np.abs(chi[..., :norb, :norb])))
-        chi[..., norb, norb] += 0.1 * sc._SPIN_DISCARD_ROUNDOFF_RATIO * scale
+        chi[..., norb, norb] += 0.1 * sc_config._SPIN_DISCARD_ROUNDOFF_RATIO * scale
         warns = self._capture(
-            lambda: sc._check_spin_block_discarded(chi, norb, "kuroki"))
+            lambda: sc_config._check_spin_block_discarded(chi, norb, "kuroki"))
         self.assertEqual(len(warns), 1)
         self.assertIn("round-off", warns[0])
 
     def test_above_the_roundoff_threshold_is_refused(self):
         """...but only just below it. An order of magnitude above must raise, so
         the allowance cannot be mistaken for a general tolerance."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         norb, Nx, Ny, Nz, nfreq = 2, 2, 2, 1, 2
         chi = self._chi(norb, Nx, Ny, Nz, nfreq)
         scale = float(np.max(np.abs(chi[..., :norb, :norb])))
-        chi[..., norb, norb] += 10.0 * sc._SPIN_DISCARD_ROUNDOFF_RATIO * scale
+        chi[..., norb, norb] += 10.0 * sc_config._SPIN_DISCARD_ROUNDOFF_RATIO * scale
         with self.assertRaises(ValueError):
-            sc._check_spin_block_discarded(chi, norb, "kuroki")
+            sc_config._check_spin_block_discarded(chi, norb, "kuroki")
 
     def test_threshold_is_anchored_to_machine_precision(self):
         """Pin the provenance of the constant: it is a few hundred ulp, not a
         guess about how weak a physical field can be."""
-        import hwave.sc as sc
-        self.assertLess(sc._SPIN_DISCARD_ROUNDOFF_RATIO, 1e-12)
-        self.assertGreater(sc._SPIN_DISCARD_ROUNDOFF_RATIO,
+        from hwave.solver.eliashberg import config as sc_config
+        self.assertLess(sc_config._SPIN_DISCARD_ROUNDOFF_RATIO, 1e-12)
+        self.assertGreater(sc_config._SPIN_DISCARD_ROUNDOFF_RATIO,
                            np.finfo(float).eps)
 
     def test_myo_chi_is_never_checked(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         norb, Nx, Ny, Nz, nfreq = 3, 2, 1, 1, 2
         nd = norb * norb
         rng = np.random.default_rng(13)
@@ -1038,7 +1040,7 @@ class TestDiscardedSpinContentIsRefused(unittest.TestCase):
                + 1j * rng.standard_normal((nfreq, Nx * Ny * Nz, nd, nd)))
         self.assertEqual(
             self._capture(
-                lambda: sc._check_spin_block_discarded(chi, norb, "myo")), [])
+                lambda: sc_config._check_spin_block_discarded(chi, norb, "myo")), [])
 
 
 class TestStaticEntryPointWarnsOnce(unittest.TestCase):
@@ -1231,7 +1233,7 @@ class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):
                     what, name, float(np.max(np.abs(cross)))))
 
     def _check(self, extra_param, tag):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         import logging
 
         with tempfile.TemporaryDirectory() as d:
@@ -1247,7 +1249,7 @@ class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):
                     chi = np.asarray(green_info[key])
                     self._assert_exactly_redundant(chi, norb,
                                                    "{} {}".format(tag, key))
-                    sc._check_spin_block_discarded(chi, norb, "kuroki", key)
+                    sc_config._check_spin_block_discarded(chi, norb, "kuroki", key)
             finally:
                 lg.removeHandler(handler)
             # Filter on nothing: the guard has several messages and an earlier
@@ -1297,7 +1299,7 @@ class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
     """
 
     def test_message_identifies_spin_orbital_mode(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         # geom norb = 4 spin-orbitals (2 physical); FLEX stores nd = 2*2 = 4.
         norb, Nx, Ny, Nz, nfreq = 4, 2, 1, 1, 1
@@ -1305,19 +1307,19 @@ class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
         chi_raw = np.zeros((nfreq, Nx * Ny * Nz, nd_chi, nd_chi), dtype=complex)
 
         with self.assertRaises(ValueError) as cm:
-            sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, "kuroki")
+            sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, "kuroki")
         msg = str(cm.exception)
         self.assertIn("enable_spin_orbital", msg)
         self.assertIn("does not support", msg)
 
     def test_unrelated_shape_mismatch_keeps_the_plain_message(self):
         """The hint must not be attached to every shape error."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         norb, Nx, Ny, Nz, nfreq = 3, 2, 1, 1, 1
         chi_raw = np.zeros((nfreq, Nx * Ny * Nz, 5, 5), dtype=complex)
         with self.assertRaises(ValueError) as cm:
-            sc._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, "kuroki")
+            sc_io._expand_flex_chi(chi_raw, norb, Nx, Ny, Nz, "kuroki")
         msg = str(cm.exception)
         self.assertIn("matches neither", msg)
         self.assertNotIn("enable_spin_orbital", msg)
@@ -1444,23 +1446,23 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
         saturated or projected spin sector looks identical. The values alone
         cannot tell them apart, so an untagged file must not be assumed benign
         -- that was a hole in the first version of this guard."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         with tempfile.TemporaryDirectory() as d:
             inp, norb, Nx, Ny, Nz = self._write(d, build=self._only_up)
             with self.assertRaises(ValueError) as cm:
-                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+                sc_io._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
         self.assertIn("chi_spin_blocks='up_only'", str(cm.exception))
 
     def test_config_flag_accepts_an_untagged_legacy_file(self):
         """Files written before this check existed cannot carry the tag, so the
         configuration route must work for them -- otherwise the escape hatch is
         unreachable for exactly the files that need it."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         with tempfile.TemporaryDirectory() as d:
             inp, norb, Nx, Ny, Nz = self._write(d, build=self._only_up)
             inp["eliashberg"]["accept_up_block_only"] = True
             with self.assertLogs("hwave_sc", level="WARNING") as cm:
-                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+                sc_io._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
         msg = "\n".join(cm.output)
         # Name the real authoriser: a user override and a file assertion carry
         # different weight, and an earlier version reported the override as
@@ -1472,22 +1474,22 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
         """A TOML typo like the string "false" is truthy in Python; silently
         enabling an override that relaxes a correctness guard is the worst
         reading of a malformed value."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         with tempfile.TemporaryDirectory() as d:
             inp, norb, Nx, Ny, Nz = self._write(d, build=self._only_up)
             inp["eliashberg"]["accept_up_block_only"] = "false"
             with self.assertRaises(ValueError) as cm:
-                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+                sc_io._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
         self.assertIn("must be a boolean", str(cm.exception))
 
     def test_tagged_legacy_file_is_accepted(self):
         """...but a file that declares the layout is read as intended."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         with tempfile.TemporaryDirectory() as d:
             inp, norb, Nx, Ny, Nz = self._write(d, build=self._only_up,
                                                 tag_up_only=True)
             with self.assertLogs("hwave_sc", level="WARNING") as cm:
-                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+                sc_io._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
         self.assertIn("chi_spin_blocks", "\n".join(cm.output))
 
     def test_static_route_also_validates_the_whole_axis(self):
@@ -1496,25 +1498,25 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
         dynamic route rejects through the static one -- and with a one-block
         Green function it would then return a paramagnetic eigenvalue in
         silence."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         with tempfile.TemporaryDirectory() as d:
             inp, norb, Nx, Ny, Nz = self._write(d, build=_bad_tail)
             with self.assertRaises(ValueError):
-                sc._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
+                sc_io._load_flex_susceptibilities(inp, norb, Nx, Ny, Nz)
 
     def test_dynamic_route_rejects_it_too(self):
         """The two routes must agree about whether a file is usable."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         with tempfile.TemporaryDirectory() as d:
             inp, norb, Nx, Ny, Nz = self._write(d, build=_bad_tail)
             with self.assertRaises(ValueError):
-                sc._load_flex_susceptibilities_full(inp, norb, Nx, Ny, Nz)
+                sc_io._load_flex_susceptibilities_full(inp, norb, Nx, Ny, Nz)
 
     def test_non_finite_susceptibility_is_refused(self):
         """NaN in a DISCARDED block is the dangerous case: max(0.0, nan) is 0.0
         in Python, so it would leave the redundancy maxima untouched and the
         array would be accepted as exactly redundant."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         for bad in (np.nan, np.inf):
             for blk, sl in (("up", (slice(None), slice(None), 0, 0)),
                             ("down", (slice(None), slice(None), 2, 2)),
@@ -1527,7 +1529,7 @@ class TestGuardsDoNotBreakLegitimateInput(unittest.TestCase):
                         z["chiq_s"][sl] = bad
                         np.savez(f, **z)
                         with self.assertRaises(ValueError) as cm:
-                            sc._load_flex_susceptibilities(inp, norb,
+                            sc_io._load_flex_susceptibilities(inp, norb,
                                                            Nx, Ny, Nz)
                     self.assertIn("non-finite", str(cm.exception))
 
@@ -1558,7 +1560,7 @@ class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
         n = self.NORB
         up, dn = chi[..., :n, :n], chi[..., n:, n:]
         cu, cd = chi[..., :n, n:], chi[..., n:, :n]
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         if float(np.max(np.abs(up - dn))) == 0.0 and \
                 float(np.max(np.abs(cu))) == 0.0 and \
                 float(np.max(np.abs(cd))) == 0.0:
@@ -1578,12 +1580,12 @@ class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
             wd = max(float(np.max(np.abs(u - d))),
                      float(np.max(np.abs(c1))), float(np.max(np.abs(c2))))
             worst = max(worst, wd / max(ws, np.finfo(float).tiny))
-        return worst > sc._SPIN_DISCARD_ROUNDOFF_RATIO
+        return worst > sc_config._SPIN_DISCARD_ROUNDOFF_RATIO
 
     def _cases(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         n, nd_so = self.NORB, self.NORB * 2
-        R = sc._SPIN_DISCARD_ROUNDOFF_RATIO
+        R = sc_config._SPIN_DISCARD_ROUNDOFF_RATIO
         rng = np.random.default_rng(0)
         for nfreq in (1, 3, 8):
             base = (rng.standard_normal((nfreq, 5, n, n))
@@ -1638,7 +1640,7 @@ class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
                 yield "n%d all-zero-frequency" % nfreq, a0
 
     def test_every_case_decides_the_same_way(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         import logging
         # Silence the guard's warnings for this test only. Setting the level
         # without restoring it leaks into every later test that asserts on
@@ -1651,7 +1653,7 @@ class TestChunkedCheckMatchesWholeArray(unittest.TestCase):
             with self.subTest(case=name):
                 want_raise = self._whole_array_verdict(chi)
                 try:
-                    sc._check_spin_block_discarded(chi, self.NORB, "kuroki",
+                    sc_config._check_spin_block_discarded(chi, self.NORB, "kuroki",
                                                    "x", True)
                     got_raise = False
                 except ValueError:
@@ -1677,9 +1679,9 @@ class TestSpinGuardDiagnostics(unittest.TestCase):
         return a
 
     def _raise_message(self, chi):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         with self.assertRaises(ValueError) as cm:
-            sc._check_spin_block_discarded(chi, self.NORB, "kuroki", "chi_s")
+            sc_config._check_spin_block_discarded(chi, self.NORB, "kuroki", "chi_s")
         return str(cm.exception)
 
     def test_sole_mismatch_at_frequency_zero_is_named(self):
@@ -1704,16 +1706,17 @@ class TestMalformedShapesAreRefused(unittest.TestCase):
     used to be reshaped into a susceptibility without complaint."""
 
     def test_rectangular_trailing_axes_are_refused(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
+        from hwave.solver.eliashberg import config as sc_config
         norb = 2
         # 2*8 = 16 trailing elements; sqrt(16) = 4 = norb^2, so deriving nd_chi
         # from the element count accepted this as a 4x4.
         chi = np.arange(1 * 1 * 2 * 8, dtype=complex).reshape(1, 1, 2, 8)
         with self.assertRaises(ValueError) as cm:
-            sc._expand_flex_chi(chi, norb, 1, 1, 1, "kuroki")
+            sc_io._expand_flex_chi(chi, norb, 1, 1, 1, "kuroki")
         self.assertIn("shape", str(cm.exception))
         with self.assertRaises(ValueError):
-            sc._check_spin_block_discarded(chi, norb, "kuroki", "chi_s")
+            sc_config._check_spin_block_discarded(chi, norb, "kuroki", "chi_s")
 
     def test_the_two_supported_layouts_still_load(self):
         """The refusal must not catch either real layout: reduced is
@@ -1723,11 +1726,11 @@ class TestMalformedShapesAreRefused(unittest.TestCase):
         Distinct nonzero values, not zeros: the rank-6 branch flattens the pair
         axes, and an all-zero array would agree on shape however that flattening
         permuted the values."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         for norb in (1, 2, 3):
             with self.subTest(norb=norb, layout="reduced"):
                 red = np.zeros((2, 1, norb * 2, norb * 2), dtype=complex)
-                out = sc._expand_flex_chi(red, norb, 1, 1, 1, "kuroki")
+                out = sc_io._expand_flex_chi(red, norb, 1, 1, 1, "kuroki")
                 self.assertEqual(out.shape[-2:],
                                  (norb * norb, norb * norb))
             with self.subTest(norb=norb, layout="general"):
@@ -1735,7 +1738,7 @@ class TestMalformedShapesAreRefused(unittest.TestCase):
                 gen = (np.arange(2 * 1 * n ** 4, dtype=float)
                        + 1j * np.arange(2 * 1 * n ** 4, dtype=float)
                        ).reshape(2, 1, n, n, n, n)
-                out = sc._expand_flex_chi(gen, norb, 1, 1, 1, "myo")
+                out = sc_io._expand_flex_chi(gen, norb, 1, 1, 1, "myo")
                 # pins the ORDER, not just the shape: row pair (a,c), col (b,d)
                 np.testing.assert_array_equal(
                     out, gen.reshape(2, 1, 1, 1, n * n, n * n))
@@ -1747,7 +1750,6 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
     user takes responsibility (mirrors the chi-side policy)."""
 
     def _write(self, d, blocks, chi_extra=None):
-        import hwave.sc as sc
 
         norb, Nx, Ny, Nz, nmat = 1, 2, 1, 1, 4
         nvol = Nx * Ny * Nz
@@ -1779,11 +1781,11 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
     def test_identical_blocks_pass(self):
         import tempfile
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         d = tempfile.mkdtemp()
         inp = self._write(d, self._blocks(1.0))
-        green = sc._load_flex_green(inp, 1, 2, 1, 1)
+        green = sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIsNotNone(green)
 
     def test_nonfinite_green_is_rejected_at_the_boundary(self):
@@ -1793,7 +1795,7 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
         one-block and (block-redundant) two-block files alike."""
         import tempfile
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         for label, val, blocks in (
                 ("nan two-block", np.nan, 2),
@@ -1808,10 +1810,10 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
                 d = tempfile.mkdtemp()
                 inp = self._write(d, b)
                 with self.assertRaises(ValueError) as cm:
-                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                    sc_io._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn('non-finite', str(cm.exception))
                 with self.assertRaises(ValueError):
-                    sc._load_flex_green(inp, 1, 2, 1, 1, allow_ir=True)
+                    sc_io._load_flex_green(inp, 1, 2, 1, 1, allow_ir=True)
 
     def test_partial_nan_components_are_rejected_as_nonfinite(self):
         """Entries like nan+1j (one finite component) are caught by the
@@ -1820,7 +1822,7 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
         is thereby closed at the boundary."""
         import tempfile
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         for kind in ("imag-differs", "real-differs"):
             with self.subTest(kind=kind):
@@ -1834,31 +1836,31 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
                 d = tempfile.mkdtemp()
                 inp = self._write(d, blocks)
                 with self.assertRaises(ValueError) as cm:
-                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                    sc_io._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn('non-finite', str(cm.exception))
 
     def test_differing_blocks_are_rejected(self):
         import tempfile
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         d = tempfile.mkdtemp()
         inp = self._write(d, self._blocks(2.0))
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, 1, 2, 1, 1)
+            sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIn('accept_up_block_only', str(cm.exception))
 
     def test_differing_blocks_pass_with_authorization(self):
         import logging
         import tempfile
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         d = tempfile.mkdtemp()
         inp = self._write(d, self._blocks(2.0))
         inp['eliashberg']['accept_up_block_only'] = True
         with self.assertLogs('hwave_sc', level=logging.WARNING) as cm:
-            green = sc._load_flex_green(inp, 1, 2, 1, 1)
+            green = sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIsNotNone(green)
         self.assertTrue(any('DIFFERING' in m for m in cm.output))
 
@@ -1870,7 +1872,7 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
         import tempfile
         from unittest import mock
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         blocks = self._blocks(1.0)
         blocks[1][0, 0, 0, 0] += 1.0     # first frequency differs
@@ -1885,7 +1887,7 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
 
         with mock.patch.object(np, 'array_equal', side_effect=spy):
             with self.assertRaises(ValueError):
-                sc._load_flex_green(inp, 1, 2, 1, 1)
+                sc_io._load_flex_green(inp, 1, 2, 1, 1)
         nvol_slice = 2 * 1 * 1           # (nvol, norb, norb) elements
         self.assertTrue(calls, "the guard must compare something")
         self.assertLessEqual(max(calls), nvol_slice,
@@ -1896,12 +1898,12 @@ class TestGreenTwoBlockGuard(unittest.TestCase):
     def test_dynamic_route_rejects_differing_blocks(self):
         import tempfile
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         d = tempfile.mkdtemp()
         inp = self._write(d, self._blocks(2.0))
         with self.assertRaises(ValueError):
-            sc._load_flex_green(inp, 1, 2, 1, 1, allow_ir=True)
+            sc_io._load_flex_green(inp, 1, 2, 1, 1, allow_ir=True)
 
 
 if __name__ == "__main__":

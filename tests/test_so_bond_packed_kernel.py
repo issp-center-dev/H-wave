@@ -31,7 +31,7 @@ from unittest import mock
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
-from hwave import sc
+from hwave.solver.eliashberg import eigen as sc_eigen
 from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
 from hwave.solver.so_bond import (PackedArrays, PackedBondBlockStore, PackedBondPairKernel,
@@ -59,7 +59,7 @@ def _pp_index(fx, nfreq):
 
 
 def _reverse(nfreq):
-    return sc._reverse_k_and_orbital if nfreq == 1 else eliashberg_dynamic._reverse_kw_and_orbital
+    return sc_eigen._reverse_k_and_orbital if nfreq == 1 else eliashberg_dynamic._reverse_kw_and_orbital
 
 
 def _rel(a, b):
@@ -76,7 +76,7 @@ class TestPackedKernel(unittest.TestCase):
         for fx, nfreq in CASES:
             packed, dense, _, _ = _kernels(fx, nfreq)
             shape = _gap_shape(fx, nfreq)
-            full = sc._SOAntisymmetricBasis(shape, reverse=_reverse(nfreq))
+            full = sc_eigen._SOAntisymmetricBasis(shape, reverse=_reverse(nfreq))
             rng = np.random.default_rng(31)
             n = int(np.prod(shape))
             gaps = (_cvec(rng, n), full.to_full(_cvec(rng, full.dim)), _cvec(rng, n))
@@ -167,7 +167,7 @@ class TestPackedKernelSectors(unittest.TestCase):
             shape = _gap_shape(fx, nfreq)
             self.assertEqual(packed.gap_shape, shape)
             self.assertEqual(packed.pp_sectors, (1, 0, -1))
-            full = sc._SOAntisymmetricBasis(shape, reverse=_reverse(nfreq))
+            full = sc_eigen._SOAntisymmetricBasis(shape, reverse=_reverse(nfreq))
             dims = 0
             for p, idx, pairs in zip(PP_ORDER, _pp_index(fx, nfreq), pp_sector_lists(fx.nd)):
                 with self.subTest(fixture=NAMES[fx], nfreq=nfreq, p=p):
@@ -176,7 +176,7 @@ class TestPackedKernelSectors(unittest.TestCase):
                                      (len(pairs),) + fx.spatial_shape
                                      + ((nfreq,) if nfreq > 1 else ()))
                     op = packed.sector_op(p)
-                    self.assertIsInstance(op, sc.SectorOp)
+                    self.assertIsInstance(op, sc_so.SectorOp)
                     self.assertEqual((op.pp_sector, op.has_adjoint), (p, True))
                     b = op.basis
                     np.testing.assert_array_equal(b.indices, idx)
@@ -421,8 +421,8 @@ def _dense_eigen(fx):
     case = _eigen_case(fx)
     info = {}
     with quiet():
-        vals, gaps = sc._so_solve_eigenvalue(case.dense_operator(),
-                                             sc._SOAntisymmetricBasis(case.shape), K_EIG,
+        vals, gaps = sc_so._so_solve_eigenvalue(case.dense_operator(),
+                                             sc_eigen._SOAntisymmetricBasis(case.shape), K_EIG,
                                              "arnoldi", info_out=info)
     return vals, gaps, info["selection"]
 
@@ -461,7 +461,7 @@ class TestEigenSet(unittest.TestCase):
         for fx in self.FIXTURES:
             with self.subTest(fixture=NAMES[fx]):
                 case = _eigen_case(fx)
-                full = sc._SOAntisymmetricBasis(case.shape)
+                full = sc_eigen._SOAntisymmetricBasis(case.shape)
                 dims = [case.packed.sector_op(p).basis.dim for p in PP_ORDER]
                 self.assertEqual(dims, [case.T[p].shape[1] for p in PP_ORDER])
                 self.assertEqual(dims, [7, 15, 7])
@@ -494,7 +494,7 @@ class TestEigenSet(unittest.TestCase):
 
     def _solve(self, case, **kw):
         with quiet():
-            return sc._so_solve_sectors(case.ops(), K_EIG, "arnoldi", gap_shape=case.shape, **kw)
+            return sc_so._so_solve_sectors(case.ops(), K_EIG, "arnoldi", gap_shape=case.shape, **kw)
 
     def test_sector_solve_lists_the_top_real_parts(self):
         for fx in self.FIXTURES:
@@ -547,25 +547,25 @@ class TestEigenSet(unittest.TestCase):
         lam = full.vals[i_lead]
         tol = MATCH_TOL * full.scale * max(1.0, full.kappa[i_lead])
         A = case.dense_operator()
-        basis = sc._SOAntisymmetricBasis(case.shape)
+        basis = sc_eigen._SOAntisymmetricBasis(case.shape)
         rng = np.random.default_rng(47)
         init = case.lift(rng.normal(size=basis.dim) + 1j * rng.normal(size=basis.dim))
         init = init.reshape(case.shape)
         vals, gaps, selection = case.dense_eigen()
         with quiet():
-            gap, value, conv, n_iter = sc._so_solve_iteration(A, basis, init, ITER["max_iter"],
+            gap, value, conv, n_iter = sc_so._so_solve_iteration(A, basis, init, ITER["max_iter"],
                                                               ITER["alpha"], ITER["tol"],
                                                               spectral_shift="auto")
-            it_p = sc._so_iterate_sectors(case.ops(), init, gap_shape=case.shape,
+            it_p = sc_so._so_iterate_sectors(case.ops(), init, gap_shape=case.shape,
                                           spectral_shift="auto", **ITER)
-        legs = {"dense": (sc.EigenLeg.from_dense(vals, gaps, selection=selection),
-                          sc.IterationLeg.from_dense(gap, value, conv, n_iter, {})),
-                "packed": (sc.EigenLeg.from_sectors(self._solve(case)),
-                           sc.IterationLeg.from_sectors(it_p))}
+        legs = {"dense": (sc_so.EigenLeg.from_dense(vals, gaps, selection=selection),
+                          sc_so.IterationLeg.from_dense(gap, value, conv, n_iter, {})),
+                "packed": (sc_so.EigenLeg.from_sectors(self._solve(case)),
+                           sc_so.IterationLeg.from_sectors(it_p))}
         for mode in ("eigenvalue", "iteration", "both"):
             reports = {}
             for layout, (eig, it) in legs.items():
-                reports[layout] = sc._so_bond_report(
+                reports[layout] = sc_so._so_bond_report(
                     mode, None if mode == "iteration" else eig,
                     None if mode == "eigenvalue" else it, gap_shape=case.shape)
             rd, rp = reports["dense"], reports["packed"]
@@ -672,7 +672,7 @@ class TestEigenSetArpack(unittest.TestCase):
         case = self.case
         with self.assertLogs("hwave_sc", level="WARNING") as logs, \
                 _spy_sector_solves() as calls:
-            s = sc._so_solve_sectors(case.ops(), K_EIG, "arnoldi", gap_shape=case.shape)
+            s = sc_so._so_solve_sectors(case.ops(), K_EIG, "arnoldi", gap_shape=case.shape)
         retries = [m for m in logs.output if "re-solving for the largest real part" in m]
         self.assertEqual(len(retries), 1, logs.output)
         self.assertTrue(s.converged)
@@ -709,7 +709,7 @@ class TestEigenSetArpack(unittest.TestCase):
         case = self.case
         full = case.full
         with quiet():
-            s = sc._so_solve_sectors(case.ops(), K_EIG, "arnoldi", gap_shape=case.shape)
+            s = sc_so._so_solve_sectors(case.ops(), K_EIG, "arnoldi", gap_shape=case.shape)
         vals, gaps, selection = case.dense_eigen()
         _, ratio = match_spectrum(full, s.vals)
         self.assertLessEqual(ratio, 1.0)
@@ -723,9 +723,9 @@ class TestEigenSetArpack(unittest.TestCase):
         self.assertLessEqual(_sine(s.gaps[0], case.lift(full.right[:, i_lead])),
                              MATCH_TOL * max(1.0, full.kappa[i_lead]))
         # the reports of the two layouts
-        rd = sc._so_bond_report("eigenvalue", sc.EigenLeg.from_dense(
+        rd = sc_so._so_bond_report("eigenvalue", sc_so.EigenLeg.from_dense(
             vals, gaps, selection=selection), None, gap_shape=case.shape)
-        rp = sc._so_bond_report("eigenvalue", sc.EigenLeg.from_sectors(s), None,
+        rp = sc_so._so_bond_report("eigenvalue", sc_so.EigenLeg.from_sectors(s), None,
                                 gap_shape=case.shape)
         self.assertEqual((rd.gap_status, rp.gap_status), ("certified", "certified"))
         self.assertEqual((rd.pp_sector, rp.pp_sector), (2, p_lead))
@@ -741,7 +741,7 @@ class TestEigenSetArpack(unittest.TestCase):
             # a seeded which='LM' run tracks its branch and is never re-solved
             # for the largest real part, so the seeded solve takes the shift
             with _spy_sector_solves() as calls:
-                s = sc._so_solve_sectors(case.ops(), K_EIG, "arnoldi", gap_shape=case.shape,
+                s = sc_so._so_solve_sectors(case.ops(), K_EIG, "arnoldi", gap_shape=case.shape,
                                          spectral_shift="auto", seed_vec=gaps[0])
         seed = gaps[0].ravel()
         self.assertEqual(s.selection, "+1:LR;0:LR;-1:LR")

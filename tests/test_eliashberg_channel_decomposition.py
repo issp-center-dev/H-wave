@@ -18,7 +18,8 @@ from tests.test_eliashberg_ir import (
 @pytest.mark.parametrize("pairing_type", ["singlet", "triplet"])
 def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite, pairing_type):
     """Spin, charge, and retained bare vertex terms are linearly separable."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
+    from hwave.solver.eliashberg import vertex as sc_vertex
     from hwave.solver.eliashberg import dynamic as ed
     inp = _offsite_input(flex_outdir_offsite)
     norb, nx, ny, nz = 1, LX, LY, 1
@@ -26,8 +27,8 @@ def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite, pairin
     kx = np.linspace(0, 2 * np.pi, nx, endpoint=False)
     ky = np.linspace(0, 2 * np.pi, ny, endpoint=False)
     kz = np.linspace(0, 2 * np.pi, nz, endpoint=False)
-    _, _, interaction = sc._read_interaction_files(inp)
-    inter_k = sc._build_interaction_k(kx, ky, kz, interaction, norb)
+    _, _, interaction = sc_io._read_interaction_files(inp)
+    inter_k = sc_vertex._build_interaction_k(kx, ky, kz, interaction, norb)
     zeros_s, zeros_c = np.zeros_like(chis_w), np.zeros_like(chic_w)
 
     def vertex(chis, chic):
@@ -114,10 +115,10 @@ def test_static_channel_flags_warn_they_are_ignored(caplog, flags, ignored):
     static path they are silently inert, so calc_eliashberg must warn."""
     import logging
 
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import config as sc_config
 
     with caplog.at_level(logging.WARNING, logger="hwave_sc"):
-        sc._warn_if_static_ignores_channel_flags(flags)
+        sc_config._warn_if_static_ignores_channel_flags(flags)
     warnings = [
         rec.getMessage()
         for rec in caplog.records

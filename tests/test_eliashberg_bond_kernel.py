@@ -481,7 +481,7 @@ class TestKernelUniform(unittest.TestCase):
                                                                               residency))
 
     def test_flat_frequency_matches_static_bond_kernel(self):     # 10.1.2
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import bond as sc_bond
         from hwave.solver.eliashberg.bond_dynamic import (PairVertexUniform, ArrayBlockSource,
                                                   BondPairKernel, COEFF)
         fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=8, beta=2.0,
@@ -497,7 +497,7 @@ class TestKernelUniform(unittest.TestCase):
         phi_k = rng.standard_normal((1, 1, nx, ny, nz)) + 1j * rng.standard_normal(
             (1, 1, nx, ny, nz))
         for eta in ("singlet", "triplet"):
-            _, A_st, _, _ = sc._bond_kernel_parts(
+            _, A_st, _, _ = sc_bond._bond_kernel_parts(
                 fx["S"], fx["C"], [("spin", chi_s_st), ("charge", chi_c_st)],
                 fx["green_sc"], fx["view"], 1, fx["spatial_shape"], fx["beta"], eta, topo=None)
             ref = A_st.matvec(phi_k.ravel()).reshape(phi_k.shape)
@@ -609,7 +609,7 @@ class TestKernelUniform(unittest.TestCase):
 
     def test_dense_oracle_leading_eigenvalue(self):               # 10.1.5
         import scipy.linalg
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         from scipy.sparse.linalg import LinearOperator
         fx = physical_fixture(norb=1, shape=(2, 2, 1), nmat=4, beta=1.0)
         K = _kernel(fx, _uniform_vertex(fx, "singlet"))
@@ -625,7 +625,7 @@ class TestKernelUniform(unittest.TestCase):
         def make():
             return LinearOperator((n, n), matvec=K.matvec, dtype=complex), n
 
-        lam, _, _ = sc._solve_leading(make, n, "arnoldi", num_eigenvalues=3)
+        lam, _, _ = sc_eigen._solve_leading(make, n, "arnoldi", num_eigenvalues=3)
         self.assertAlmostEqual(float(np.real(lam)), float(lead.real),
                                delta=1e-8 * max(1.0, abs(lead)))
 
@@ -715,7 +715,7 @@ class TestKernelUniform(unittest.TestCase):
         self.assertEqual((src.nmat, src.nvol, src.ND, src.B), (2, 2, 4, 2))
 
     def test_instantaneous_vertex_single_band_equals_onsite(self):   # 10.1.12
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver.eliashberg import dynamic as ed
         from hwave.solver.eliashberg.bond_dynamic import instantaneous_vertex
         fx = physical_fixture(norb=1, shape=(4, 4, 1), nmat=2, U=2.0,
@@ -726,7 +726,7 @@ class TestKernelUniform(unittest.TestCase):
                         "CoulombInter": {(tuple(R), (0, 0)): 0.5
                                          for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0),
                                                    (0, -1, 0))}}
-        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, 1)
+        inter_k = sc_vertex._build_interaction_k(kx, ky, kz, interactions, 1)
         for eta in ("singlet", "triplet"):
             ref = ed._instantaneous_vertex(inter_k, 1, nx, ny, nz, eta, "myo")
             got = instantaneous_vertex(fx["S"], fx["C"], fx["nd"], eta, fx["spatial_shape"], topo=None)
@@ -739,7 +739,7 @@ class TestKernelUniform(unittest.TestCase):
         interactions2 = {"CoulombIntra": {((0, 0, 0), (a, a)): 2.0 for a in range(2)},
                          "CoulombInter": {((1, 0, 0), (0, 1)): 0.4, ((1, 0, 0), (1, 0)): 0.4,
                                           ((-1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4}}
-        inter_k2 = sc._build_interaction_k(kx, 2 * np.pi * np.arange(2) / 2, kz,
+        inter_k2 = sc_vertex._build_interaction_k(kx, 2 * np.pi * np.arange(2) / 2, kz,
                                            interactions2, 2)
         ref2 = ed._instantaneous_vertex(inter_k2, 2, 4, 2, 1, "singlet", "myo")
         got2 = instantaneous_vertex(fx2["S"], fx2["C"], 4, "singlet", (4, 2, 1), topo=None)

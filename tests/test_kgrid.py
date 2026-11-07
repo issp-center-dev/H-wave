@@ -108,14 +108,14 @@ class TestProductionCallSites(unittest.TestCase):
     covered end-to-end by their reference-value suites.)"""
 
     def test_sc_reverse_k_and_orbital(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
 
         rng = np.random.default_rng(11)
         gap = rng.standard_normal((3, 3, 4, 3, 5)) \
             + 1j * rng.standard_normal((3, 3, 4, 3, 5))
         old = np.swapaxes(
             np.roll(gap[:, :, ::-1, ::-1, ::-1], 1, axis=(2, 3, 4)), 0, 1)
-        np.testing.assert_array_equal(sc._reverse_k_and_orbital(gap), old)
+        np.testing.assert_array_equal(sc_eigen._reverse_k_and_orbital(gap), old)
 
     def test_eliashberg_dynamic_reverse_kw_and_orbital(self):
         from hwave.solver.eliashberg import dynamic as ed
@@ -172,7 +172,7 @@ class TestProductionCallSites(unittest.TestCase):
         np.testing.assert_array_equal(got, want)
 
     def test_sc_symmetrise_interactions_k(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         rng = np.random.default_rng(13)
         nx, ny, nz = 4, 3, 5
@@ -181,7 +181,7 @@ class TestProductionCallSites(unittest.TestCase):
         Mrev_old = M[:, :, (-np.arange(nx)) % nx][:, :, :, (-np.arange(ny)) % ny][
             :, :, :, :, (-np.arange(nz)) % nz]
         want = 0.5 * (M + Mrev_old.transpose(1, 0, 2, 3, 4))
-        got = sc._symmetrise_interactions_k({"Hund": M})["Hund"]
+        got = sc_vertex._symmetrise_interactions_k({"Hund": M})["Hund"]
         np.testing.assert_array_equal(got, want)
 
 

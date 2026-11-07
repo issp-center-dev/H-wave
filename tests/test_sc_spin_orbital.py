@@ -54,6 +54,8 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver.eliashberg import static as sc_static
 from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import io as sc_io
@@ -254,7 +256,7 @@ def _spin_weights(gap, n):
 
 
 def _reverse(gap):
-    return sc._reverse_k_and_orbital(gap)
+    return sc_eigen._reverse_k_and_orbital(gap)
 
 
 def _clusters(vals, vecs, rtol=1e-8):
@@ -274,7 +276,7 @@ def _clusters(vals, vecs, rtol=1e-8):
         V = np.stack([vecs[i].ravel() for i in idx], axis=1)
         dims = []
         for ch in ("singlet", "triplet"):
-            P = np.stack([sc._project_gap_parity(vecs[i], ch).ravel()
+            P = np.stack([sc_eigen._project_gap_parity(vecs[i], ch).ravel()
                           for i in idx], axis=1)
             sv = np.linalg.svd(P, compute_uv=False)
             dims.append(int(np.sum(sv > 1e-6 * np.linalg.norm(V, 2))))
@@ -384,7 +386,7 @@ class TestStaticEntry(_TmpDir):
                          out="out_so"))
         # every physical mode: the antisymmetric space has dimension 120
         # (36 even singlet + 3 x 28 odd triplet) and all 120 are returned
-        self.assertEqual(sc._SOAntisymmetricBasis((ND, ND) + tuple(CELL)).dim,
+        self.assertEqual(sc_eigen._SOAntisymmetricBasis((ND, ND) + tuple(CELL)).dim,
                          120)
         self.assertEqual(len(so["evs"]), 120)
         _assert_su2_multiplicities(self, res, so)
@@ -864,13 +866,13 @@ class TestStaticVertexLayouts(_TmpDir):
             4, 5, 6, 7, 1, 2, 3, 0)
         for si in (None, 1):
             with self.subTest(static_index=si), _quiet():
-                v_raw = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, si)
-                v_ref = sc._so_static_vertex(inp, ref, NP, Nx, Ny, Nz, si)
+                v_raw = sc_so._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, si)
+                v_ref = sc_so._so_static_vertex(inp, ref, NP, Nx, Ny, Nz, si)
                 self.assertGreater(np.abs(v_raw).max(), 0.0)
                 np.testing.assert_array_equal(v_raw, v_ref)
         with _quiet():
-            v0 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, None)
-            v1 = sc._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, 1)
+            v0 = sc_so._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, None)
+            v1 = sc_so._so_static_vertex(inp, raw, NP, Nx, Ny, Nz, 1)
         self.assertGreater(np.abs(v0 - v1).max(), 1e-6)
 
 
@@ -908,15 +910,15 @@ class TestFlexVertexCheck(unittest.TestCase):
                 with _quiet(), self.assertRaisesRegex(
                         ValueError, r"do not reproduce the vertex .*\(backward "
                                     r"error 3\.00\de-08 >"):
-                    sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+                    sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz")
                 # the error itself, through the tolerance-free path
                 with _quiet(), mock.patch.object(sc_so, "_SO_FLEX_GAMMA_TOL", np.inf):
-                    errs.append(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"))
+                    errs.append(sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz"))
                 if nvol >= 16:
                     # non-vacuity: a global norm would let this pass
                     self.assertLess(self._global_error(gam, C, C0),
-                                    sc._SO_FLEX_GAMMA_TOL)
-        self.assertGreater(errs[0], sc._SO_FLEX_GAMMA_TOL)
+                                    sc_so._SO_FLEX_GAMMA_TOL)
+        self.assertGreater(errs[0], sc_so._SO_FLEX_GAMMA_TOL)
         np.testing.assert_allclose(errs, errs[0], rtol=1e-10)
 
     def test_one_bad_block_among_many(self):
@@ -926,11 +928,11 @@ class TestFlexVertexCheck(unittest.TestCase):
         C = np.broadcast_to(chi, (nvol,) + c0.shape).copy()
         C[nvol // 3] += 3.0e-8 * d
         with _quiet(), self.assertRaisesRegex(ValueError, r"do not reproduce"):
-            sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+            sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz")
         with _quiet():
             C[nvol // 3] = chi
-            self.assertLess(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
-                            sc._SO_FLEX_GAMMA_TOL)
+            self.assertLess(sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
+                            sc_so._SO_FLEX_GAMMA_TOL)
 
     def test_zero_scale_block(self):
         """A block with ``chi0_q = 0``: passes when ``chi_q = 0`` too, and is
@@ -939,11 +941,11 @@ class TestFlexVertexCheck(unittest.TestCase):
         C0 = np.stack([c0, np.zeros_like(c0)])
         C = np.stack([chi, np.zeros_like(chi)])
         with _quiet(), np.errstate(all="raise"):
-            self.assertLess(sc._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
-                            sc._SO_FLEX_GAMMA_TOL)
+            self.assertLess(sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz"),
+                            sc_so._SO_FLEX_GAMMA_TOL)
             C[1] = 1e-3 * d
             with self.assertRaisesRegex(ValueError, r"backward error inf"):
-                sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+                sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz")
 
     def test_nan_is_refused(self):
         gam, c0, chi, d = self._block()
@@ -951,7 +953,7 @@ class TestFlexVertexCheck(unittest.TestCase):
         C = np.stack([chi, chi])
         C[1, 0, 0] = np.nan
         with _quiet(), self.assertRaisesRegex(ValueError, r"backward error nan"):
-            sc._check_so_flex_vertex(gam, C, C0, "chiq.npz")
+            sc_so._check_so_flex_vertex(gam, C, C0, "chiq.npz")
 
 
 def _dense_P(shape):
@@ -959,7 +961,7 @@ def _dense_P(shape):
     column from ``_project_gap_parity`` (independent of the basis)."""
     n = int(np.prod(shape))
     eye = np.eye(n, dtype=complex)
-    return np.stack([sc._project_gap_parity(eye[:, j].reshape(shape),
+    return np.stack([sc_eigen._project_gap_parity(eye[:, j].reshape(shape),
                                             "triplet").ravel()
                      for j in range(n)], axis=1)
 
@@ -999,7 +1001,7 @@ class TestAntisymmetricBasis(unittest.TestCase):
             with self.subTest(grid=grid):
                 shape = (nd, nd) + grid
                 n = int(np.prod(shape))
-                b = sc._SOAntisymmetricBasis(shape)
+                b = sc_eigen._SOAntisymmetricBasis(shape)
                 P = _dense_P(shape)
                 rank = int(round(np.trace(P).real))
                 self.assertEqual(b.dim, rank)
@@ -1017,7 +1019,7 @@ class TestAntisymmetricBasis(unittest.TestCase):
                 c = rng.standard_normal(b.dim) + 1j * rng.standard_normal(b.dim)
                 g = b.to_full(c).reshape(shape)
                 np.testing.assert_array_equal(g, -self._partner(g))
-                self.assertEqual(sc._so_antisymmetry_residual(g), 0.0)
+                self.assertEqual(sc_so._so_antisymmetry_residual(g), 0.0)
                 np.testing.assert_allclose(b.to_reduced(g.ravel()), c,
                                            rtol=0, atol=1e-14)
                 # E^dagger annihilates the symmetric sector
@@ -1036,7 +1038,7 @@ class TestAntisymmetryResidual(unittest.TestCase):
         shape = (4, 4, 4, 4, 1)
         rng = np.random.default_rng(11)
         x = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
-        a = sc._project_gap_parity(x, "triplet")
+        a = sc_eigen._project_gap_parity(x, "triplet")
         s_ = x - a
         a, s_ = a / np.linalg.norm(a), s_ / np.linalg.norm(s_)
         for keep, accepted in ((0.89, False), (0.95, False),
@@ -1046,15 +1048,15 @@ class TestAntisymmetryResidual(unittest.TestCase):
             if keep > 0.999:
                 g = a + 1e-13 * s_
             with self.subTest(keep=keep):
-                self.assertEqual(sc._so_is_antisymmetric(g), accepted)
-                self.assertAlmostEqual(sc._so_antisymmetry_residual(g),
-                                       np.linalg.norm(g - sc._project_gap_parity(
+                self.assertEqual(sc_so._so_is_antisymmetric(g), accepted)
+                self.assertAlmostEqual(sc_so._so_antisymmetry_residual(g),
+                                       np.linalg.norm(g - sc_eigen._project_gap_parity(
                                            g, "triplet")) / np.linalg.norm(g),
                                        delta=1e-15)
         # the dominant-sector test (non-SO semantics, unchanged) accepts 95 %
-        self.assertTrue(sc._is_gap_parity(0.95 * a + np.sqrt(1 - 0.95 ** 2)
+        self.assertTrue(sc_eigen._is_gap_parity(0.95 * a + np.sqrt(1 - 0.95 ** 2)
                                           * s_, "triplet"))
-        self.assertEqual(sc._so_antisymmetry_residual(np.zeros(shape)),
+        self.assertEqual(sc_so._so_antisymmetry_residual(np.zeros(shape)),
                          float("inf"))
 
 
@@ -1140,13 +1142,13 @@ class TestRepulsiveSpectralShift(_TmpDir):
         B = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
         M = -(B @ B.conj().T) / n - 0.5 * np.eye(n)
         A = aslinearoperator(M)
-        basis = sc._SOAntisymmetricBasis(shape)
+        basis = sc_eigen._SOAntisymmetricBasis(shape)
         dense, m = _dense_antisymmetric_spectrum(M, shape)
         self.assertEqual(basis.dim, m)
         self.assertAlmostEqual(dense[0].real, -0.8376, delta=1e-3)
         for shift in (0.01, 0.3, 10.0):
             with self.subTest(spectral_shift=shift), _quiet():
-                vals, gaps = sc._so_solve_eigenvalue(
+                vals, gaps = sc_so._so_solve_eigenvalue(
                     A, basis, 3, "arnoldi", spectral_shift=shift)
                 np.testing.assert_allclose(vals, dense[:3], rtol=0, atol=1e-9)
                 for g in gaps:
@@ -1156,13 +1158,13 @@ class TestRepulsiveSpectralShift(_TmpDir):
         # dense leading eigenvalues as the shifted runs
         with _quiet():
             info = {}
-            vals, _ = sc._so_solve_eigenvalue(A, basis, 3, "arnoldi",
+            vals, _ = sc_so._so_solve_eigenvalue(A, basis, 3, "arnoldi",
                                               info_out=info)
         self.assertEqual(info["selection"], "LR_retry")
         np.testing.assert_allclose(vals, dense[:3], rtol=0, atol=1e-9)
         seed = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
         with _quiet():
-            g, lam, conv, _ = sc._so_solve_iteration(
+            g, lam, conv, _ = sc_so._so_solve_iteration(
                 A, basis, seed / np.linalg.norm(seed), 5000, 0.5, 1e-11,
                 spectral_shift=10.0)
         self.assertTrue(conv)
@@ -1182,7 +1184,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
         rng = np.random.default_rng(21)
         M = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
         A = aslinearoperator(M)
-        basis = sc._SOAntisymmetricBasis(shape)
+        basis = sc_eigen._SOAntisymmetricBasis(shape)
         self.assertEqual(basis.dim, 5)
         dense, m = _dense_antisymmetric_spectrum(M, shape)
         self.assertEqual(m, 5)
@@ -1190,7 +1192,7 @@ class TestRepulsiveSpectralShift(_TmpDir):
             for req in (3, 4, 5, 7):
                 with self.subTest(spectral_shift=shift, num_eigenvalues=req), \
                         _quiet():
-                    vals, gaps = sc._so_solve_eigenvalue(
+                    vals, gaps = sc_so._so_solve_eigenvalue(
                         A, basis, req, "arnoldi", spectral_shift=shift)
                     k = min(req, 5)
                     self.assertEqual(len(vals), k)
@@ -1205,23 +1207,23 @@ class TestRepulsiveSpectralShift(_TmpDir):
                     np.testing.assert_allclose(vals, want, rtol=0, atol=1e-10)
                     for v, g in zip(vals, gaps):
                         r = (M @ g.ravel()).reshape(shape)
-                        r = sc._project_gap_parity(r, "triplet")
+                        r = sc_eigen._project_gap_parity(r, "triplet")
                         np.testing.assert_allclose(r, v * g, rtol=0, atol=1e-10)
 
     def test_dense_branch_warns_about_sigma_shift(self):
         from scipy.sparse.linalg import aslinearoperator
-        basis = sc._SOAntisymmetricBasis((2, 2, 3, 1, 1))
+        basis = sc_eigen._SOAntisymmetricBasis((2, 2, 3, 1, 1))
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
-            sc._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 5,
+            sc_so._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 5,
                                     "arnoldi", sigma_shift=0.2)
         self.assertTrue(any("sigma_shift is ignored" in m for m in cm.output))
 
     def test_non_arnoldi_method_is_refused(self):
         from scipy.sparse.linalg import aslinearoperator
-        basis = sc._SOAntisymmetricBasis((2, 2, 3, 1, 1))
+        basis = sc_eigen._SOAntisymmetricBasis((2, 2, 3, 1, 1))
         with self.assertRaisesRegex(ValueError, "supports only eigenvalue_"
                                                 "method = \"arnoldi\""):
-            sc._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 2,
+            sc_so._so_solve_eigenvalue(aslinearoperator(np.eye(12)), basis, 2,
                                     "subspace")
 
     def test_non_antisymmetric_solver_output_is_refused(self):
@@ -1232,11 +1234,11 @@ class TestRepulsiveSpectralShift(_TmpDir):
         shape = (ND, ND) + tuple(CELL)
         rng = np.random.default_rng(5)
         x = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
-        a = sc._project_gap_parity(x, "triplet")
+        a = sc_eigen._project_gap_parity(x, "triplet")
         s_ = x - a
         mixed = (0.95 * a / np.linalg.norm(a)
                  + np.sqrt(1 - 0.95 ** 2) * s_ / np.linalg.norm(s_))
-        self.assertTrue(sc._is_gap_parity(mixed, "triplet"))
+        self.assertTrue(sc_eigen._is_gap_parity(mixed, "triplet"))
         cases = (
             ("eigenvalue", "_so_solve_eigenvalue",
              lambda *_a, **_k: (np.array([0.5, 0.1]),
@@ -1285,7 +1287,7 @@ class TestStaticKernelBridge(_TmpDir):
                       "num_eigenvalues": 2, "g2_tail": False}, nmat=16)
         cap = {}
         real_green = sc_static._build_bond_green
-        real_vertex = sc._so_static_vertex_from_chi
+        real_vertex = sc_so._so_static_vertex_from_chi
         real_solve = sc_static._so_solve_eigenvalue
 
         def spy_green(*a, **kw):
@@ -1338,9 +1340,9 @@ class TestStaticKernelBridge(_TmpDir):
             # a general gap too: then the raw kernel is compared off range(P)
             D = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape))
             if antisym:
-                D = sc._project_gap_parity(D, "triplet")
+                D = sc_eigen._project_gap_parity(D, "triplet")
             raw = cap["A"].matvec(D.ravel()).reshape(shape)
-            want = sc._project_gap_parity(raw, "triplet")
+            want = sc_eigen._project_gap_parity(raw, "triplet")
             if antisym:
                 # what the solver iterates, mapped back
                 want = basis.to_full(red.matvec(
@@ -1355,7 +1357,7 @@ class TestStaticKernelBridge(_TmpDir):
                 for n in range(nmat):
                     np.testing.assert_allclose(
                         out[..., n], raw, rtol=0, atol=1e-12 * np.abs(raw).max())
-                    got = sc._project_gap_parity(out[..., n], "triplet")
+                    got = sc_eigen._project_gap_parity(out[..., n], "triplet")
                     np.testing.assert_allclose(
                         got, want, rtol=0, atol=1e-12 * np.abs(want).max())
 
@@ -1559,11 +1561,11 @@ class TestFlexMode(unittest.TestCase):
         nmat = green.shape[0]
         g = green.reshape(nmat, Nx, Ny, Nz, ND, ND).transpose(4, 5, 1, 2, 3, 0)
         with _quiet():
-            gam = sc._so_rpa_vertex(inp)
-        Vs = sc._so_static_vertex_from_chi(gam, chi_static, ND, (Nx, Ny, Nz))
-        G2 = sc._calc_g2(np.ascontiguousarray(g), 1.0 / 0.25, tail=True)
+            gam = sc_so._so_rpa_vertex(inp)
+        Vs = sc_so._so_static_vertex_from_chi(gam, chi_static, ND, (Nx, Ny, Nz))
+        G2 = sc_kernel._calc_g2(np.ascontiguousarray(g), 1.0 / 0.25, tail=True)
         n = ND * ND * Nx * Ny * Nz
-        A, _ = sc._make_kernel_operator(Vs, G2, ND, Nx, Ny, Nz)
+        A, _ = sc_kernel._make_kernel_operator(Vs, G2, ND, Nx, Ny, Nz)
         M = A.matmat(np.eye(n, dtype=complex))
         return _dense_antisymmetric_spectrum(M, (ND, ND, Nx, Ny, Nz))[0]
 
@@ -1922,8 +1924,8 @@ class TestFlexMode(unittest.TestCase):
             chi0 = z0["chi0q"][si].reshape(nvol, 4, 4)
         # the vertex check passes vacuously here
         with _quiet():
-            self.assertLess(sc._check_so_flex_vertex(
-                np.zeros((4, 4)), chi, chi0, "chiq.npz"), sc._SO_FLEX_GAMMA_TOL)
+            self.assertLess(sc_so._check_so_flex_vertex(
+                np.zeros((4, 4)), chi, chi0, "chiq.npz"), sc_so._SO_FLEX_GAMMA_TOL)
         self._assert_chi0q_marker_refused(d, files, flex, "g0")
 
     def test_refuses_non_so_and_reduced(self):
@@ -2216,7 +2218,7 @@ class TestInitialGap(unittest.TestCase):
 
     def test_even_seed_is_singlet_structured(self):
         gap = so_pairing.so_initial_gap("cos", NP, *self.K)
-        proj = sc._project_gap_parity(gap, "triplet")
+        proj = sc_eigen._project_gap_parity(gap, "triplet")
         self.assertGreater(np.linalg.norm(proj), 0.99)
         np.testing.assert_allclose(proj, gap, atol=1e-14)
         w = _spin_weights(gap, NP)
@@ -2224,7 +2226,7 @@ class TestInitialGap(unittest.TestCase):
 
     def test_odd_seed_is_sz0_triplet(self):
         gap = so_pairing.so_initial_gap("p_x", NP, *self.K)
-        np.testing.assert_allclose(sc._project_gap_parity(gap, "triplet"), gap,
+        np.testing.assert_allclose(sc_eigen._project_gap_parity(gap, "triplet"), gap,
                                    atol=1e-14)
         w = _spin_weights(gap, NP)
         self.assertAlmostEqual(w[3], 1.0, places=12)
@@ -2430,9 +2432,9 @@ class TestOutputs(_TmpDir):
         self.assertFalse(os.path.exists(inp["file"]["output"]["path_to_output"]))
 
     def test_npz_name(self):
-        self.assertEqual(sc._so_gap_npz_name("gap.dat"), "gap.npz")
-        self.assertEqual(sc._so_gap_npz_name("gap"), "gap.npz")
-        self.assertEqual(sc._so_gap_npz_name("gap.npz"), "gap.npz.npz")
+        self.assertEqual(sc_so._so_gap_npz_name("gap.dat"), "gap.npz")
+        self.assertEqual(sc_so._so_gap_npz_name("gap"), "gap.npz")
+        self.assertEqual(sc_so._so_gap_npz_name("gap.npz"), "gap.npz.npz")
 
 
 if __name__ == "__main__":

@@ -48,7 +48,9 @@ from scipy.optimize import linear_sum_assignment
 from scipy.sparse.linalg import LinearOperator
 
 import hwave.qlmsio.read_input_k as read_input_k
-from hwave import sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import so_solve as sc_so
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver import bond_channels, flex_bond, so_bond
 from hwave.solver.eliashberg import bond_dynamic as eb
 from hwave.solver import rpa
@@ -289,7 +291,7 @@ def static_pair_inputs(fixture, nmat=8):
                                                            plan=plan("pairing_static"))
     V = PackedArrays(sm, tuple((a + b)[None] for a, b in zip(v_bare.blocks, v_fluct.blocks)))
     g_kw = green.reshape((nmat,) + shape + (nd, nd)).transpose(4, 5, 1, 2, 3, 0)
-    G2 = sc._calc_g2(np.ascontiguousarray(g_kw), fixture.beta)[..., None]
+    G2 = sc_kernel._calc_g2(np.ascontiguousarray(g_kw), fixture.beta)[..., None]
     return V, G2, geom, sm, plan("vertex")
 
 
@@ -738,13 +740,13 @@ def pb_sigma_prod_packed(nnn, seed):
 def subset_bases(shape, dims):
     """Subset bases of the requested dimensions on disjoint orbits of the
     antisymmetric basis of ``shape``."""
-    full = sc._SOAntisymmetricBasis(shape)
+    full = sc_eigen._SOAntisymmetricBasis(shape)
     out, start = [], 0
     for d in dims:
         reps = full.rep[start:start + d]
         start += d
         idx = np.sort(np.concatenate([reps, full.partner[reps]])).astype(np.int64)
-        out.append(sc._SOAntisymmetricBasis.from_subset(shape, idx))
+        out.append(sc_eigen._SOAntisymmetricBasis.from_subset(shape, idx))
     assert start <= full.dim, (shape, dims)
     return out
 
@@ -763,4 +765,4 @@ def sector_op_of(p, basis, M, *, adjoint=True, matmat=True):
     if adjoint:
         KH = np.ascontiguousarray(K.conj().T)
         kw["rmatvec"] = lambda y: KH @ np.asarray(y).ravel()
-    return sc.SectorOp(p, LinearOperator((n, n), dtype=complex, **kw), basis, adjoint)
+    return sc_so.SectorOp(p, LinearOperator((n, n), dtype=complex, **kw), basis, adjoint)

@@ -88,7 +88,9 @@ def test_ir_matvec_matches_uniform_kernel(flex_outdir):
     IR-representable probe must reproduce the full-grid kernel after
     densification, BEFORE any eigensolver runs."""
     from hwave.solver.eliashberg import dynamic as ed
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import eigen as sc_eigen
+    from hwave.solver.eliashberg import io as sc_io
+    from hwave.solver.eliashberg import vertex as sc_vertex
 
     inp = _eliashberg_input(flex_outdir)
     norb, Nx, Ny, Nz = 1, LX, LY, 1
@@ -100,8 +102,8 @@ def test_ir_matvec_matches_uniform_kernel(flex_outdir):
     kx = np.linspace(0, 2*np.pi, Nx, endpoint=False)
     ky = np.linspace(0, 2*np.pi, Ny, endpoint=False)
     kz = np.linspace(0, 2*np.pi, Nz, endpoint=False)
-    geom, hr, inter = sc._read_interaction_files(inp)
-    inter_k = sc._build_interaction_k(kx, ky, kz, inter, norb)
+    geom, hr, inter = sc_io._read_interaction_files(inp)
+    inter_k = sc_vertex._build_interaction_k(kx, ky, kz, inter, norb)
 
     # IR-path objects from the SAME npz
     axF, axB = ed._ir_axes_for_run(inp["eliashberg"], beta, hr, inter_k, norb)
@@ -131,7 +133,7 @@ def test_ir_matvec_matches_uniform_kernel(flex_outdir):
     G2_w = ed.calc_g2_dynamic(green_d, beta)
 
     # IR-representable probe: the frequency-flat d-wave-like seed
-    gap_static = sc._initialize_gap("cos", norb, kx, ky, kz)
+    gap_static = sc_eigen._initialize_gap("cos", norb, kx, ky, kz)
     phi_u = np.broadcast_to(gap_static[..., None],
                             gap_static.shape + (NMAT,)).astype(complex)
     phi_n = np.broadcast_to(gap_static[..., None],
@@ -373,7 +375,9 @@ def test_ir_matvec_gate_offsite_interaction(flex_outdir_offsite):
     (the triplet instantaneous part is 0.5*(C-S); a sign regression there
     must not hide behind the singlet-only gate)."""
     from hwave.solver.eliashberg import dynamic as ed
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import eigen as sc_eigen
+    from hwave.solver.eliashberg import io as sc_io
+    from hwave.solver.eliashberg import vertex as sc_vertex
 
     inp = _offsite_input(flex_outdir_offsite)
     norb, Nx, Ny, Nz = 1, LX, LY, 1
@@ -383,8 +387,8 @@ def test_ir_matvec_gate_offsite_interaction(flex_outdir_offsite):
     kx = np.linspace(0, 2*np.pi, Nx, endpoint=False)
     ky = np.linspace(0, 2*np.pi, Ny, endpoint=False)
     kz = np.linspace(0, 2*np.pi, Nz, endpoint=False)
-    geom, hr, inter = sc._read_interaction_files(inp)
-    inter_k = sc._build_interaction_k(kx, ky, kz, inter, norb)
+    geom, hr, inter = sc_io._read_interaction_files(inp)
+    inter_k = sc_vertex._build_interaction_k(kx, ky, kz, inter, norb)
 
     axF, axB = ed._ir_axes_for_run(inp["eliashberg"], beta, hr, inter_k,
                                    norb)
@@ -396,7 +400,7 @@ def test_ir_matvec_gate_offsite_interaction(flex_outdir_offsite):
     chic_d = axB.eval_to_uniform(axB.fit_from_freq(chic_n), NMAT)
     green_d = axF.eval_to_uniform(axF.fit_from_freq(green_n), NMAT)
     G2_w = ed.calc_g2_dynamic(green_d, beta)
-    gap_static = sc._initialize_gap("cos", norb, kx, ky, kz)
+    gap_static = sc_eigen._initialize_gap("cos", norb, kx, ky, kz)
     phi_u = np.broadcast_to(gap_static[..., None],
                             gap_static.shape + (NMAT,)).astype(complex)
     phi_n = np.broadcast_to(gap_static[..., None],

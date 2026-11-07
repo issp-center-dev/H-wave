@@ -32,7 +32,7 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver import bond_channels as bc
 from tests.eliashberg_bond_fixtures import _channel0_from_gate, _tables_from_pairs
 
@@ -241,9 +241,9 @@ class TestStaticBondKernelPlacement(_PlacementCase, unittest.TestCase):
         super().setUpClass()
         interactions = {"CoulombInter": {((r, 0, 0), (a, b)): complex(v)
                                          for (r, a, b), v in ROWS.items()}}
-        topo, cls.view, split = sc._resolve_bond_topology(
+        topo, cls.view, split = sc_bond._resolve_bond_topology(
             interactions, {"rvec": np.eye(3)}, NORB, None)
-        cls.S_b, cls.C_b = sc._build_bond_vertices(topo, split, NORB, (NX, 1, 1))
+        cls.S_b, cls.C_b = sc_bond._build_bond_vertices(topo, split, NORB, (NX, 1, 1))
         # the static path's vertices are the FLEX gate's own
         np.testing.assert_allclose(cls.S_b, bc.build_sc_bond_channel(cls.topo, cls.S0, "S"),
                                    rtol=0, atol=1e-13)
@@ -252,7 +252,7 @@ class TestStaticBondKernelPlacement(_PlacementCase, unittest.TestCase):
         cls.chib = bc.bond_bubble(cls.g, cls.view, BETA).reshape(cls.S_b.shape)
 
     def _parts(self, eta):
-        _, A_fl, A_pp, _ = sc._bond_kernel_parts(
+        _, A_fl, A_pp, _ = sc_bond._bond_kernel_parts(
             self.S_b, self.C_b, [("spin", self.chib), ("charge", self.chib)], self.g,
             self.view, NORB, (NX, 1, 1), BETA, eta, topo=None)
         return A_fl, A_pp

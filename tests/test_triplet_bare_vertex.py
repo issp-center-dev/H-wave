@@ -20,7 +20,8 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import vertex as sc_vertex
+from hwave.solver.eliashberg import kernel as sc_kernel
 import tests.test_sc_bond_pairing_oracle as O
 
 NORB = 2
@@ -48,14 +49,14 @@ class TestTripletBareVertex(unittest.TestCase):
     def setUp(self):
         self.g = O._green_sc(NORB)
         self.kx = np.linspace(0, 2 * np.pi, O.NX, endpoint=False)
-        self.G2 = sc._calc_g2(self.g, O.BETA, tail=False)
+        self.G2 = sc_kernel._calc_g2(self.g, O.BETA, tail=False)
 
     def _assert_matches(self, got, want, label):
         scale = max(np.linalg.norm(want), 1e-2)
         self.assertLess(np.linalg.norm(got - want) / scale, 1e-10, label)
 
     def _nonbond(self, vertex):
-        A, _ = sc._make_kernel_operator(vertex, self.G2, NORB, O.NX, 1, 1)
+        A, _ = sc_kernel._make_kernel_operator(vertex, self.G2, NORB, O.NX, 1, 1)
         return A
 
     def test_flex_route_both_conventions(self):
@@ -63,12 +64,12 @@ class TestTripletBareVertex(unittest.TestCase):
         z = np.zeros((O.NX, 1, 1, NORB ** 2, NORB ** 2), complex)
         for conv, types in (("myo", ONSITE_TYPES), ("kuroki", KUROKI_TYPES)):
             for t in types:
-                inter_k = sc._build_interaction_k(self.kx, np.zeros(1), np.zeros(1),
+                inter_k = sc_vertex._build_interaction_k(self.kx, np.zeros(1), np.zeros(1),
                                                   _onsite_declaration(t, 1.0), NORB)
                 for eta in ("singlet", "triplet"):
                     with self.subTest(conv=conv, t=t, eta=eta):
                         phi, want = _reference(t, eta, self.g, rng)
-                        V = sc._compute_vertices_flex(z, z, inter_k, NORB, O.NX, 1, 1,
+                        V = sc_vertex._compute_vertices_flex(z, z, inter_k, NORB, O.NX, 1, 1,
                                                       pairing_type=eta, convention=conv)
                         got = self._nonbond(V).matvec(phi.ravel()).reshape(want.shape)
                         self._assert_matches(got, want, (conv, t, eta))
@@ -78,12 +79,12 @@ class TestTripletBareVertex(unittest.TestCase):
         nmat = 2
         chi0q = np.zeros((NORB,) * 4 + (O.NX, 1, 1, nmat), complex)
         for t in ONSITE_TYPES:
-            inter_k = sc._build_interaction_k(self.kx, np.zeros(1), np.zeros(1),
+            inter_k = sc_vertex._build_interaction_k(self.kx, np.zeros(1), np.zeros(1),
                                               _onsite_declaration(t, 1.0), NORB)
             for eta in ("singlet", "triplet"):
                 with self.subTest(t=t, eta=eta):
                     phi, want = _reference(t, eta, self.g, rng)
-                    V = sc._compute_vertices_general(chi0q, inter_k, NORB, O.NX, 1, 1, nmat,
+                    V = sc_vertex._compute_vertices_general(chi0q, inter_k, NORB, O.NX, 1, 1, nmat,
                                                      pairing_type=eta)
                     got = self._nonbond(V).matvec(phi.ravel()).reshape(want.shape)
                     self._assert_matches(got, want, (t, eta))
@@ -124,14 +125,14 @@ class TestTripletBareVertex(unittest.TestCase):
                 A = O._antisymmetrized(O._terms(t, fx, 0, 1, R, 1.0), 2 * O.NX * NORB)
                 phi = O._pair_field(rng, NORB, eta)
                 want = O._reference_gap(NORB, A, O._static_x(self.g, phi), eta)
-                inter_k = sc._build_interaction_k(self.kx, np.zeros(1), np.zeros(1),
+                inter_k = sc_vertex._build_interaction_k(self.kx, np.zeros(1), np.zeros(1),
                                                   O._declaration(t, R, 0, 1, 1.0), NORB)
                 for route in ("flex", "general"):
                     with self.subTest(R=R, t=t, eta=eta, route=route):
-                        V = (sc._compute_vertices_flex(z, z, inter_k, NORB, O.NX, 1, 1,
+                        V = (sc_vertex._compute_vertices_flex(z, z, inter_k, NORB, O.NX, 1, 1,
                                                        pairing_type=eta, convention="myo")
                              if route == "flex" else
-                             sc._compute_vertices_general(chi0q, inter_k, NORB, O.NX, 1, 1, 2,
+                             sc_vertex._compute_vertices_general(chi0q, inter_k, NORB, O.NX, 1, 1, 2,
                                                           pairing_type=eta))
                         got = self._nonbond(V).matvec(phi.ravel()).reshape(want.shape)
                         self._assert_matches(got, want, (R, t, eta, route))

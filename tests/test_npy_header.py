@@ -378,11 +378,11 @@ class TestCallerContracts(unittest.TestCase):
         # Its contract is the opposite: an unknown version must surface,
         # so the caller's except branch can turn it into a clear error
         # rather than silently preflighting on a guess.
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
 
         raw = b"\x93NUMPY" + bytes((9, 9)) + b"\x00" * 4
-        with self.assertRaises(sc._UnsupportedNpyHeaderVersion):
-            sc._read_npy_header_shape(io.BytesIO(raw))
+        with self.assertRaises(sc_io._UnsupportedNpyHeaderVersion):
+            sc_io._read_npy_header_shape(io.BytesIO(raw))
 
 
 if __name__ == "__main__":

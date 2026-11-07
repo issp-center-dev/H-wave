@@ -43,6 +43,8 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import vertex as sc_vertex
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import io as sc_io
@@ -229,14 +231,14 @@ class TestSU2Limit(unittest.TestCase):
         chi0q = np.ascontiguousarray(chi0.transpose(2, 3, 4, 5, 1, 0)).reshape(
             np_, np_, np_, np_, T.NX, 1, 1, _NMAT_DENSE)
         kx = 2 * np.pi * np.arange(T.NX) / T.NX
-        inter_k = sc._build_interaction_k(kx, np.zeros(1), np.zeros(1), decl, np_)
+        inter_k = sc_vertex._build_interaction_k(kx, np.zeros(1), np.zeros(1), decl, np_)
         G2n = dyn.calc_g2_dynamic(g, T.BETA)
         nshape = (np_, np_, T.NX, 1, 1, _NMAT_DENSE)
         nn = int(np.prod(nshape))
         want = []
         for eta, s, mult in (("singlet", 1.0, 1), ("triplet", -1.0, 3)):
             with _quiet():
-                Vn = np.stack([sc._compute_vertices_general(
+                Vn = np.stack([sc_vertex._compute_vertices_general(
                     chi0q, inter_k, np_, T.NX, 1, 1, _NMAT_DENSE, pairing_type=eta,
                     static_index=m) for m in range(_NMAT_DENSE)], axis=-1)
             I = np.eye(nn, dtype=complex)
@@ -282,11 +284,11 @@ class TestStaticLimit(unittest.TestCase):
         vals, vecs = np.linalg.eig(_reduced_dense(A, basis))
         # static spin-orbital solver (production operator, #269)
         Vs = so_pairing_vertex(gam, chi_s, nd, (T.NX, 1, 1))
-        G2s = sc._calc_g2(gso, T.BETA, tail=False)
-        Ks, _ = sc._make_kernel_operator(Vs, G2s, nd, T.NX, 1, 1)
-        sbasis = sc._SOAntisymmetricBasis((nd, nd, T.NX, 1, 1))
+        G2s = sc_kernel._calc_g2(gso, T.BETA, tail=False)
+        Ks, _ = sc_kernel._make_kernel_operator(Vs, G2s, nd, T.NX, 1, 1)
+        sbasis = sc_eigen._SOAntisymmetricBasis((nd, nd, T.NX, 1, 1))
         with _quiet():
-            svals, _ = sc._so_solve_eigenvalue(Ks, sbasis, sbasis.dim, "arnoldi")
+            svals, _ = sc_so._so_solve_eigenvalue(Ks, sbasis, sbasis.dim, "arnoldi")
         scale = np.abs(svals).max()
         snz = svals[np.abs(svals) > 1e-10 * scale]
         dnz = np.abs(vals) > 1e-10 * scale
@@ -311,7 +313,7 @@ def _failing_largest_real():
     unavailable (its size limit below every operator), so the eigenvalue
     solver must report its NaN sentinel."""
     import scipy.sparse.linalg as spl
-    real_eigs = sc.eigs
+    real_eigs = sc_eigen.eigs
 
     def eigs(A, k=6, which="LM", **kw):
         if which == "LR":
@@ -405,7 +407,7 @@ class TestFlexMode(_FlexFixture):
         m = _NMAT_E2E // 2 + 2
         self.assertGreater(np.linalg.norm(chi[m] - chi0[m]) / np.linalg.norm(chi0[m]), 1e-2)
         with _quiet():
-            gam = sc._so_rpa_vertex(inp)
+            gam = sc_so._so_rpa_vertex(inp)
         A, basis = dso.build_operator(gam, chi, g, 4.0)
         dense = np.linalg.eigvals(_reduced_dense(A, basis))
         for lam in cap["vals"]:
@@ -424,8 +426,8 @@ class TestFlexMode(_FlexFixture):
 
     def test_zero_frequency_slice_equals_static_reader(self):
         with _quiet():
-            full = sc._load_flex_so(self._flex_input("x"), S.ND, *S.CELL, full=True)
-            stat = sc._load_flex_so(self._flex_input("x"), S.ND, *S.CELL)
+            full = sc_io._load_flex_so(self._flex_input("x"), S.ND, *S.CELL, full=True)
+            stat = sc_io._load_flex_so(self._flex_input("x"), S.ND, *S.CELL)
         m0 = _NMAT_E2E // 2
         np.testing.assert_array_equal(full[0][m0], stat[0])
         np.testing.assert_array_equal(full[2][m0], stat[2])
@@ -498,7 +500,7 @@ class TestCalcMode(_FlexFixture):
         cap = _run(inp)
         g = cap["green"]
         with _quiet():
-            gam = sc._so_rpa_vertex(inp)
+            gam = sc_so._so_rpa_vertex(inp)
         chi = _rpa(_bubble_w(g, 4.0), gam[0])
         A, basis = dso.build_operator(gam, chi, g, 4.0)
         dense = np.linalg.eigvals(_reduced_dense(A, basis))
@@ -662,7 +664,7 @@ class TestLMRetry(_FlexFixture):
         inp = S._input(self.d, self.files, True,
                        _dyn_eli(chi0q_mode="calc", num_eigenvalues=3),
                        nmat=_NMAT_E2E, out=out)
-        real_init = sc._SOAntisymmetricBasis.__init__
+        real_init = sc_eigen._SOAntisymmetricBasis.__init__
 
         def init(self_, shape, reverse=None):
             real_init(self_, shape, reverse=reverse)
@@ -670,8 +672,8 @@ class TestLMRetry(_FlexFixture):
                 self_.dim = 4
                 self_.rep, self_.rep_partner = self_.rep[:4], self_.rep_partner[:4]
 
-        with mock.patch.object(sc._SOAntisymmetricBasis, "__init__", init), \
-                mock.patch.object(sc._SOAntisymmetricBasis, "reduce",
+        with mock.patch.object(sc_eigen._SOAntisymmetricBasis, "__init__", init), \
+                mock.patch.object(sc_eigen._SOAntisymmetricBasis, "reduce",
                                   lambda self_, A: red):
             with _quiet():
                 lam = sc.calc_eliashberg(inp)
@@ -796,7 +798,7 @@ class TestOutputs(_FlexFixture):
             with self.subTest(seed=name):
                 with self.assertRaisesRegex(ValueError, "index_convention"):
                     with _quiet(), mock.patch.object(
-                            sc._SOAntisymmetricBasis, "to_reduced",
+                            sc_eigen._SOAntisymmetricBasis, "to_reduced",
                             side_effect=AssertionError("reduced before the check")):
                         dso.load_seed(bad, (S.ND, S.ND) + tuple(S.CELL) + (_NMAT_E2E,))
                 out = self._out("s8_" + name)
@@ -1027,8 +1029,8 @@ class TestGPU(unittest.TestCase):
             self.assertIsInstance(b, np.ndarray)
             self.assertLess(np.linalg.norm(a - b), 1e-12 * np.linalg.norm(a))
         with _quiet():
-            va, _ = sc._so_solve_eigenvalue(A, basis, 4, "arnoldi", map_back=False)
-            vb, _ = sc._so_solve_eigenvalue(Ad, basis, 4, "arnoldi", map_back=False)
+            va, _ = sc_so._so_solve_eigenvalue(A, basis, 4, "arnoldi", map_back=False)
+            vb, _ = sc_so._so_solve_eigenvalue(Ad, basis, 4, "arnoldi", map_back=False)
         self.assertLess(abs(va[0] - vb[0]), 1e-10 * abs(va[0]))
 
     def test_entry_gpu_equals_cpu(self):
@@ -1053,7 +1055,7 @@ class TestSecondaryRetryFailure(_FlexFixture):
     def test_failed_retry_is_not_labelled_lr_retry(self):
         import scipy.sparse.linalg as spl
         real_solve = sc_so._so_solve_eigenvalue
-        real_eigs = sc.eigs
+        real_eigs = sc_eigen.eigs
         calls = []
 
         def solve(A, basis, *a, **kw):

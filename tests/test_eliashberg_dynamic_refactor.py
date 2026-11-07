@@ -485,11 +485,10 @@ class TestSecondaryRetryFailure(unittest.TestCase):
 
     def test_failed_retry_is_not_labelled_lr_retry(self):
         from unittest import mock
-        import hwave.sc as sc
         from hwave.solver.eliashberg import eigen as sc_eigen
         import scipy.sparse.linalg as spl
-        real_leading = sc._solve_leading
-        real_eigs = sc.eigs
+        real_leading = sc_eigen._solve_leading
+        real_eigs = sc_eigen.eigs
         calls = []
 
         def leading(*a, **kw):

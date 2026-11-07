@@ -43,7 +43,9 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver import bond_channels as bc
 from tests.ed_oracle_util import EDFixture
 from tests.test_bond_longitudinal_ed import _terms_pairhop_offsite
@@ -153,13 +155,13 @@ def _production_parts(norb, interactions, eta, g):
     """``(A, A_fl, A_pp)`` of the static bond kernel built by the production
     chain from ``interactions`` and the Green function ``g``."""
     shape = (NX, 1, 1)
-    topo, view, split = sc._resolve_bond_topology(interactions, {"rvec": np.eye(3)}, norb, None)
+    topo, view, split = sc_bond._resolve_bond_topology(interactions, {"rvec": np.eye(3)}, norb, None)
     if norb == 1:
         kx = np.linspace(0, 2 * np.pi, NX, endpoint=False)
-        carrier = sc._BondGreen(full_sc=g, deflated_kw=sc._green_sc_to_canonical(g),
+        carrier = sc_kernel._BondGreen(full_sc=g, deflated_kw=sc_kernel._green_sc_to_canonical(g),
                                 green0_tail=None, coeff_tail_requested=0.0,
                                 coeff_tail_applied=0.0, source="external_npz")
-        (A, _), _, attr = sc._build_bond_operator(
+        (A, _), _, attr = sc_bond._build_bond_operator(
             topo, split, carrier, norb, kx, np.zeros(1), np.zeros(1), BETA, eta,
             bond_max_shells=None, bond_memory_cap_gb=8.0, g2_tail=False)
         return A, attr["fl"], attr["pp"]
@@ -167,11 +169,11 @@ def _production_parts(norb, interactions, eta, g):
     # preconditions of the full operator do not apply; the same chain below
     # the operator assembly
     chi_bar = bc.bond_bubble(g, view, BETA).reshape(NX, view.n_channels * norb ** 2, -1)
-    S, C = sc._build_bond_vertices(topo, split, norb, shape)
+    S, C = sc_bond._build_bond_vertices(topo, split, norb, shape)
     dressed = ((ch, bc.dress_batch(chi_bar[None], W, ch, l0=0, nmat=0,
                                    spatial_shape=shape)[0][0])
                for ch, W in (("spin", S), ("charge", C)))
-    A, A_fl, A_pp, _ = sc._bond_kernel_parts(S, C, dressed, g, view, norb, shape, BETA, eta,
+    A, A_fl, A_pp, _ = sc_bond._bond_kernel_parts(S, C, dressed, g, view, norb, shape, BETA, eta,
                                              topo=topo)
     return A, A_fl, A_pp
 
@@ -290,7 +292,7 @@ class TestLambdaPpDerivative(unittest.TestCase):
                 A_ref = _antisymmetrized(_terms(t, fx, 0, 0, 1, 1.0), 2 * NX)
 
                 def ref_op(v, A_ref=A_ref, eta=eta):
-                    phi = sc._project_gap_parity(np.asarray(v).reshape(1, 1, NX, 1, 1),
+                    phi = sc_eigen._project_gap_parity(np.asarray(v).reshape(1, 1, NX, 1, 1),
                                                  eta)[:, :, :, 0, 0]
                     return _reference_gap(1, A_ref, _static_x(g, phi), eta).ravel()
 

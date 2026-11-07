@@ -24,11 +24,14 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import kernel as sc_kernel
 # The G2 size-guard thresholds are read by _warn_if_g2_indefinite in
 # hwave.solver.eliashberg.config (dev/sc-split-plan.md, step 1); the tests
 # that rebind them do so on that module. hwave.sc still re-exports them.
 from hwave.solver.eliashberg import config as _cfg
-from hwave.sc import _calc_g2, _warn_if_g2_indefinite
+from hwave.solver.eliashberg.kernel import _calc_g2
+from hwave.solver.eliashberg.config import _warn_if_g2_indefinite
 
 
 def _model(norb=2, Nx=4, Ny=4, Nz=1, seed=86):
@@ -211,13 +214,13 @@ class TestG2TailGuards(unittest.TestCase):
         message's ability to distinguish the two values.
         """
         green = _green(_model(Nx=2, Ny=2), 10.0, 4)
-        just_over = np.nextafter(sc._G2_BETA_MAX, np.inf)
+        just_over = np.nextafter(sc_kernel._G2_BETA_MAX, np.inf)
         with self.assertRaises(ValueError) as cm:
             _calc_g2(green, just_over)
         msg = str(cm.exception)
         self.assertIn(repr(float(just_over)), msg)
         self.assertNotEqual(repr(float(just_over)),
-                            repr(float(sc._G2_BETA_MAX)))
+                            repr(float(sc_kernel._G2_BETA_MAX)))
         # The normalisation is a property of the message, so pin it: the
         # plain repr is a SUBSTRING of the numpy one, so the assertion
         # above alone passes either way and would let a user-facing
@@ -275,7 +278,7 @@ class TestG2TailGuards(unittest.TestCase):
                 chunks.append(x)
             return real_isfinite(x, *args, **kwargs)
 
-        with mock.patch.object(sc.np, "isfinite", side_effect=spy):
+        with mock.patch.object(np, "isfinite", side_effect=spy):
             g2 = _calc_g2(green, self.beta)
         chunk_sizes = [n for n in sizes if n > 1]
         self.assertEqual(chunk_sizes,
@@ -311,7 +314,7 @@ class TestG2TailGuards(unittest.TestCase):
         IndexError) so the user sees the actionable g2_tail ValueError."""
         empty = np.zeros((2, 2, 2, 2, 1, 0), dtype=complex)
         self.assertEqual(
-            sc._warn_if_g2_tail_outside_asymptotic_regime(empty, self.beta),
+            _cfg._warn_if_g2_tail_outside_asymptotic_regime(empty, self.beta),
             0.0)
         with self.assertRaises(ValueError) as cm:
             _calc_g2(empty, self.beta)
@@ -430,7 +433,7 @@ class TestG2TailGuards(unittest.TestCase):
         inp = {"file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, norb, Nx, Ny, Nz)
+            sc_io._load_flex_green(inp, norb, Nx, Ny, Nz)
         self.assertIn("centered fermionic", str(cm.exception))
 
 
@@ -453,9 +456,9 @@ class TestG2TailAsymptoticDiagnostic(unittest.TestCase):
     def test_warns_when_window_edge_is_below_the_hamiltonian_scale(self):
         green = _green(_diag_model(), self.beta, 2)
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
-            dev = sc._warn_if_g2_tail_outside_asymptotic_regime(
+            dev = _cfg._warn_if_g2_tail_outside_asymptotic_regime(
                 green, self.beta)
-        self.assertGreater(dev, sc._G2_TAIL_EDGE_DEV_THRESHOLD)
+        self.assertGreater(dev, _cfg._G2_TAIL_EDGE_DEV_THRESHOLD)
         self.assertTrue(any("OVERSHOOT" in m for m in cm.output))
 
     def test_silent_when_the_window_edge_is_asymptotic(self):
@@ -470,11 +473,11 @@ class TestG2TailAsymptoticDiagnostic(unittest.TestCase):
         target = logging.getLogger("hwave_sc")
         target.addHandler(grab)
         try:
-            dev = sc._warn_if_g2_tail_outside_asymptotic_regime(
+            dev = _cfg._warn_if_g2_tail_outside_asymptotic_regime(
                 green, self.beta)
         finally:
             target.removeHandler(grab)
-        self.assertLess(dev, sc._G2_TAIL_EDGE_DEV_THRESHOLD)
+        self.assertLess(dev, _cfg._G2_TAIL_EDGE_DEV_THRESHOLD)
         self.assertEqual(records, [])
 
     def test_warns_for_a_scaled_green_function(self):
@@ -486,7 +489,7 @@ class TestG2TailAsymptoticDiagnostic(unittest.TestCase):
         green = np.zeros((1, 1, 2, 1, 1, nmat), dtype=complex)
         green[0, 0, :, 0, 0, :] = 2.0 / iw
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
-            dev = sc._warn_if_g2_tail_outside_asymptotic_regime(
+            dev = _cfg._warn_if_g2_tail_outside_asymptotic_regime(
                 green, self.beta)
         self.assertAlmostEqual(dev, 1.0, places=12)
         self.assertTrue(any("normalization/provenance" in m
@@ -513,10 +516,10 @@ class TestG2DiagnosticThresholds(unittest.TestCase):
     beta = 10.0
 
     def test_production_constants(self):
-        self.assertEqual(sc._G2_TAIL_EDGE_DEV_THRESHOLD, 0.5)
-        self.assertEqual(sc._G2_CHECK_MAX_WORK, 20_000_000_000)
-        self.assertEqual(sc._G2_CHECK_MAX_BYTES, 2_000_000_000)
-        self.assertEqual(sc._G2_BETA_MAX, 1.0e75)
+        self.assertEqual(_cfg._G2_TAIL_EDGE_DEV_THRESHOLD, 0.5)
+        self.assertEqual(_cfg._G2_CHECK_MAX_WORK, 20_000_000_000)
+        self.assertEqual(_cfg._G2_CHECK_MAX_BYTES, 2_000_000_000)
+        self.assertEqual(sc_kernel._G2_BETA_MAX, 1.0e75)
 
     def _scaled_green(self, factor, nmat=64):
         iw = 1j * (2 * np.arange(nmat) + 1 - nmat) * np.pi / self.beta
@@ -537,14 +540,14 @@ class TestG2DiagnosticThresholds(unittest.TestCase):
         target = logging.getLogger("hwave_sc")
         target.addHandler(grab)
         try:
-            dev = sc._warn_if_g2_tail_outside_asymptotic_regime(
+            dev = _cfg._warn_if_g2_tail_outside_asymptotic_regime(
                 self._scaled_green(1.45), self.beta)
         finally:
             target.removeHandler(grab)
         self.assertAlmostEqual(dev, 0.45, places=12)
         self.assertEqual(records, [])
         with self.assertLogs("hwave_sc", level="WARNING"):
-            dev = sc._warn_if_g2_tail_outside_asymptotic_regime(
+            dev = _cfg._warn_if_g2_tail_outside_asymptotic_regime(
                 self._scaled_green(1.55), self.beta)
         self.assertAlmostEqual(dev, 0.55, places=12)
 
@@ -644,13 +647,13 @@ class TestG2TailStrictParsing(unittest.TestCase):
                  ("ON", True), (" yes ", True), ("0", False), ("1", True)]
         for value, expected in cases:
             with self.subTest(value=value):
-                self.assertEqual(sc._coerce_g2_tail(value), expected)
+                self.assertEqual(_cfg._coerce_g2_tail(value), expected)
 
     def test_rejected_forms(self):
         for value in ("garbage", "ture", "", 2, -1, 1.0, None, [True]):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
-                    sc._coerce_g2_tail(value)
+                    _cfg._coerce_g2_tail(value)
 
 
 class TestFinitePositiveScalarHelper(unittest.TestCase):
@@ -662,7 +665,7 @@ class TestFinitePositiveScalarHelper(unittest.TestCase):
         for value in (2.0, 2, np.float64(2.0), np.int64(2),
                       np.uint8(2), np.array(2.0)):
             with self.subTest(value=repr(value)):
-                self.assertEqual(sc._finite_positive_float64(value), 2.0)
+                self.assertEqual(_cfg._finite_positive_float64(value), 2.0)
 
     def test_rejected_forms(self):
         for value in ([2.0], [[2.0]], (2.0,), "2.0", True,
@@ -670,7 +673,7 @@ class TestFinitePositiveScalarHelper(unittest.TestCase):
                       np.array([1.0, 2.0]), np.array([]), None,
                       2.0 + 0j, np.nan, np.inf, 0.0, -1.0):
             with self.subTest(value=repr(value)):
-                self.assertIsNone(sc._finite_positive_float64(value))
+                self.assertIsNone(_cfg._finite_positive_float64(value))
 
 
 class TestFlexGreenProvenance(unittest.TestCase):
@@ -695,21 +698,21 @@ class TestFlexGreenProvenance(unittest.TestCase):
     def test_matching_beta_and_full_freq_index_pass(self):
         d = self._tmp()
         inp = self._write_green(d, beta=0.5, freq_index=np.arange(4))
-        green = sc._load_flex_green(inp, 1, 2, 1, 1)
+        green = sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertEqual(green.shape[-1], 4)
 
     def test_mismatched_beta_is_rejected(self):
         d = self._tmp()
         inp = self._write_green(d, beta=1.0)  # run beta = 1/T = 0.5
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, 1, 2, 1, 1)
+            sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIn("beta", str(cm.exception))
 
     def test_missing_beta_warns_and_is_accepted(self):
         d = self._tmp()
         inp = self._write_green(d)
         with self.assertLogs("hwave_sc", level="WARNING") as cm:
-            green = sc._load_flex_green(inp, 1, 2, 1, 1)
+            green = sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIsNotNone(green)
         self.assertTrue(any("beta metadata" in m for m in cm.output))
 
@@ -717,7 +720,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
         d = self._tmp()
         inp = self._write_green(d, beta=0.5, freq_index=np.array([1, 2]))
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, 1, 2, 1, 1)
+            sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIn("freq_index", str(cm.exception))
 
     def test_malformed_beta_metadata_is_rejected(self):
@@ -732,7 +735,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
                 d = self._tmp()
                 inp = self._write_green(d, beta=bad)
                 with self.assertRaises(ValueError) as cm:
-                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                    sc_io._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("beta", str(cm.exception))
 
     def test_non_real_or_non_numeric_beta_is_rejected(self):
@@ -746,7 +749,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
                 d = self._tmp()
                 inp = self._write_green(d, beta=bad)
                 with self.assertRaises(ValueError) as cm:
-                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                    sc_io._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("beta", str(cm.exception))
 
     def test_beta_tolerance_is_symmetric_at_the_boundary(self):
@@ -760,7 +763,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
                 inp = self._write_green(d, beta=file_beta)
                 inp["mode"]["param"]["T"] = run_T
                 with self.assertRaises(ValueError) as cm:
-                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                    sc_io._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("beta", str(cm.exception))
 
     def test_invalid_run_temperature_is_rejected(self):
@@ -775,7 +778,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
                 inp = self._write_green(d, beta=0.5)
                 inp["mode"]["param"]["T"] = bad_T
                 with self.assertRaises(ValueError) as cm:
-                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                    sc_io._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("T", str(cm.exception))
 
     @unittest.skipUnless(
@@ -790,7 +793,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
         big = np.longdouble(np.finfo(np.float64).max) * np.longdouble(2)
         inp = self._write_green(d, beta=np.array(big))
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, 1, 2, 1, 1)
+            sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIn("beta", str(cm.exception))
 
     @unittest.skipUnless(
@@ -804,7 +807,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
         tiny = np.longdouble(2) ** np.longdouble(-16000)
         self.assertGreater(tiny, 0)
         with self.assertRaises(ValueError):
-            sc._coerce_run_beta(tiny)
+            _cfg._coerce_run_beta(tiny)
 
     def test_subnormal_run_temperature_is_rejected(self):
         """A positive finite subnormal T passes elementwise checks but
@@ -814,10 +817,10 @@ class TestFlexGreenProvenance(unittest.TestCase):
         inp = self._write_green(d, beta=0.5)
         inp["mode"]["param"]["T"] = np.nextafter(0.0, 1.0)
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, 1, 2, 1, 1)
+            sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIn("beta", str(cm.exception))
         with self.assertRaises(ValueError):
-            sc._coerce_run_beta(np.nextafter(0.0, 1.0))
+            _cfg._coerce_run_beta(np.nextafter(0.0, 1.0))
 
     def test_beta_tolerance_value_is_pinned_on_both_sides(self):
         """rtol = 1e-8 exactly: a 5e-9 relative mismatch loads, a 2e-8 one
@@ -825,7 +828,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
         test_beta_tolerance_is_symmetric_at_the_boundary)."""
         d = self._tmp()
         inp = self._write_green(d, beta=0.5 * (1.0 + 5.0e-9))
-        self.assertIsNotNone(sc._load_flex_green(inp, 1, 2, 1, 1))
+        self.assertIsNotNone(sc_io._load_flex_green(inp, 1, 2, 1, 1))
 
     def test_beta_tolerance_scales_with_the_larger_magnitude(self):
         """Pins the max(|a|, |b|) scaling: |diff| = 1.0 at beta ~ 1e8 sits
@@ -839,13 +842,13 @@ class TestFlexGreenProvenance(unittest.TestCase):
                 d = self._tmp()
                 inp = self._write_green(d, beta=file_beta)
                 inp["mode"]["param"]["T"] = run_T
-                self.assertIsNotNone(sc._load_flex_green(inp, 1, 2, 1, 1))
+                self.assertIsNotNone(sc_io._load_flex_green(inp, 1, 2, 1, 1))
 
     def test_unsigned_integer_beta_is_accepted(self):
         d = self._tmp()
         inp = self._write_green(d, beta=np.uint8(1))
         inp["mode"]["param"]["T"] = 1.0
-        self.assertIsNotNone(sc._load_flex_green(inp, 1, 2, 1, 1))
+        self.assertIsNotNone(sc_io._load_flex_green(inp, 1, 2, 1, 1))
 
     def test_freq_index_content_is_checked_not_just_length(self):
         """Equal-length but non-canonical axes (permuted, reversed,
@@ -860,7 +863,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
                 inp = self._write_green(d, beta=0.5,
                                         freq_index=np.array(fi))
                 with self.assertRaises(ValueError) as cm:
-                    sc._load_flex_green(inp, 1, 2, 1, 1)
+                    sc_io._load_flex_green(inp, 1, 2, 1, 1)
                 self.assertIn("freq_index", str(cm.exception))
 
     def test_small_beta_relative_mismatch_is_rejected(self):
@@ -870,7 +873,7 @@ class TestFlexGreenProvenance(unittest.TestCase):
         inp = self._write_green(d, beta=1.0e-6)
         inp["mode"]["param"]["T"] = 1.0 / 1.001e-6  # run beta = 1.001e-6
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, 1, 2, 1, 1)
+            sc_io._load_flex_green(inp, 1, 2, 1, 1)
         self.assertIn("beta", str(cm.exception))
 
 

@@ -10,7 +10,7 @@ import unittest
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
 
 
 def _random_operator(n=60, seed=3):
@@ -23,20 +23,20 @@ def _random_operator(n=60, seed=3):
 class TestArpackStart(unittest.TestCase):
     def test_start_vector_is_fixed_and_yields_to_a_seed(self):
         A, n = _random_operator()()
-        v1, v2 = sc._arpack_start(A), sc._arpack_start(A)
+        v1, v2 = sc_eigen._arpack_start(A), sc_eigen._arpack_start(A)
         np.testing.assert_array_equal(v1, v2)
         self.assertAlmostEqual(float(np.linalg.norm(v1)), 1.0, places=12)
         seed = np.ones(n, dtype=complex)
-        self.assertIs(sc._arpack_start(A, seed), seed)
+        self.assertIs(sc_eigen._arpack_start(A, seed), seed)
 
     def test_start_vector_has_the_operator_precision(self):
         for dt in (np.float32, np.float64, np.complex64, np.complex128):
             with self.subTest(dtype=dt):
                 A = LinearOperator((10, 10), matvec=lambda v: 2.0 * v, dtype=dt)
-                self.assertEqual(sc._arpack_start(A).dtype, np.dtype(dt))
+                self.assertEqual(sc_eigen._arpack_start(A).dtype, np.dtype(dt))
         # an integer operator keeps a float64 start (eigs promotes it to double)
         Ai = LinearOperator((10, 10), matvec=lambda v: 2 * v, dtype=np.int64)
-        self.assertEqual(sc._arpack_start(Ai).dtype, np.dtype(np.float64))
+        self.assertEqual(sc_eigen._arpack_start(Ai).dtype, np.dtype(np.float64))
 
     def test_odd_sector_leading_eigenvalue_is_found(self):
         """The reason the start is generic and not constant: on an operator
@@ -52,10 +52,10 @@ class TestArpackStart(unittest.TestCase):
         m = P_even @ h @ P_even + P_odd @ (h + 10.0 * np.eye(n)) @ P_odd
         make = lambda: (LinearOperator((n, n), matvec=lambda v: m @ v, dtype=complex), n)
         A, _ = make()
-        v = sc._arpack_start(A)
+        v = sc_eigen._arpack_start(A)
         self.assertGreater(float(np.linalg.norm(P_odd @ v)), 0.1)
         self.assertGreater(float(np.linalg.norm(P_even @ v)), 0.1)
-        lam = sc._solve_leading(make, n, "arnoldi", num_eigenvalues=4,
+        lam = sc_eigen._solve_leading(make, n, "arnoldi", num_eigenvalues=4,
                                 spectral_shift="auto")[0]
         want = float(np.max(np.linalg.eigvalsh(m)))
         self.assertAlmostEqual(float(np.real(lam)), want, places=8)
@@ -68,9 +68,9 @@ class TestArpackStart(unittest.TestCase):
                  ("shift-invert-bicgstab", {}), ("shift-invert-bicgstab", {"sigma_shift": 2.0}))
         for mode, kw in cases:
             with self.subTest(mode=mode, **kw):
-                a = sc._solve_leading(make, 60, mode, num_eigenvalues=4, **kw)
+                a = sc_eigen._solve_leading(make, 60, mode, num_eigenvalues=4, **kw)
                 lam_a, vec_a = complex(a[0]), np.array(a[1], copy=True)
-                b = sc._solve_leading(make, 60, mode, num_eigenvalues=4, **kw)
+                b = sc_eigen._solve_leading(make, 60, mode, num_eigenvalues=4, **kw)
                 self.assertEqual(lam_a, complex(b[0]))
                 np.testing.assert_array_equal(vec_a, b[1])
 
@@ -79,7 +79,7 @@ class TestArpackStart(unittest.TestCase):
         A, n = make()
         seed = np.random.default_rng(9).normal(size=n) + 0j
         keep = seed.copy()
-        sc._solve_leading(make, n, "arnoldi", num_eigenvalues=4, seed_vec=seed)
+        sc_eigen._solve_leading(make, n, "arnoldi", num_eigenvalues=4, seed_vec=seed)
         np.testing.assert_array_equal(seed, keep)
 
 

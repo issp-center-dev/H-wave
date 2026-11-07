@@ -17,7 +17,9 @@ from unittest import mock
 
 import numpy as np
 
-from hwave import sc
+from hwave.solver.eliashberg import so_solve as sc_so
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import band as sc_band
 from hwave.solver import so_bond, spin_orbital
 from hwave.solver.fingerprint import green_digest
 from hwave.solver.so_records import compile_interaction
@@ -60,7 +62,7 @@ def _epsilon_k(fixture, h):
     ks = [np.linspace(0, 2.0 * np.pi, n, endpoint=False) for n in fixture.spatial_shape]
     extern = _extern(norb, h)
     with quiet():
-        return sc._so_epsilon_k({"mode": {"param": {"coeff_extern": h}}}, *ks,
+        return sc_so._so_epsilon_k({"mode": {"param": {"coeff_extern": h}}}, *ks,
                                 fixture.transfer_dict, extern, norb)
 
 
@@ -68,7 +70,7 @@ def _green(fixture, eigen):
     """The bond-path band Green function ``(1, nmat, nvol, nd, nd)`` of an
     eigen-decomposition (``sc._build_bond_green``, internal build)."""
     ev, evec = eigen
-    return sc._build_bond_green(ev, evec, fixture.mu, fixture.beta, NMAT, 0.0, None,
+    return sc_bond._build_bond_green(ev, evec, fixture.mu, fixture.beta, NMAT, 0.0, None,
                                 spin_orbital_mode=True).deflated_kw
 
 
@@ -102,7 +104,7 @@ class TestCanonicalBandEigen(unittest.TestCase):
                 with self.subTest(norb=fixture.norb_phys, h=h):
                     eps = _epsilon_k(fixture, h)
                     ev, evec = canonical_band_eigen(eps, fixture.norb_phys, conserving=True)
-                    ref, _ = sc._calc_eigenvalues(eps)
+                    ref, _ = sc_band._calc_eigenvalues(eps)
                     self.assertEqual(ev.shape, ref.shape)
                     self.assertEqual(evec.shape, ref.shape + (ref.shape[-1],))
                     self.assertLessEqual(float(np.max(np.abs(ev - ref))), 1e-13)
@@ -151,7 +153,7 @@ class TestCanonicalBandEigen(unittest.TestCase):
             with self.subTest(h=h):
                 eps = spin_orbital.spinblock_to_interleaved(_epsilon_k(fixture, h), norb,
                                                             axes=(0, 1))
-                G_il = _green(fixture, sc._calc_eigenvalues(eps))
+                G_il = _green(fixture, sc_band._calc_eigenvalues(eps))
                 G = spin_orbital.interleaved_to_spinblock(G_il, norb, axes=(-2, -1))
                 leak = green_leak(G, norb)
                 self.assertGreater(leak, 0.0)
@@ -182,7 +184,7 @@ class TestCanonicalBandEigen(unittest.TestCase):
         eps[0, 2] += 0.05
         eps[2, 0] += 0.05
         ev, evec = canonical_band_eigen(eps, 2, conserving=False)
-        ref_ev, ref_evec = sc._calc_eigenvalues(eps)
+        ref_ev, ref_evec = sc_band._calc_eigenvalues(eps)
         assert_recomputed(self, ev, ref_ev)
         assert_recomputed(self, evec, ref_evec)
 

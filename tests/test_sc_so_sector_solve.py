@@ -24,7 +24,8 @@ from unittest import mock
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
-from hwave import sc
+from hwave.solver.eliashberg import static as sc_static
+from hwave.solver.eliashberg import eigen as sc_eigen
 from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
 from tests.so_bond_fixtures import exact, pp_flat_index, quiet, subset_bases
@@ -56,11 +57,11 @@ class TestFromSubset(unittest.TestCase):
 
     def test_partition_and_coordinates(self):
         for shape, rev in self._cases():
-            full = sc._SOAntisymmetricBasis(shape, reverse=rev)
+            full = sc_eigen._SOAntisymmetricBasis(shape, reverse=rev)
             n_full = int(np.prod(shape))
             dims = 0
             for idx in _pp_index(shape):
-                b = sc._SOAntisymmetricBasis.from_subset(shape, idx, reverse=rev)
+                b = sc_eigen._SOAntisymmetricBasis.from_subset(shape, idx, reverse=rev)
                 np.testing.assert_array_equal(b.indices, idx)
                 self.assertEqual(b.n, len(idx))
                 self.assertEqual(b.shape, tuple(shape))
@@ -86,23 +87,23 @@ class TestFromSubset(unittest.TestCase):
     def test_not_closed_refused(self):
         idx = _pp_index(SHAPE)[1]
         # drop the partner of the first non-self-paired index
-        full = sc._SOAntisymmetricBasis(SHAPE)
+        full = sc_eigen._SOAntisymmetricBasis(SHAPE)
         i = next(int(j) for j in idx if full.partner[j] != j)
         sub = np.setdiff1d(idx, [full.partner[i]])
         with self.assertRaisesRegex(ValueError, exact(
                 "the subset of the antisymmetric basis is not closed under the involution "
                 "(index {} maps to {})".format(i, int(full.partner[i])))):
-            sc._SOAntisymmetricBasis.from_subset(SHAPE, sub)
+            sc_eigen._SOAntisymmetricBasis.from_subset(SHAPE, sub)
 
     def test_bad_indices_refused(self):
         idx = _pp_index(SHAPE)[0]
         for bad in (idx[::-1], np.concatenate([idx, idx[:1]]), np.array([-1]),
                     np.array([int(np.prod(SHAPE))]), idx.reshape(1, -1)):
             with self.assertRaises(ValueError):
-                sc._SOAntisymmetricBasis.from_subset(SHAPE, bad)
+                sc_eigen._SOAntisymmetricBasis.from_subset(SHAPE, bad)
 
     def test_full_basis_scatter(self):
-        full = sc._SOAntisymmetricBasis(SHAPE)
+        full = sc_eigen._SOAntisymmetricBasis(SHAPE)
         self.assertIsNone(full.indices)
         v = np.arange(full.n, dtype=complex)
         np.testing.assert_array_equal(full.scatter(v), v)
@@ -114,7 +115,7 @@ class TestReduceAdjoint(unittest.TestCase):
 
     def test_adjoint(self):
         idx = _pp_index(SHAPE)[1]
-        b = sc._SOAntisymmetricBasis.from_subset(SHAPE, idx)
+        b = sc_eigen._SOAntisymmetricBasis.from_subset(SHAPE, idx)
         M, A = _random_operator(len(idx), 3)
         red = b.reduce(A, adjoint=True)
         E = b.to_full(np.eye(b.dim))
@@ -125,7 +126,7 @@ class TestReduceAdjoint(unittest.TestCase):
         np.testing.assert_allclose(fwd, R, rtol=0, atol=1e-13 * np.abs(R).max())
 
     def test_default_has_no_adjoint(self):
-        b = sc._SOAntisymmetricBasis(SHAPE)
+        b = sc_eigen._SOAntisymmetricBasis(SHAPE)
         _, A = _random_operator(b.n, 4)
         red = b.reduce(A)
         self.assertEqual(red.shape, (b.dim, b.dim))
@@ -133,9 +134,9 @@ class TestReduceAdjoint(unittest.TestCase):
             red.rmatvec(np.ones(b.dim, dtype=complex))
 
     def test_sector_op(self):
-        b = sc._SOAntisymmetricBasis(SHAPE)
+        b = sc_eigen._SOAntisymmetricBasis(SHAPE)
         _, A = _random_operator(b.n, 5)
-        op = sc.SectorOp(0, A, b, True)
+        op = sc_so.SectorOp(0, A, b, True)
         self.assertEqual(op._fields, ("pp_sector", "operator", "basis", "has_adjoint"))
         self.assertIs(op.basis, b)
 
@@ -146,22 +147,22 @@ class TestDenseReducedEigen(unittest.TestCase):
 
     def test_matches_solver_and_is_silent(self):
         idx = _pp_index(SHAPE)[0]
-        b = sc._SOAntisymmetricBasis.from_subset(SHAPE, idx)
+        b = sc_eigen._SOAntisymmetricBasis.from_subset(SHAPE, idx)
         _, A = _random_operator(len(idx), 6)
         red = b.reduce(A)
         k = b.dim
-        with self.assertLogs(sc.logger, level="INFO") as cm:
-            vals0, vecs0 = sc._so_solve_eigenvalue(A, b, k, "arnoldi", map_back=False)
+        with self.assertLogs(sc_static.logger, level="INFO") as cm:
+            vals0, vecs0 = sc_so._so_solve_eigenvalue(A, b, k, "arnoldi", map_back=False)
         self.assertTrue(any("dense diagonalization" in r for r in cm.output))
         logger = logging.getLogger()
         with self.assertNoLogs(logger, level="DEBUG"):
-            vals, vecs, M = sc._so_dense_reduced_eigen(red, b.dim, k, None)
+            vals, vecs, M = sc_so._so_dense_reduced_eigen(red, b.dim, k, None)
         np.testing.assert_array_equal(vals, vals0)
         np.testing.assert_array_equal(vecs, vecs0)
         np.testing.assert_array_equal(M, red.matmat(np.eye(b.dim, dtype=complex)))
         seed = np.random.default_rng(1).normal(size=b.dim) + 0j
-        vals1, vecs1, _ = sc._so_dense_reduced_eigen(red, b.dim, b.dim - 1, seed)
-        vals2, vecs2 = sc._so_solve_eigenvalue(A, b, b.dim - 1, "arnoldi", seed_vec=seed,
+        vals1, vecs1, _ = sc_so._so_dense_reduced_eigen(red, b.dim, b.dim - 1, seed)
+        vals2, vecs2 = sc_so._so_solve_eigenvalue(A, b, b.dim - 1, "arnoldi", seed_vec=seed,
                                                map_back=False)
         np.testing.assert_array_equal(vals1, vals2)
         np.testing.assert_array_equal(vecs1, vecs2)
@@ -173,21 +174,21 @@ class TestClosureAndDims(unittest.TestCase):
 
     def test_closure_and_dims(self):
         shape = (2, 2, 5, 3, 1)
-        full = sc._SOAntisymmetricBasis(shape)
-        subs = [sc._SOAntisymmetricBasis.from_subset(shape, idx) for idx in _pp_index(shape)]
+        full = sc_eigen._SOAntisymmetricBasis(shape)
+        subs = [sc_eigen._SOAntisymmetricBasis.from_subset(shape, idx) for idx in _pp_index(shape)]
         self.assertEqual(sum(b.dim for b in subs), full.dim)
         idx = _pp_index(shape)[1]
         i = next(int(j) for j in idx if full.partner[j] != j)
         with self.assertRaisesRegex(ValueError, exact(
                 "the subset of the antisymmetric basis is not closed under the involution "
                 "(index {} maps to {})".format(i, int(full.partner[i])))):
-            sc._SOAntisymmetricBasis.from_subset(shape, np.setdiff1d(idx, [full.partner[i]]))
+            sc_eigen._SOAntisymmetricBasis.from_subset(shape, np.setdiff1d(idx, [full.partner[i]]))
 
 
 # --- the sector solvers --------------------------------------------------------------
 
 GAP = (4, 4, 16, 1, 1)                      # full gap; antisymmetric dim 124
-_FULL = sc._SOAntisymmetricBasis(GAP)
+_FULL = sc_eigen._SOAntisymmetricBasis(GAP)
 _EMPTY_MSG = ("spin-orbital: the antisymmetric gap space is empty on this grid; "
               "no eigenvalue is reported")
 
@@ -211,7 +212,7 @@ def _scalar_sector(p, basis, lam):
     n = basis.n
     op = LinearOperator((n, n), dtype=complex, matvec=lambda x: lam * np.asarray(x).ravel(),
                         rmatvec=lambda y: np.conj(lam) * np.asarray(y).ravel())
-    return sc.SectorOp(p, op, basis, True)
+    return sc_so.SectorOp(p, op, basis, True)
 
 
 def _lift(basis, c):
@@ -231,22 +232,22 @@ def _seed():
 
 
 def _solve(ops, k=10, **kw):
-    return sc._so_solve_sectors(ops, k, "arnoldi", gap_shape=GAP, **kw)
+    return sc_so._so_solve_sectors(ops, k, "arnoldi", gap_shape=GAP, **kw)
 
 
 def _iterate(ops, sigma_init=None, **kw):
     kw.setdefault("spectral_shift", "auto")
-    return sc._so_iterate_sectors(ops, _seed() if sigma_init is None else sigma_init,
+    return sc_so._so_iterate_sectors(ops, _seed() if sigma_init is None else sigma_init,
                                   gap_shape=GAP, max_iter=400, alpha=0.0, tol=1e-9, **kw)
 
 
 def _report(mode, eigen=None, iteration=None):
-    e = None if eigen is None else sc.EigenLeg.from_sectors(eigen)
-    i = None if iteration is None else sc.IterationLeg.from_sectors(iteration)
-    return sc._so_bond_report(mode, e, i, gap_shape=GAP)
+    e = None if eigen is None else sc_so.EigenLeg.from_sectors(eigen)
+    i = None if iteration is None else sc_so.IterationLeg.from_sectors(iteration)
+    return sc_so._so_bond_report(mode, e, i, gap_shape=GAP)
 
 
-_REAL_SOLVE_LEADING = sc._solve_leading
+_REAL_SOLVE_LEADING = sc_eigen._solve_leading
 
 
 def _failing_arnoldi(dim):
@@ -280,7 +281,7 @@ def _failing_iteration(*dims):
     return fake
 
 
-_REAL_DENSE = sc._so_dense_reduced_eigen
+_REAL_DENSE = sc_so._so_dense_reduced_eigen
 
 
 def _perturbed_dense(dim, which=1):
@@ -338,7 +339,7 @@ class TestStateTable(unittest.TestCase):
                 self.assertTrue(np.array_equal(s1.gaps[i], want))
                 self.assertAlmostEqual(np.linalg.norm(s1.gaps[i]), 1.0, delta=1e-15)
             self.assertTrue(np.array_equal(s1.gaps, s2.gaps))
-            with mock.patch.object(sc_so, "_solve_leading", wraps=sc._solve_leading) as spy:
+            with mock.patch.object(sc_so, "_solve_leading", wraps=sc_eigen._solve_leading) as spy:
                 it = _iterate([op])
             self.assertEqual(spy.call_count, 0)
             lead = it.leaders[0]
@@ -356,7 +357,7 @@ class TestStateTable(unittest.TestCase):
         ops = [_sector(1, b1, _normal(np.concatenate([[5.0], np.linspace(-1, 1, 21)]), 1)),
                _sector(0, b0, _normal([0.9, 0.5, 0.1, -0.3, -1], 2))]
         with mock.patch.object(sc_so, "_solve_leading", _failing_arnoldi(22)), \
-                self.assertLogs(sc.logger, level="WARNING") as cm:
+                self.assertLogs(sc_static.logger, level="WARNING") as cm:
             s = _solve(ops)
         self.assertEqual(_messages(cm), ["spin-orbital sector +1: the eigen solve did not "
                                          "converge; the sector is failed."])
@@ -389,7 +390,7 @@ class TestStateTable(unittest.TestCase):
         M1 = _normal([2.0, 1.0, 0.5, -0.5, -1.0], 3)
         ops = [_sector(1, b1, M1), _sector(0, b0, _normal([0.7, 0.2, -0.1, -0.6], 4))]
         with mock.patch.object(sc_so, "_so_dense_reduced_eigen", _perturbed_dense(5, which=1)), \
-                self.assertLogs(sc.logger, level="WARNING") as cm:
+                self.assertLogs(sc_static.logger, level="WARNING") as cm:
             s = _solve(ops)
         self.assertEqual(len(cm.records), 1)
         self.assertTrue(re.match(r"^spin-orbital sector \+1: a returned eigenpair fails the "
@@ -416,7 +417,7 @@ class TestStateTable(unittest.TestCase):
 
     def test_row5_all_empty(self):
         ops = [_sector(p, b, np.zeros((0, 0))) for p, b in zip((1, 0, -1), _bases((0, 0, 0)))]
-        with self.assertLogs(sc.logger, level="WARNING") as cm:
+        with self.assertLogs(sc_static.logger, level="WARNING") as cm:
             s = _solve(ops)
         self.assertEqual(_messages(cm), [_EMPTY_MSG])
         self.assertEqual(s.vals.shape, (0,))
@@ -425,7 +426,7 @@ class TestStateTable(unittest.TestCase):
         self.assertFalse(s.converged)
         self.assertTrue(np.isnan(s.leading))
         self.assertEqual(s.failed_sectors, ())
-        with self.assertNoLogs(sc.logger, level="WARNING"):
+        with self.assertNoLogs(sc_static.logger, level="WARNING"):
             it = _iterate(ops)          # the empty-space WARNING is the eigen leg's
         self.assertTrue(np.isnan(it.value))
         self.assertFalse(it.converged)
@@ -445,7 +446,7 @@ class TestStateTable(unittest.TestCase):
         ops = [_sector(1, b1, _normal([2.0, 1.0, 0.5, -0.5, -1.0], 3)),
                _sector(0, b0, np.zeros((0, 0)))]
         with mock.patch.object(sc_so, "_so_dense_reduced_eigen", _perturbed_dense(5)), \
-                self.assertLogs(sc.logger, level="WARNING") as cm:
+                self.assertLogs(sc_static.logger, level="WARNING") as cm:
             s = _solve(ops)
         self.assertNotIn(_EMPTY_MSG, _messages(cm))
         self.assertEqual((s.vals.shape, s.gaps.shape), ((0,), (0,) + GAP))
@@ -505,28 +506,28 @@ class TestStateTable(unittest.TestCase):
 
     def test_gap_status(self):
         g = np.ones(GAP, complex)
-        e_empty = sc.EigenLeg(np.zeros(0, complex), np.zeros((0,) + GAP, complex),
+        e_empty = sc_so.EigenLeg(np.zeros(0, complex), np.zeros((0,) + GAP, complex),
                               np.zeros(0, np.int8), False, complex(np.nan), "", ())
-        i_empty = sc.IterationLeg(float("nan"), None, 2, False, 0, (), "iteration")
-        i_fail = sc.IterationLeg(float("nan"), g, 0, False, 9, (0,), "iteration")
+        i_empty = sc_so.IterationLeg(float("nan"), None, 2, False, 0, (), "iteration")
+        i_fail = sc_so.IterationLeg(float("nan"), g, 0, False, 9, (0,), "iteration")
         cases = (("eigenvalue", e_empty, None, "none"), ("iteration", None, i_empty, "none"),
                  ("both", e_empty, i_empty, "none"), ("iteration", None, i_fail, "uncertified"),
                  ("both", e_empty, i_fail, "uncertified"))
         for mode, e, i, want in cases:
-            r = sc._so_bond_report(mode, e, i, gap_shape=GAP)
+            r = sc_so._so_bond_report(mode, e, i, gap_shape=GAP)
             self.assertEqual(r.gap_status, want, (mode, want))
             self.assertEqual(r.gap.shape, GAP)
             self.assertEqual(r.gap_status == "certified", bool(np.isfinite(r.reported)))
 
     def test_report_reductions(self):
         g = [np.full(GAP, i + 1, complex) for i in range(5)]
-        E_OK = sc.EigenLeg(np.array([0.5, 0.2], complex), np.array([g[0], g[1]]),
+        E_OK = sc_so.EigenLeg(np.array([0.5, 0.2], complex), np.array([g[0], g[1]]),
                            np.array([0, 1], np.int8), True, 0.5 + 0j, "+1:dense-LR;0:dense-LR", ())
-        E_FAIL = sc.EigenLeg(np.array([0.2], complex), np.array([g[1]]), np.array([1], np.int8),
+        E_FAIL = sc_so.EigenLeg(np.array([0.2], complex), np.array([g[1]]), np.array([1], np.int8),
                              False, complex(np.nan), "+1:dense-LR;0:not-converged", (0,))
-        I_OK = sc.IterationLeg(0.49, g[2], 0, True, 10, (), "iteration")
-        I_FAIL = sc.IterationLeg(float("nan"), g[3], -1, False, 50, (-1,), "iteration")
-        I_NULL = sc.IterationLeg(0.0, g[4], 1, True, 0, (), "null-operator")
+        I_OK = sc_so.IterationLeg(0.49, g[2], 0, True, 10, (), "iteration")
+        I_FAIL = sc_so.IterationLeg(float("nan"), g[3], -1, False, 50, (-1,), "iteration")
+        I_NULL = sc_so.IterationLeg(0.0, g[4], 1, True, 0, (), "null-operator")
         nan = float("nan")
         # (mode, eigen, iteration) -> (reported, eigen_converged, iteration_converged,
         #  gap, gap_status, pp_sector, selection, failed_sectors, iteration_failed_sectors)
@@ -546,7 +547,7 @@ class TestStateTable(unittest.TestCase):
             table.append(("both", E_FAIL, it, (nan, False, ic, gi, "uncertified", it.pp_sector,
                                                E_FAIL.selection, (0,), it.failed_sectors)))
         for mode, e, i, want in table:
-            r = sc._so_bond_report(mode, e, i, gap_shape=GAP)
+            r = sc_so._so_bond_report(mode, e, i, gap_shape=GAP)
             got = (r.reported, r.eigen_converged, r.iteration_converged, r.gap, r.gap_status,
                    r.pp_sector, r.selection, r.failed_sectors, r.iteration_failed_sectors)
             msg = (mode, e and e.selection, i and i.selection)
@@ -634,7 +635,7 @@ class TestSectorIteration(unittest.TestCase):
     def test_dim_one_exact(self):
         b1, b0 = _bases((1, 1))
         ops = [_sector(1, b1, [[0.25]]), _sector(0, b0, [[-0.5]])]
-        with mock.patch.object(sc_so, "_solve_leading", wraps=sc._solve_leading) as spy:
+        with mock.patch.object(sc_so, "_solve_leading", wraps=sc_eigen._solve_leading) as spy:
             it = _iterate(ops)
         self.assertEqual(spy.call_count, 0)
         self.assertEqual([lead.status for lead in it.leaders], ["converged", "converged"])
@@ -649,7 +650,7 @@ class TestSectorIteration(unittest.TestCase):
         for bad in (np.nan, np.inf, complex(1.0, np.inf)):
             with self.subTest(element=bad):
                 ops = [_scalar_sector(1, b1, bad), _scalar_sector(0, b0, 0.25)]
-                with self.assertLogs(sc.logger, level="WARNING") as cm, \
+                with self.assertLogs(sc_static.logger, level="WARNING") as cm, \
                         np.errstate(invalid="ignore"):
                     it = _iterate(ops)
                 self.assertEqual(len(cm.records), 1)
@@ -707,15 +708,15 @@ class TestSectorIteration(unittest.TestCase):
 
     def test_report_requires_a_finite_iteration_value(self):
         g = np.ones(GAP, complex)
-        e_ok = sc.EigenLeg(np.array([0.5], complex), np.array([g]), np.array([0], np.int8),
+        e_ok = sc_so.EigenLeg(np.array([0.5], complex), np.array([g]), np.array([0], np.int8),
                            True, 0.5 + 0j, "0:dense-LR", ())
         for bad in (float("nan"), float("inf"), complex(0.1, np.inf)):
-            leg = sc.IterationLeg(bad, g, 0, True, 3, (), "iteration")
-            r = sc._so_bond_report("iteration", None, leg, gap_shape=GAP)
+            leg = sc_so.IterationLeg(bad, g, 0, True, 3, (), "iteration")
+            r = sc_so._so_bond_report("iteration", None, leg, gap_shape=GAP)
             self.assertTrue(np.isnan(r.reported), bad)
             self.assertFalse(r.eigen_converged, bad)
             self.assertEqual(r.gap_status, "uncertified", bad)
-            r = sc._so_bond_report("both", e_ok, leg, gap_shape=GAP)
+            r = sc_so._so_bond_report("both", e_ok, leg, gap_shape=GAP)
             self.assertFalse(r.iteration_converged, bad)
             self.assertEqual((r.reported, r.gap_status), (0.5, "certified"), bad)
 
@@ -762,7 +763,7 @@ class TestSectorSolve(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, exact(
                     "_so_solve_sectors: the per-sector solve supports eigenvalue_method = "
                     "\"arnoldi\" only, got {}".format(method))):
-                sc._so_solve_sectors([_sector(1, b, np.eye(3))], 2, method, gap_shape=GAP)
+                sc_so._so_solve_sectors([_sector(1, b, np.eye(3))], 2, method, gap_shape=GAP)
 
     def test_dense_branch_rule(self):
         retry_eigs = np.concatenate([-np.arange(1.0, 11.0), 0.01 * np.arange(1.0, 13.0)])
@@ -784,7 +785,7 @@ class TestSectorSolve(unittest.TestCase):
                 top = ev[np.argsort(-np.abs(ev))[:10]]
                 self.assertLess(top.real.max(), np.abs(top).min())
             if sel == "LR_retry":
-                with self.assertLogs(sc.logger, level="WARNING") as cm:
+                with self.assertLogs(sc_static.logger, level="WARNING") as cm:
                     s = _solve([_sector(0, b, M)], k=10, **kw)
                 self.assertEqual(len(cm.records), 1)
                 self.assertIn("re-solving for the largest real part", _messages(cm)[0])
@@ -831,9 +832,9 @@ class TestSectorSolve(unittest.TestCase):
         seed = _seed().ravel().copy()
         seed[bm.indices] = 0.0
         seed = seed.reshape(GAP)
-        with mock.patch.object(sc_so, "_so_dense_reduced_eigen", wraps=sc._so_dense_reduced_eigen) as d, \
-                mock.patch.object(sc_so, "_so_solve_eigenvalue", wraps=sc._so_solve_eigenvalue) as a, \
-                self.assertLogs(sc.logger, level="WARNING") as cm:
+        with mock.patch.object(sc_so, "_so_dense_reduced_eigen", wraps=sc_so._so_dense_reduced_eigen) as d, \
+                mock.patch.object(sc_so, "_so_solve_eigenvalue", wraps=sc_so._so_solve_eigenvalue) as a, \
+                self.assertLogs(sc_static.logger, level="WARNING") as cm:
             s = _solve(ops, k=4, seed_vec=seed)
         # a random seed: no selected eigenvector is near it
         self.assertEqual(len(cm.records), 1)
@@ -856,7 +857,7 @@ class TestSectorSolve(unittest.TestCase):
                _sector(0, b0, _normal([2.0, 0.5, 0.3, -0.1, -0.4, -0.6], 2))]
         seed = _seed().ravel().copy()
         seed[b0.indices] = 0.0
-        with mock.patch.object(sc_so, "_solve_leading", wraps=sc._solve_leading) as spy:
+        with mock.patch.object(sc_so, "_solve_leading", wraps=sc_eigen._solve_leading) as spy:
             _iterate(ops, sigma_init=seed.reshape(GAP))
         inits = [c.kwargs["init_vec"] for c in spy.call_args_list]
         np.testing.assert_array_equal(inits[0], b1.to_reduced(seed[b1.indices]))
@@ -873,13 +874,13 @@ class TestSectorSolve(unittest.TestCase):
         noise = np.zeros_like(base)
         noise[b1.indices] = _seed().ravel()[b1.indices]
         noise *= np.linalg.norm(base) / np.linalg.norm(noise)
-        real = sc._so_dense_reduced_eigen
+        real = sc_so._so_dense_reduced_eigen
         for scale, seeded_plus in ((1e-12, False), (1e-9, False), (1e-7, True)):
             with self.subTest(scale=scale):
                 seed = base + scale * noise
                 with mock.patch.object(sc_so, "_so_dense_reduced_eigen", wraps=real) as d, \
-                        self.assertLogs(sc.logger, level="INFO") as cm:
-                    sc.logger.info("start")
+                        self.assertLogs(sc_static.logger, level="INFO") as cm:
+                    sc_static.logger.info("start")
                     s = _solve(ops, k=4, seed_vec=seed.reshape(GAP))
                 self.assertTrue(s.converged)
                 seeds = [c.args[3] for c in d.call_args_list]
@@ -907,7 +908,7 @@ class TestSectorSolve(unittest.TestCase):
             with self.subTest(element=bad):
                 ops = [_scalar_sector(1, b1, bad),
                        _sector(0, b0, _normal([0.7, 0.2, -0.1, -0.6], 4))]
-                with self.assertLogs(sc.logger, level="WARNING") as cm, \
+                with self.assertLogs(sc_static.logger, level="WARNING") as cm, \
                         np.errstate(invalid="ignore"):
                     s = _solve(ops)
                 self.assertTrue(any("dense diagonalization failed" in m for m in _messages(cm)),
@@ -946,7 +947,7 @@ class TestSectorSolve(unittest.TestCase):
         b = _lift(b0, v0[:, np.argmin(abs(w0 - 0.3))])
         seed = (0.8 * a / np.linalg.norm(a) + 0.6 * b / np.linalg.norm(b)).reshape(GAP)
         unseeded = _solve(ops, k=6)
-        with self.assertNoLogs(sc.logger, level="WARNING"):
+        with self.assertNoLogs(sc_static.logger, level="WARNING"):
             s = _solve(ops, k=6, seed_vec=seed)
         self.assertTrue(s.converged)
         # the selection is unchanged; only the order follows the seed
@@ -956,7 +957,7 @@ class TestSectorSolve(unittest.TestCase):
         self.assertAlmostEqual(s.leading.real, 0.5, delta=1e-12)
         self.assertAlmostEqual(unseeded.leading.real, 2.0, delta=1e-12)
         # a seed outside every selected branch: warned, still ordered by overlap
-        with self.assertLogs(sc.logger, level="WARNING") as cm:
+        with self.assertLogs(sc_static.logger, level="WARNING") as cm:
             _solve(ops, k=6, seed_vec=_seed())
         self.assertEqual(len(cm.records), 1)
         self.assertTrue(re.match(
@@ -975,7 +976,7 @@ class TestSectorSolve(unittest.TestCase):
             vals[1] += 1e-6
             return vals, vecs
         with mock.patch.object(sc_so, "_so_solve_eigenvalue", perturbed), \
-                self.assertLogs(sc.logger, level="WARNING") as cm:
+                self.assertLogs(sc_static.logger, level="WARNING") as cm:
             s = _solve([op], k=4)
         lead = s.leaders[0]
         self.assertEqual((lead.selection, lead.norm_kind, lead.certified),
@@ -989,13 +990,13 @@ class TestSectorSolve(unittest.TestCase):
     def test_adjoint_estimate_not_converged_is_logged(self):
         (b,) = _bases((30,))
         op = _sector(1, b, _normal(np.linspace(-1, 2, 30), 7))
-        real = sc._so_sector_norm_estimate
+        real = sc_so._so_sector_norm_estimate
 
         def unconverged(red, dim, adjoint):
             est, steps, change, _ = real(red, dim, adjoint)
             return est, steps, change, False
         with mock.patch.object(sc_so, "_so_sector_norm_estimate", unconverged), \
-                self.assertLogs(sc.logger, level="INFO") as cm:
+                self.assertLogs(sc_static.logger, level="INFO") as cm:
             s = _solve([op], k=4)
         self.assertTrue(s.converged)
         self.assertEqual(s.leaders[0].norm_kind, "adjoint")
@@ -1012,7 +1013,7 @@ class TestSectorSolve(unittest.TestCase):
         unseeded = _solve(ops, k=4)
         for s_vec in (seed, np.zeros_like(seed)):
             with mock.patch.object(sc_so, "_so_solve_eigenvalue",
-                                   wraps=sc._so_solve_eigenvalue) as a, quiet():
+                                   wraps=sc_so._so_solve_eigenvalue) as a, quiet():
                 s = _solve(ops, k=4, seed_vec=s_vec.reshape(GAP))
             self.assertEqual(a.call_count, 1)
             self.assertIsNone(a.call_args.kwargs["seed_vec"])
@@ -1026,7 +1027,7 @@ class TestSectorSolve(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, exact(
                 "_so_solve_sectors: the basis of sector +1 lives on a gap of shape "
                 "{}, not {}".format(GAP, GAP + (1,)))):
-            sc._so_solve_sectors([_sector(1, b, np.eye(3))], 2, "arnoldi",
+            sc_so._so_solve_sectors([_sector(1, b, np.eye(3))], 2, "arnoldi",
                                  gap_shape=GAP + (1,))
 
     def test_norm_estimate_and_adjoint_contract(self):
@@ -1042,7 +1043,7 @@ class TestSectorSolve(unittest.TestCase):
         self.assertEqual(lead.norm_kind, "adjoint")
         self.assertTrue(lead.certified)
         self.assertLessEqual(abs(lead.norm_estimate - exact_norm), 1e-3 * exact_norm)
-        with self.assertLogs(sc.logger, level="INFO") as cm:
+        with self.assertLogs(sc_static.logger, level="INFO") as cm:
             s = _solve([_sector(1, b, M, adjoint=False)], k=4)
         lead = s.leaders[0]
         self.assertEqual(lead.norm_kind, "forward")
@@ -1061,17 +1062,17 @@ class TestReportAdapter(unittest.TestCase):
     through the one report."""
 
     def test_dense_leg_is_pass_through(self):
-        basis = sc._SOAntisymmetricBasis(SHAPE)
+        basis = sc_eigen._SOAntisymmetricBasis(SHAPE)
         _, A = _random_operator(basis.n, 21)
-        with self.assertLogs(sc.logger, level="WARNING") as cm:
-            vals, gaps = sc._so_solve_eigenvalue(A, basis, 6, "arnoldi")
+        with self.assertLogs(sc_static.logger, level="WARNING") as cm:
+            vals, gaps = sc_so._so_solve_eigenvalue(A, basis, 6, "arnoldi")
         self.assertEqual(len(cm.records), 1)
         self.assertIn("re-solving for the largest real part", _messages(cm)[0])
-        leg = sc.EigenLeg.from_dense(vals, gaps, selection="LM")
+        leg = sc_so.EigenLeg.from_dense(vals, gaps, selection="LM")
         self.assertIs(leg.vals, vals)
         self.assertIs(leg.gaps, gaps)
         self.assertEqual(leg.failed_sectors, ())
-        r = sc._so_bond_report("eigenvalue", leg, None, gap_shape=SHAPE)
+        r = sc_so._so_bond_report("eigenvalue", leg, None, gap_shape=SHAPE)
         self.assertTrue(np.array_equal(r.vals, vals))
         self.assertTrue(np.array_equal(r.gap, gaps[0]))
         self.assertEqual((r.reported, r.eigen_converged, r.pp_sector),
@@ -1086,15 +1087,15 @@ class TestReportAdapter(unittest.TestCase):
         g_it = np.full(SHAPE, 3.0 + 0j)
         for eig_ok in (True, False):
             vals = np.array([0.4, 0.1]) + 0j if eig_ok else np.full(2, np.nan + 0j)
-            eleg = sc.EigenLeg.from_dense(vals, np.array(g_eig), selection="LM")
+            eleg = sc_so.EigenLeg.from_dense(vals, np.array(g_eig), selection="LM")
             self.assertEqual(eleg.converged, eig_ok)
             for it_ok in (True, False):
-                ileg = sc.IterationLeg.from_dense(g_it, 0.39 if it_ok else float("nan"), it_ok,
+                ileg = sc_so.IterationLeg.from_dense(g_it, 0.39 if it_ok else float("nan"), it_ok,
                                                   12, {"converged": it_ok})
                 self.assertEqual((ileg.pp_sector, ileg.selection, ileg.failed_sectors),
                                  (2, "iteration", ()))
                 for mode in ("eigenvalue", "iteration", "both"):
-                    r = sc._so_bond_report(mode, eleg if mode != "iteration" else None,
+                    r = sc_so._so_bond_report(mode, eleg if mode != "iteration" else None,
                                            ileg if mode != "eigenvalue" else None,
                                            gap_shape=SHAPE)
                     if mode == "iteration":

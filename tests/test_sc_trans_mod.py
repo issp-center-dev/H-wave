@@ -23,6 +23,8 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import kernel as sc_kernel
+from hwave.solver.eliashberg import band as sc_band
 from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.eliashberg import static as sc_static
 
@@ -372,7 +374,7 @@ class TestTransModOracle(unittest.TestCase):
                      trans_mod=_trans_mod_from_hr(_nematic_hr(1)))
             inp = _input(d, os.path.join(d, "o"), chi0q_tensor="auto",
                          extra_file={"trans_mod": "tm.npz"})
-            expected = sc._auto_chi0q_tensor_scheme(
+            expected = sc_io._auto_chi0q_tensor_scheme(
                 inp["file"]["input"]["interaction"])
             res = _run(inp)
         self.assertEqual(expected, "general")
@@ -541,7 +543,7 @@ class TestMixedCaseAndControl(unittest.TestCase):
 
     def test_extern_is_a_source_whatever_the_coefficient(self):
         for coeff in (0.0, 0.5):
-            self.assertEqual(sc._one_body_band_sources(
+            self.assertEqual(sc_band._one_body_band_sources(
                 {"file": {"input": {"interaction": {"extern": "e.dat"}}},
                  "mode": {"param": {"Coeff_Extern": coeff}}}), ("Extern",))
 
@@ -768,8 +770,8 @@ class TestAssembledBandCheck(unittest.TestCase):
                     files_.pop(k, None)
                 tname, fname = inter
                 files_[tname] = fname
-            sources = sc._one_body_band_sources(inp)
-            return sc._mean_field_band(inp, sources, "general",
+            sources = sc_band._one_body_band_sources(inp)
+            return sc_io._mean_field_band(inp, sources, "general",
                                        (NX, NY, 1), norb)
 
     def test_green_init_band_is_the_uhf_band(self):
@@ -913,7 +915,7 @@ class TestSpinFreeTolerance(unittest.TestCase):
 
     def test_spin_mixing_threshold(self):
         h = _nematic_hr(1)
-        self.assertEqual(sc.SPIN_FREE_ATOL, 1.0e-10)
+        self.assertEqual(sc_band.SPIN_FREE_ATOL, 1.0e-10)
         lam_ref, _ = self._lam_or_error(_trans_mod_from_hr(h))
         above = _trans_mod_from_hr(h, mixing=np.array([[1.0e-9]]))
         lam, err = self._lam_or_error(above)
@@ -957,7 +959,7 @@ class TestExternalBondGreen(unittest.TestCase):
             # a valid external Green function: the bare model's own
             ref = _run(_input(d, os.path.join(d, "o0"), eliashberg=bond))
             np.savez(os.path.join(d, "green.npz"),
-                     green=sc._green_sc_to_canonical(ref["bond_green"]))
+                     green=sc_kernel._green_sc_to_canonical(ref["bond_green"]))
             bond_ext = dict(bond, bond_green=os.path.join(d, "green.npz"))
             h = _bare_hr(1)
             m = np.zeros_like(h)
@@ -1017,7 +1019,7 @@ class TestCheckedBandIsUsedBand(unittest.TestCase):
 
         solver = _Solver()
         before = solver.ham_info.ham_trans_r.copy()
-        up = sc._checked_band(solver, {}, ("green_init",))
+        up = sc_band._checked_band(solver, {}, ("green_init",))
         self.assertTrue(np.array_equal(solver.ham_info.ham_trans_r, before))
         self.assertEqual(up.shape, (4, 1, 1))
         self.assertFalse(hasattr(solver, "_find_block_diagonal"))
@@ -1036,7 +1038,7 @@ class TestCheckedBandIsUsedBand(unittest.TestCase):
             np.savez(os.path.join(d, "g.npz"), green=g)
             inp = _input(d, os.path.join(d, "o"),
                          extra_file={"green_init": "g.npz"})
-            band = sc._mean_field_band(inp, ("green_init",), "general",
+            band = sc_io._mean_field_band(inp, ("green_init",), "general",
                                        (NX, NY, 1), norb)
             # a fresh RPA solver, one assembly
             info = {"path_to_input": d,
@@ -1085,7 +1087,7 @@ class TestCheckedBandIsUsedBand(unittest.TestCase):
             inp = _input(d, os.path.join(d, "o"), extern=True,
                          extra_file={"trans_mod": "tm.npz"},
                          extra_param={"coeff_extern": -0.3})
-            band = sc._mean_field_band(inp, sc._one_body_band_sources(inp),
+            band = sc_io._mean_field_band(inp, sc_band._one_body_band_sources(inp),
                                        "general", (NX, NY, 1), 1)
         eps = np.transpose(band.epsilon_k[:, :, :, :, 0], (2, 3, 0, 1))
         self.assertLess(np.abs(eps - (_band_k(h) + 1.0e3)).max(), 1e-10)
@@ -1241,10 +1243,10 @@ class TestSpinFreeTol(unittest.TestCase):
                     np.str_("1e-3")):
             with self.subTest(val=val):
                 with self.assertRaises(ValueError) as cm:
-                    sc._read_spin_free_tol({"spin_free_tol": val})
+                    sc_io._read_spin_free_tol({"spin_free_tol": val})
                 self.assertIn("spin_free_tol", str(cm.exception))
-        self.assertEqual(sc._read_spin_free_tol({}), sc.SPIN_FREE_ATOL)
-        self.assertEqual(sc._read_spin_free_tol({"SPIN_FREE_TOL": 2e-3}),
+        self.assertEqual(sc_io._read_spin_free_tol({}), sc_band.SPIN_FREE_ATOL)
+        self.assertEqual(sc_io._read_spin_free_tol({"SPIN_FREE_TOL": 2e-3}),
                          2e-3)
 
 
@@ -1264,7 +1266,7 @@ class TestBandGuards(unittest.TestCase):
 
         up = np.zeros((4, 1, 1), complex)
         with self.assertRaises(RuntimeError):
-            sc._load_band_into_solver(_Solver(), up)
+            sc_io._load_band_into_solver(_Solver(), up)
 
     def test_wrong_cellshape_trans_mod(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1515,7 +1517,7 @@ class TestGreenInitIsUHFkMeanField(unittest.TestCase):
                 files_.pop("CoulombIntra")
                 files_[typ] = "x.dat"
                 with self.assertRaises(ValueError) as cm:
-                    sc._mean_field_band(inp, ("green_init",), "general",
+                    sc_io._mean_field_band(inp, ("green_init",), "general",
                                         (NX, NY, 1), 2)
                 self.assertIn("green_init describes a spin-dependent state",
                               str(cm.exception))
@@ -1549,7 +1551,7 @@ class TestGreenInitIsUHFkMeanField(unittest.TestCase):
                 lg = logging.getLogger("hwave_sc")
                 lg.addHandler(handler)
                 try:
-                    sc._mean_field_band(inp, ("green_init",), "general",
+                    sc_io._mean_field_band(inp, ("green_init",), "general",
                                         (NX, NY, 1), 2)
                 finally:
                     lg.removeHandler(handler)
@@ -1605,7 +1607,7 @@ class TestHermiticityRound6(unittest.TestCase):
             self._model(d, 1e-7, norb=norb, a=0, b=1)
             inp = _input(d, os.path.join(d, "o"), extern=True,
                          extra_param={"coeff_extern": 0.0})
-            band = sc._mean_field_band(inp, ("Extern",), "general",
+            band = sc_io._mean_field_band(inp, ("Extern",), "general",
                                        (NX, NY, 1), norb)
             info = {"path_to_input": d,
                     "interaction": inp["file"]["input"]["interaction"]}
@@ -1631,7 +1633,7 @@ class TestGreenInitSpinCheck(unittest.TestCase):
             inp = _input(d, os.path.join(d, "o"), coulomb_inter=False,
                          extra_file={"green_init": "g.npz"})
             kw = {} if tol is None else {"spin_free_tol": tol}
-            return sc._mean_field_band(inp, ("green_init",), "general",
+            return sc_io._mean_field_band(inp, ("green_init",), "general",
                                        (NX, NY, 1), 1, **kw)
 
     @staticmethod
@@ -1721,7 +1723,7 @@ class TestGreenInitGuardsPinned(unittest.TestCase):
             inp = _input(d, os.path.join(d, "o"), coulomb_inter=False,
                          extra_file={"green_init": "g.npz"})
             kw = {} if tol is None else {"spin_free_tol": tol}
-            return sc._mean_field_band(inp, ("green_init",), "general",
+            return sc_io._mean_field_band(inp, ("green_init",), "general",
                                        (NX, NY, 1), 1, **kw)
 
     @staticmethod

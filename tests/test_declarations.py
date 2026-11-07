@@ -124,15 +124,15 @@ class TestProductionAnchoring(unittest.TestCase):
     q = pi/2 is not self-inverse."""
 
     def test_dense_route_equals_the_production_k_route(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver.declarations import symmetrise_dense
 
         nx, norb = 4, 2
         kx = np.linspace(0, 2 * np.pi, nx, endpoint=False)
         kz = np.array([0.0])
         tbl = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.7}}
-        prod = sc._symmetrise_interactions_k(
-            sc._build_interaction_k(kx, kz, kz, tbl, norb))["CoulombInter"]
+        prod = sc_vertex._symmetrise_interactions_k(
+            sc_vertex._build_interaction_k(kx, kz, kz, tbl, norb))["CoulombInter"]
 
         # dense route with _build_interaction_k's layout: an entry
         # (R, (a, b)) lands at [R, b, a] (the vertex pair transpose).
@@ -188,7 +188,6 @@ class TestProductionAnchoring(unittest.TestCase):
     def test_sc_builders_consume_the_shared_k_form(self):
         """Delegation spy for both S/C builder routes."""
         from unittest import mock
-        import hwave.sc as sc
         from hwave.solver import declarations
 
         # symmetrise_k is read by the builders in
@@ -198,9 +197,9 @@ class TestProductionAnchoring(unittest.TestCase):
         with mock.patch.object(
                 sc_vertex, "symmetrise_k",
                 side_effect=declarations.symmetrise_k) as spy:
-            sc._build_sc_matrices_all_q({"Hund": M}, 2, 2, 2, 1)
+            sc_vertex._build_sc_matrices_all_q({"Hund": M}, 2, 2, 2, 1)
             self.assertEqual(spy.call_count, 1)
-            sc._build_sc_matrices({"Hund": M}, 2, 0, 0, 0)
+            sc_vertex._build_sc_matrices({"Hund": M}, 2, 0, 0, 0)
         self.assertEqual(spy.call_count, 2)
 
 
@@ -211,15 +210,15 @@ class TestSimplePathSymmetrisation(unittest.TestCase):
     fix through the production _compute_vertices dispatch."""
 
     def test_one_sided_bond_reads_as_cos_q(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         nx, norb, nmat = 4, 1, 4
         kx = np.linspace(0, 2 * np.pi, nx, endpoint=False)
         kz = np.array([0.0])
-        inter_k = sc._build_interaction_k(
+        inter_k = sc_vertex._build_interaction_k(
             kx, kz, kz, {"CoulombInter": {((1, 0, 0), (0, 0)): 0.7}}, norb)
         chi0q = np.zeros((norb, norb, nx, 1, 1, nmat), dtype=complex)
-        V = sc._compute_vertices(chi0q, inter_k, norb, nx, 1, 1, nmat)
+        V = sc_vertex._compute_vertices(chi0q, inter_k, norb, nx, 1, 1, nmat)
         # with chi0 = 0 the vertex is the bare (Wc + Ws)/2 = V(q); the
         # symmetrised one-sided declaration is 0.7 cos(q): ~0 at pi/2,
         # NOT the raw -0.7i
@@ -247,7 +246,7 @@ class TestSimplePathSymmetrisation(unittest.TestCase):
         measured comparison: an asymmetric on-site declaration must
         reduce to the SAME mean coefficient in the ring's dense route
         and the S/C k-route."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver.declarations import symmetrise_dense
 
         norb = 2
@@ -256,8 +255,8 @@ class TestSimplePathSymmetrisation(unittest.TestCase):
                             ((0, 0, 0), (1, 0)): 0.35}}
         mean = (1.0 + 0.35) / 2
         # S/C k-route
-        S, C = sc._build_sc_matrices_all_q(
-            sc._build_interaction_k(k1, k1, k1, tbl, norb), norb, 1, 1, 1)
+        S, C = sc_vertex._build_sc_matrices_all_q(
+            sc_vertex._build_interaction_k(k1, k1, k1, tbl, norb), norb, 1, 1, 1)
         self.assertAlmostEqual(S[0, 0, 0, 1, 1].real, mean, places=12)
         # ring dense route
         arr = np.zeros((1, 1, 1, norb, norb), dtype=complex)
@@ -276,7 +275,7 @@ class TestClosureGate(unittest.TestCase):
     closed input, restoring byte parity."""
 
     def test_closure_detection(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         closed = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.7,
                                    ((-1, 0, 0), (1, 0)): 0.7}}
@@ -284,21 +283,21 @@ class TestClosureGate(unittest.TestCase):
         herm = {"CoulombInter": {((0, 0, 0), (0, 1)): 0.5 + 0.2j,
                                  ((0, 0, 0), (1, 0)): 0.5 - 0.2j}}
         self.assertTrue(
-            sc._declarations_partner_closed(closed, 4, 1, 1, 2))
+            sc_vertex._declarations_partner_closed(closed, 4, 1, 1, 2))
         self.assertFalse(
-            sc._declarations_partner_closed(one_sided, 4, 1, 1, 2))
+            sc_vertex._declarations_partner_closed(one_sided, 4, 1, 1, 2))
         # Hermitian-closed complex is NOT same-operator closed: the mean
         # folds it to Re(p), so it must be (re)symmetrised
         self.assertFalse(
-            sc._declarations_partner_closed(herm, 4, 1, 1, 2))
-        self.assertTrue(sc._declarations_partner_closed({}, 4, 1, 1, 2))
+            sc_vertex._declarations_partner_closed(herm, 4, 1, 1, 2))
+        self.assertTrue(sc_vertex._declarations_partner_closed({}, 4, 1, 1, 2))
 
     def test_huge_closed_coefficient_detected_without_overflow(self):
         """Round 6: the mean-based comparison overflowed for closed
         coefficients above float64.max / 2, reading them as open (with
         RuntimeWarnings). The direct partner comparison forms no mean."""
         import warnings
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         big = np.finfo(np.float64).max * 0.75
         closed = {"CoulombInter": {((1, 0, 0), (0, 1)): big,
@@ -306,11 +305,11 @@ class TestClosureGate(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             self.assertTrue(
-                sc._declarations_partner_closed(closed, 4, 1, 1, 2))
+                sc_vertex._declarations_partner_closed(closed, 4, 1, 1, 2))
         nonfinite = {"CoulombInter": {((1, 0, 0), (0, 1)): np.inf,
                                       ((-1, 0, 0), (1, 0)): np.inf}}
         self.assertFalse(
-            sc._declarations_partner_closed(nonfinite, 4, 1, 1, 2))
+            sc_vertex._declarations_partner_closed(nonfinite, 4, 1, 1, 2))
 
     def test_e2e_symmetric_run_takes_the_raw_pipeline(self):
         """End-to-end capture through calc_eliashberg (round 6): on a
@@ -368,8 +367,8 @@ class TestClosureGate(unittest.TestCase):
         # hwave.solver.eliashberg.vertex (dev/sc-split-plan.md, step 1).
         from hwave.solver.eliashberg import vertex as sc_vertex
         real_closed = sc_static._declarations_partner_closed
-        real_symm = sc._symmetrise_interactions_k
-        real_simple = sc._compute_vertices_simple
+        real_symm = sc_vertex._symmetrise_interactions_k
+        real_simple = sc_vertex._compute_vertices_simple
         with mock.patch.object(sc_static, "_declarations_partner_closed",
                                side_effect=real_closed) as det_spy, \
                 mock.patch.object(sc_vertex, "_symmetrise_interactions_k",
@@ -388,16 +387,16 @@ class TestClosureGate(unittest.TestCase):
     def test_closed_input_keeps_the_raw_bits(self):
         """With declarations_closed=True the vertex is computed from the
         UNTOUCHED k-tables: bitwise equal to the pre-fix raw formula."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         nx, norb, nmat = 4, 1, 4
         kx = np.linspace(0, 2 * np.pi, nx, endpoint=False)
         kz = np.array([0.0])
         tbl = {"CoulombInter": {((1, 0, 0), (0, 0)): 0.7,
                                 ((-1, 0, 0), (0, 0)): 0.7}}
-        inter_k = sc._build_interaction_k(kx, kz, kz, tbl, norb)
+        inter_k = sc_vertex._build_interaction_k(kx, kz, kz, tbl, norb)
         chi0q = np.zeros((norb, norb, nx, 1, 1, nmat), dtype=complex)
-        V = sc._compute_vertices(chi0q, inter_k, norb, nx, 1, 1, nmat,
+        V = sc_vertex._compute_vertices(chi0q, inter_k, norb, nx, 1, 1, nmat,
                                  declarations_closed=True)
         # pre-fix raw formula at chi0 = 0: (Wc + Ws)/2 = V_k, untouched
         raw = np.asarray(inter_k["CoulombInter"]).transpose(2, 3, 4, 0, 1)
