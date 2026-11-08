@@ -1505,6 +1505,28 @@ class TestProjectedStructuralZeroMask(unittest.TestCase):
 # adjudicate this element pattern.
 # ---------------------------------------------------------------------------
 
+def _hf_sub_zero_bond(fx, channels):
+    """``full - hf_only`` of ``bond_correlator`` at ZERO coupling, without a
+    diagonalization. Every interaction term then carries a zero coefficient
+    and ``hf_h1_from_terms`` adds exact zeros to the free ``h1``, so the
+    full and the HF-only Hamiltonians are the same matrix and the two
+    correlators are bit-identical: the difference is exactly zero (the
+    same shortcut ``test_bond_longitudinal_ed._chi_hf_sub`` and
+    ``test_offsite_exchange_ed_longitudinal._first_order`` take). ``f(0)``
+    enters the Richardson stencil only through ``f(v) - f(0)``, so the
+    extracted derivatives are unchanged bit for bit."""
+    n = len(channels)
+    return np.zeros((fx.L, 2, 2, n, n), dtype=complex)
+
+
+def _hf_sub_zero_pair(channels):
+    """The ``q = 0`` slice of ``full - hf_only`` of ``pair_correlator`` at
+    zero coupling: exactly zero, for the reason given in
+    :func:`_hf_sub_zero_bond`."""
+    n = len(channels)
+    return np.zeros((n, n), dtype=complex)
+
+
 def _decls_U(fx, v):
     """U (on-site) direction at amplitude ``v``, carried on fx5's shared
     B=5 topology (the other two shells declared at zero amplitude -- see
@@ -1680,6 +1702,8 @@ def _unit_direction_raw(direction):
     # -- ED side --------------------------------------------------------
     @functools.lru_cache(maxsize=None)
     def _chi_hf_sub(v):
+        if v == 0:
+            return _hf_sub_zero_bond(fx, channels)   # no diagonalization at zero coupling
         terms = terms_at(fx, v)
         full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(channels)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
@@ -1794,6 +1818,8 @@ def _joint_ray_superposition_check(testcase, directions_alphas, terms_at_ray,
 
     @functools.lru_cache(maxsize=None)
     def _chi_hf_sub(t):
+        if t == 0:
+            return _hf_sub_zero_bond(fx, channels)   # no diagonalization at zero coupling
         terms = terms_at_ray(fx, t)
         full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(channels)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
@@ -2354,6 +2380,8 @@ class TestPpInterOrbitalSanityFx3(ApproxTestCase):
 
         @functools.lru_cache(maxsize=None)
         def _xpp_hf_sub(v):
+            if v == 0:
+                return _hf_sub_zero_pair(channels)   # no diagonalization at zero coupling
             terms = terms_at(v)
             full = ed_oracle_util.SectorED(fx, terms=terms).pair_correlator(channels)
             hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
@@ -2552,6 +2580,8 @@ def _pp_unit_direction_raw(direction):
     # -- ED side ----------------------------------------------------------
     @functools.lru_cache(maxsize=None)
     def _xpp_hf_sub(v):
+        if v == 0:
+            return _hf_sub_zero_pair(channels_ed)   # no diagonalization at zero coupling
         terms = terms_at(fx, v)
         full = ed_oracle_util.SectorED(fx, terms=terms).pair_correlator(channels_ed)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
@@ -2862,6 +2892,8 @@ def _case_m_unit_direction_raw(direction):
     # -- ED side --------------------------------------------------------
     @functools.lru_cache(maxsize=None)
     def _chi_hf_sub(v):
+        if v == 0:
+            return _hf_sub_zero_bond(fx, channels)   # no diagonalization at zero coupling
         terms = terms_at(fx, v)
         full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(channels)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
@@ -3033,6 +3065,8 @@ def _case_m_pp_unit_direction_raw(direction):
     # -- ED side ----------------------------------------------------------
     @functools.lru_cache(maxsize=None)
     def _xpp_hf_sub(v):
+        if v == 0:
+            return _hf_sub_zero_pair(channels_ed)   # no diagonalization at zero coupling
         terms = terms_at(fx, v)
         full = ed_oracle_util.SectorED(fx, terms=terms).pair_correlator(channels_ed)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
@@ -3107,6 +3141,8 @@ def _joint_ray_superposition_check_case_m(testcase, directions_alphas,
 
     @functools.lru_cache(maxsize=None)
     def _chi_hf_sub(t):
+        if t == 0:
+            return _hf_sub_zero_bond(fx, channels)   # no diagonalization at zero coupling
         terms = terms_at_ray(fx, t)
         full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(channels)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
@@ -3159,6 +3195,8 @@ def _pp_joint_ray_superposition_check_case_m(testcase, directions_alphas,
 
     @functools.lru_cache(maxsize=None)
     def _xpp_hf_sub(t):
+        if t == 0:
+            return _hf_sub_zero_pair(channels_ed)   # no diagonalization at zero coupling
         terms = terms_at_ray(fx, t)
         full = ed_oracle_util.SectorED(fx, terms=terms).pair_correlator(channels_ed)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
