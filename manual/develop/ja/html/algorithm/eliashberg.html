@@ -106,15 +106,18 @@ RPA の枠組みで線形化ギャップ方程式の固有値問題を解くこ�
 <p>一重項ペアリング頂点は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-6">
 <span class="eqno">(7.48)<a class="headerlink" href="#equation-algorithm-eliashberg-6" title="Link to this equation">¶</a></span>\[V^S_{\alpha\beta}(\mathbf{q})
-= \frac{1}{2}(W_c + W_s)_{\alpha\beta}
+= \frac{1}{2}(W_c - W_s)_{\alpha\beta}
   + \frac{3}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
   - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}\]</div>
 <p>三重項ペアリング頂点は</p>
 <div class="math notranslate nohighlight" id="equation-algorithm-eliashberg-7">
 <span class="eqno">(7.49)<a class="headerlink" href="#equation-algorithm-eliashberg-7" title="Link to this equation">¶</a></span>\[V^T_{\alpha\beta}(\mathbf{q})
-= \frac{1}{2}(W_c - W_s)_{\alpha\beta}
+= \frac{1}{2}(W_c + W_s)_{\alpha\beta}
   - \frac{1}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
   - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}\]</div>
+<p>裸の（一次の）項は、一重項で <span class="math notranslate nohighlight">\(\tfrac12(W_c - W_s) = U + V\)</span>、
+三重項で <span class="math notranslate nohighlight">\(\tfrac12(W_c + W_s) = V\)</span> です。オンサイトの <span class="math notranslate nohighlight">\(U\)</span> は一重項にだけ効き、
+同時刻の三重項には効きません。</p>
 </section>
 <section id="s-c">
 <h3>一般モード（S/C行列定式化）<a class="headerlink" href="#s-c" title="Link to this heading">¶</a></h3>
