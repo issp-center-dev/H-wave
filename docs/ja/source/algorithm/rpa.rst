@@ -677,7 +677,7 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 :math:`V(\mathbf{q})`\ だけでリング和に入ります。入力にオフサイトの行があると、
 スピン軌道 RPA は 1 回の計算につき 1 回、INFO レベルで次の行を記録します::
 
-   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included.
+   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static").
 
 ``<types>``\ は、オフサイトの行がゼロでない相互作用の種類を、並べ替えてコンマで
 区切ったリストです。\ ``PairHop``\ はこのリストには挙がりません。この行は FLEX

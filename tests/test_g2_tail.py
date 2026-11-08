@@ -150,6 +150,30 @@ class TestG2TailCorrection(unittest.TestCase):
                                       np.zeros_like(diff[~mask]))
         np.testing.assert_allclose(diff[mask], c, rtol=0, atol=1.0e-12)
 
+    def test_one_tail_coefficient(self):
+        """The static bubble (``_calc_g2``) and the bond pair propagator
+        (``bond_channels._g2_from_green``) add the one coefficient of
+        ``bond_channels.g2_tail_coefficient``: the window complement of
+        (1/beta) sum 1/wn^2."""
+        from unittest import mock
+        from hwave.solver import bond_channels
+        wn = (2.0 * np.arange(self.nmat) + 1.0 - self.nmat) * np.pi / self.beta
+        c = self.beta / 4.0 - np.sum(1.0 / wn**2) / self.beta
+        self.assertAlmostEqual(bond_channels.g2_tail_coefficient(self.nmat, self.beta), c,
+                               delta=1e-12)
+        norb = self.green.shape[0]
+        di = np.arange(norb)
+        for name, g2 in (("_calc_g2", _calc_g2),
+                         ("_g2_from_green", bond_channels._g2_from_green)):
+            with self.subTest(bubble=name):
+                bare = g2(self.green, self.beta, tail=False)
+                with mock.patch.object(bond_channels, "g2_tail_coefficient",
+                                       return_value=0.375) as coeff:
+                    corr = g2(self.green, self.beta, tail=True)
+                coeff.assert_called_once_with(self.nmat, self.beta)
+                diff = (corr - bare)[di[:, None], di[:, None], di[None, :], di[None, :]]
+                np.testing.assert_allclose(diff, 0.375, rtol=0, atol=1e-12)
+
     def test_warning_fires_on_indefinite_g2_and_not_after_correction(self):
         bare = _calc_g2(self.green, self.beta, tail=False)
         corr = _calc_g2(self.green, self.beta)

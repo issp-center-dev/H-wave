@@ -844,7 +844,7 @@ class TestRefusals(unittest.TestCase):
     def test_offsite_row(self):
         files = S._write_model(self.d, so=True, extra_rows={
             "CoulombInter": [(1, 0, 0, 0.2), (-1, 0, 0, 0.2)]})
-        self._refused("^" + re.escape(S.OFFSITE_TEXT.format(
+        self._refused("^" + re.escape(S.OFFSITE_DYNAMIC_TEXT.format(
             R=(1, 0, 0), orbs=(1, 1), src="the CoulombInter file")) + "$", {}, files=files)
 
     def test_cross_site_row_under_orbital_site(self):

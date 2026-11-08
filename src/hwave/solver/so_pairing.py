@@ -67,7 +67,7 @@ __all__ = ["so_pairing_vertex", "so_pairing_vertex_parts",
            "check_so_config", "check_so_supported", "so_spin_components",
            "so_spin_decomposition", "SPIN_COMPONENTS", "SZ_COMPONENTS",
            "so_sz_decomposition", "sz_off_sector_index",
-           "sz_conservation_residual", "sz_report"]
+           "sz_conservation_residual", "bond_sz_conservation_residual", "sz_report"]
 
 #: relative tolerance of the on-site (q-independent Gamma) check
 _ONSITE_RTOL = 1.0e-10
@@ -291,6 +291,21 @@ def _check_so_dynamic_config(eli):
                     _SO_DYN_WHAT, key, key))
 
 
+def _static_bond_channels(eli, freq):
+    """Whether the case-insensitive ``[eliashberg]`` table ``eli`` asks for
+    the static spin-orbital bond path (``bond_channels = true``, strictly
+    parsed, with ``frequency = freq = "static"``); ``bond_channels = true``
+    with ``frequency = "dynamic"`` is refused here."""
+    if eli.get("bond_channels") is None:
+        return False
+    from hwave import sc
+    if not sc._bond_bool_option(eli, "bond_channels", False):
+        return False
+    if freq == "dynamic":
+        raise ValueError(_SO_DYNAMIC_BOND_REFUSAL)
+    return True
+
+
 def check_so_config(input_dict):
     """Refuse every configuration the spin-orbital entries do not support,
     from the configuration alone (no file is read). Keys are looked up
@@ -299,7 +314,15 @@ def check_so_config(input_dict):
     ``frequency = "dynamic"`` (issue #284) adds the refusals of
     :func:`_check_so_dynamic_config`; everything below applies to both.
 
-    Supported: ``frequency = "static"`` or ``"dynamic"``, ``bond_channels = false``,
+    ``bond_channels = true`` (issue #270) is supported with ``frequency =
+    "static"``: the static spin-orbital bond path builds its bond bubble
+    from the band's Green function, so ``chi0q_tensor`` and ``flex_chi_s`` /
+    ``flex_chi_c`` are not checked here (they are not used there and get a
+    WARNING from the entry); the ``chi0q_mode`` value is checked as for
+    every run. With ``frequency = "dynamic"`` it is refused.
+
+    Supported: ``frequency = "static"`` or ``"dynamic"``, ``bond_channels = false``
+    (or true with ``frequency = "static"``),
     ``chi0q_mode = "calc"`` or ``"load"`` with a general (4-index) chi0q, or
     ``"flex"`` with the outputs of a spin-orbital FLEX run (``flex_chiq``,
     ``flex_green``; ``flex_chi_s`` / ``flex_chi_c`` are refused),
@@ -318,16 +341,7 @@ def check_so_config(input_dict):
         raise ValueError(
             "{}: [eliashberg] frequency = {!r} is not supported; use \"static\" "
             "or \"dynamic\" (or remove the key).".format(_SO_WHAT, freq))
-    bond = eli.get("bond_channels")
-    if bond is not None:
-        from hwave import sc
-        if sc._bond_bool_option(eli, "bond_channels", False):
-            if freq == "dynamic":
-                raise ValueError(_SO_DYNAMIC_BOND_REFUSAL)
-            raise ValueError(
-                "{}: [eliashberg] bond_channels = true is not supported; the "
-                "spin-orbital pairing vertex is on-site only. Set bond_channels = "
-                "false.".format(_SO_WHAT))
+    static_bond = _static_bond_channels(eli, freq)
     if "pairing_type" in eli:
         raise ValueError(
             "{}: [eliashberg] pairing_type = {!r} has no meaning in spin-orbital "
@@ -356,7 +370,7 @@ def check_so_config(input_dict):
             "a spin-orbital RPA run) or \"flex\" (the chiq and green of a "
             "spin-orbital FLEX run).".format(_SO_WHAT, chi0q_mode))
     for key in ("flex_chi_s", "flex_chi_c"):
-        if key in eli:
+        if key in eli and not static_bond:
             raise ValueError(
                 "{}: [eliashberg] {} names a spin or charge channel file, which a "
                 "spin-orbital FLEX run does not write (it stores the single "
@@ -364,7 +378,7 @@ def check_so_config(input_dict):
                 "chiq archive of the spin-orbital FLEX run (default "
                 "\"chiq.npz\").".format(_SO_WHAT, key, key))
     tensor = eli.get("chi0q_tensor", "auto")
-    if tensor not in ("auto", "general"):
+    if tensor not in ("auto", "general") and not static_bond:
         raise ValueError(
             "{}: [eliashberg] chi0q_tensor = {!r} is not supported; the "
             "spin-orbital vertex needs the general (4-index) chi0q. Set "
@@ -396,19 +410,27 @@ def check_so_supported(input_dict, interactions, site=None, norb_phys=None):
     in physical orbital indices (as read, before any folding: an off-site row
     can fold onto ``R = 0``). Refused: any nonzero row with ``R != 0`` (also
     inside a ``Coulomb`` aggregate file): the spin-orbital pairing vertex
-    supports on-site and in-cell interactions only. Every ``R = 0`` row is
-    accepted, between any two orbitals of the cell: spin-orbital mode treats
-    it exactly (direct part and exchange crossing). Every orbital index must
-    satisfy ``0 <= o < norb_phys`` (``o >= 0`` when ``norb_phys`` is not
-    given): an input orbital 0 (reads as -1) would otherwise wrap to the last
-    orbital in the vertex, and an index past the physical orbitals means a
-    file written in spin-orbital indices.
+    supports on-site and in-cell interactions only -- except on the static
+    bond path (``frequency = "static"`` with ``bond_channels = true``, read
+    case-insensitively), whose bond vertex takes the off-site rows. The
+    static refusal points to ``bond_channels = true``; the dynamic one asks
+    to remove the rows (no bond-resolved dynamic path). Every ``R = 0`` row
+    is accepted, between any two orbitals of the cell: spin-orbital mode
+    treats it exactly (direct part and exchange crossing).
+    Every orbital index must satisfy ``0 <= o < norb_phys`` (``o >= 0`` when
+    ``norb_phys`` is not given), on every path: an input orbital 0 (reads as
+    -1) would otherwise wrap to the last orbital in the vertex, and an index
+    past the physical orbitals means a file written in spin-orbital indices.
 
     ``site`` is accepted for compatibility and ignored: spin-orbital mode
     never reads ``[mode.param] orbital_site``, so the result is the same for
     any value."""
     del site    # ignored (see the docstring)
     check_so_config(input_dict)
+    eli = _ci(input_dict.get("eliashberg", {}))
+    freq = so_frequency(input_dict)
+    static_bond = _static_bond_channels(eli, freq)
+    dynamic = freq == "dynamic"
     files = _ci(input_dict.get("file", {}).get("input", {}).get("interaction", {}))
     aggregate = "Coulomb" in files
     for t, tbl in (interactions or {}).items():
@@ -431,17 +453,26 @@ def check_so_supported(input_dict, interactions, site=None, norb_phys=None):
                         "" if norb_phys is None else
                         ", and the model has {}".format(int(norb_phys))))
             R = tuple(int(x) for x in irvec)
-            if v == 0 or R == (0, 0, 0):
+            if v == 0 or R == (0, 0, 0) or static_bond:
                 continue
             src = ("the Coulomb file (split into {})".format(t)
                    if aggregate and t in ("CoulombIntra", "CoulombInter")
                    else "the {} file".format(t))
+            orbs = tuple(int(o) + 1 for o in orbvec)
+            if dynamic:
+                raise ValueError(
+                    "{}: an off-site row (R = {}, orbitals {}) in {} is not supported; "
+                    "the spin-orbital pairing vertex supports on-site and in-cell "
+                    "(R = 0) interactions only (the exchange crossing of an off-site "
+                    "term depends on k + k'). Remove the off-site rows.".format(
+                        _SO_WHAT, R, orbs, src))
+            # static without bond channels: the bond-resolved path takes the row
             raise ValueError(
-                "{}: an off-site row (R = {}, orbitals {}) in {} is not supported; "
-                "the spin-orbital pairing vertex supports on-site and in-cell "
-                "(R = 0) interactions only (the exchange crossing of an off-site "
-                "term depends on k + k'). Remove the off-site rows.".format(
-                    _SO_WHAT, R, tuple(int(o) + 1 for o in orbvec), src))
+                "{}: an off-site row (R = {}, orbitals {}) in {} needs [eliashberg] "
+                "bond_channels = true: the exchange crossing of an off-site term "
+                "depends on k + k', which only the bond-resolved pairing path treats. "
+                "Set bond_channels = true (with frequency = \"static\"), or remove the "
+                "off-site rows.".format(_SO_WHAT, R, orbs, src))
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +673,44 @@ def sz_conservation_residual(V=None, green=None, norb_phys=None):
                              "with nd = {}; got {}".format(nd, green.shape))
         r = max(r, _leak(green, n, ((0, 1), (1, 0)), ((0, 0), (1, 1))))
     return float(r)
+
+
+def bond_sz_conservation_residual(V, *, nd, B):
+    """The S_z-conservation residual ``r_V`` of a bond pairing vertex.
+
+    ``V`` is ``(..., ND, ND)`` in the code slots, ``ND = B nd^2``: the slot
+    ``(m; X, Y)`` is at ``m nd^2 + X nd + Y`` (spin-block modes, ``S(X) = X //
+    (nd / 2)``). The entry of row ``(alpha; A, B')`` and column ``(beta; C,
+    D)`` is off-sector when ``S(A) + S(D) != S(B') + S(C)`` (it maps a pair of
+    one S_z onto a pair of another; equivalently the ph sectors ``S(A) -
+    S(B')`` and ``S(C) - S(D)`` of the two slots differ). Returns ``max
+    |V_off| / max |V|`` over every leading index (momenta) and every channel
+    block; ``0.0`` for a zero ``V`` and NaN when ``V`` has a non-finite
+    entry. ``V`` is read one matrix at a time (no copy of the whole
+    array)."""
+    nd, B = int(nd), int(B)
+    if nd < 2 or nd % 2 or B < 1:
+        raise ValueError("bond_sz_conservation_residual: nd must be an even integer >= 2 and "
+                         "B >= 1, got nd = {}, B = {}".format(nd, B))
+    ND = B * nd * nd
+    V = np.asarray(V)
+    if V.ndim < 2 or V.shape[-2:] != (ND, ND):
+        raise ValueError("bond_sz_conservation_residual: V must end in shape ({0}, {0}) "
+                         "(ND = B nd^2 with B = {1}, nd = {2}), got {3}".format(
+                             ND, B, nd, V.shape))
+    spin = np.arange(nd) // (nd // 2)
+    ph = np.tile((spin[:, None] - spin[None, :]).ravel(), B)       # S(X) - S(Y) per slot
+    off = ph[:, None] != ph[None, :]
+    v_max = v_off = 0.0
+    for mat in V.reshape((-1, ND, ND)):
+        a = np.abs(mat)
+        m = float(a.max()) if a.size else 0.0
+        if not np.isfinite(m):
+            return float("nan")
+        v_max = max(v_max, m)
+        if off.any():
+            v_off = max(v_off, float(a[off].max()))
+    return v_off / v_max if v_max > 0.0 else 0.0
 
 
 def sz_report(weights, residual, logger):
