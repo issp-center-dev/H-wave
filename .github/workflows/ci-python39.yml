@@ -11,7 +11,8 @@ name: CI Python 3.10+
 #                 tests registered in tests/heavy_tests.py (HEAVY_TESTS),
 #                 plus the registry's own consistency gate, run once with
 #                 pytest and without coverage, on Python 3.12 only (`test`
-#                 keeps all three versions). The fast tests that share a
+#                 keeps all three versions), split by file over three
+#                 parallel jobs (tests/heavy_shards.py). The fast tests that share a
 #                 file with a registered test are the fast gate's job and
 #                 are not repeated here.
 #
@@ -228,10 +229,11 @@ jobs:
   # ---------------------------------------------------------------------
   # FULL-ONLY tests: the same provisioning as `test`, on Python 3.12 only,
   # with HWAVE_FULL_TESTS=1 so the opt-in exact-diagonalization tests run,
-  # restricted to the test files that contain such a test and run once,
-  # with pytest, without coverage (see the note at the top for the
-  # measurements behind this shape). Triggered on pull_request as well as
-  # push.
+  # restricted to the registered heavy tests and run once, with pytest,
+  # without coverage (see the note at the top for the measurements behind
+  # this shape), split over three parallel jobs by file (the `shard`
+  # matrix; the map is tests/heavy_shards.py). Triggered on pull_request
+  # as well as push -- every shard, so all of them run before a merge.
   # ---------------------------------------------------------------------
   test-full:
     runs-on: ubuntu-latest
@@ -248,9 +250,22 @@ jobs:
     # breakage is the fast gate's job, which keeps all three versions.
     # Re-widen this matrix if the legs' stacks ever diverge (the "Verify
     # installation" step prints them).
+    #
+    # THREE SHARDS: the registered tests are split by FILE into the jobs
+    # of the `shard` axis, a longest-processing-time-first partition of
+    # their measured per-file time kept in tests/heavy_shards.py (whose
+    # docstring has the measurement and the command that re-plans it).
+    # File granularity keeps each file's module/class-level caches inside
+    # one process. tests/test_heavy_tests_registry.py fails the fast gate
+    # when a file holding a registered test is in no shard or in two, or
+    # when the shard count below differs from the map's. fail-fast is off:
+    # a failure in one shard must not cancel the others, whose results
+    # are needed either way (a cancelled shard reads like a timeout).
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.12"]
+        shard: [1, 2, 3]
 
     steps:
     - uses: actions/checkout@v4
@@ -370,20 +385,25 @@ jobs:
       # coverage was byte-identical to the fast gate's, and the fast gate
       # keeps the floor. --durations=30: the 30 slowest tests of the run,
       # printed at the end.
+      #
+      # This job runs shard ${{ matrix.shard }}: `node-ids --shard N`
+      # selects the registered tests of that shard's files (and, in shard
+      # 1, the registry test), and `check-collected --shard N` compares
+      # the collected ids with that shard's part of the registry.
       run: |
-        ids="$(poetry run python -m tests.heavy_tests node-ids)"
+        ids="$(poetry run python -m tests.heavy_tests node-ids --shard ${{ matrix.shard }})"
         if [ -z "$ids" ]; then
-          echo "::error::tests/heavy_tests.py registers no test; the full-only job would run nothing";
+          echo "::error::shard ${{ matrix.shard }} selects no test; the full-only job would run nothing";
           exit 1;
         fi
-        echo "full-only test ids ($(echo "$ids" | wc -l | tr -d ' ')):"
+        echo "full-only test ids of shard ${{ matrix.shard }} ($(echo "$ids" | wc -l | tr -d ' ')):"
         echo "$ids"
         poetry run pytest --collect-only -q $ids > "${RUNNER_TEMP}/heavy-collected.txt" || {
           cat "${RUNNER_TEMP}/heavy-collected.txt";
-          echo "::error::pytest could not collect every registered heavy test id";
+          echo "::error::pytest could not collect every registered heavy test id of shard ${{ matrix.shard }}";
           exit 1;
         }
-        poetry run python -m tests.heavy_tests check-collected "${RUNNER_TEMP}/heavy-collected.txt"
+        poetry run python -m tests.heavy_tests check-collected --shard ${{ matrix.shard }} "${RUNNER_TEMP}/heavy-collected.txt"
         poetry run pytest $ids -v --durations=30
 
     - name: Verify the test suite left the tracked tree clean
