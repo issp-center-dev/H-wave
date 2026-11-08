@@ -67,6 +67,7 @@ SHARDS = (
         "test_uhfk_orientation",                   # 16
         "test_flex_second_order_ed_onsite",        # 13
         "test_flex_bond_memory",                   # 2
+        "test_sc_spin_orbital_bond_full",          # 10 (CI estimate; 6 s on Linux)
     ),
     (
         "test_bond_longitudinal_ed",               # 109 } one item (TOGETHER)
