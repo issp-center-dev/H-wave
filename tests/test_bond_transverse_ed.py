@@ -2564,7 +2564,7 @@ def _sector_s_minus_correlator(se, channels):
     ``S-_{R,a,b}(q) = sum_j e^{+iqj} c^+_{j+R,a,dn} c_{j,b,up}`` (creation
     DOWN, annihilation UP, the opposite of S+'s creation UP/annihilation
     DOWN). Built directly from ``SectorED``'s own
-    ``_build_operator``/``_lehmann_dagger``/``_thermal_avg`` primitives (the
+    ``_build_operator``/``_lehmann_dagger_matrix``/``_thermal_avg`` primitives (the
     SAME primitives ``bond_correlator_transverse`` uses internally, already
     called directly from this module's own contract tests, e.g.
     ``TestBondCorrelatorTransverseContract.
@@ -2591,21 +2591,22 @@ def _sector_s_minus_correlator(se, channels):
     n_i = len(wrapped)
     out = np.zeros((fx.L, n_i, n_i), dtype=complex)
     for qi in range(fx.L):
-        built = []
+        ops, avgs, delta = [], [], None
         for (R, a, b) in wrapped:
             mode_terms = [
                 (fx.mode((j + R) % fx.L, a, 1), fx.mode(j, b, 0),
                  np.exp(2j * np.pi * qi * j / fx.L))
                 for j in range(fx.L)]
             delta, op = se._build_operator(mode_terms)
-            built.append((delta, op, se._thermal_avg(op, delta)))
-        for i in range(n_i):
-            deltaA, opA, avgA = built[i]
-            for j in range(n_i):
-                deltaB, opB, avgB = built[j]
-                val = se._lehmann_dagger(opA, deltaA, opB, deltaB)
-                val -= fx.beta * avgA * np.conj(avgB)
-                out[qi, i, j] = val
+            ops.append(op)
+            avgs.append(se._thermal_avg(op, delta))
+        if n_i == 0:
+            continue
+        # every (I, J) cell of this q at once (the contraction of
+        # _lehmann_dagger, as one product per sector)
+        avgs = np.asarray(avgs, dtype=complex)
+        out[qi] = (se._lehmann_dagger_matrix(ops, delta)
+                   - fx.beta * np.outer(avgs, np.conj(avgs)))
     return out / fx.L
 
 
