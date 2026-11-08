@@ -112,7 +112,7 @@ RPA感受率は
      - \frac{1}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
      - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}
 
-裸の（一次の）項は、一重項で :math:`\tfrac12(W_c - W_s) = U + V`、
+裸の（一次の）項は、一重項で :math:`\tfrac12(W_c - W_s) = U + V`\ 、
 三重項で :math:`\tfrac12(W_c + W_s) = V` です。オンサイトの :math:`U` は一重項にだけ効き、
 同時刻の三重項には効きません。
 
