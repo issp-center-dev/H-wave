@@ -50,6 +50,7 @@ from hwave.solver import green as _hgreen
 from hwave.solver import rpa as rpa_mod
 from hwave.solver.vertex_table import ring_spin_table
 from tests import ed_oracle_util
+from tests import ed_cache
 from tests.approx_util import assert_approx_array
 from tests.heavy_tests import heavy
 
@@ -239,7 +240,7 @@ def _h2_chi0_solver_frame():
     solver's bare transverse bubble at this on-site fixture."""
     fx, _C, _CD, _H1 = oracle._fx2_state()
     channels = _h2_channels()
-    se = ed_oracle_util.SectorED(fx)
+    se = ed_cache.sector(fx)
     raw = se.bond_correlator_transverse(list(channels))
     return _frame_map(raw, oracle.NORB)
 
@@ -291,10 +292,10 @@ def _h2_ed_derivative_solver_frame(kind, phase=1.0):
         @functools.lru_cache(maxsize=None)
         def X_of_v(v):
             terms = _terms_at(fx, kind, v, phase)
-            full = ed_oracle_util.SectorED(
+            full = ed_cache.sector(
                 fx, terms=terms).bond_correlator_transverse(channels)
             hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
-            hf_only = ed_oracle_util.SectorED(
+            hf_only = ed_cache.sector(
                 fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
             return _frame_map(full - hf_only, norb)
 
@@ -1507,10 +1508,10 @@ def _w0_ed_derivative_solver_frame(fx, terms_of_v, delta_r, norb):
     @functools.lru_cache(maxsize=None)
     def X_of_v(v):
         terms = terms_of_v(v)
-        full = ed_oracle_util.SectorED(
+        full = ed_cache.sector(
             fx, terms=terms).bond_correlator_transverse(channels)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
-        hf_only = ed_oracle_util.SectorED(
+        hf_only = ed_cache.sector(
             fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
         diff = full - hf_only
         return diff[:, smap][:, :, smap]
@@ -1528,7 +1529,7 @@ def _w0_chi0_solver_frame(fx, delta_r, norb):
     delta_r_1d = _w0_delta_r_1d(delta_r)
     channels = _w0_channels_for(delta_r_1d, norb)
     smap = transverse_ed_to_solver_map(channels, delta_r_1d, norb)
-    se = ed_oracle_util.SectorED(fx)
+    se = ed_cache.sector(fx)
     raw = se.bond_correlator_transverse(channels)
     return raw[:, smap][:, :, smap]
 
@@ -2771,12 +2772,14 @@ class TestTask6ProductionConjugatePairGranule(unittest.TestCase):
 
         def X_of_v(v):
             terms = terms_of_v(v)
+            # the engines come from the shared content-keyed cache: the
+            # Richardson stencils of v1 and v1/2 revisit the same points
             full = _sector_s_minus_correlator(
-                ed_oracle_util.SectorED(fx, terms=terms, h1=h1_zeeman),
+                ed_cache.sector(fx, terms=terms, h1=h1_zeeman).engine(),
                 channels)
             hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_zeeman)
             hf_only = _sector_s_minus_correlator(
-                ed_oracle_util.SectorED(fx, terms=(), h1=hf_h1), channels)
+                ed_cache.sector(fx, terms=(), h1=hf_h1).engine(), channels)
             return full - hf_only
 
         v1 = CAMPAIGN_V1_TASK6

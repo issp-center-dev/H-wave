@@ -46,6 +46,7 @@ import numpy as np
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as rpa_mod
 from tests import ed_oracle_util
+from tests import ed_cache
 from tests.approx_util import assert_approx_array
 from tests.test_bond_transverse_ed import (CAMPAIGN_V1, _hf_h1_from_terms_at,
                                             _dense_bond_correlator_transverse,
@@ -675,10 +676,10 @@ def _s0_X_of_v(v):
     terms = (ed_oracle_util.canonical_density_terms(
                 fx, [(0, 0, 0, v * _S0_U_UNIT)])
               + _s0_pairhop_terms(fx, v, _S0_PAIRHOP_PHASE))
-    full = ed_oracle_util.TotalNED(
+    full = ed_cache.total(
         fx, terms=terms, h1=h1_so).bond_correlator_transverse(channels)
     hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_so)
-    hf_only = ed_oracle_util.TotalNED(
+    hf_only = ed_cache.total(
         fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
     return (full - hf_only).reshape(fx.L, _S0_NORB, _S0_NORB, _S0_NORB,
                                      _S0_NORB)
@@ -1553,10 +1554,10 @@ def _s4_ed_derivative(variant, kind, v1, phase=1.0):
     @functools.lru_cache(maxsize=None)
     def X_of_v(v):
         terms = _s4_terms_of_v(fx, kind, _s4_scaled(v), phase)
-        full = ed_oracle_util.TotalNED(
+        full = ed_cache.total(
             fx, terms=terms, h1=h1_so).bond_correlator_transverse(channels)
         hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_so)
-        hf_only = ed_oracle_util.TotalNED(
+        hf_only = ed_cache.total(
             fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
         return (full - hf_only).reshape(fx.L, norb, norb, norb, norb)
 
@@ -1741,10 +1742,10 @@ def _s4_tso0_ed_derivative(kind, v1):
     @functools.lru_cache(maxsize=None)
     def X_of_v(v):
         terms = _s4_terms_of_v(fx, kind, _s4_scaled(v))
-        full = ed_oracle_util.TotalNED(
+        full = ed_cache.total(
             fx, terms=terms).bond_correlator_transverse(channels)
         hf_h1 = _hf_h1_from_terms_at(fx, terms, fx.build_h1())
-        hf_only = ed_oracle_util.TotalNED(
+        hf_only = ed_cache.total(
             fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
         return (full - hf_only).reshape(fx.L, _S4_2_NORB, _S4_2_NORB,
                                          _S4_2_NORB, _S4_2_NORB)
