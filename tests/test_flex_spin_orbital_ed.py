@@ -51,6 +51,7 @@ import unittest
 
 import numpy as np
 
+from tests.ed_oracle_util import lehmann_frequency_sum
 from tests.heavy_tests import heavy
 from tests import test_flex_sopt_index_order as ref
 from tests import test_flex_second_order_ed_onsite as G3
@@ -115,16 +116,14 @@ def _gen_op(p):
 
 
 def _green(H, iws):
+    """Lehmann ``G_{pq}(i omega)``; every ``(p, q)`` cell and every frequency
+    as one product (:func:`tests.ed_oracle_util.lehmann_frequency_sum`)."""
     E, V, w, Z = _eig(H)
     with ref._quiet_matmul():
-        cm = [V.conj().T @ _gen_op(p) @ V for p in range(M)]
-    boltz = w[:, None] + w[None, :]
-    dE = E[None, :] - E[:, None]
-    G = np.zeros((len(iws), M, M), complex)
-    for p in range(M):
-        for q in range(M):
-            num = cm[p] * np.conj(cm[q]) * boltz
-            G[:, p, q] = (num[None] / (iws[:, None, None] - dE[None])).sum(axis=(1, 2))
+        cm = np.stack([(V.conj().T @ _gen_op(p) @ V).ravel() for p in range(M)])
+    boltz = (w[:, None] + w[None, :]).ravel()
+    dE = (E[None, :] - E[:, None]).ravel()
+    G = lehmann_frequency_sum(np.asarray(iws, dtype=complex), cm, np.conj(cm), boltz, dE)
     return G / Z
 
 

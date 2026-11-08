@@ -454,6 +454,27 @@ def _lehmann_gram(kernel_of, ops, conj):
     return acc.total(np.zeros((n_op, n_op), dtype=complex))
 
 
+def lehmann_frequency_sum(iws, Ar, Ac, weight, dE, budget=1 << 22):
+    """``out[i, r, c] = sum_k Ar[r, k] Ac[c, k] weight[k] / (iws[i] - dE[k])``:
+    the Lehmann frequency sum of one sector pair for EVERY frequency as one
+    ``(n_w, k) x (k, n_r n_c)`` product rather than one product per
+    frequency. ``Ar``/``Ac`` are the row/column matrix elements ``(n_r,
+    k)``/``(n_c, k)``, ``k`` running over the flattened ``(m, n)``
+    eigenstate pairs. The ``k`` axis is taken in blocks of at most
+    :data:`_ACC_CHUNK` (fewer when an operand would exceed ``budget``
+    elements) whose products are combined pairwise."""
+    n_w, n_r, n_c = len(iws), Ar.shape[0], Ac.shape[0]
+    acc = _PairwiseSum()
+    n_k = dE.size
+    chunk = max(1, min(_ACC_CHUNK, budget // max(n_w, n_r * n_c, 1)))
+    for lo in range(0, n_k, chunk):
+        sl = slice(lo, lo + chunk)
+        F = weight[None, sl] / (iws[:, None] - dE[None, sl])
+        AA = (Ar[:, None, sl] * Ac[None, :, sl]).reshape(n_r * n_c, -1)
+        acc.add(F @ AA.T)
+    return acc.total(np.zeros((n_w, n_r * n_c), dtype=complex)).reshape(n_w, n_r, n_c)
+
+
 class SectorED:
     """Exact diagonalization by (N_up, N_dn) symmetry block, for a
     Hamiltonian H1(+terms) - mu*(N_up+N_dn) that conserves both particle
@@ -1167,8 +1188,7 @@ class SectorED:
                 Ac = np.conj(flat[c_slot])
                 weight = (w_m[:, None] + w_n[None, :]).ravel()
                 dE = (ev_n[None, :] - ev_m[:, None]).ravel()
-                for i, iw in enumerate(iws):
-                    buf[i] += (Ar * (weight / (iw - dE))) @ Ac.T
+                buf += lehmann_frequency_sum(iws, Ar, Ac, weight, dE)
             out[np.ix_(widx, r_pos, c_pos)] += buf
         return out
 
@@ -1603,8 +1623,7 @@ class TotalNED:
             Ar, Ac = flat[r_slot], np.conj(flat[c_slot])
             weight = (self._w[key_m][:, None] + self._w[key_n][None, :]).ravel()
             dE = (self._ev[key_n][None, :] - self._ev[key_m][:, None]).ravel()
-            for i, iw in enumerate(iws):
-                out[i] += (Ar * (weight / (iw - dE))) @ Ac.T
+            out += lehmann_frequency_sum(iws, Ar, Ac, weight, dE)
         return out
 
     def pair_correlator(self, pairs, qs=None):
