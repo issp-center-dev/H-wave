@@ -72,6 +72,7 @@ import numpy as np
 
 import hwave.qlmsio.wan90 as wan90
 import tests.test_sc_spin_orbital as S        # the shared two-orbital model
+from tests import so_zero_field
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SPIN_DIR = os.path.join(_HERE, "equivalence_input", "spin")
@@ -1207,8 +1208,6 @@ _H_SEQ = (0.0, 0.5e-3, 1e-3, 2e-3, 4e-3)
 #: filling 0.35 (not particle-hole symmetric), the field in Transfer
 _FL_FILLING = 0.35
 _FL_DIM = 120
-#: A-1: the leading clusters by |lambda| that assertions 1, 3 and 4 inspect
-_FL_LEAD = 16
 
 
 def _sc_dense_operator(h, filling):
@@ -1237,82 +1236,22 @@ def _sc_dense_operator(h, filling):
 def _sc_full_spectra(H, filling=_FL_FILLING):
     """Every eigenvalue of the kernel on the antisymmetric gaps at each field
     of ``H`` (rows, in the order of ``H``), and the eigenvectors (columns, in
-    the full gap space) at ``H[0]``. One orthonormal basis of range(P), built
-    here from the dense projector, serves every field."""
-    lams, vecs0, Q = [], None, None
+    the full gap space) at ``H[0]``, the gap shape and the reduced kernels
+    (one per field). One orthonormal basis of range(P), built here from the
+    dense projector, serves every field."""
+    lams, vecs0, Q, Ks = [], None, None, []
     for k, h in enumerate(H):
         M, shape = _sc_dense_operator(h, filling)
         if Q is None:
             w, U = np.linalg.eigh(S._dense_P(shape))
             Q = U[:, w > 0.5]
-        vals, vecs = np.linalg.eig(Q.conj().T @ M @ Q)
+        K = Q.conj().T @ M @ Q
+        vals, vecs = np.linalg.eig(K)
         lams.append(vals)
+        Ks.append(K)
         if k == 0:
             vecs0 = Q @ vecs
-    return np.array(lams), vecs0, shape
-
-
-def _track(lams):
-    """Eigenvalue paths ``(n_ev, n_h)``: the eigenvalues at each field are
-    assigned one to one (minimum total distance) to the paths at the previous
-    field, starting from the order at the first field."""
-    from scipy.optimize import linear_sum_assignment
-    paths = np.empty((lams.shape[1], lams.shape[0]), dtype=complex)
-    paths[:, 0] = lams[0]
-    for k in range(1, lams.shape[0]):
-        cost = np.abs(paths[:, k - 1][:, None] - lams[k][None, :])
-        r, c = linear_sum_assignment(cost)
-        paths[r, k] = lams[k][c]
-    return paths
-
-
-def _fit(paths, H):
-    """Least squares ``lambda(h) - lambda(0) = a h + b h^2`` on the nonzero
-    fields: complex ``a``, ``b`` and the max absolute residual per path."""
-    h = np.asarray(H[1:], float)
-    A = np.stack([h, h ** 2], axis=1)
-    y = (paths[:, 1:] - paths[:, :1]).T                    # (n_h - 1, n_ev)
-    coef = np.linalg.lstsq(A.astype(complex), y, rcond=None)[0]
-    res = np.abs(A @ coef - y).max(axis=0)
-    return coef[0], coef[1], res
-
-
-def _spin_projectors(shape):
-    """Dense Hermitian projectors ``{"psi", "d"}`` onto the singlet and
-    triplet parts of a spin-orbital gap: ``v^H P_X v / v^H v`` is the
-    weight of :func:`so_pairing.so_spin_decomposition` (``d`` = dx+dy+dz)."""
-    from hwave.solver import so_pairing
-    n = int(np.prod(shape))
-    eye = np.eye(n, dtype=complex)
-    cols = [so_pairing.so_spin_components(eye[:, j].reshape(shape), S.NP)
-            for j in range(n)]
-    L = [np.stack([c[m].ravel() for c in cols], axis=1) for m in range(4)]
-    G = [2.0 * l.conj().T @ l for l in L]
-    return {"psi": G[0], "d": G[1] + G[2] + G[3]}
-
-
-def _classify(clusters, vecs0, shape):
-    """``"singlet"`` / ``"triplet"`` per cluster, from the spin weight of its
-    whole (orthonormalized) eigenspace, so the mixing of degenerate
-    eigenvectors does not matter; a mixed cluster fails the fixture."""
-    from hwave.solver import so_pairing
-    proj = _spin_projectors(shape)
-    kinds, weights = [], []
-    for c in clusters:
-        Qc, _ = np.linalg.qr(vecs0[:, c])
-        w = {x: float(np.trace(Qc.conj().T @ P @ Qc).real) / len(c) for x, P in proj.items()}
-        # the projector reproduces so_spin_decomposition on one vector
-        v = so_pairing.so_spin_decomposition(vecs0[:, c[0]].reshape(shape), S.NP)
-        u = vecs0[:, c[0]]
-        assert abs(v["psi"] - (u.conj() @ proj["psi"] @ u).real / (u.conj() @ u).real) <= 1e-10
-        weights.append(w)
-        if w["psi"] >= 0.99:
-            kinds.append("singlet")
-        elif w["d"] >= 0.99:
-            kinds.append("triplet")
-        else:
-            raise AssertionError("cluster %s is spin-mixed: %r" % (c, w))
-    return kinds, weights
+    return np.array(lams), vecs0, shape, Ks
 
 
 class TestFieldLimit(unittest.TestCase):                                # 0-S3
@@ -1320,48 +1259,15 @@ class TestFieldLimit(unittest.TestCase):                                # 0-S3
     eigenvalue linearly: an SU(2) triplet (degeneracy 3m) into m slopes near
     zero (S_z = 0) and m pairs of opposite slopes (up-up / down-down), while
     a singlet does not move at first order. Assertions 1, 3 and 4 apply to
-    the leading isolated clusters (amendment A-1); 2 and 5 are global."""
+    the leading isolated clusters; 2 and 5 are global. The measures and the
+    isolation rule are those of ``tests/so_zero_field.py``."""
 
     def test_linear_triplet_splitting(self):
-        from scipy.optimize import linear_sum_assignment
-        from hwave.solver.bond_channels import cluster_eigenvalues
         H = _H_SEQ
-        lams, vecs0, shape = _sc_full_spectra(H)
+        lams, vecs0, shape, Ks = _sc_full_spectra(H)
         self.assertEqual(lams.shape, (len(H), _FL_DIM))
-        scale = max(1.0, np.abs(lams[0]).max())
-        paths = _track(lams)
-        a, b, res = _fit(paths, H)
-        clusters = cluster_eigenvalues(lams[0], deg_tol=1e-8 * scale)
-        kinds, _w = _classify(clusters, vecs0, shape)
-        amax = {i: np.abs(a[c]).max() for i, c in enumerate(clusters)}
-        lead = sorted(range(len(clusters)),
-                      key=lambda i: -np.abs(lams[0][clusters[i][0]]))[:_FL_LEAD]
-        sel = [i for i in lead
-               if all(abs(lams[0][clusters[i][0]] - lams[0][clusters[j][0]])
-                      > 10 * (amax[i] + amax[j]) * H[-1]
-                      for j in range(len(clusters)) if j != i)]
-        self.assertTrue(any(kinds[i] == "triplet" for i in sel))      # non-vacuity of A-1
-        self.assertGreaterEqual(np.abs(a).max() * H[-1], 1e-6 * scale)          # 2 (global)
-        self.assertLessEqual(np.abs(paths[:, -1] - paths[:, 0]).max(),
-                             10 * H[-1] * scale)                                 # 5 (global)
-        for i in sel:
-            c = clusters[i]
-            dev = np.abs(paths[c] - paths[c, :1]).max(axis=1)
-            self.assertTrue(np.all(res[c] <= np.maximum(1e-3 * dev, 1e-11 * scale)),
-                            (i, res[c], dev))                                    # 1
-            if kinds[i] == "triplet":                                            # 3
-                self.assertEqual(len(c) % 3, 0, c)
-                m = len(c) // 3
-                ac = a[c]
-                small = np.argsort(np.abs(ac))[:m]
-                self.assertEqual(int(np.sum(np.abs(ac) <= 1e-3 * amax[i])), m, ac)
-                rest = np.delete(ac, small)
-                cost = np.abs(rest[:, None] + rest[None, :])
-                np.fill_diagonal(cost, np.inf)
-                r, cidx = linear_sum_assignment(cost)
-                self.assertLessEqual(cost[r, cidx].max(), 1e-2 * amax[i], ac)
-            else:                                                                # 4
-                self.assertTrue(np.all(np.abs(a[c]) <= 1e-3 * np.abs(a).max()), a[c])
+        m = so_zero_field.zero_field_measures(lams, vecs0, shape, S.NP, H, kernels=Ks[:2])
+        so_zero_field.assert_zero_field(self, m)
 
 
 # ------------------------------------------------- a general Extern table

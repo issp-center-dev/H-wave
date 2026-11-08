@@ -177,7 +177,6 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
         guard moved after expensive work would raise KeyError here."""
         for eli in ({"frequency": "dynamic"},
                     {"frequency": "dynamic", "matsubara_basis": "ir"},
-                    {"Bond_Channels": True},
                     {"Frequency": "dynamic", "Bond_Channels": True},
                     {"eigenvalue_method": "subspace"}):
             with self.subTest(eli=eli):
@@ -185,6 +184,12 @@ class TestSpinOrbitalGuardPublicEntries(unittest.TestCase):
                     sc.calc_eliashberg({"mode": {"Enable_Spin_Orbital": True},
                                         "eliashberg": eli})
                 self.assertIn("enable_spin_orbital", str(cm.exception))
+        # bond_channels = true with frequency = "static" passes the guard (the
+        # static spin-orbital bond path): the run goes on to read [mode.param]
+        with self.assertRaises(KeyError) as cm:
+            sc.calc_eliashberg({"mode": {"Enable_Spin_Orbital": True},
+                                "eliashberg": {"Bond_Channels": True}})
+        self.assertEqual(cm.exception.args, ("param",))
 
     def test_dynamic_entry_rejects_first(self):
         """solve_dynamic is publicly callable; in spin-orbital mode it reaches

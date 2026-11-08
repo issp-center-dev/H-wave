@@ -73,13 +73,20 @@ _SU2_TYPES = tuple(_SU2_VALUES)
 
 _IY = np.array([[0, 1], [-1, 0]], complex)
 
-#: the off-site refusal of the spin-orbital entries, with the row and its
-#: source filled in
+#: the off-site refusal of the static spin-orbital entry without bond
+#: channels, with the row and its source filled in
 OFFSITE_TEXT = ("[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site row "
-                "(R = {R}, orbitals {orbs}) in {src} is not supported; the spin-orbital "
-                "pairing vertex supports on-site and in-cell (R = 0) interactions only "
-                "(the exchange crossing of an off-site term depends on k + k'). Remove "
-                "the off-site rows.")
+                "(R = {R}, orbitals {orbs}) in {src} needs [eliashberg] bond_channels = "
+                "true: the exchange crossing of an off-site term depends on k + k', which "
+                "only the bond-resolved pairing path treats. Set bond_channels = true (with "
+                "frequency = \"static\"), or remove the off-site rows.")
+#: the off-site refusal of the dynamic spin-orbital entry (no bond-resolved
+#: path there), with the row and its source filled in
+OFFSITE_DYNAMIC_TEXT = ("[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site "
+                        "row (R = {R}, orbitals {orbs}) in {src} is not supported; the "
+                        "spin-orbital pairing vertex supports on-site and in-cell (R = 0) "
+                        "interactions only (the exchange crossing of an off-site term depends "
+                        "on k + k'). Remove the off-site rows.")
 
 
 @contextlib.contextmanager
@@ -540,8 +547,11 @@ class TestRefusals(_TmpDir):
         self._refused(r"matsubara_basis", {"Frequency": "dynamic",
                                            "Matsubara_Basis": "ir"})
 
-    def test_bond_channels(self):
-        self._refused(r"bond_channels", {"bond_channels": True})
+    def test_bond_channels_dynamic(self):
+        # bond_channels = true is supported with frequency = "static" (the
+        # static spin-orbital bond path); with "dynamic" it is refused
+        self._refused("^" + re.escape(so_pairing._SO_DYNAMIC_BOND_REFUSAL) + "$",
+                      {"bond_channels": True, "frequency": "dynamic"})
 
     def test_offsite_coulomb_inter(self):
         files = _write_model(self.d, so=True, extra_rows={

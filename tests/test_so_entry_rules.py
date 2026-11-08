@@ -301,8 +301,41 @@ class TestSCSupported(unittest.TestCase):
         tables = dict(self.CROSS, Hund=closed_row((0, 1, 0), 1, 0, 0.1))
         with self.assertRaises(ValueError) as cm:
             self._check(tables)
+        self.assertEqual(
+            str(cm.exception),
+            "[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site row "
+            "(R = (0, 1, 0), orbitals (2, 1)) in the Hund file needs [eliashberg] "
+            "bond_channels = true: the exchange crossing of an off-site term depends on "
+            "k + k', which only the bond-resolved pairing path treats. Set bond_channels = "
+            "true (with frequency = \"static\"), or remove the off-site rows.")
         import tests.test_sc_spin_orbital as S
         self.assertEqual(str(cm.exception), S.OFFSITE_TEXT.format(
+            R=(0, 1, 0), orbs=(2, 1), src="the Hund file"))
+        # bond_channels = false said explicitly: the same text
+        from hwave.solver import so_pairing
+        inp = self._input()
+        inp["eliashberg"]["Bond_Channels"] = False
+        with self.assertRaises(ValueError) as cm:
+            so_pairing.check_so_supported(inp, tables, norb_phys=NORB)
+        self.assertEqual(str(cm.exception), S.OFFSITE_TEXT.format(
+            R=(0, 1, 0), orbs=(2, 1), src="the Hund file"))
+
+    def test_offsite_dynamic_text_unchanged(self):
+        from hwave.solver import so_pairing
+        tables = dict(self.CROSS, Hund=closed_row((0, 1, 0), 1, 0, 0.1))
+        inp = self._input()
+        inp["eliashberg"]["Frequency"] = "dynamic"
+        with self.assertRaises(ValueError) as cm:
+            so_pairing.check_so_supported(inp, tables, norb_phys=NORB)
+        self.assertEqual(
+            str(cm.exception),
+            "[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site row "
+            "(R = (0, 1, 0), orbitals (2, 1)) in the Hund file is not supported; the "
+            "spin-orbital pairing vertex supports on-site and in-cell (R = 0) interactions "
+            "only (the exchange crossing of an off-site term depends on k + k'). Remove the "
+            "off-site rows.")
+        import tests.test_sc_spin_orbital as S
+        self.assertEqual(str(cm.exception), S.OFFSITE_DYNAMIC_TEXT.format(
             R=(0, 1, 0), orbs=(2, 1), src="the Hund file"))
 
 
@@ -647,7 +680,9 @@ class TestRPAFlexEntry(unittest.TestCase):
             "enable_spin_orbital: the off-site rows of CoulombInter, Hund enter the "
             "spinful RPA vertex through their direct (Hartree-like) part V(q) only; "
             "the exchange (crossing) part of these off-site rows is not included in "
-            "the ring sum. The on-site and in-cell exchange is included.")
+            "the ring sum. The on-site and in-cell exchange is included. For an exact "
+            "treatment of the off-site exchange use hwave_sc with [eliashberg] "
+            "bond_channels = true (frequency = \"static\").")
 
     def test_offsite_info_counts(self):
         from hwave.solver.rpa import SO_OFFSITE_INFO

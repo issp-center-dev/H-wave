@@ -1463,42 +1463,46 @@ def shell_rows(compiled, topo, cell):
                  for k in sorted(members))
 
 
-#: the admitted cases of the spin-orbital bond paths: (layout, title, rows of
-#: (machine, path, admitted))
+#: the admitted cases of the static spin-orbital bond path on the CPU, per
+#: layout: (layout, title, rows of (host memory in GiB, cases)), a case
+#: (norb_phys, B, L, Nmat, estimated peak in GiB) on an L x L grid: the
+#: largest power-of-two Nmat whose estimated peak (static_so_bond_rows and
+#: plan_so_bond, solver_mode "eigenvalue", num_eigenvalues 10, max_iter 1000,
+#: spectral_shift unset) fits the default cap, 0.8 x the host memory
 _ENVELOPE = (
     ("sz_packed", "S_z-packed layout (S_z-conserving input: Zeeman, no SOC, no PairLift)", (
-        ("A100-40GB, device store", "FLEX (W aliased, one slot <= ~24 GiB)",
-         "norb_phys = 1: B = 9, 32², Nmat = 1024 (7.6 GiB); norb_phys = 2: B = 5, 32², "
-         "Nmat = 512 (18.8 GiB); B = 9, 16², Nmat = 512 (15.2 GiB)"),
-        ("A100-40GB", "hwave_sc dynamic, device residency (V in place)",
-         "norb_phys = 2: B = 5, 32², Nmat = 512 (tight: about 27 GiB in the pairing "
-         "phase)"),
-        ("256 GB host", "FLEX (aliased)", "norb_phys = 2: B = 9, 32², Nmat = 1024 (121.5 GiB)"),
-        ("256 GB host", "hwave_sc dynamic (V in place)",
-         "norb_phys = 2: B = 9, 32², Nmat = 512 (60.8 GiB); Nmat = 1024 is borderline"))),
+        (64, ((1, 9, 64, 8192, 45.5), (2, 9, 32, 2048, 35.9), (2, 5, 64, 512, 36.4))),
+        (256, ((1, 9, 64, 32768, 180.5), (2, 9, 32, 8192, 137.2), (2, 5, 64, 2048, 137.7))))),
     ("dense", "dense layout (S_z broken by SOC or PairLift)", (
-        ("A100-40GB, device store", "FLEX",
-         "norb_phys = 1 up to B = 9, 32², Nmat = 1024 (tight); norb_phys = 2: B = 5, 16², "
-         "Nmat = 512"),
-        ("A100-40GB", "hwave_sc dynamic", "norb_phys = 2: B = 5, 16², Nmat <= 512"),
-        ("256 GB host", "FLEX (aliased)",
-         "norb_phys = 2: B = 5, 32², Nmat = 1024 (100 GiB); B = 9 needs Nmat <= 256"),
-        ("256 GB host", "hwave_sc dynamic (V in place)",
-         "norb_phys = 2: B = 5, 32², Nmat <= 1024; multi-hour"))),
+        (64, ((1, 9, 64, 8192, 46.3), (2, 9, 32, 2048, 38.9), (2, 5, 64, 512, 40.1))),
+        (256, ((1, 9, 64, 32768, 181.3), (2, 9, 32, 8192, 140.1), (2, 5, 64, 2048, 141.4))))),
 )
+_ENVELOPE_PATH = "hwave_sc static, CPU"
+_ENVELOPE_NOTE = ("  (the largest power-of-two Nmat whose estimated peak fits the default cap, "
+                  "0.8 x the host memory, with the default solver settings)")
+
+
+def _envelope_case(case):
+    norb_phys, B, L, nmat, gib = case
+    return "norb_phys = {}: B = {}, {}², Nmat = {} ({:.1f} GiB)".format(norb_phys, B, L, nmat,
+                                                                       gib)
 
 
 def envelope_text(layout):
-    """The admitted cases of the spin-orbital bond paths (one table per
-    layout, ``machine | path | admitted``), the table of ``layout`` marked
-    ``<- this run``."""
+    """The admitted cases of the static spin-orbital bond path on the CPU
+    (one table per layout, ``machine | path | admitted``; per host the
+    largest power-of-two ``Nmat`` admitted at the default cap for a few
+    model sizes), the table of ``layout`` marked ``<- this run``."""
     if not (isinstance(layout, str) and layout in LAYOUTS):
         raise ValueError("envelope_text: layout must be 'dense' or 'sz_packed', got {!r}"
                          .format(layout))
     lines = ["admitted cases (machine | path | admitted):"]
     for lay, title, rows in _ENVELOPE:
         lines.append("  {}{}".format(title, "  <- this run" if lay == layout else ""))
-        lines += ["    {} | {} | {}".format(*row) for row in rows]
+        lines += ["    {} GiB host | {} | {}".format(host, _ENVELOPE_PATH,
+                                                      "; ".join(map(_envelope_case, cases)))
+                  for host, cases in rows]
+    lines.append(_ENVELOPE_NOTE)
     return "\n".join(lines)
 
 
@@ -1816,6 +1820,19 @@ def _row_table(rows):
         "  {}  {}  {}".format(ph, name, b) for ph, name, b in rows)
 
 
+#: the phases of static_so_bond_rows beside the consumer pairing_static
+_STATIC_PHASES = frozenset(("green_static", "g2_static", "kernel_static"))
+#: the scaling sentence of the static path's over-cap refusal (the rows of
+#: _plan_rows for pairing_static and of static_so_bond_rows)
+_STATIC_SCALING = (
+    "Memory grows as Nmat · nvol · norb_phys⁴ (the bubble's per-shift workspace) and "
+    "Nmat · nvol · norb_phys² (the Green function); independent of Nmat, as nvol · B² · "
+    "norb_phys⁴ (the vertex arrays and the kernel workspace); the eigensolver rows grow "
+    "with the reduced gap dimension dim (about nvol · (2·norb_phys)² / 2): linearly times "
+    "num_eigenvalues for Arnoldi, as dim² for the dense fallback (dim <= 2000), with "
+    "max_iter for the power iteration, and they depend on the layout and spectral_shift.")
+
+
 def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
                  placement_request="host", nb=None, keep_chi=False, write_chibar=False,
                  layout="dense", layout_reason=None, vertex_batch=False, cap_key=None,
@@ -1963,29 +1980,39 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
                   phase, "unlimited" if cap is None else "{:.3f} GiB".format(cap / _GIB)))
     if cap is not None and peak > cap:
         solver = "Eliashberg" if "pairing_static" in closed else "FLEX"
-        slot = ("16·Nmat·nvol·ND² bytes" if layout == "dense" else
-                "16·Nmat·nvol·Σn_σ² bytes (Σn_σ² = (6/16)·ND²)")
+        # the static path's plan (the consumer pairing_static with the rows
+        # of static_so_bond_rows, as _admit_so_bond_static builds it) keeps
+        # no store slot: its refusal names the largest row of the peak phase
+        # and the static scaling; every other plan keeps the store-slot text
+        row_phases = {ph for ph, _, _ in rows}
+        if "pairing_static" in closed and _STATIC_PHASES <= row_phases:
+            name, nbytes = max(((nm, b) for ph, nm, b in rows if ph in ("resident", phase)),
+                               key=lambda r: r[1])
+            detail = "largest row in that phase: {} = {:.2f} GiB".format(name, nbytes / _GIB)
+            scaling = _STATIC_SCALING
+        else:
+            slot = ("16·Nmat·nvol·ND² bytes" if layout == "dense" else
+                    "16·Nmat·nvol·Σn_σ² bytes (Σn_σ² = (6/16)·ND²)")
+            detail = "one store slot = {} = {:.2f} GiB".format(
+                slot, _ENTRY * nmat * nvol * _layout_entries(layout, B, nd) / _GIB)
+            scaling = "Memory grows as Nmat · nvol · B² · norb_phys⁴."
         if cap_key is not None:
             raise ValueError(
                 "spin-orbital bond {} needs an estimated peak of {:.2f} GiB in phase {} (B = {} "
-                "channels, ND = B·(2·norb_phys)² = {}, nvol = {}, Nmat = {}; one store slot = "
-                "{} = {:.2f} GiB) but the cap is {:.2f} GiB ({}). "
-                "Memory grows as Nmat · nvol · B² · norb_phys⁴. Reduce Nmat or the k grid, or "
-                "raise {} (0 disables the check); pruning bond shells helps only for shells "
-                "the per-shell table below shows with negligible coupling.\n{}".format(
-                    solver, peak / _GIB, phase, B, ND, nvol, nmat, slot,
-                    _ENTRY * nmat * nvol * _layout_entries(layout, B, nd) / _GIB, cap / _GIB,
-                    cap_key, cap_key, "\n".join(
+                "channels, ND = B·(2·norb_phys)² = {}, nvol = {}, Nmat = {}; {}) but the cap "
+                "is {:.2f} GiB ({}). {} Reduce Nmat or the k grid, or raise {} (0 disables "
+                "the check); pruning bond shells helps only for shells the per-shell table "
+                "below shows with negligible coupling.\n{}".format(
+                    solver, peak / _GIB, phase, B, ND, nvol, nmat, detail, cap / _GIB,
+                    cap_key, scaling, cap_key, "\n".join(
                         part for part in (_row_table(rows), envelope,
                                           _shell_table(shell_rows, max_shells_key)) if part)))
         raise ValueError(
             "spin-orbital bond {} needs an estimated peak of {:.2f} GiB in phase {} (B = {} "
-            "channels, ND = B·(2·norb_phys)² = {}, nvol = {}, Nmat = {}; one store slot = "
-            "{} = {:.2f} GiB) but the cap is {:.2f} GiB (caps.host_bytes). "
-            "Memory grows as Nmat · nvol · B² · norb_phys⁴. Reduce Nmat or the k grid, or prune "
-            "bond shells.\n{}".format(
-                solver, peak / _GIB, phase, B, ND, nvol, nmat, slot,
-                _ENTRY * nmat * nvol * _layout_entries(layout, B, nd) / _GIB, cap / _GIB,
+            "channels, ND = B·(2·norb_phys)² = {}, nvol = {}, Nmat = {}; {}) but the cap is "
+            "{:.2f} GiB (caps.host_bytes). {} Reduce Nmat or the k grid, or prune bond "
+            "shells.\n{}".format(
+                solver, peak / _GIB, phase, B, ND, nvol, nmat, detail, cap / _GIB, scaling,
                 _row_table(rows)))
     logger.info(reason)
     return SOBondPlan(
@@ -4183,6 +4210,15 @@ class PackedBondPairKernel:
         op = sc.SectorOp(self.pp_sectors[s], operator, basis, True)
         self._ops[s] = op
         return op
+
+    def drop_sector_ops(self):
+        """Forget the cached sector operators of :meth:`sector_op`. Each one
+        refers back to this kernel (its matvec calls the kernel), so the cache
+        is a reference cycle that keeps the kernel's arrays alive until the
+        next garbage collection; after this call dropping the last reference
+        to the kernel frees them at once. A later :meth:`sector_op` builds the
+        operator again."""
+        self._ops.clear()
 
     def _apply(self, s, x, adjoint=False):
         """The kernel (or its adjoint) of sector position ``s`` on a sector

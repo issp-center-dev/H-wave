@@ -29,6 +29,7 @@ Conventions (stated here, not read from the solver)
   ``filling * nd * nvol``.
 """
 
+import logging
 import os
 from typing import NamedTuple
 
@@ -196,7 +197,8 @@ def write_case(tmpdir, fixture, *, param=None, eliashberg=None, mode=None):
     interleaved Transfer table, the Extern file); false writes the
     non-spin-orbital files of the spin-independent hopping (``norb_phys``
     orbitals), refused for a fixture with spin-dependent Transfer entries or
-    an Extern table."""
+    an Extern table, and writes every ``[eliashberg]`` key in lower case:
+    the non-spin-orbital reader looks keys up case-sensitively."""
     if mode is not None and any(k.lower() == "param" for k in mode):
         raise ValueError("write_case: pass the [mode.param] overrides as param=")
     mode_tbl = _override({"mode": "RPA", "Enable_Spin_Orbital": True}, mode, "[mode]")
@@ -230,11 +232,215 @@ def write_case(tmpdir, fixture, *, param=None, eliashberg=None, mode=None):
     eli = _override({"Frequency": "static", "Bond_Channels": True,
                      "Solver_Mode": "eigenvalue", "Num_Eigenvalues": 2},
                     eliashberg, "[eliashberg]")
+    if not so:
+        eli = {k.lower(): v for k, v in eli.items()}
     mode_tbl["param"] = par
     return {"mode": mode_tbl,
             "file": {"input": {"path_to_input": "", "interaction": inter},
                      "output": {"path_to_output": os.path.join(tmpdir, "out")}},
             "eliashberg": eli}
+
+
+# ------------------------------------------------------------ production runs
+class Prepared(NamedTuple):
+    """The inputs of a static spin-orbital bond run, read by the production
+    readers in the order of ``hwave.sc.calc_eliashberg``, up to the band
+    (:func:`prepare`)."""
+    fixture: object
+    input_dict: dict
+    eli_param: object
+    so_run: object
+    cfg: object
+    epsilon_k: object
+    cell: object
+    shape: tuple
+    beta: float
+    nmat: int
+    filling: float
+    norb_phys: int
+    solver_mode: object
+    num_eigenvalues: object
+    max_iter: object
+    spectral_shift: object
+    kx: object
+    ky: object
+    kz: object
+
+
+def prepare(fixture, tmpdir, *, param=None, eliashberg=None, mode=None):
+    """The :class:`Prepared` inputs of the spin-orbital bond run of
+    ``fixture``: :func:`write_case` (the three mappings forwarded unchanged),
+    then the production readers in the order of the entry -- the bond
+    configuration (``_read_so_bond_config``, bond channels on), the input
+    files, the entry context, the Extern table, the bond topology, the run
+    record and the spin-block band ``_so_epsilon_k``. It stops there: no
+    Green function, admission or operator is built. Spin-orbital runs only
+    (``ValueError`` when ``mode`` turns ``enable_spin_orbital`` off). The
+    files may be removed once it returns."""
+    import hwave.sc as sc
+    from requests.structures import CaseInsensitiveDict
+    from hwave.solver import spin_orbital
+    input_dict = write_case(tmpdir, fixture, param=param, eliashberg=eliashberg, mode=mode)
+    if sc._resolve_spin_orbital_flag(input_dict) is not True:
+        raise ValueError("prepare: spin-orbital runs only ([mode] enable_spin_orbital = true)")
+    eli_param = CaseInsensitiveDict(input_dict["eliashberg"])
+    cfg = sc._read_so_bond_config(eli_param)
+    if not cfg.use_bond:
+        raise ValueError("prepare: the run must set [eliashberg] bond_channels = true")
+    par = CaseInsensitiveDict(input_dict["mode"]["param"])
+    beta = sc._coerce_run_beta(par["T"])
+    nmat = par.get("Nmat", sc._DEFAULT_NMAT)
+    filling = par["filling"]
+    geom_info, hr, interactions = sc._read_interaction_files(input_dict)
+    norb_phys = spin_orbital.physical_norb(
+        geom_info["norb"], True, source="the Geometry file ({})".format(
+            input_dict["file"]["input"]["interaction"].get("Geometry", "")))
+    so_context = spin_orbital.build_so_entry_context(
+        input_dict["mode"].get("param"), interactions, norb_phys, sc.logger)
+    extern_table, _ = sc._read_so_extern(input_dict, norb_phys)
+    cell = geom_info["rvec"]
+    bond = sc._so_bond_run(so_context, cell, cfg.max_shells)
+    so_run = sc._so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat, filling,
+                               context=so_context, bond=bond)
+    shape = tuple(int(n) for n in par["CellShape"])
+    kx, ky, kz = (np.linspace(0, 2.0 * np.pi, n, endpoint=False) for n in shape)
+    epsilon_k = sc._so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table, norb_phys)
+    return Prepared(
+        fixture=fixture, input_dict=input_dict, eli_param=eli_param, so_run=so_run, cfg=cfg,
+        epsilon_k=epsilon_k, cell=cell, shape=shape, beta=beta, nmat=nmat, filling=filling,
+        norb_phys=norb_phys,
+        solver_mode=eli_param.get("solver_mode", sc.DEFAULT_SOLVER_MODE),
+        num_eigenvalues=eli_param.get("num_eigenvalues", 10),
+        max_iter=eli_param.get("max_iter", 1000),
+        spectral_shift=eli_param.get("spectral_shift"), kx=kx, ky=ky, kz=kz)
+
+
+class RunResult(NamedTuple):
+    """The outputs of one public-entry run (:func:`run_case`): the returned
+    ``value``, the gap archive's members (``None`` when no archive was
+    written; arrays read-only), the eigenvalue file's text (``None`` when
+    absent) and the ``logging.LogRecord`` s of level INFO and above captured
+    during the run."""
+    value: object
+    gap_npz: object
+    eigenvalue_dat: object
+    records: tuple
+
+
+def _freeze_value(v):
+    if isinstance(v, dict):
+        return freeze(v)
+    if isinstance(v, (list, tuple)):
+        return tuple(_freeze_value(x) for x in v)
+    return v
+
+
+def freeze(m):
+    """The canonical frozen form of an override mapping: ``tuple(sorted((key
+    in lower case, frozen value)))``, lists and tuples as tuples, nested
+    mappings frozen; ``None`` and ``{}`` freeze alike. Two keys that differ
+    only in case are a ``ValueError`` (:func:`write_case` would keep one)."""
+    items = {}
+    for k, v in (m or {}).items():
+        if not isinstance(k, str):
+            raise ValueError("freeze: keys must be strings, got {!r}".format(k))
+        low = k.lower()
+        if low in items:
+            raise ValueError("freeze: the keys {!r} and {!r} differ only in case".format(
+                items[low][0], k))
+        items[low] = (k, _freeze_value(v))
+    return tuple(sorted((low, fv) for low, (_, fv) in items.items()))
+
+
+_RUN_CACHE = {}
+_RUN_DIR = []
+
+
+def _run_root():
+    """The directory of the cached runs (one per module, removed at
+    interpreter exit)."""
+    if not _RUN_DIR:
+        import tempfile
+        _RUN_DIR.append(tempfile.TemporaryDirectory(prefix="so_bond_runs_"))
+    return _RUN_DIR[0].name
+
+
+class _Records(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.INFO)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+def _read_outputs(input_dict):
+    import hwave.sc as sc
+    out = input_dict["file"]["output"]["path_to_output"]
+    eli = {k.lower(): v for k, v in input_dict["eliashberg"].items()}
+    gap = os.path.join(out, sc._so_gap_npz_name(eli.get("output_gap", "gap.dat")))
+    members = None
+    if os.path.exists(gap):
+        with np.load(gap, allow_pickle=False) as z:
+            members = {k: z[k] for k in z.files}
+        for a in members.values():
+            a.flags.writeable = False
+    ev = os.path.join(out, eli.get("output_eigenvalue", "eigenvalue.dat"))
+    text = None
+    if os.path.exists(ev):
+        with open(ev) as f:
+            text = f.read()
+    return members, text
+
+
+def run_case(fixture, *, layout="auto", fresh=False, param=None, eliashberg=None, mode=None):
+    """The :class:`RunResult` of ``hwave.sc.calc_eliashberg`` on the files of
+    :func:`write_case` (``param``, ``eliashberg``, ``mode`` forwarded
+    unchanged; ``layout`` other than ``"auto"`` is written as
+    ``eliashberg["SO_Bond_Layout"]``, and an ``so_bond_layout`` key in
+    ``eliashberg`` together with such a ``layout`` is a ``ValueError``).
+
+    Cached per ``(fixture.name, layout, freeze(param), freeze(eliashberg),
+    freeze(mode))`` under one module directory; ``fresh=True`` (a test that
+    spies, patches or counts calls) bypasses the cache, runs in its own
+    directory (removed on return) and stores nothing."""
+    eli = dict(eliashberg or {})
+    if layout != "auto":
+        if any(k.lower() == "so_bond_layout" for k in eli):
+            raise ValueError("run_case: so_bond_layout is set both by layout = {!r} and in "
+                             "eliashberg".format(layout))
+        eli["SO_Bond_Layout"] = layout
+    key = (fixture.name, layout, freeze(param), freeze(eliashberg), freeze(mode))
+    if not fresh and key in _RUN_CACHE:
+        return _RUN_CACHE[key]
+    import tempfile
+    import hwave.sc as sc
+    if fresh:
+        holder = tempfile.TemporaryDirectory(prefix="so_bond_run_")
+        tmpdir = holder.name
+    else:
+        holder = None
+        tmpdir = tempfile.mkdtemp(prefix="case_", dir=_run_root())
+    try:
+        input_dict = write_case(tmpdir, fixture, param=param, eliashberg=eli, mode=mode)
+        root = logging.getLogger()
+        handler = _Records()
+        level = root.level
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        try:
+            value = sc.calc_eliashberg(input_dict)
+        finally:
+            root.removeHandler(handler)
+            root.setLevel(level)
+        members, text = _read_outputs(input_dict)
+    finally:
+        if holder is not None:
+            holder.cleanup()
+    result = RunResult(value, members, text, tuple(handler.records))
+    if not fresh:
+        _RUN_CACHE[key] = result
+    return result
 
 
 # ------------------------------------------------------------ the oracles

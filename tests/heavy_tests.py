@@ -333,6 +333,32 @@ HEAVY_TESTS = (
     # --- tests/test_rpa_vs_ed_oracle.py ----------------------------------
     ("test_rpa_vs_ed_oracle", "TestRPAGeneralVsED", "test_first_order",
      "general-scheme RPA first-order response vs ED"),
+    # --- tests/test_sc_spin_orbital_bond_full.py -- #270 spin-orbital bond --
+    ("test_sc_spin_orbital_bond_full", "TestAdmission", "test_phase_rows_iteration",
+     "the traced per-phase memory rows of the static spin-orbital bond path in "
+     "the iteration solver mode at Nmat 32 (S_z-packed Zeeman fixture, up to "
+     "1000 power-iteration steps); below the rule, kept out of the fast set by "
+     "its time budget; the fast module keeps the Nmat 8 smoke; macOS 0.43 s, "
+     "Linux 1.0 s"),
+    ("test_sc_spin_orbital_bond_full", "TestLayoutSelectionThroughEntry",
+     "test_layout_selection_through_entry",
+     "the public-entry layout pair of the static spin-orbital bond path (the "
+     "S_z-conserving Zeeman fixture in the automatic S_z-packed and the forced "
+     "dense layout, full spectrum); below the rule, kept out of the fast set by "
+     "its time budget; macOS 0.10 s, Linux 0.14 s"),
+    ("test_sc_spin_orbital_bond_full", "TestReportingThroughEntry", "test_state_rows",
+     "the forced sector-solver states of the static spin-orbital bond path through "
+     "the public entry (rows 2-7 S_z-packed, rows 3 and 7 dense, three solver modes "
+     "each, 24 runs); below the rule, kept out of the fast set by its time budget; "
+     "macOS 1.0 s, Linux 2.4 s"),
+    ("test_sc_spin_orbital_bond_full", "TestZeroFieldThroughEntry",
+     "test_zero_field_limit_through_entry",
+     "the zero-field limit of the static spin-orbital bond path through the public "
+     "entry (4x4, B = 1 and B = 5, one and two orbitals, both layouts, five fields, "
+     "complete listings; 40 runs, plus the Extern/Transfer route pair and the "
+     "operator at the first two fields for the isolation of the selected clusters); "
+     "the fast module keeps the 4x2 operator-level variant; macOS 2.7 s, "
+     "Linux 6.3 s"),
     # --- tests/test_so_bond_chi_ed.py -- spinful bond correlators vs ED ---
     ("test_so_bond_chi_ed", "TestChiFirstOrderED", "test_fixture_ii",
      "the first-order longitudinal and transverse bond correlators of the "

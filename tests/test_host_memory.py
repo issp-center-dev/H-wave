@@ -779,6 +779,96 @@ class TestCaps(unittest.TestCase):
                 self.assertEqual(str(cm.exception), today)
 
 
+    def test_refusal_text_by_plan(self):
+        """Only the static path's plan (pairing_static with the rows of
+        static_so_bond_rows) gets the static wording: the largest row of
+        the peak phase and the static scaling. Every other plan (vertex,
+        chi_static, chi_dynamic, pairing_static without the static rows)
+        keeps the store-slot text."""
+        caps = SOBondCaps(1024.0, 1e-6, None)
+        slot = "; one store slot = 16·Nmat·nvol·ND² bytes = 0.00 GiB) but the cap is "
+        old_scaling = " Memory grows as Nmat · nvol · B² · norb_phys⁴. Reduce Nmat "
+        for consumers in (("vertex",), ("chi_static",), ("chi_dynamic",),
+                          ("pairing_static",)):
+            with self.subTest(consumers=consumers):
+                with self.assertRaises(ValueError) as cm:
+                    so_bond.plan_so_bond(nmat=2, nvol=5, B=5, nd=4, consumers=consumers,
+                                         caps=caps)
+                msg = str(cm.exception)
+                self.assertIn(slot, msg)
+                self.assertIn(old_scaling, msg)
+                self.assertNotIn("largest row", msg)
+
+        def static(nmat, shape, B, nd):
+            nvol = int(np.prod(shape))
+            rows = so_bond.static_so_bond_rows(
+                nmat=nmat, nvol=nvol, B=B, nd=nd, layout="dense", solver_mode="eigenvalue",
+                num_eigenvalues=10, max_iter=1000, spatial_shape=shape, spectral_shift=None)
+            with self.assertRaises(ValueError) as cm:
+                so_bond.plan_so_bond(nmat=nmat, nvol=nvol, B=B, nd=nd,
+                                     consumers=("pairing_static",), caps=caps, extra_rows=rows)
+            return str(cm.exception), rows
+
+        # the bubble workspace leads (pairing phase)
+        msg, _ = static(64, (8, 8, 1), 5, 4)
+        self.assertIn(" in phase pairing_static ", msg)
+        self.assertIn("; largest row in that phase: bubble_pair_block = ", msg)
+        self.assertIn(" " + so_bond._STATIC_SCALING + " Reduce Nmat ", msg)
+        self.assertNotIn("store slot", msg)
+        # the dense fallback of the eigensolver leads (dim <= 2000, B = 1,
+        # Nmat 2): the kernel phase, and the text names the solver scaling
+        msg, rows = static(2, (12, 12, 1), 1, 4)
+        kernel = {n: b for ph, n, b in rows if ph == "kernel_static"}
+        self.assertEqual(max(kernel, key=kernel.get), "eigensolver")
+        self.assertIn(" in phase kernel_static ", msg)
+        self.assertIn("; largest row in that phase: eigensolver = ", msg)
+        for part in ("the eigensolver rows grow with the reduced gap dimension dim",
+                     "as dim² for the dense fallback (dim <= 2000)", "num_eigenvalues",
+                     "max_iter", "the layout and spectral_shift", "the kernel workspace"):
+            self.assertIn(part, msg)
+
+    def test_envelope_cases_recomputed(self):
+        """Every admitted case of the envelope is the static plan's own
+        number: at the default solver settings its estimated peak fits 0.8 x
+        the host memory, twice its Nmat does not, and the GiB shown is the
+        estimate rounded."""
+        def peak(layout, norb_phys, B, L, nmat):
+            nd, nvol = 2 * norb_phys, L * L
+            rows = so_bond.static_so_bond_rows(
+                nmat=nmat, nvol=nvol, B=B, nd=nd, layout=layout, solver_mode="eigenvalue",
+                num_eigenvalues=10, max_iter=1000, spatial_shape=(L, L, 1),
+                spectral_shift=None)
+            why = "so bond layout: sz_packed (test)" if layout == "sz_packed" else None
+            return so_bond.plan_so_bond(nmat=nmat, nvol=nvol, B=B, nd=nd,
+                                        consumers=("pairing_static",),
+                                        caps=SOBondCaps(None, None, None), layout=layout,
+                                        layout_reason=why, extra_rows=rows).peak_host
+
+        self.assertEqual([lay for lay, _, _ in so_bond._ENVELOPE], ["sz_packed", "dense"])
+        with self.assertLogs(so_bond.logger, level="INFO"):
+            for layout, _, hosts in so_bond._ENVELOPE:
+                for host, cases in hosts:
+                    cap = 0.8 * host * GiB
+                    for norb_phys, B, L, nmat, gib in cases:
+                        with self.subTest(layout=layout, host=host, norb_phys=norb_phys, B=B,
+                                          L=L):
+                            here = peak(layout, norb_phys, B, L, nmat)
+                            self.assertLessEqual(here, cap)
+                            self.assertGreater(peak(layout, norb_phys, B, L, 2 * nmat), cap)
+                            self.assertEqual(round(here / GiB, 1), gib)
+        text = so_bond.envelope_text("sz_packed").split("\n")
+        self.assertEqual(text[:2], [
+            "admitted cases (machine | path | admitted):",
+            "  S_z-packed layout (S_z-conserving input: Zeeman, no SOC, no PairLift)  <- this run"])
+        self.assertEqual(text[2], (
+            "    64 GiB host | hwave_sc static, CPU | norb_phys = 1: B = 9, 64², Nmat = 8192 "
+            "(45.5 GiB); norb_phys = 2: B = 9, 32², Nmat = 2048 (35.9 GiB); norb_phys = 2: "
+            "B = 5, 64², Nmat = 512 (36.4 GiB)"))
+        self.assertEqual(text[-1], (
+            "  (the largest power-of-two Nmat whose estimated peak fits the default cap, 0.8 x "
+            "the host memory, with the default solver settings)"))
+        self.assertEqual(len(text), 8)
+
     def test_refusal_options(self):
         """No empty line for an empty envelope; the clause without a key and
         with no nonzero off-site shell; a topology of another interaction."""

@@ -702,6 +702,18 @@ def _validate_green_beta(green, beta, label):
     return green
 
 
+def g2_tail_coefficient(nmat, beta):
+    """The Matsubara tail correction of a static pair bubble on the centered
+    fermionic grid ``wn = (2n + 1 - nmat) pi / beta``: the window complement
+    ``beta/4 - (1/beta) sum_window 1/wn^2`` of the exact full sum, added to
+    ``G2[i, i, l, l]``. Written in the odd integers ``r = 2n + 1 - nmat``,
+    ``beta (1/4 - (1/pi^2) sum 1/r^2)``, so every intermediate stays O(1)
+    whatever beta (the wn-based form underflows wn^2 to 0 for extreme
+    beta). ``nmat`` must be even and positive (the callers check it)."""
+    r = 2.0 * np.arange(nmat) + 1.0 - nmat
+    return beta * (0.25 - np.sum(1.0 / r**2) / np.pi**2)
+
+
 def _g2_from_green(green, beta, tail=False):
     """Static two-particle bubble ``G2[i,j,l,m](k) = (T) sum_n
     G_{ij}(k, iw_n) G_{lm}(-k, -iw_n)`` (``T = 1/beta``).
@@ -731,8 +743,7 @@ def _g2_from_green(green, beta, tail=False):
                 "the Matsubara tail correction (g2_tail) requires an even, "
                 "positive number of frequencies on the centered fermionic "
                 "grid; the Green function has nmat = {}".format(nmat))
-        r = 2.0 * np.arange(nmat) + 1.0 - nmat
-        coeff = beta * (0.25 - np.sum(1.0 / r**2) / np.pi**2)
+        coeff = g2_tail_coefficient(nmat, beta)
         di = np.arange(norb)
         G2[di[:, None], di[:, None], di[None, :], di[None, :]] += coeff
     return G2
