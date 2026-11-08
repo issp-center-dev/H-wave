@@ -1,8 +1,8 @@
-"""The shard map of the FULL CI job (``test-full`` in
-``.github/workflows/ci-python39.yml``).
+"""The shard map of the FULL CI job (``test-full-shard``, summarised by the
+``test-full`` status, in ``.github/workflows/ci-python39.yml``).
 
-``test-full`` runs the registered heavy tests (``tests/heavy_tests.py``) as
-:data:`N_SHARDS` parallel jobs. Each job takes the registered tests of the
+``test-full-shard`` runs the registered heavy tests (``tests/heavy_tests.py``)
+as :data:`N_SHARDS` parallel jobs. Each job takes the registered tests of the
 FILES listed for it below -- file granularity, so the module- and
 class-level caches of a test file (and the shared ED cache,
 ``tests/ed_cache.py``, between files of one job) stay inside one process --
@@ -11,7 +11,8 @@ plus, in shard 1, the registry's own consistency gate.
 The split is a longest-processing-time-first (LPT) partition of the
 measured per-file time of the registered tests (:func:`lpt_partition`):
 files in decreasing time, each to the currently lightest shard. MEASURED
-input, see :data:`MEASUREMENT`; re-measure and re-partition when a file's
+input, see :data:`MEASUREMENT` (which also gives the loads of the map as
+checked in, files placed by hand after the partition included); re-measure and re-partition when a file's
 cost moves a lot, with::
 
     python -m tests.heavy_shards plan JUNIT.xml
@@ -34,7 +35,9 @@ MEASUREMENT = (
     "CI runner: CI run 42418446187 (2026-11-07, Python 3.12, numpy 1.26.4) "
     "times the after/before ratio of the ED speed-ups of 2026-11-08 "
     "measured on a 32-core Linux host (numpy 1.26.4, "
-    "OPENBLAS_NUM_THREADS=4); projected shard loads 460 / 461 / 465 s")
+    "OPENBLAS_NUM_THREADS=4). Loads of the checked-in map: 460 / 471 / "
+    "465 s (shard 2 includes test_sc_spin_orbital_bond_full, placed by "
+    "hand after the partition at a 10 s CI estimate)")
 
 #: Files that must share a shard: they diagonalize identical Hamiltonians,
 #: which ``tests/ed_cache.py`` shares only within one process (the case-M
