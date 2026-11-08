@@ -651,7 +651,7 @@ spurious).</p>
 <p>The following figures show the gap function <span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 in momentum space obtained from the self-consistent iteration.</p>
 <p><strong>Singlet channel</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id11">
+<figure class="align-center" id="id14">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -659,11 +659,11 @@ in momentum space obtained from the self-consistent iteration.</p>
 <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>.
 Right: inter-orbital component <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>.
 The inter-orbital component is about 5 times larger than the intra-orbital one,
-indicating that inter-orbital pairing is dominant.</span><a class="headerlink" href="#id11" title="Link to this image">¶</a></p>
+indicating that inter-orbital pairing is dominant.</span><a class="headerlink" href="#id14" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>Triplet channel</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id12">
+<figure class="align-center" id="id15">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -672,7 +672,7 @@ indicating that inter-orbital pairing is dominant.</span><a class="headerlink" h
 Right: inter-orbital component <span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>.
 The gap is <strong>odd</strong> under <span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span> (with the orbital
 transpose), as required for spin-triplet pairing; the inter-orbital component
-is again the larger one.</span><a class="headerlink" href="#id12" title="Link to this image">¶</a></p>
+is again the larger one.</span><a class="headerlink" href="#id15" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
@@ -680,7 +680,7 @@ is again the larger one.</span><a class="headerlink" href="#id12" title="Link to
 <h3>Eigenvalue spectrum<a class="headerlink" href="#eigenvalue-spectrum" title="Link to this heading">¶</a></h3>
 <p>The eigenvalue spectrum of the linearized Eliashberg equation is shown below
 for both singlet and triplet channels.</p>
-<figure class="align-center" id="id13">
+<figure class="align-center" id="id16">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -691,7 +691,7 @@ parity: even for singlet, odd for triplet); open markers are <strong>spurious</s
 opposite-parity modes. All physical eigenvalues lie below 1. The two open
 markers above 1 are even-parity solutions of the
 <em>triplet</em> kernel, which the Pauli principle forbids for spin-triplet pairing
-(see the parity note below).</span><a class="headerlink" href="#id13" title="Link to this image">¶</a></p>
+(see the parity note below).</span><a class="headerlink" href="#id16" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>The Arnoldi eigenvalue analysis finds multiple eigenvalues.
@@ -2079,8 +2079,9 @@ static bond path, the dynamic bond path and the in-process
 (the first four by name) where <code class="docutils literal notranslate"><span class="pre">J_Exchange</span> <span class="pre">!=</span> <span class="pre">J_Hund</span> <span class="pre">-</span> <span class="pre">2</span> <span class="pre">J_Ising</span></code> (each row taken with its
 partner); the run is not refused and no number changes. The
 spin-orbital route (<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>) treats such couplings
-exactly for on-site interactions; its bond-resolved extension is
-issue #270. These
+exactly, for on-site interactions and, with <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+and <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>, for off-site rows as well
+(<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>). These
 statements are pinned against an independent spin-orbital construction
 in <code class="docutils literal notranslate"><span class="pre">tests/test_sc_bond_pairing_oracle.py</span></code>.</p>
 </div>
@@ -2234,7 +2235,11 @@ different orbitals, whatever <code class="docutils literal notranslate"><span cl
 <td><p>accepted through their direct (Hartree-like) part only; an INFO line
 names the types (see <a class="reference internal" href="../../algorithm/rpa.html#rpa-so-offsite"><span class="std std-ref">off-site rows in spin-orbital RPA</span></a>)</p></td>
 <td><p>refused</p></td>
-<td><p>refused; the message asks to remove the off-site rows</p></td>
+<td><p>static with <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>: accepted; direct part and
+exchange crossing, exactly, each on its bond
+(<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>). Static without bond channels: refused;
+the message names <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. Dynamic: refused; the
+message asks to remove the off-site rows</p></td>
 </tr>
 <tr class="row-odd"><td><p>imaginary part on <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
 or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code></p></td>
@@ -2249,9 +2254,10 @@ or <code class="docutils literal notranslate"><span class="pre">PairLift</span><
 </tr>
 </tbody>
 </table>
-<p>Spin-orbital FLEX and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuse the bond-resolved channels
-(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>) in this version, and the
-off-site refusals above do not point to them.</p>
+<p>Spin-orbital FLEX refuses the bond-resolved channels
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>) in this version. Spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
+accepts <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>
+(<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>) and refuses it with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>.</p>
 </section>
 <section id="spin-structure">
 <h2><span class="section-number">5.2.14. </span>Spin structure<a class="headerlink" href="#spin-structure" title="Link to this heading">¶</a></h2>
@@ -2289,8 +2295,9 @@ or even spin-free model can be written in this representation) –
 (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>), with a full spin-matrix gap function and the
 spinful (charge, longitudinal and transverse spin) susceptibility; see
 <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a> and <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a> for the scope.
-The dynamic bond path (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>) rejects the configuration
-up front, and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> rejects it in
+The static bond path (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>) supports it
+(<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>); the dynamic bond path rejects the
+configuration up front, and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> rejects it in
 preflight before any FLEX rung runs (a FLEX-only sweep runs it, with
 <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>).</p></li>
 </ul>
@@ -2325,6 +2332,13 @@ Exchange).</p></li>
 <li><p>Spin-orbital archives written before this version (fingerprint
 version 1 or none) must be regenerated (which command writes which
 file: see <a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>).</p></li>
+<li><p>Off-site rows (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>) are accepted by the static
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+(<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>); earlier versions refused <code class="docutils literal notranslate"><span class="pre">bond_channels</span>
+<span class="pre">=</span> <span class="pre">true</span></code> and every off-site row in spin-orbital mode. Without bond
+channels an off-site row is still refused, and the message now
+names <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. The dynamic solver refuses both as
+before.</p></li>
 </ol>
 <p>To reproduce an earlier result, remove the affected rows or imaginary
 parts, or run the non-spin-orbital solver.</p>
@@ -2341,8 +2355,12 @@ is present: <code class="docutils literal notranslate"><span class="pre">orbital
 <li><p>on-site and in-cell (<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) two-body interactions: a
 row between two different orbitals of the cell is treated exactly,
 exchange crossing included, whatever <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> says. Off-site rows
-(<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>) are refused (see <em>Refused combinations</em>);</p></li>
-<li><p>no bond-resolved channels (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>, the default);</p></li>
+(<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>) need the bond-resolved channels below and are
+refused otherwise (see <em>Refused combinations</em>);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code> (the default) for the on-site path described in
+this section, or, with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+for the bond-resolved path of <a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>, which also takes
+the off-site rows;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> (the spinful <span class="math notranslate nohighlight">\(\chi_0\)</span> is computed
 internally), <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> (the general four-index chi0q written by a
 spin-orbital RPA run; <strong>static only</strong>) or <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> (the outputs of a
@@ -2656,6 +2674,13 @@ channels) and <code class="docutils literal notranslate"><span class="pre">fp_re
 <li><p>the copies <code class="docutils literal notranslate"><span class="pre">prov_*</span></code> of the band and interaction input, and the realized
 state <code class="docutils literal notranslate"><span class="pre">state_*</span></code>.</p></li>
 </ul>
+<p>The gap archive of a bond-resolved run (<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span>
+<span class="pre">&quot;sc_so_bond_static&quot;</span></code>, <a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>) records <code class="docutils literal notranslate"><span class="pre">fp_capability</span> <span class="pre">=</span>
+<span class="pre">&quot;so_bond&quot;</span></code> and, as <code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code>, the digest of its resolved
+bond channels, and adds the members <code class="docutils literal notranslate"><span class="pre">delta_r</span></code>, <code class="docutils literal notranslate"><span class="pre">reverse</span></code>,
+<code class="docutils literal notranslate"><span class="pre">slot_convention</span></code> and <code class="docutils literal notranslate"><span class="pre">max_shells</span></code> (<code class="docutils literal notranslate"><span class="pre">-1</span></code> without a
+<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> cutoff) and <code class="docutils literal notranslate"><span class="pre">block_layout</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> or
+<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>).</p>
 <p>In <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> the spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
 checks each archive it reads against its own input, before any large array
 is read. The <code class="docutils literal notranslate"><span class="pre">prov_*</span></code> copies only word the difference in a message: no
@@ -2756,8 +2781,7 @@ are read.</p></li>
 <td><p><code class="docutils literal notranslate"><span class="pre">sigma_static</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">sc_so_static</span></code>, <code class="docutils literal notranslate"><span class="pre">sc_so_dynamic</span></code> (<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code> is
-recognised)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sc_so_static</span></code>, <code class="docutils literal notranslate"><span class="pre">sc_so_dynamic</span></code>, <code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">gap</span></code></p></td>
 </tr>
 </tbody>
@@ -2765,6 +2789,13 @@ recognised)</p></td>
 <p>The stages <code class="docutils literal notranslate"><span class="pre">sc_so_bond_dynamic</span></code> and <code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code> are recognised
 but not read yet; they are refused with their own message (see the
 table below).</p>
+<p><em>Layout members.</em> An archive of a bond-resolved stage
+(<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code>) must record <code class="docutils literal notranslate"><span class="pre">block_layout</span></code>, a string that is
+<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>; an archive of an on-site stage carries
+no <code class="docutils literal notranslate"><span class="pre">block_layout</span></code>. The member-name prefix <code class="docutils literal notranslate"><span class="pre">sz_sector_</span></code> is reserved:
+a gap archive (stored as the full gap in either layout) or an archive
+of an on-site stage with a member whose name starts with it is refused
+as malformed.</p>
 </li>
 <li><p><strong>Compatibility with this run</strong>, in this order; the first difference is
 reported.</p>
@@ -2782,11 +2813,16 @@ counts and the first differing record, e.g. <code class="docutils literal notran
 <span class="pre">records;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">record</span> <span class="pre">CoulombIntra</span> <span class="pre">modes</span> <span class="pre">(...)</span> <span class="pre">cells</span>
 <span class="pre">(...):</span> <span class="pre">file</span> <span class="pre">...,</span> <span class="pre">run</span> <span class="pre">...</span></code>.</p></li>
 <li><p><em>Capability.</em> The archive’s <code class="docutils literal notranslate"><span class="pre">fp_capability</span></code> must equal the
-capability the run consumes. Every spin-orbital path of this version
-works without bond channels and so consumes <code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>
+capability the run consumes. The on-site spin-orbital paths (the
+<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> inputs above) consume <code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>
 artifacts; an archive that resolves bond channels (<code class="docutils literal notranslate"><span class="pre">&quot;so_bond&quot;</span></code>) is
-refused. The declared and resolved bond topologies are compared only
-by a bond-resolved consumer, and there is none in this version.</p></li>
+refused. The bond-resolved path (<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>) writes a
+<code class="docutils literal notranslate"><span class="pre">&quot;so_bond&quot;</span></code> gap archive but reads no archive: it builds its Green
+function from the band and refuses <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> and <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;flex&quot;</span></code>, so a spin-orbital FLEX <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>) is
+not a bond-path input. The declared and resolved bond topologies are
+compared only by a bond-resolved consumer, and no run of this version
+reads an archive as one.</p></li>
 <li><p><em>State.</em> <span class="math notranslate nohighlight">\(\beta\)</span> (relative <span class="math notranslate nohighlight">\(10^{-12}\)</span>); the μ-search mode
 (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> always searches μ, so a fixed-μ archive is refused);
 the target <code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">*</span> <span class="pre">2N</span></code> electrons per cell (relative
@@ -2827,11 +2863,13 @@ Extern input alone. An unversioned archive of an earlier version was
 accepted with a WARNING when the run had no Extern field; it is now always
 refused.</p>
 <p><strong>What the gap archive records.</strong> <code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> (<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span>
-<span class="pre">&quot;sc_so_static&quot;</span></code>) and <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_dynamic&quot;</span></code>) carry the
+<span class="pre">&quot;sc_so_static&quot;</span></code>, or <code class="docutils literal notranslate"><span class="pre">&quot;sc_so_bond_static&quot;</span></code> for a bond-resolved run) and
+<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_dynamic&quot;</span></code>) carry the
 same version-2 members, describing what <em>this</em> run’s kernel used; nothing
 is copied from the producer:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>: the run’s own Green function, built from its
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>, and every bond-resolved run: the run’s own
+Green function, built from its
 band and its own μ; <code class="docutils literal notranslate"><span class="pre">state_density</span></code> is the Fermi count of the band at that
 μ per cell, <code class="docutils literal notranslate"><span class="pre">state_mu_tol</span> <span class="pre">=</span> <span class="pre">|state_density</span> <span class="pre">-</span> <span class="pre">state_target|</span></code>;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> is the digest of the borrowed Green function as
@@ -2907,8 +2945,11 @@ interaction files of this input.</p></td>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&lt;file&gt;</span> <span class="pre">was</span> <span class="pre">produced</span> <span class="pre">by</span> <span class="pre">&lt;producer&gt;</span> <span class="pre">(so_bond),</span> <span class="pre">but</span> <span class="pre">this</span> <span class="pre">run</span> <span class="pre">needs</span> <span class="pre">a</span>
 <span class="pre">so_onsite</span> <span class="pre">artifact</span></code></p></td>
 <td><p>The archive resolves bond channels, which this run does not use.
-Spin-orbital archives of this version are all <code class="docutils literal notranslate"><span class="pre">so_onsite</span></code>, so this
-message does not occur with archives written by this version.</p></td>
+Of the archives this version writes, only the gap archive of a
+bond-resolved run (<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code>) is <code class="docutils literal notranslate"><span class="pre">so_bond</span></code>, and a gap
+archive given as a chi0q, chiq, green or sigma input is refused by
+the stage check before this step, so this message does not occur
+with archives written by this version.</p></td>
 <td><p>the producer’s <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> archives</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">calc_mu:</span> <span class="pre">file</span> <span class="pre">False,</span> <span class="pre">run</span> <span class="pre">True</span></code></p></td>
@@ -2977,17 +3018,30 @@ density did not close. Rerun the producer.</p></td>
 <h3>Refused combinations<a class="headerlink" href="#refused-combinations" title="Link to this heading">¶</a></h3>
 <p>Each of the following raises an error that names the key or file to change,
 before any calculation:</p>
-<ul class="simple">
+<ul>
 <li><p>a <code class="docutils literal notranslate"><span class="pre">frequency</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> (the refusals
 specific to <code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> are listed in <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>);</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>;</p></li>
-<li><p>any off-site two-body row (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>), including off-site
-rows inside a <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code> aggregate file. The message names the row, says
-that the spin-orbital pairing vertex supports on-site and in-cell
-(<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) interactions only, and asks to remove the
-off-site rows. Every <span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span> row is accepted, also between
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>:
+<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">(hwave_sc,</span> <span class="pre">issue</span> <span class="pre">#83):</span> <span class="pre">[eliashberg]</span>
+<span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">with</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span> <span class="pre">is</span> <span class="pre">not</span> <span class="pre">available</span> <span class="pre">yet</span>
+<span class="pre">(issue</span> <span class="pre">#270);</span> <span class="pre">use</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;,</span> <span class="pre">or</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span> <span class="pre">for</span>
+<span class="pre">on-site</span> <span class="pre">interactions.</span></code> With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> it selects the
+bond-resolved path (<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>), which has refusals of its
+own (listed there);</p></li>
+<li><p>an off-site two-body row (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>) without
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, including off-site rows inside a <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>
+aggregate file. With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> the message names the row
+and the key that accepts it:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site row (R = &lt;R&gt;, orbitals &lt;orbitals&gt;) in &lt;file&gt; needs [eliashberg] bond_channels = true: the exchange crossing of an off-site term depends on k + k', which only the bond-resolved pairing path treats. Set bond_channels = true (with frequency = "static"), or remove the off-site rows.
+</pre></div>
+</div>
+<p>With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> it says that the spin-orbital pairing
+vertex supports on-site and in-cell (<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) interactions
+only, and asks to remove the off-site rows. Every <span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>
+row is accepted, also between
 orbitals that <code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> would label as different sites
-(<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> is ignored in spin-orbital mode);</p></li>
+(<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code> is ignored in spin-orbital mode);</p>
+</li>
 <li><p>an imaginary part on a <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
 or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> coefficient, on every spin-orbital path (RPA, FLEX and
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>). A complex <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is accepted. The message names the
@@ -2996,7 +3050,8 @@ issue #302;</p></li>
 <li><p>an interaction file with an orbital index outside <span class="math notranslate nohighlight">\(1 \ldots N\)</span>
 (an index larger than <span class="math notranslate nohighlight">\(N\)</span> means the file was written in
 spin-orbital indices; an index 0 is never valid);</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>, a reduced
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code> (on the
+bond-resolved path it is unused and gets a WARNING instead), a reduced
 (two-index) chi0q file, a chi0q file without the <code class="docutils literal notranslate"><span class="pre">index_convention</span></code>
 tag, and a chi0q file without the marker <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code> (only a
 spin-orbital run writes it, so a non-spin-orbital RPA chi0q has no
@@ -3007,7 +3062,8 @@ one over <span class="math notranslate nohighlight">\(N\)</span>; regenerate the
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> run, or without the <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code> /
 <code class="docutils literal notranslate"><span class="pre">index_convention</span></code> tags; a FLEX archive whose <code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code> is
 not <code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code>; non-finite FLEX values;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code> (on the bond-resolved path they are
+unused and get a WARNING instead);</p></li>
 <li><p>a missing FLEX chi0q archive (write <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code> in the FLEX
 run), a FLEX chi0q archive without the marker <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>
 (written only by a spin-orbital FLEX run), a missing FLEX Green function
@@ -3072,13 +3128,16 @@ read the full-frequency file whole, <span class="math notranslate nohighlight">\
 bytes: about 64 GiB for the same model with <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>, against about
 4 GiB for a non-spin-orbital general chi0q (<span class="math notranslate nohighlight">\(N^4\)</span> orbital indices) of
 the same physical <span class="math notranslate nohighlight">\(N\)</span>. <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> needs every
-frequency; see <a class="reference internal" href="#sc-spin-orbital-dynamic-memory"><span class="std std-ref">Memory and time</span></a>.</p></li>
+frequency; see <a class="reference internal" href="#sc-spin-orbital-dynamic-memory"><span class="std std-ref">Memory and time</span></a>. The bond-resolved
+path has its own estimate and admission check (<a class="reference internal" href="#sc-so-bond-memory"><span class="std std-ref">Memory</span></a>).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> in spin-orbital mode is
 validated against <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">false</span></code> on an A100 GPU: the full spectrum of an
 SU(2) model and the Arnoldi solve of a complex-SOC model agree to
 <span class="math notranslate nohighlight">\(10^{-10}\)</span> in the eigenvalues, and the power-iteration solve agrees
 within its converged residual (<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>; for
-<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> see <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>).</p></li>
+<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code> see <a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>). The bond-resolved path
+runs on the CPU only: there <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is ignored with a WARNING and
+<code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code> is refused (<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>).</p></li>
 </ul>
 </section>
 <section id="validation">
@@ -3118,6 +3177,469 @@ non-spin-orbital run for such models; the equal-spin triplet agrees.
 Rotation-invariant combinations (for example <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> in
 the Kanamori form) agree in both channels.</p>
 </section>
+<section id="bond-resolved-spin-orbital-pairing-bond-channels">
+<span id="sc-so-bond-static"></span><h3>Bond-resolved spin-orbital pairing (<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>)<a class="headerlink" href="#bond-resolved-spin-orbital-pairing-bond-channels" title="Link to this heading">¶</a></h3>
+<p>With <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> (the default), <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code> gives the spin-orbital solver the bond-resolved channels of
+<a class="reference internal" href="#sc-bond-channels-static"><span class="std std-ref">Bond-resolved static pairing (bond_channels)</span></a>. Off-site rows (<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>) of
+every interaction type are then accepted, and the exchange crossing of each
+row acts on the bond it was declared on. The pairing vertex is built on the
+(spin-orbital pair) <span class="math notranslate nohighlight">\(\times\)</span> (bond) basis: <span class="math notranslate nohighlight">\(B\)</span> bond channels
+(channel 0 is the on-site point, then the off-site shells by bond length,
+closed under reversal) give <code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">(2N)^2</span></code> slots. The input files follow
+the spin-orbital conventions of the <em>Scope</em> above.</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="n">enable_spin_orbital</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+
+<span class="k">[eliashberg]</span>
+<span class="n">bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">          </span><span class="c1"># frequency = "static", the default</span>
+<span class="c1"># so_bond_layout = "auto"     # the default; "dense" forces the dense layout</span>
+<span class="c1"># bond_memory_cap_gb = 32.0   # GiB; unset: 0.8 x the available memory</span>
+</pre></div>
+</div>
+<section id="what-is-exact">
+<h4>What is exact<a class="headerlink" href="#what-is-exact" title="Link to this heading">¶</a></h4>
+<p>The bond vertex <span class="math notranslate nohighlight">\(\Gamma_B\)</span> is the antisymmetrized spinful vertex of
+the on-site path (the direct term plus its exchange crossing), with every
+row placed on its own bond: the direct part of an off-site row in the
+on-site channel, as a function of <span class="math notranslate nohighlight">\(\mathbf{q}\)</span>, and its exchange
+crossing in the channel of its displacement. No spin-rotation symmetry is
+assumed: each row enters with its own spin structure, so <code class="docutils literal notranslate"><span class="pre">Hund</span></code> or
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code> without the matching <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, a spin-orbit coupled band and a
+Zeeman field need none of the approximations of the non-spin-orbital bond
+kernel (its singlet/triplet combination and the <code class="docutils literal notranslate"><span class="pre">J_Exchange</span> <span class="pre">!=</span> <span class="pre">J_Hund</span> <span class="pre">-</span> <span class="pre">2</span>
+<span class="pre">J_Ising</span></code> WARNING do not apply here). The pairing vertex is</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-12">
+<span class="eqno">(5.13)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-12" title="Link to this equation">¶</a></span>\[V = \tfrac{1}{4}\left(\Gamma_B + \Gamma_B^{P}\right)
+    \;-\; \Gamma_B\,\chi_B\,\Gamma_B ,
+\qquad
+\chi_B = \left[1 + \bar\chi_B \Gamma_B\right]^{-1} \bar\chi_B ,\]</div>
+<p>at zero bosonic frequency, with <span class="math notranslate nohighlight">\(\Gamma_B^{P}\)</span> the exchange image of
+<span class="math notranslate nohighlight">\(\Gamma_B\)</span> (equal to it; the solver checks this, so the first term is
+<span class="math notranslate nohighlight">\(\Gamma_B/2\)</span>, as on site) and <span class="math notranslate nohighlight">\(\bar\chi_B\)</span> the bond-resolved
+bubble of the <strong>bare</strong> Green function built from the Transfer (and Extern)
+input. The bare part is exact at first order for every interaction type.
+The fluctuation part is a static RPA-ladder dressing, not a conserving
+(FLEX) result, and every run says so with one WARNING:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the BARE Green function built from the Transfer (and Extern) input. It demonstrates the qualitative V-dependence of the pairing eigenvalue; it is NOT a conserving FLEX result (the bond chi-bar is built here at RPA-ladder level), so absolute lambda values are not comparable with FLEX/dynamic references.
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Off-site PairLift.</strong> The non-spin-orbital bond paths leave an off-site
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code> out (it has no spin/charge content). The spin-orbital bond
+vertex includes it, and the run logs at INFO level:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>off-site PairLift is included in the spin-orbital bond vertex (the non-spin-orbital bond paths omit it: it has no spin/charge content)
+</pre></div>
+</div>
+<p>A nonzero <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> row (on-site or off-site) changes <span class="math notranslate nohighlight">\(S_z\)</span> and
+so selects the dense layout (see <em>Layout</em> below). A model with an
+off-site <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> can therefore give different eigenvalues on the
+spin-orbital and the non-spin-orbital bond paths.</p>
+</div>
+<p><strong>One channel.</strong> With <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> and no off-site row the run
+has <span class="math notranslate nohighlight">\(B = 1\)</span> and logs at INFO level:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>bond_channels = true: no off-site row is declared, so B = 1 and the bond vertex is the on-site spin-orbital vertex
+</pre></div>
+</div>
+<p>It is accepted (the non-spin-orbital bond path refuses <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code> without a declared off-site interaction). With the same Matsubara tail on
+both bubbles (<code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span> <span class="pre">=</span> <span class="pre">0</span></code>, and the default <code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">0</span></code> of the on-site bubble) it gives the eigenvalues of the
+on-site path with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>. Off-site rows that are all
+declared with zero coupling keep their channels and give the leading
+eigenvalue of the <span class="math notranslate nohighlight">\(B = 1\)</span> run.</p>
+</section>
+<section id="keys">
+<h4>Keys<a class="headerlink" href="#keys" title="Link to this heading">¶</a></h4>
+<p>Keys are case-insensitive. The keys of the spin-orbital solver apply as on
+site (<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>, <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>, <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>,
+<code class="docutils literal notranslate"><span class="pre">max_iter</span></code>, <code class="docutils literal notranslate"><span class="pre">init_gap</span></code>, …); the bond keys are:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span></code> (default <code class="docutils literal notranslate"><span class="pre">false</span></code>): <code class="docutils literal notranslate"><span class="pre">true</span></code> selects this path.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> (the default) or <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>, read
+case-insensitively (see <em>Layout</em>). <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code> cannot be forced:
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">so_bond_layout</span> <span class="pre">=</span> <span class="pre">&quot;sz_packed&quot;</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">forced:</span> <span class="pre">the</span> <span class="pre">S_z-packed</span>
+<span class="pre">layout</span> <span class="pre">is</span> <span class="pre">chosen</span> <span class="pre">automatically</span> <span class="pre">when</span> <span class="pre">the</span> <span class="pre">input</span> <span class="pre">conserves</span> <span class="pre">S_z</span> <span class="pre">(no</span> <span class="pre">spin-flip</span>
+<span class="pre">Transfer</span> <span class="pre">entry,</span> <span class="pre">no</span> <span class="pre">S_z-changing</span> <span class="pre">interaction).</span> <span class="pre">Use</span> <span class="pre">&quot;auto&quot;</span> <span class="pre">(the</span> <span class="pre">default)</span> <span class="pre">or</span>
+<span class="pre">&quot;dense&quot;.</span></code> Any other value is refused. With <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code> the
+key is ignored with a WARNING: <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">so_bond_layout</span> <span class="pre">set</span> <span class="pre">but</span>
+<span class="pre">bond_channels=false;</span> <span class="pre">it</span> <span class="pre">only</span> <span class="pre">applies</span> <span class="pre">to</span> <span class="pre">the</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">path</span> <span class="pre">and</span> <span class="pre">is</span>
+<span class="pre">ignored</span> <span class="pre">here.</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> (an integer <span class="math notranslate nohighlight">\(\ge 0\)</span>; default: every declared
+shell) keeps the first <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> off-site shells. A cutoff that
+would drop a shell used by a nonzero row is refused, naming the shells and
+the smallest admissible value (<code class="docutils literal notranslate"><span class="pre">so_bond_topology:</span> <span class="pre">max_shells=&lt;m&gt;</span> <span class="pre">would</span> <span class="pre">drop</span>
+<span class="pre">bond</span> <span class="pre">shell(s)</span> <span class="pre">used</span> <span class="pre">by</span> <span class="pre">nonzero</span> <span class="pre">interaction</span> <span class="pre">records:</span> <span class="pre">shell</span> <span class="pre">&lt;k&gt;</span> <span class="pre">with</span>
+<span class="pre">displacements</span> <span class="pre">[...].</span> <span class="pre">Use</span> <span class="pre">max_shells</span> <span class="pre">&gt;=</span> <span class="pre">&lt;n&gt;,</span> <span class="pre">or</span> <span class="pre">remove</span> <span class="pre">those</span>
+<span class="pre">declarations.</span></code>); shells declared only with zero coupling may be dropped.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>: the host-memory cap of the admission check, in
+GiB (see <a class="reference internal" href="#sc-so-bond-memory"><span class="std std-ref">Memory</span></a>). Unset: <code class="docutils literal notranslate"><span class="pre">0.8</span></code> times the available
+memory. A positive value: that many GiB. <code class="docutils literal notranslate"><span class="pre">0</span></code>: the check is disabled,
+with a WARNING. A negative or non-finite value (or a boolean) is refused:
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_memory_cap_gb</span> <span class="pre">must</span> <span class="pre">be</span> <span class="pre">a</span> <span class="pre">finite</span> <span class="pre">number</span> <span class="pre">&gt;=</span> <span class="pre">0</span> <span class="pre">in</span>
+<span class="pre">spin-orbital</span> <span class="pre">mode</span> <span class="pre">(0</span> <span class="pre">disables</span> <span class="pre">the</span> <span class="pre">check),</span> <span class="pre">got</span> <span class="pre">&lt;value&gt;</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span></code> (default <code class="docutils literal notranslate"><span class="pre">1.0</span></code>): the Matsubara tail coefficient of
+the Green function of the bond bubble, as on the non-spin-orbital bond
+path.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code> (default <code class="docutils literal notranslate"><span class="pre">true</span></code>): the Matsubara tail correction of the pair
+propagator.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code> must be <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code> (or unset), as in every
+spin-orbital run; another value is refused before any file is read. Use
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> (not <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>) to bias the Arnoldi selection. The
+keys that are accepted but not used on this path, the keys that are
+refused, and their messages are listed in <em>Switching a non-spin-orbital
+bond configuration</em> below.</p>
+</section>
+<section id="layout">
+<h4>Layout<a class="headerlink" href="#layout" title="Link to this heading">¶</a></h4>
+<p>The bond objects (<span class="math notranslate nohighlight">\(\Gamma_B\)</span>, <span class="math notranslate nohighlight">\(\bar\chi_B\)</span>, <span class="math notranslate nohighlight">\(\chi_B\)</span>,
+<span class="math notranslate nohighlight">\(V\)</span>) and the pairing kernel are stored in one of two layouts:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>: when the input conserves <span class="math notranslate nohighlight">\(S_z\)</span>, every object is
+block-diagonal in the pair-<span class="math notranslate nohighlight">\(S_z\)</span> sectors <span class="math notranslate nohighlight">\((+1, 0, -1)\)</span>; only
+the blocks are stored (<span class="math notranslate nohighlight">\(\sum_\sigma n_\sigma^2 = (6/16)\,ND^2\)</span>
+entries per <span class="math notranslate nohighlight">\(ND \times ND\)</span> matrix instead of <span class="math notranslate nohighlight">\(ND^2\)</span>), and the
+eigenvalue problem is solved sector by sector;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>: the full matrices and one kernel on the whole gap.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">so_bond_layout</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> selects the layout from the input, in this
+order: <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> when the key forces it; else <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> at the first
+spin-flip Transfer entry (in the interleaved index, an entry between
+different spins); else <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> at the first interaction row that
+changes <span class="math notranslate nohighlight">\(S_z\)</span> (a nonzero <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>); else <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>. An
+Extern field (<span class="math notranslate nohighlight">\(\sigma^z\)</span>) never breaks <span class="math notranslate nohighlight">\(S_z\)</span>, so a Zeeman-only
+model is packed. The selection is <strong>exact</strong>: a spin-flip entry of
+<code class="docutils literal notranslate"><span class="pre">1e-14</span></code> selects the dense layout, so the layout, and the memory estimate
+with it, jump between a value of exactly zero and any nonzero value. The
+reason is logged at INFO level and written to <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>
+(<code class="docutils literal notranslate"><span class="pre">so_bond_layout_reason</span></code>), one of:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>so bond layout: sz_packed (S_z conserved: no spin-flip transfer, no S_z-changing interaction)
+so bond layout: dense (reason: forced by so_bond_layout = "dense")
+so bond layout: dense (reason: spin-flip transfer entry R=(&lt;Rx&gt;, &lt;Ry&gt;, &lt;Rz&gt;) (&lt;i&gt;, &lt;j&gt;) = &lt;value&gt;)
+so bond layout: dense (reason: PairLift declared)
+so bond layout: dense (reason: S_z-changing interaction record of type &lt;type&gt;)
+</pre></div>
+</div>
+<p>(<code class="docutils literal notranslate"><span class="pre">&lt;i&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">&lt;j&gt;</span></code> are the 1-based interleaved spin-orbital indices of the
+Transfer file. The last line is for an <span class="math notranslate nohighlight">\(S_z\)</span>-changing record of a type
+other than <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>; no such type exists yet.) Both layouts give the same leading eigenvalue and gap
+within round-off; the packed listing is the union of the per-sector
+solves, so with a small <code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code> it can list other eigenvalues
+below the leading one than the dense listing.
+The packed layout is the cheaper one; <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> is for debugging and for
+cross-checking a packed run.</p>
+</section>
+<section id="id7">
+<h4>Outputs<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h4>
+<p><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> and <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> have the layout of the on-site path
+(<em>Outputs</em> above). <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> adds the comment lines
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_n_channels</span></code> (<span class="math notranslate nohighlight">\(B\)</span>), <code class="docutils literal notranslate"><span class="pre">bond_delta_r</span></code> (the
+channel displacements), <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>, <code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code>,
+<code class="docutils literal notranslate"><span class="pre">so_bond_layout_reason</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_memory_cap</span></code> (the cap in force and where
+it came from), <code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_coeff_tail_source</span></code>,
+<code class="docutils literal notranslate"><span class="pre">approximation</span> <span class="pre">=</span> <span class="pre">static</span> <span class="pre">RPA-ladder</span> <span class="pre">bond</span> <span class="pre">dressing</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_status</span></code>,
+<code class="docutils literal notranslate"><span class="pre">pp_sector</span></code> and <code class="docutils literal notranslate"><span class="pre">selection</span></code> (the eigen-selection, per sector in the
+packed layout, e.g. <code class="docutils literal notranslate"><span class="pre">+1:dense-LR;0:LR;-1:null-operator</span></code>), plus the scalar
+provenance members of the gap archive. There is <strong>no</strong> split <span class="math notranslate nohighlight">\(\lambda
+= \lambda^{pp} + \lambda^{fl}\)</span> of the leading eigenvalue and no
+<code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span></code> record (both belong to the non-spin-orbital bond
+path).</p>
+<p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> (<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;sc_so_bond_static&quot;</span></code>) holds the members of
+the on-site table above and the provenance of <a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>
+(with <code class="docutils literal notranslate"><span class="pre">fp_capability</span> <span class="pre">=</span> <span class="pre">&quot;so_bond&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">delta_r</span></code>, <code class="docutils literal notranslate"><span class="pre">reverse</span></code>,
+<code class="docutils literal notranslate"><span class="pre">slot_convention</span></code> and <code class="docutils literal notranslate"><span class="pre">max_shells</span></code>), and in addition:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 70.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>key</p></th>
+<th class="head"><p>content</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap_status</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;certified&quot;</span></code> (the reported eigenvalue is finite), <code class="docutils literal notranslate"><span class="pre">&quot;uncertified&quot;</span></code>
+(a gap is written, but no eigenvalue was certified: the reported
+value is NaN) or <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code> (no gap; <code class="docutils literal notranslate"><span class="pre">gap</span></code> is zeros)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pp_sector</span></code></p></td>
+<td><p>int8: the pair-<span class="math notranslate nohighlight">\(S_z\)</span> sector (<code class="docutils literal notranslate"><span class="pre">1</span></code>, <code class="docutils literal notranslate"><span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">-1</span></code>) of the
+written gap in the packed layout; <code class="docutils literal notranslate"><span class="pre">2</span></code> for a dense result or when
+no gap is written</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pp_sectors</span></code></p></td>
+<td><p>int8, one entry per listed eigenvalue: its sector (<code class="docutils literal notranslate"><span class="pre">2</span></code> in the
+dense layout)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">block_layout</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code></p></td>
+<td><p>whether the reported eigenvalue was certified</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sz_weight_upup</span></code>, <code class="docutils literal notranslate"><span class="pre">sz_weight_dndn</span></code>, <code class="docutils literal notranslate"><span class="pre">sz_weight_singlet0</span></code>,
+<code class="docutils literal notranslate"><span class="pre">sz_weight_triplet0</span></code>, <code class="docutils literal notranslate"><span class="pre">sz_conservation_residual</span></code>, <code class="docutils literal notranslate"><span class="pre">sz_conserved</span></code></p></td>
+<td><p>the <span class="math notranslate nohighlight">\(S_z\)</span> report of <a class="reference internal" href="#sc-spin-polarized"><span class="std std-ref">Spin-polarized states (Zeeman field)</span></a>; the residual is
+that of the bond vertex and of the Green function (<code class="docutils literal notranslate"><span class="pre">0</span></code> for the
+vertex in the packed layout)</p></td>
+</tr>
+</tbody>
+</table>
+<p>The listing members <code class="docutils literal notranslate"><span class="pre">eigenvalues</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvectors</span></code>,
+<code class="docutils literal notranslate"><span class="pre">eigenvector_spin_weights</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue_match</span></code> and <code class="docutils literal notranslate"><span class="pre">pp_sectors</span></code> are
+written exactly when the eigenvalue listing is not empty: never in
+<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code> (the gap and its weights are then those of the
+one iterate), and not when the eigenvalue analysis returned no pair. The
+gap-level members (<code class="docutils literal notranslate"><span class="pre">gap</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_spin_weights</span></code> and the <span class="math notranslate nohighlight">\(S_z\)</span>
+weights) are always written; with <code class="docutils literal notranslate"><span class="pre">gap_status</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code> the gap is zeros
+and its spin and <span class="math notranslate nohighlight">\(S_z\)</span> weights are NaN. When no pair-<span class="math notranslate nohighlight">\(S_z\)</span>
+sector has a fermion-antisymmetric gap space on the k grid, one WARNING
+says so:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond pairing: no pair-S_z sector has a fermion-antisymmetric gap space on this k grid; no gap is reported (gap_status = "none")
+</pre></div>
+</div>
+<p><strong>Iteration at the default</strong> <code class="docutils literal notranslate"><span class="pre">max_iter</span></code>. <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>
+(and the iteration leg of <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>) runs a power iteration (with
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> unless set). On a slowly converging model the
+default <code class="docutils literal notranslate"><span class="pre">max_iter</span> <span class="pre">=</span> <span class="pre">1000</span></code> may not be enough: the run then reports no
+eigenvalue (NaN, <code class="docutils literal notranslate"><span class="pre">gap_status</span> <span class="pre">=</span> <span class="pre">&quot;uncertified&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span>
+<span class="pre">false</span></code>; <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> exits with status 3), and the WARNING names the
+<code class="docutils literal notranslate"><span class="pre">max_iter</span></code> it needs, e.g.:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Failed to converge after 1000 iterations: no eigenvalue is reported (lambda = NaN, eigen_converged = false). The iterate difference was still decreasing by a factor 0.9949 per step (now 9.56e-05; the stopping rule needs diff / (1 - rate) &lt; convergence_tol 1.0e-05): about 1473 more steps are needed, i.e. max_iter of about 2473 -- or use solver_mode="eigenvalue", which does not depend on the eigenvalue gap this way.
+</pre></div>
+</div>
+<p>Raise <code class="docutils literal notranslate"><span class="pre">max_iter</span></code> to the value named, or keep the default <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;eigenvalue&quot;</span></code>, which is not affected.</p>
+</section>
+<section id="id8">
+<h4>Scope<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> only; with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> is refused (see <em>Refused combinations</em>);</p></li>
+<li><p>the bond bubble is built from the bare Green function of the band; a
+bond-resolved Green function cannot be supplied yet (<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> is
+refused), and no chi0q or FLEX output is read (<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> is not
+used, and <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> is refused);</p></li>
+<li><p>CPU only (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is ignored with a WARNING, <code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span>
+<span class="pre">true</span></code> is refused);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code> only;</p></li>
+<li><p>the memory of the whole run is admitted once, before any bond array is
+built (<a class="reference internal" href="#sc-so-bond-memory"><span class="std std-ref">Memory</span></a>).</p></li>
+</ul>
+</section>
+<section id="switching-a-non-spin-orbital-bond-configuration">
+<h4>Switching a non-spin-orbital bond configuration<a class="headerlink" href="#switching-a-non-spin-orbital-bond-configuration" title="Link to this heading">¶</a></h4>
+<p>A non-spin-orbital <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> input needs, besides the
+spin-orbital input files (<em>Scope</em> above: Geometry <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2N</span></code>, the
+interleaved Transfer file, interaction files in physical orbital indices),
+these changes to its <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code> table. Each item gives the message the
+change avoids.</p>
+<ul>
+<li><p><strong>Remove</strong> <code class="docutils literal notranslate"><span class="pre">pairing_type</span></code> (there is one gap):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] pairing_type = &lt;value&gt; has no meaning in spin-orbital mode: the gap is one general 2N x 2N spin-orbital matrix, not a singlet or a triplet channel. Remove pairing_type.
+</pre></div>
+</div>
+</li>
+<li><p><strong>Remove</strong> <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_green is not available with bond_channels in spin-orbital mode: no run writes a spin-orbital bond-resolved Green function yet (it arrives with the spin-orbital bond FLEX). Remove bond_green; the Green function is built from the Transfer (and Extern) input.
+</pre></div>
+</div>
+</li>
+<li><p><strong>Remove</strong> <code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span></code> and every <code class="docutils literal notranslate"><span class="pre">bond_precondition_*</span></code> key
+(<code class="docutils literal notranslate"><span class="pre">bond_precondition_atol</span></code>, <code class="docutils literal notranslate"><span class="pre">bond_precondition_rtol</span></code>,
+<code class="docutils literal notranslate"><span class="pre">bond_precondition_dense_limit</span></code>). They are refused <strong>whatever their
+value, false included</strong>: delete them rather than switching them off:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_diagnostics is not available in spin-orbital mode (its character analysis is the singlet/triplet one of the non-spin-orbital bond path); the gap.npz S_z and spin decompositions describe the leading state. Remove bond_diagnostics.
+[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] &lt;key&gt; tunes the Hermiticity check of the non-spin-orbital bond kernel; the spin-orbital kernel is not Hermitian and has no such check. Remove &lt;key&gt;.
+</pre></div>
+</div>
+</li>
+<li><p><strong>Remove</strong> <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> (remove the key; it is not used
+here):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "flex" with bond_channels = true is not available yet: the spin-orbital bond path builds its bond bubble from the band's Green function and reads no FLEX output. Remove chi0q_mode (or leave it unset); it is not used on this path.
+</pre></div>
+</div>
+<p>The value check of every spin-orbital run still applies first: a value
+other than <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;FLEX&quot;</span></code> included,
+the value is case-sensitive) is refused with that check’s message. Any
+other <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> or <code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code> is accepted but not used, with
+one WARNING (<code class="docutils literal notranslate"><span class="pre">unset</span></code> stands for a key that is not given):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] bond_channels=true in spin-orbital mode builds its own bond-resolved bubble directly from the Green function, so chi0q_mode = '&lt;value&gt;' and chi0q_tensor = '&lt;value&gt;' are not used: no chi0q file is read or computed on this path.
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code> (refused on the on-site spin-orbital path)
+get one WARNING here:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] &lt;keys&gt;: not used for bond_channels=true in spin-orbital mode (the spin-orbital bond path reads no FLEX output).
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: only <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>; another value is refused:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] eigenvalue_method = &lt;value&gt; is not supported; only "arnoldi" is. Set eigenvalue_method = "arnoldi" (or remove the key).
+</pre></div>
+</div>
+<p>With the eigenvalue analysis (<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code>, the
+default, or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>) <code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code> is ignored with a WARNING; the
+power iteration does not read it. Use <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code> to bias the
+Arnoldi selection:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] sigma_shift is ignored for eigenvalue_method='arnoldi' (it targets the shift-invert methods); use spectral_shift to bias the arnoldi selection.
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is ignored with a WARNING (the path runs on the CPU), and
+<code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code> is refused:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] gpu=true is ignored for bond_channels=true in spin-orbital mode: the spin-orbital bond-resolved kernel is CPU-only (GPU support is a deferred follow-up).
+[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] gpu_required = true is not available with bond_channels = true: the spin-orbital bond-resolved kernel runs on the CPU only. Remove gpu_required (gpu = true alone is ignored with a warning).
+</pre></div>
+</div>
+</li>
+<li><p><strong>Complex couplings</strong> are accepted on <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> rows only, as in every
+spin-orbital run; an imaginary part on a <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> row is refused, naming the row
+(the non-spin-orbital bond path refuses every complex off-site
+coefficient).</p></li>
+<li><p><strong>Declared-zero outer shells.</strong> Off-site shells declared only with zero
+coupling keep their channels and count in the memory estimate. When the
+run is over the cap, the refusal names the <code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> value that
+drops them (<code class="docutils literal notranslate"><span class="pre">&lt;n&gt;</span> <span class="pre">outer</span> <span class="pre">shell(s)</span> <span class="pre">declared</span> <span class="pre">only</span> <span class="pre">with</span> <span class="pre">zero</span> <span class="pre">coupling;</span>
+<span class="pre">[eliashberg]</span> <span class="pre">bond_max_shells</span> <span class="pre">=</span> <span class="pre">&lt;m&gt;</span> <span class="pre">removes</span> <span class="pre">them</span></code>); set it, or remove the
+rows.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>: unset means <code class="docutils literal notranslate"><span class="pre">0.8</span></code> times the available memory
+(the non-spin-orbital default is a fixed 8 GB); a positive value is in
+GiB; <code class="docutils literal notranslate"><span class="pre">0</span></code> disables the check, with a WARNING (the non-spin-orbital path
+refuses <code class="docutils literal notranslate"><span class="pre">0</span></code>); a negative or non-finite value is refused.</p></li>
+<li><p><strong>Outputs.</strong> <code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> differs from the non-spin-orbital bond archive:
+it carries <code class="docutils literal notranslate"><span class="pre">pp_sector</span></code>, <code class="docutils literal notranslate"><span class="pre">pp_sectors</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_status</span></code>,
+<code class="docutils literal notranslate"><span class="pre">block_layout</span></code> and the <span class="math notranslate nohighlight">\(S_z\)</span> weights; the listing members are not
+written in <code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>; there is no singlet/triplet
+<code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span></code> record and no <span class="math notranslate nohighlight">\(\lambda^{pp} + \lambda^{fl}\)</span>
+attribution in <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> (<em>Outputs</em> above).</p></li>
+</ul>
+</section>
+<section id="memory">
+<span id="sc-so-bond-memory"></span><h4>Memory<a class="headerlink" href="#memory" title="Link to this heading">¶</a></h4>
+<p>The run is admitted once, from an estimate made before the Green function
+or any bond array is built; an admitted run is not refused later. The
+estimate is <span class="math notranslate nohighlight">\(1.25\times\)</span> the largest phase total (the arrays resident
+for the whole run plus those of one phase). With <span class="math notranslate nohighlight">\(P = (2N)^2\)</span>,
+<span class="math notranslate nohighlight">\(N_k\)</span> k points and <code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">P</span></code>, the rows, the largest first for
+realistic sizes, are:</p>
+<ul class="simple">
+<li><p>the bubble’s per-shift workspace, <code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">N_k</span> <span class="pre">(3</span> <span class="pre">Nmat</span> <span class="pre">P^2</span> <span class="pre">+</span> <span class="pre">3</span> <span class="pre">Nmat</span> <span class="pre">P</span> <span class="pre">+</span> <span class="pre">8</span> <span class="pre">P)</span></code>
+bytes, in the pairing phase: about 12.8 GiB for <span class="math notranslate nohighlight">\(N = 2\)</span>, a
+<span class="math notranslate nohighlight">\(32 \times 32\)</span> grid and <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>. It grows linearly with
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> and with <span class="math notranslate nohighlight">\(N_k\)</span>, and does not depend on <span class="math notranslate nohighlight">\(B\)</span> or on
+the layout;</p></li>
+<li><p>the Green function, <code class="docutils literal notranslate"><span class="pre">G</span> <span class="pre">=</span> <span class="pre">16</span> <span class="pre">Nmat</span> <span class="pre">N_k</span> <span class="pre">P</span></code> bytes: <code class="docutils literal notranslate"><span class="pre">4</span> <span class="pre">G</span></code> while it is
+built, then <code class="docutils literal notranslate"><span class="pre">3</span> <span class="pre">G</span></code> resident to the end of the solve (0.25 GiB per <code class="docutils literal notranslate"><span class="pre">G</span></code>
+in the same example);</p></li>
+<li><p>the <span class="math notranslate nohighlight">\((N_k, ND, ND)\)</span> arrays (<span class="math notranslate nohighlight">\(\Gamma_B\)</span> resident; in the
+pairing phase <span class="math notranslate nohighlight">\(\bar\chi_B\)</span>, <span class="math notranslate nohighlight">\(\chi_B\)</span>, the bare and the
+fluctuation part of <span class="math notranslate nohighlight">\(V\)</span>, a dense bubble temporary and a dressing
+workspace of seven such arrays): <code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">N_k</span> <span class="pre">ND^2</span></code> bytes each in the dense
+layout, <span class="math notranslate nohighlight">\(6/16\)</span> of that packed, about 0.32 GiB each for
+<span class="math notranslate nohighlight">\(32 \times 32\)</span> k points up to <code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">144</span></code> (<span class="math notranslate nohighlight">\(B = 9\)</span>,
+<span class="math notranslate nohighlight">\(N = 2\)</span>);</p></li>
+<li><p>the eigensolver: the Arnoldi work arrays, the room for its dense
+fallback with the LAPACK workspace included (operators up to dimension
+2000), and above dimension 2000 a second Arnoldi working set;
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> or unset adds the few vectors of the
+spectral-radius estimate that sizes the shift. These rows grow with the
+reduced gap dimension <code class="docutils literal notranslate"><span class="pre">dim</span></code> (about <code class="docutils literal notranslate"><span class="pre">N_k</span> <span class="pre">(2N)^2</span> <span class="pre">/</span> <span class="pre">2</span></code>): linearly, times
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>, for Arnoldi, as <code class="docutils literal notranslate"><span class="pre">dim^2</span></code> for the dense fallback
+(<code class="docutils literal notranslate"><span class="pre">dim</span> <span class="pre">&lt;=</span> <span class="pre">2000</span></code>), and with <code class="docutils literal notranslate"><span class="pre">max_iter</span></code> for the power iteration; they
+depend on the layout and on <code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>. With few k points and a
+small <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> the dense fallback can be the largest row;</p></li>
+<li><p>the kernel workspace: the hoisted vertex blocks (proportional to
+<span class="math notranslate nohighlight">\(N_k\,ND^2\)</span>) and the gap and matvec work arrays, independent of
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>.</p></li>
+</ul>
+<p>For the example above with <span class="math notranslate nohighlight">\(B = 9\)</span> the estimated peak is about 22 GiB
+dense and 19 GiB packed; <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">256</span></code> brings it to about 9.4 GiB dense.
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> and the k grid therefore dominate. The remedies, in order: reduce
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, reduce the k grid, or raise <code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>.
+<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> lowers <span class="math notranslate nohighlight">\(B\)</span> only by the shells whose coupling is
+zero (a cutoff that drops a nonzero shell is refused), so it helps only for
+declared-zero shells.</p>
+<p><strong>The cap.</strong> <code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code> unset: <code class="docutils literal notranslate"><span class="pre">0.8</span></code> times the available host
+memory, logged as <code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">memory</span> <span class="pre">cap:</span> <span class="pre">&lt;c&gt;</span> <span class="pre">GiB</span> <span class="pre">=</span> <span class="pre">0.8</span> <span class="pre">x</span> <span class="pre">available</span>
+<span class="pre">&lt;a&gt;</span> <span class="pre">GiB</span> <span class="pre">(source:</span> <span class="pre">&lt;source&gt;)</span></code>. The available memory is the minimum over the
+sources that give a value:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">psutil</span></code> (<code class="docutils literal notranslate"><span class="pre">virtual_memory().available</span></code>), else the <code class="docutils literal notranslate"><span class="pre">MemAvailable</span></code>
+line of <code class="docutils literal notranslate"><span class="pre">/proc/meminfo</span></code>;</p></li>
+<li><p>a finite soft <code class="docutils literal notranslate"><span class="pre">RLIMIT_AS</span></code> minus the process’s virtual size, and a
+finite soft <code class="docutils literal notranslate"><span class="pre">RLIMIT_DATA</span></code> minus its data size;</p></li>
+<li><p>the job’s own cgroup (v2, else v1): at every level from the process’s
+cgroup up to the mount point, the remaining amount is the limit minus the
+working set, the working set being the usage minus the inactive file
+cache (v2 <code class="docutils literal notranslate"><span class="pre">memory.stat</span></code> <code class="docutils literal notranslate"><span class="pre">inactive_file</span></code>, v1 <code class="docutils literal notranslate"><span class="pre">total_inactive_file</span></code>),
+as the kernel counts it, so reclaimable cache of earlier output files is
+not counted as used. The minimum over the levels and over every mount
+that shows the job’s cgroup is taken.</p></li>
+</ul>
+<p>A batch-system limit enforced outside these (for example a PBS memory
+limit that is not a cgroup of the job) is invisible to the estimate: set
+<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code> to the job’s limit. When no source gives a value, a
+WARNING says <code class="docutils literal notranslate"><span class="pre">no</span> <span class="pre">memory</span> <span class="pre">limit</span> <span class="pre">could</span> <span class="pre">be</span> <span class="pre">determined;</span> <span class="pre">the</span> <span class="pre">admission</span> <span class="pre">check</span> <span class="pre">is</span>
+<span class="pre">disabled;</span> <span class="pre">set</span> <span class="pre">[eliashberg]</span> <span class="pre">bond_memory_cap_gb</span> <span class="pre">to</span> <span class="pre">enable</span> <span class="pre">it</span></code> and the run
+continues. <code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span> <span class="pre">=</span> <span class="pre">0</span></code> disables the check with the WARNING
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_memory_cap_gb</span> <span class="pre">=</span> <span class="pre">0:</span> <span class="pre">the</span> <span class="pre">memory</span> <span class="pre">admission</span> <span class="pre">check</span> <span class="pre">of</span> <span class="pre">the</span>
+<span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">path</span> <span class="pre">is</span> <span class="pre">disabled</span></code>.</p>
+<p><strong>The refusal.</strong> An estimate above the cap is refused before the Green
+function and <span class="math notranslate nohighlight">\(\Gamma_B\)</span> are built:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond Eliashberg needs an estimated peak of &lt;peak&gt; GiB in phase &lt;phase&gt; (B = &lt;B&gt; channels, ND = B·(2·norb_phys)² = &lt;ND&gt;, nvol = &lt;nvol&gt;, Nmat = &lt;nmat&gt;; largest row in that phase: &lt;row&gt; = &lt;bytes&gt; GiB) but the cap is &lt;cap&gt; GiB ([eliashberg] bond_memory_cap_gb). Memory grows as Nmat · nvol · norb_phys⁴ (the bubble's per-shift workspace) and Nmat · nvol · norb_phys² (the Green function); independent of Nmat, as nvol · B² · norb_phys⁴ (the vertex arrays and the kernel workspace); the eigensolver rows grow with the reduced gap dimension dim (about nvol · (2·norb_phys)² / 2): linearly times num_eigenvalues for Arnoldi, as dim² for the dense fallback (dim &lt;= 2000), with max_iter for the power iteration, and they depend on the layout and spectral_shift. Reduce Nmat or the k grid, or raise [eliashberg] bond_memory_cap_gb (0 disables the check); pruning bond shells helps only for shells the per-shell table below shows with negligible coupling.
+rows (phase  name  bytes):
+  ...
+admitted cases (machine | path | admitted):
+  ...
+shells (shell  |dr|  max|v|):
+  ...
+</pre></div>
+</div>
+<p>The row table lists every row of the estimate; the first paragraph names
+the largest of them in the peak phase. The table of admitted cases gives,
+for this static path on the CPU, the largest power-of-two <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>
+admitted on a 64 GiB and a 256 GiB host at the default cap (<code class="docutils literal notranslate"><span class="pre">0.8</span></code> times
+the host memory) and the default solver settings, for a few model sizes
+(one table per layout, the layout of this run marked <code class="docutils literal notranslate"><span class="pre">&lt;-</span> <span class="pre">this</span> <span class="pre">run</span></code>). The per-shell table gives, for every off-site
+shell, its bond length and the largest coupling of its rows; when the outer
+shells carry only zero couplings it ends with the clause naming the
+<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> value that removes them.</p>
+</section>
+<section id="id9">
+<h4>Validation<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>SU(2) limit.</strong> With spin-independent hopping and a spin-rotation
+invariant interaction (<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> and
+<code class="docutils literal notranslate"><span class="pre">J_Exchange</span> <span class="pre">=</span> <span class="pre">J_Hund</span> <span class="pre">-</span> <span class="pre">2</span> <span class="pre">J_Ising</span></code> on every bond), the spectrum is that
+of the non-spin-orbital singlet bond kernel once and of the triplet bond
+kernel three times, in both layouts, to a relative accuracy of about
+<span class="math notranslate nohighlight">\(10^{-8}\)</span>.</p></li>
+<li><p><strong>One channel.</strong> At <span class="math notranslate nohighlight">\(B = 1\)</span> the whole eigenvalue listing equals that
+of the on-site path (<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>), for a spin-orbit coupled
+model (dense) and a Zeeman model (packed).</p></li>
+<li><p><strong>S_z-conserving, not rotation invariant.</strong> For <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code> or
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code> alone on the bonds, each equal-spin sector (pair
+<span class="math notranslate nohighlight">\(S_z = \pm 1\)</span>) reproduces the non-spin-orbital triplet bond
+spectrum, where the non-spin-orbital vertex is exact.</p></li>
+<li><p><strong>Zeeman field.</strong> On an SU(2) model a weak Extern field moves the
+eigenvalues linearly: a triplet splits by its pair <span class="math notranslate nohighlight">\(S_z\)</span> (the
+<span class="math notranslate nohighlight">\(S_z = 0\)</span> component with a slope near zero, the two equal-spin
+components with opposite slopes), and a singlet does not move at first
+order.</p></li>
+<li><p><strong>Exact diagonalization.</strong> The pair susceptibility built from the bond
+vertex agrees with exact diagonalization of a two-orbital chain with
+complex spin-flip hopping in the first- and second-order coefficients of
+the interaction (<code class="docutils literal notranslate"><span class="pre">tests/test_so_bond_pairing_ed.py</span></code>).</p></li>
+<li><p><strong>Kernel.</strong> The pairing kernel of a run equals a reference kernel built
+from an independently constructed Green function, in both layouts.</p></li>
+</ul>
+</section>
+</section>
 <section id="frequency-resolved-gap-frequency-dynamic">
 <span id="sc-spin-orbital-dynamic"></span><h3>Frequency-resolved gap (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>)<a class="headerlink" href="#frequency-resolved-gap-frequency-dynamic" title="Link to this heading">¶</a></h3>
 <p>With <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> the spin-orbital gap carries the
@@ -3126,8 +3648,8 @@ fermionic Matsubara frequency as well,
 <span class="math notranslate nohighlight">\(\omega_n = (2n + 1 - N_\mathrm{mat})\pi T\)</span>,
 <span class="math notranslate nohighlight">\(n = 0, \ldots, N_\mathrm{mat} - 1\)</span>, and the pairing vertex is used at
 every bosonic frequency <span class="math notranslate nohighlight">\(\nu_m = (2m - N_\mathrm{mat})\pi T\)</span>:</p>
-<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-12">
-<span class="eqno">(5.13)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-12" title="Link to this equation">¶</a></span>\[V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-13">
+<span class="eqno">(5.14)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-13" title="Link to this equation">¶</a></span>\[V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
 \Gamma\,\chi(\mathbf{q}, i\nu_m)\,\Gamma .\]</div>
 <p>The bare part <span class="math notranslate nohighlight">\(\tfrac{1}{2}\Gamma\)</span> does not depend on frequency. The
 fluctuation part is read at <span class="math notranslate nohighlight">\(+\mathbf{q}\)</span> and at the same bosonic index
@@ -3149,8 +3671,8 @@ spin-orbital mode there is no singlet/triplet label, and the frequency parity
 kernel in general (without inversion symmetry or with spin-orbit coupling).
 The spectrum therefore contains even- and odd-frequency gaps, and the
 even/odd content of every eigenvector is reported, not selected.</p>
-<section id="id7">
-<h4>Scope<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h4>
+<section id="id10">
+<h4>Scope<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h4>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code> (the default) only;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> set explicitly to <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code> (never
@@ -3173,7 +3695,9 @@ bosonic frequency, not only at <span class="math notranslate nohighlight">\(\nu 
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>: the spinful bubble of the bare Green function is
 computed at every bosonic frequency, and
 <span class="math notranslate nohighlight">\(\chi = [1 + \chi_0\Gamma]^{-1}\chi_0\)</span>;</p></li>
-<li><p>on-site and in-cell interactions, no bond channels (as in the static case);</p></li>
+<li><p>on-site and in-cell interactions, no bond channels (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+is refused; the bond-resolved path of <a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a> is static
+only);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code>, in both modes (the archive checks compare the
 filling target);</p></li>
 <li><p>an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>;</p></li>
@@ -3184,10 +3708,12 @@ as in the non-spin-orbital dynamic solver. <code class="docutils literal notrans
 run on the same grid) are supported.</p></li>
 </ul>
 </section>
-<section id="id8">
-<h4>Refused combinations<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h4>
-<p>In addition to the static refusals above (<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>, off-site rows,
-<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>, …), the
+<section id="id11">
+<h4>Refused combinations<a class="headerlink" href="#id11" title="Link to this heading">¶</a></h4>
+<p>In addition to the static refusals above (<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>,
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>, …), and to <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code> and every off-site row, which the dynamic solver refuses in any case
+(see <em>Refused combinations</em> of the static solver), the
 following are refused before any file is read. Each error names the key:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> (the IR basis is not available in spin-orbital
@@ -3222,8 +3748,8 @@ coupling), a power iteration started there cannot reach an odd-frequency
 leading state. Keep the random default unless you want to follow a specific
 even-frequency state. The Arnoldi solver does not use <code class="docutils literal notranslate"><span class="pre">init_gap</span></code>.</p>
 </section>
-<section id="id9">
-<h4>Outputs<a class="headerlink" href="#id9" title="Link to this heading">¶</a></h4>
+<section id="id12">
+<h4>Outputs<a class="headerlink" href="#id12" title="Link to this heading">¶</a></h4>
 <p>The file names are those of the dynamic solver: <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>,
 <code class="docutils literal notranslate"><span class="pre">gap.dat</span></code> and <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>. The conventions are those of the static
 spin-orbital solver (spin-block order, <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">spin_block</span></code>, no
@@ -3398,8 +3924,8 @@ solve agrees within its converged residual; for a degenerate leading
 eigenvalue the gaps are compared as subspaces
 (<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>).</p>
 </section>
-<section id="id10">
-<h4>Validation<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h4>
+<section id="id13">
+<h4>Validation<a class="headerlink" href="#id13" title="Link to this heading">¶</a></h4>
 <ul class="simple">
 <li><p><strong>Against exact diagonalization.</strong> On the spin-mixing chain of the static
 validation, the production operator equals, to round-off, the kernel

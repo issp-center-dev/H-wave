@@ -622,7 +622,7 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 ギャップ関数<span class="math notranslate nohighlight">\(\Sigma_{\alpha\beta}(\mathbf{k})\)</span>
 の運動量空間での分布を示しています。</p>
 <p><strong>一重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.96\)</span>):</p>
-<figure class="align-center" id="id51">
+<figure class="align-center" id="id60">
 <a class="reference internal image-reference" href="../../_images/gap_singlet.png"><img alt="../../_images/gap_singlet.png" src="../../_images/gap_singlet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -630,11 +630,11 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 左: 軌道内成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{00}(\mathbf{k})\)</span>。
 右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 軌道間成分が軌道内成分の約5倍大きく、
-軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id51" title="Link to this image">¶</a></p>
+軌道間ペアリングが支配的であることを示す。</span><a class="headerlink" href="#id60" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p><strong>三重項チャネル</strong> (<span class="math notranslate nohighlight">\(\lambda \approx 0.97\)</span>):</p>
-<figure class="align-center" id="id52">
+<figure class="align-center" id="id61">
 <a class="reference internal image-reference" href="../../_images/gap_triplet.png"><img alt="../../_images/gap_triplet.png" src="../../_images/gap_triplet.png" style="width: 90%;" />
 </a>
 <figcaption>
@@ -643,14 +643,14 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 右: 軌道間成分<span class="math notranslate nohighlight">\(\mathrm{Re}\,\Sigma_{01}(\mathbf{k})\)</span>。
 ギャップは<span class="math notranslate nohighlight">\(\mathbf{k} \to -\mathbf{k}\)</span>（および軌道の入れ替え）に対して
 <strong>奇</strong> であり、スピン三重項ペアリングに要請される対称性を満たす。
-軌道間成分が再び大きい。</span><a class="headerlink" href="#id52" title="Link to this image">¶</a></p>
+軌道間成分が再び大きい。</span><a class="headerlink" href="#id61" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 </section>
 <section id="id15">
 <h3>固有値スペクトル<a class="headerlink" href="#id15" title="Link to this heading">¶</a></h3>
 <p>一重項・三重項チャネルのEliashberg方程式の固有値スペクトルを以下に示します。</p>
-<figure class="align-center" id="id53">
+<figure class="align-center" id="id62">
 <a class="reference internal image-reference" href="../../_images/eigenvalue_spectrum.png"><img alt="../../_images/eigenvalue_spectrum.png" src="../../_images/eigenvalue_spectrum.png" style="width: 70%;" />
 </a>
 <figcaption>
@@ -660,7 +660,7 @@ hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
 ＝一重項は偶・三重項は奇を持つ）、白抜きマーカーは <strong>逆パリティの spurious</strong>
 モードである。物理的な固有値はすべて1未満である。1を超える
 2つの白抜きマーカーは<em>三重項</em>カーネルの偶パリティ解で、スピン三重項
-ペアリングにはパウリ原理により禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id53" title="Link to this image">¶</a></p>
+ペアリングにはパウリ原理により禁止される（下記のパリティに関する注記を参照）。</span><a class="headerlink" href="#id62" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>Arnoldi固有値解析は複数の固有値を検出します。
@@ -1929,7 +1929,9 @@ issue #239）と、真に非等価な2軌道の鎖に対する1次の参照構�
 となるボンド（各行はその相手の行と合わせて扱います。名前を挙げるのは最初の4つまで）を
 報告する WARNING をログに出力します。計算は拒否されず、数値も変わりません。
 スピン軌道の経路（<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>）はオンサイト相互作用について
-このような結合を厳密に扱います。そのボンド分解版は issue #270 です。これらは
+このような結合を厳密に扱います。<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>かつ
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>ではオフサイトの行についても厳密です
+（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）。これらは
 <code class="docutils literal notranslate"><span class="pre">tests/test_sc_bond_pairing_oracle.py</span></code>で独立なスピン軌道の構成と
 比較して固定されています。</p>
 </div>
@@ -2081,7 +2083,10 @@ SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FL
 <td><p>直接（Hartree 型）部分のみで受け入れ。INFO の行が種類を示す
 （<a class="reference internal" href="../../algorithm/rpa.html#rpa-so-offsite"><span class="std std-ref">スピン軌道 RPA のオフサイトの行</span></a>を参照）</p></td>
 <td><p>拒否</p></td>
-<td><p>拒否。メッセージはオフサイトの行を取り除くよう伝える</p></td>
+<td><p>静的で<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>: 受け入れ。直接項と交換交差を
+それぞれのボンド上で厳密に（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）。ボンド
+チャネルなしの静的: 拒否。メッセージは<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を
+示す。動的: 拒否。メッセージはオフサイトの行を取り除くよう伝える</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・
 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の係数の虚部</p></td>
@@ -2096,9 +2101,10 @@ SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FL
 </tr>
 </tbody>
 </table>
-<p>スピン軌道の FLEX と<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は、このバージョンではボンド分解チャネル
-（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>、<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>）を拒否します。上のオフサイトの
-拒否メッセージはそれらを案内しません。</p>
+<p>スピン軌道の FLEX は、このバージョンではボンド分解チャネル
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>）を拒否します。スピン軌道の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を受け付け
+（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）、<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>では拒否します。</p>
 </section>
 <section id="id35">
 <h2><span class="section-number">5.2.14. </span>スピン構造の取り扱い<a class="headerlink" href="#id35" title="Link to this heading">¶</a></h2>
@@ -2132,8 +2138,9 @@ reduced の FLEX 感受率は2つのスピンブロックをビット単位で�
 ソルバー（</strong><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code><strong>）でサポートされます。</strong>
 ギャップ関数はスピン行列として扱い、スピンフルな（電荷・縦スピン・横スピンの）
 感受率を用います。適用範囲は<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>と
-<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照してください。動的なボンド分解の経路
-（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）は設定を即座に拒否し、
+<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照してください。静的なボンド分解の経路
+（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）はこの表現をサポートします
+（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）。動的なボンド分解の経路は設定を即座に拒否し、
 <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は FLEX rung の実行前に preflight で
 拒否します（FLEX のみの掃引は<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます）。</p></li>
 </ul>
@@ -2165,6 +2172,13 @@ SO RPA、SO FLEX、SO hwave_sc の結果が変わります。そのような行�
 <li><p>このバージョンより前に書かれたスピン軌道のアーカイブ（fingerprint version 1
 またはなし）は作り直す必要があります（どのコマンドがどのファイルを書くかは
 <a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>を参照）。</p></li>
+<li><p>静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>で
+オフサイトの行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）を受け付けます
+（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）。以前の版はスピン軌道モードで
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>とすべてのオフサイトの行を拒否していました。
+ボンドチャネルなしではオフサイトの行は引き続き拒否され、メッセージは
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を示すようになりました。動的ソルバーは以前と同じく
+両方を拒否します。</p></li>
 </ol>
 <p>以前の結果を再現するには、該当する行や虚部を取り除くか、非スピン軌道の
 ソルバーを使ってください。</p>
@@ -2180,8 +2194,11 @@ SO RPA、SO FLEX、SO hwave_sc の結果が変わります。そのような行�
 依存するギャップ。<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）;</p></li>
 <li><p>オンサイトおよびセル内（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の2体相互作用: セル内の異なる
 軌道間の行は、<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>によらず、交換交差も含めて厳密に扱われます。
-オフサイトの行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）は拒否されます（「拒否される組み合わせ」を参照）;</p></li>
-<li><p>ボンド分解チャネルなし（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>、既定値）;</p></li>
+オフサイトの行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）には下記のボンド分解チャネルが必要で、
+それ以外では拒否されます（「拒否される組み合わせ」を参照）;</p></li>
+<li><p>この節で説明するオンサイトの経路では<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>（既定値）。
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>で
+<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>のボンド分解の経路になり、オフサイトの行も扱います;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>（スピンフルな<span class="math notranslate nohighlight">\(\chi_0\)</span>を内部計算）、
 <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>（スピン軌道 RPA が出力した一般の4添字 chi0q。<strong>静的のみ</strong>）、または
 <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>（スピン軌道 FLEX の出力。FLEX は<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>かつ
@@ -2480,6 +2497,12 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 <code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code>（リテラル<code class="docutils literal notranslate"><span class="pre">&quot;none:onsite&quot;</span></code>）;</p></li>
 <li><p>バンドと相互作用の入力の写し<code class="docutils literal notranslate"><span class="pre">prov_*</span></code>と、実現した状態<code class="docutils literal notranslate"><span class="pre">state_*</span></code>。</p></li>
 </ul>
+<p>ボンド分解した計算（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）のギャップのアーカイブ
+（<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;sc_so_bond_static&quot;</span></code>）は<code class="docutils literal notranslate"><span class="pre">fp_capability</span> <span class="pre">=</span> <span class="pre">&quot;so_bond&quot;</span></code>と、
+<code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code>として分解したボンドチャネルのダイジェストを記録し、
+メンバー<code class="docutils literal notranslate"><span class="pre">delta_r</span></code>、<code class="docutils literal notranslate"><span class="pre">reverse</span></code>、<code class="docutils literal notranslate"><span class="pre">slot_convention</span></code>、<code class="docutils literal notranslate"><span class="pre">max_shells</span></code>
+（<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>のカットオフがなければ<code class="docutils literal notranslate"><span class="pre">-1</span></code>）と<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>
+（<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>）を加えます。</p>
 <p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>では、スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
 読み込む各アーカイブを、大きな配列を読む前に自身の入力と照合します。<code class="docutils literal notranslate"><span class="pre">prov_*</span></code>の
 写しはメッセージで差分を示すためだけに使われ、そこからダイジェストを再計算する
@@ -2576,13 +2599,19 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 <td><p><code class="docutils literal notranslate"><span class="pre">sigma_static</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">sc_so_static</span></code>、<code class="docutils literal notranslate"><span class="pre">sc_so_dynamic</span></code>（<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code>は認識のみ）</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sc_so_static</span></code>、<code class="docutils literal notranslate"><span class="pre">sc_so_dynamic</span></code>、<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">gap</span></code></p></td>
 </tr>
 </tbody>
 </table>
 <p>段階<code class="docutils literal notranslate"><span class="pre">sc_so_bond_dynamic</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code>は認識されますが、まだ
 読み込めません。専用のメッセージで拒否されます（下の表を参照）。</p>
+<p><em>レイアウトのメンバー。</em>ボンド分解した段階（<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code>）の
+アーカイブは、<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>の文字列<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>を
+記録していなければなりません。オンサイトの段階のアーカイブは<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>を
+持ちません。メンバー名の接頭辞<code class="docutils literal notranslate"><span class="pre">sz_sector_</span></code>は予約されています。ギャップの
+アーカイブ（どちらのレイアウトでもギャップ全体として保存）またはオンサイトの段階の
+アーカイブが、この接頭辞で始まる名前のメンバーを持つと、不正なものとして拒否されます。</p>
 </li>
 <li><p><strong>この計算との整合。</strong>次の順に検査し、最初の差分を報告します。</p>
 <ol class="arabic simple">
@@ -2597,11 +2626,15 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 <code class="docutils literal notranslate"><span class="pre">file</span> <span class="pre">3</span> <span class="pre">records,</span> <span class="pre">run</span> <span class="pre">4</span> <span class="pre">records;</span> <span class="pre">first</span> <span class="pre">differing</span> <span class="pre">record</span> <span class="pre">CoulombIntra</span> <span class="pre">modes</span>
 <span class="pre">(...)</span> <span class="pre">cells</span> <span class="pre">(...):</span> <span class="pre">file</span> <span class="pre">...,</span> <span class="pre">run</span> <span class="pre">...</span></code>。</p></li>
 <li><p><em>機能。</em>アーカイブの<code class="docutils literal notranslate"><span class="pre">fp_capability</span></code>が、この計算が使う機能と等しくなければ
-なりません。このバージョンのスピン軌道の経路はすべてボンド分解チャネルなしで
-動作し、<code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>のアーカイブを使います。ボンド分解チャネルを含む
-アーカイブ（<code class="docutils literal notranslate"><span class="pre">&quot;so_bond&quot;</span></code>）は拒否されます。宣言されたボンドトポロジーと
-解決されたボンドトポロジーはボンド分解を使う側だけが比較しますが、
-このバージョンにはそのような経路はありません。</p></li>
+なりません。オンサイトのスピン軌道の経路（上の<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>の入力）は
+<code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>のアーカイブを使い、ボンド分解チャネルを含むアーカイブ
+（<code class="docutils literal notranslate"><span class="pre">&quot;so_bond&quot;</span></code>）は拒否されます。ボンド分解の経路（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）は
+<code class="docutils literal notranslate"><span class="pre">&quot;so_bond&quot;</span></code>のギャップのアーカイブを書き出しますが、アーカイブは読みません。
+Green 関数はバンドから作り、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>と<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>は
+拒否するので、スピン軌道 FLEX の<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>）はボンドの
+経路の入力になりません。宣言されたボンドトポロジーと解決されたボンドトポロジーは
+ボンド分解を使う側だけが比較しますが、このバージョンにはアーカイブをその立場で
+読む計算はありません。</p></li>
 <li><p><em>状態。</em><span class="math notranslate nohighlight">\(\beta\)</span>（相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、μ の探索の有無
 （<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
 目標値<code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">*</span> <span class="pre">2N</span></code>（1セルあたりの電子数、相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、その目標値に
@@ -2637,11 +2670,12 @@ WARNING を出します。出力側と同じ<code class="docutils literal notran
 アーカイブは計算に Extern 場がなければ WARNING を出して受け入れていましたが、
 いまは常に拒否されます。</p>
 <p><strong>ギャップのアーカイブに記録される内容。</strong><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span>
-<span class="pre">&quot;sc_so_static&quot;</span></code>）と<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_dynamic&quot;</span></code>）は同じ version 2 の
+<span class="pre">&quot;sc_so_static&quot;</span></code>、ボンド分解した計算では<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_bond_static&quot;</span></code>）と<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;sc_so_dynamic&quot;</span></code>）は同じ version 2 の
 メンバーをもち、<em>この</em>計算のカーネルが実際に使ったものを記録します。出力側の
 値を写すことはありません。</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>: 自身のバンドと自身の μ から作った Green 関数。
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>、およびボンド分解したすべての計算: 自身のバンドと
+自身の μ から作った Green 関数。
 <code class="docutils literal notranslate"><span class="pre">state_density</span></code>はその μ でのバンドの1セルあたりの Fermi 分布の和、
 <code class="docutils literal notranslate"><span class="pre">state_mu_tol</span> <span class="pre">=</span> <span class="pre">|state_density</span> <span class="pre">-</span> <span class="pre">state_target|</span></code>です;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>は消費した借用 Green 関数のダイジェスト、<code class="docutils literal notranslate"><span class="pre">state_mu</span></code>は
@@ -2716,8 +2750,11 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&lt;file&gt;</span> <span class="pre">was</span> <span class="pre">produced</span> <span class="pre">by</span> <span class="pre">&lt;producer&gt;</span> <span class="pre">(so_bond),</span> <span class="pre">but</span> <span class="pre">this</span> <span class="pre">run</span> <span class="pre">needs</span> <span class="pre">a</span>
 <span class="pre">so_onsite</span> <span class="pre">artifact</span></code></p></td>
 <td><p>アーカイブはボンド分解チャネルを含みますが、この計算は使いません。
-このバージョンのスピン軌道のアーカイブはすべて<code class="docutils literal notranslate"><span class="pre">so_onsite</span></code>なので、
-このバージョンで書かれたアーカイブではこのメッセージは出ません。</p></td>
+このバージョンが書き出すアーカイブのうち<code class="docutils literal notranslate"><span class="pre">so_bond</span></code>はボンド分解した
+計算のギャップのアーカイブ（<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code>）だけで、ギャップの
+アーカイブを chi0q・chiq・green・sigma の入力として与えると、この段階より前に
+段階の検査で拒否されるので、このバージョンで書かれたアーカイブではこの
+メッセージは出ません。</p></td>
 <td><p>出力側の<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>のアーカイブ</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">state</span> <span class="pre">differs:</span> <span class="pre">calc_mu:</span> <span class="pre">file</span> <span class="pre">False,</span> <span class="pre">run</span> <span class="pre">True</span></code></p></td>
@@ -2783,23 +2820,36 @@ spin-orbital bond FLEX&quot; も）</p></td>
 <section id="id41">
 <h3>拒否される組み合わせ<a class="headerlink" href="#id41" title="Link to this heading">¶</a></h3>
 <p>次のいずれも、計算の前に、変更すべきキーやファイルを示すエラーになります。</p>
-<ul class="simple">
+<ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">frequency</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>に固有の
 拒否は<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>にまとめています）;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>;</p></li>
-<li><p>オフサイトの2体項の行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）。<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>集約ファイル中の
-オフサイトの行も含みます。メッセージはその行を示し、スピン軌道の対形成頂点は
-オンサイトおよびセル内（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の相互作用のみを扱うこと、
-オフサイトの行を取り除くことを伝えます。<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>の行はすべて
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>での<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>:
+<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">(hwave_sc,</span> <span class="pre">issue</span> <span class="pre">#83):</span> <span class="pre">[eliashberg]</span>
+<span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">with</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span> <span class="pre">is</span> <span class="pre">not</span> <span class="pre">available</span> <span class="pre">yet</span>
+<span class="pre">(issue</span> <span class="pre">#270);</span> <span class="pre">use</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;,</span> <span class="pre">or</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span> <span class="pre">for</span>
+<span class="pre">on-site</span> <span class="pre">interactions.</span></code>。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>ではボンド分解の経路
+（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）を選び、その経路には独自の拒否があります
+（そこに記載）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>なしのオフサイトの2体項の行（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）。
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code>集約ファイル中のオフサイトの行も含みます。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>では
+メッセージはその行と、それを受け付けるキーを示します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site row (R = &lt;R&gt;, orbitals &lt;orbitals&gt;) in &lt;file&gt; needs [eliashberg] bond_channels = true: the exchange crossing of an off-site term depends on k + k', which only the bond-resolved pairing path treats. Set bond_channels = true (with frequency = "static"), or remove the off-site rows.
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>では、スピン軌道の対形成頂点はオンサイトおよびセル内
+（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の相互作用のみを扱うことを示し、オフサイトの行を
+取り除くよう伝えます。<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>の行はすべて
 受け入れられ、<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>なら別のサイトとみなされる軌道間の行も同様です
-（スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>は無視されます）;</p></li>
+（スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">orbital_site</span></code>は無視されます）;</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の
 係数の虚部。スピン軌道のすべての経路（RPA・FLEX・<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）で拒否されます。
 複素の<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>は受け入れられます。メッセージはその行を示して虚部を取り除く
 ように伝え、<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>では issue #302 を案内します;</p></li>
 <li><p>軌道添字が<span class="math notranslate nohighlight">\(1 \ldots N\)</span>の範囲外の相互作用ファイル（<span class="math notranslate nohighlight">\(N\)</span>を
 超える添字はスピン軌道添字で書かれたファイルを意味します。添字 0 はつねに不正です）;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code>、reduced（2添字）の
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code>（ボンド分解の経路では
+使われず、代わりに WARNING になります）、reduced（2添字）の
 chi0q ファイル、<code class="docutils literal notranslate"><span class="pre">index_convention</span></code>タグのない chi0q ファイル、
 マーカー<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>をもたない chi0q ファイル（このマーカーは
 スピン軌道の計算だけが書き込むため、非スピン軌道 RPA の chi0q はマーカーを
@@ -2810,7 +2860,8 @@ chi0q ファイル、<code class="docutils literal notranslate"><span class="pre
 <code class="docutils literal notranslate"><span class="pre">chi_convention</span></code>・<code class="docutils literal notranslate"><span class="pre">index_convention</span></code>タグのない FLEX の出力、
 <code class="docutils literal notranslate"><span class="pre">chi_orbital_layout</span></code>が<code class="docutils literal notranslate"><span class="pre">&quot;acbd&quot;</span></code>でない FLEX のアーカイブ、有限でない値を
 含む FLEX の出力;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>・<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>・<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>（ボンド分解の経路では使われず、代わりに
+WARNING になります）;</p></li>
 <li><p>FLEX の chi0q アーカイブがない場合（FLEX の実行で<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>を
 指定してください）、FLEX の chi0q アーカイブがマーカー<code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>
 （スピン軌道の FLEX 計算だけが書き込みます）をもたない場合、FLEX の Green 関数
@@ -2872,13 +2923,16 @@ i\sigma_y\)</span>）の初期値です。反転対称な模型ではべき乗�
 バイトを要します。同じ模型で<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>では約 64 GiB で、同じ物理軌道数
 <span class="math notranslate nohighlight">\(N\)</span>の非スピン軌道 general の chi0q（軌道添字<span class="math notranslate nohighlight">\(N^4\)</span>）の約 4 GiB と
 比べて大きくなります。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>は全振動数を必要とします
-（<a class="reference internal" href="#sc-spin-orbital-dynamic-memory"><span class="std std-ref">メモリと時間</span></a>を参照）。</p></li>
+（<a class="reference internal" href="#sc-spin-orbital-dynamic-memory"><span class="std std-ref">メモリと時間</span></a>を参照）。ボンド分解の経路は独自の
+見積もりと受け入れ検査をもちます（<a class="reference internal" href="#sc-so-bond-memory"><span class="std std-ref">メモリ</span></a>）。</p></li>
 <li><p>スピン軌道モードの<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>での<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は、A100 GPU
 上で<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">false</span></code>と照合済みです。SU(2) 模型の全スペクトルと複素 SOC 模型の
 Arnoldi 法の解は固有値が<span class="math notranslate nohighlight">\(10^{-10}\)</span>で一致し、反復法の解は収束時の残差の
 範囲で一致します
 （<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>。<code class="docutils literal notranslate"><span class="pre">&quot;dynamic&quot;</span></code>については
-<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。</p></li>
+<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。ボンド分解の経路は CPU のみで動作し、
+<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は WARNING を出して無視され、<code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code>は拒否されます
+（<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）。</p></li>
 </ul>
 </section>
 <section id="id43">
@@ -2913,6 +2967,424 @@ Pauli 禁制モードは現れません。</p></li>
 等スピンの三重項は一致します。回転不変な組み合わせ（たとえば Kanamori 形式の
 <code class="docutils literal notranslate"><span class="pre">Hund</span></code>と<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>）では両チャネルとも一致します。</p>
 </section>
+<section id="sc-so-bond-static">
+<span id="id45"></span><h3>ボンド分解したスピン軌道の対形成（<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>）<a class="headerlink" href="#sc-so-bond-static" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（既定値）で<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>と
+すると、スピン軌道のソルバーは<a class="reference internal" href="#sc-bond-channels-static"><span class="std std-ref">ボンド分解した静的対形成（bond_channels）</span></a>のボンド分解
+チャネルを使います。すべての種類の相互作用のオフサイトの行
+（<span class="math notranslate nohighlight">\(\mathbf{R} \neq 0\)</span>）が受け付けられ、各行の交換交差はその行が宣言された
+ボンドに作用します。対形成頂点は（スピン軌道の対）<span class="math notranslate nohighlight">\(\times\)</span>（ボンド）の
+基底の上で作られます。<span class="math notranslate nohighlight">\(B\)</span>個のボンドチャネル（チャネル 0 はオンサイトの点、
+続いてオフサイトのシェルをボンド長の順に並べ、反転について閉じたもの）により、
+スロットは<code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">(2N)^2</span></code>個になります。入力ファイルは上の「適用範囲」の
+スピン軌道の規約に従います。</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="n">enable_spin_orbital</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+
+<span class="k">[eliashberg]</span>
+<span class="n">bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">          </span><span class="c1"># frequency = "static", the default</span>
+<span class="c1"># so_bond_layout = "auto"     # the default; "dense" forces the dense layout</span>
+<span class="c1"># bond_memory_cap_gb = 32.0   # GiB; unset: 0.8 x the available memory</span>
+</pre></div>
+</div>
+<section id="id46">
+<h4>厳密な部分<a class="headerlink" href="#id46" title="Link to this heading">¶</a></h4>
+<p>ボンドの頂点<span class="math notranslate nohighlight">\(\Gamma_B\)</span>は、オンサイトの経路の反対称化したスピンフル頂点
+（直接項とその交換交差）で、各行をそれぞれのボンドに置いたものです。オフサイトの行の
+直接部分はオンサイトのチャネルに<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>の関数として入り、その交換交差は
+その変位のチャネルに入ります。スピン回転対称性は仮定しません。各行はそれ自身の
+スピン構造で入るので、対応する<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>を伴わない<code class="docutils literal notranslate"><span class="pre">Hund</span></code>や<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、
+スピン軌道相互作用のあるバンド、Zeeman 磁場のいずれにも、非スピン軌道のボンド
+カーネルの近似（一重項・三重項の組み合わせと<code class="docutils literal notranslate"><span class="pre">J_Exchange</span> <span class="pre">!=</span> <span class="pre">J_Hund</span> <span class="pre">-</span> <span class="pre">2</span> <span class="pre">J_Ising</span></code>の
+WARNING）は当てはまりません。対形成頂点は</p>
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-12">
+<span class="eqno">(5.13)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-12" title="Link to this equation">¶</a></span>\[V = \tfrac{1}{4}\left(\Gamma_B + \Gamma_B^{P}\right)
+    \;-\; \Gamma_B\,\chi_B\,\Gamma_B ,
+\qquad
+\chi_B = \left[1 + \bar\chi_B \Gamma_B\right]^{-1} \bar\chi_B\]</div>
+<p>（ボソン振動数ゼロ）です。<span class="math notranslate nohighlight">\(\Gamma_B^{P}\)</span>は<span class="math notranslate nohighlight">\(\Gamma_B\)</span>の交換像で、
+<span class="math notranslate nohighlight">\(\Gamma_B\)</span>に等しくなります（ソルバーが検査します。したがって第1項はオンサイトと
+同じく<span class="math notranslate nohighlight">\(\Gamma_B/2\)</span>）。<span class="math notranslate nohighlight">\(\bar\chi_B\)</span>は Transfer（と Extern）の入力から
+作った<strong>裸の</strong> Green 関数のボンド分解バブルです。裸の部分はすべての種類の相互作用に
+ついて1次で厳密です。揺らぎの部分は静的な RPA-ladder の繰り込みで、保存近似（FLEX）の
+結果ではありません。どの計算もそのことを WARNING で 1 回示します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the BARE Green function built from the Transfer (and Extern) input. It demonstrates the qualitative V-dependence of the pairing eigenvalue; it is NOT a conserving FLEX result (the bond chi-bar is built here at RPA-ladder level), so absolute lambda values are not comparable with FLEX/dynamic references.
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>オフサイトの PairLift。</strong>非スピン軌道のボンドの経路はオフサイトの
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>を含めません（スピン・電荷の成分を持たないため）。スピン軌道の
+ボンドの頂点はこれを含め、INFO レベルで次を出力します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>off-site PairLift is included in the spin-orbital bond vertex (the non-spin-orbital bond paths omit it: it has no spin/charge content)
+</pre></div>
+</div>
+<p>非ゼロの<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の行（オンサイトでもオフサイトでも）は<span class="math notranslate nohighlight">\(S_z\)</span>を
+変えるので、dense のレイアウトを選びます（下の「レイアウト」を参照）。したがって
+オフサイトの<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>を含む模型では、スピン軌道と非スピン軌道のボンドの経路で
+固有値が異なることがあります。</p>
+</div>
+<p><strong>チャネルがひとつの場合。</strong><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でオフサイトの行がないと
+<span class="math notranslate nohighlight">\(B = 1\)</span>になり、INFO レベルで次を出力します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>bond_channels = true: no off-site row is declared, so B = 1 and the bond vertex is the on-site spin-orbital vertex
+</pre></div>
+</div>
+<p>この計算は受け付けられます（非スピン軌道のボンドの経路は、オフサイトの相互作用の
+宣言がない<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を拒否します）。両方のバブルで松原テールを
+そろえると（<code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span> <span class="pre">=</span> <span class="pre">0</span></code>と、オンサイトのバブルの既定値
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">coeff_tail</span> <span class="pre">=</span> <span class="pre">0</span></code>）、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>のオンサイトの経路の
+固有値を与えます。すべて結合ゼロで宣言されたオフサイトの行はそのチャネルを保ち、
+<span class="math notranslate nohighlight">\(B = 1\)</span>の計算と同じ主固有値を与えます。</p>
+</section>
+<section id="id47">
+<h4>キー<a class="headerlink" href="#id47" title="Link to this heading">¶</a></h4>
+<p>キーは大文字小文字を区別しません。スピン軌道のソルバーのキー（<code class="docutils literal notranslate"><span class="pre">solver_mode</span></code>、
+<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>、<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>、<code class="docutils literal notranslate"><span class="pre">max_iter</span></code>、<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>など）は
+オンサイトと同様に働きます。ボンドのキーは次のとおりです。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">false</span></code>）: <code class="docutils literal notranslate"><span class="pre">true</span></code>でこの経路を選びます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>（既定値）または<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>。値の大文字小文字は
+区別しません（「レイアウト」を参照）。<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>は強制できません:
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">so_bond_layout</span> <span class="pre">=</span> <span class="pre">&quot;sz_packed&quot;</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">forced:</span> <span class="pre">the</span> <span class="pre">S_z-packed</span>
+<span class="pre">layout</span> <span class="pre">is</span> <span class="pre">chosen</span> <span class="pre">automatically</span> <span class="pre">when</span> <span class="pre">the</span> <span class="pre">input</span> <span class="pre">conserves</span> <span class="pre">S_z</span> <span class="pre">(no</span> <span class="pre">spin-flip</span>
+<span class="pre">Transfer</span> <span class="pre">entry,</span> <span class="pre">no</span> <span class="pre">S_z-changing</span> <span class="pre">interaction).</span> <span class="pre">Use</span> <span class="pre">&quot;auto&quot;</span> <span class="pre">(the</span> <span class="pre">default)</span> <span class="pre">or</span>
+<span class="pre">&quot;dense&quot;.</span></code>。それ以外の値は拒否されます。<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>では
+このキーは WARNING を出して無視されます: <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">so_bond_layout</span> <span class="pre">set</span> <span class="pre">but</span>
+<span class="pre">bond_channels=false;</span> <span class="pre">it</span> <span class="pre">only</span> <span class="pre">applies</span> <span class="pre">to</span> <span class="pre">the</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">path</span> <span class="pre">and</span> <span class="pre">is</span>
+<span class="pre">ignored</span> <span class="pre">here.</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>（<span class="math notranslate nohighlight">\(0\)</span>以上の整数。既定値は宣言されたすべてのシェル）:
+オフサイトのシェルを最初から<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>個だけ残します。非ゼロの行が使う
+シェルを落とすカットオフは拒否され、メッセージはそのシェルと許される最小値を
+示します（<code class="docutils literal notranslate"><span class="pre">so_bond_topology:</span> <span class="pre">max_shells=&lt;m&gt;</span> <span class="pre">would</span> <span class="pre">drop</span> <span class="pre">bond</span> <span class="pre">shell(s)</span> <span class="pre">used</span> <span class="pre">by</span>
+<span class="pre">nonzero</span> <span class="pre">interaction</span> <span class="pre">records:</span> <span class="pre">shell</span> <span class="pre">&lt;k&gt;</span> <span class="pre">with</span> <span class="pre">displacements</span> <span class="pre">[...].</span> <span class="pre">Use</span>
+<span class="pre">max_shells</span> <span class="pre">&gt;=</span> <span class="pre">&lt;n&gt;,</span> <span class="pre">or</span> <span class="pre">remove</span> <span class="pre">those</span> <span class="pre">declarations.</span></code>）。結合ゼロでのみ宣言された
+シェルは落とせます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>: 受け入れ検査のホストメモリの上限（GiB）
+（<a class="reference internal" href="#sc-so-bond-memory"><span class="std std-ref">メモリ</span></a>を参照）。指定なし: 利用可能なメモリの<code class="docutils literal notranslate"><span class="pre">0.8</span></code>倍。
+正の値: その GiB 数。<code class="docutils literal notranslate"><span class="pre">0</span></code>: 検査を無効にし、WARNING を出します。負の値・有限でない
+値（および真偽値）は拒否されます: <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_memory_cap_gb</span> <span class="pre">must</span> <span class="pre">be</span> <span class="pre">a</span>
+<span class="pre">finite</span> <span class="pre">number</span> <span class="pre">&gt;=</span> <span class="pre">0</span> <span class="pre">in</span> <span class="pre">spin-orbital</span> <span class="pre">mode</span> <span class="pre">(0</span> <span class="pre">disables</span> <span class="pre">the</span> <span class="pre">check),</span> <span class="pre">got</span> <span class="pre">&lt;value&gt;</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">1.0</span></code>）: ボンドのバブルの Green 関数の松原テールの
+係数。非スピン軌道のボンドの経路と同じです。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">true</span></code>）: 対の伝播関数の松原テール補正。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>は、すべてのスピン軌道の計算と同じく<code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>（または
+指定なし）でなければならず、それ以外の値はファイルを読む前に拒否されます。Arnoldi 法の
+選択を偏らせるには<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>ではなく<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を使ってください。
+この経路で受け付けるが使わないキー、拒否されるキー、それらのメッセージは、下の
+「非スピン軌道のボンドの設定からの切り替え」にまとめています。</p>
+</section>
+<section id="id48">
+<h4>レイアウト<a class="headerlink" href="#id48" title="Link to this heading">¶</a></h4>
+<p>ボンドの量（<span class="math notranslate nohighlight">\(\Gamma_B\)</span>、<span class="math notranslate nohighlight">\(\bar\chi_B\)</span>、<span class="math notranslate nohighlight">\(\chi_B\)</span>、
+<span class="math notranslate nohighlight">\(V\)</span>）と対形成カーネルは、次のどちらかのレイアウトで保持されます。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>: 入力が<span class="math notranslate nohighlight">\(S_z\)</span>を保存するとき、すべての量は対の
+<span class="math notranslate nohighlight">\(S_z\)</span>のセクター<span class="math notranslate nohighlight">\((+1, 0, -1)\)</span>についてブロック対角です。ブロックだけを
+保持し（<span class="math notranslate nohighlight">\(ND \times ND\)</span>行列あたり<span class="math notranslate nohighlight">\(ND^2\)</span>ではなく
+<span class="math notranslate nohighlight">\(\sum_\sigma n_\sigma^2 = (6/16)\,ND^2\)</span>個の要素）、固有値問題はセクターごとに
+解きます;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>: 行列全体と、ギャップ全体に対するひとつのカーネル。</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">so_bond_layout</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>は入力から次の順にレイアウトを選びます。キーが強制して
+いれば<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>。そうでなければ最初のスピン反転の Transfer の要素（インターリーブ
+した添字で、異なるスピンの間の要素）で<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>。そうでなければ<span class="math notranslate nohighlight">\(S_z\)</span>を
+変える最初の相互作用の行（非ゼロの<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>）で<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>。どれもなければ
+<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>。Extern の磁場（<span class="math notranslate nohighlight">\(\sigma^z\)</span>）は<span class="math notranslate nohighlight">\(S_z\)</span>を破らないので、
+Zeeman だけの模型は packed になります。選択は<strong>厳密</strong>です。<code class="docutils literal notranslate"><span class="pre">1e-14</span></code>のスピン
+反転の要素でも dense を選ぶので、ちょうどゼロの値とゼロでない値の間でレイアウトと
+メモリの見積もりが不連続に変わります。理由は INFO レベルで出力され、
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>に（<code class="docutils literal notranslate"><span class="pre">so_bond_layout_reason</span></code>）書かれます。次のいずれかです:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>so bond layout: sz_packed (S_z conserved: no spin-flip transfer, no S_z-changing interaction)
+so bond layout: dense (reason: forced by so_bond_layout = "dense")
+so bond layout: dense (reason: spin-flip transfer entry R=(&lt;Rx&gt;, &lt;Ry&gt;, &lt;Rz&gt;) (&lt;i&gt;, &lt;j&gt;) = &lt;value&gt;)
+so bond layout: dense (reason: PairLift declared)
+so bond layout: dense (reason: S_z-changing interaction record of type &lt;type&gt;)
+</pre></div>
+</div>
+<p>（<code class="docutils literal notranslate"><span class="pre">&lt;i&gt;</span></code>、<code class="docutils literal notranslate"><span class="pre">&lt;j&gt;</span></code>は Transfer ファイルの1始まりのインターリーブしたスピン軌道
+添字です。最後の行は<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>以外の型で<span class="math notranslate nohighlight">\(S_z\)</span>を変えるレコードのための
+ものですが、そのような型はまだありません。）どちらのレイアウトも主固有値とギャップは丸め誤差の範囲で一致します。
+packed の一覧はセクターごとの解の和集合なので、<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>が小さいと、
+主固有値より下の一覧が dense と異なることがあります。packed のほうが安価で、
+<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>はデバッグと packed の計算の照合のためのものです。</p>
+</section>
+<section id="id49">
+<h4>出力<a class="headerlink" href="#id49" title="Link to this heading">¶</a></h4>
+<p><code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>と<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>はオンサイトの経路と同じ形式です（上の「出力」）。
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>には次のコメント行が加わります: <code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>、
+<code class="docutils literal notranslate"><span class="pre">bond_n_channels</span></code>（<span class="math notranslate nohighlight">\(B\)</span>）、<code class="docutils literal notranslate"><span class="pre">bond_delta_r</span></code>（チャネルの変位）、
+<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>、<code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code>、<code class="docutils literal notranslate"><span class="pre">so_bond_layout_reason</span></code>、
+<code class="docutils literal notranslate"><span class="pre">bond_memory_cap</span></code>（適用した上限とその由来）、<code class="docutils literal notranslate"><span class="pre">g2_tail</span></code>、<code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span></code>、
+<code class="docutils literal notranslate"><span class="pre">bond_coeff_tail_source</span></code>、<code class="docutils literal notranslate"><span class="pre">approximation</span> <span class="pre">=</span> <span class="pre">static</span> <span class="pre">RPA-ladder</span> <span class="pre">bond</span> <span class="pre">dressing</span></code>、
+<code class="docutils literal notranslate"><span class="pre">gap_status</span></code>、<code class="docutils literal notranslate"><span class="pre">pp_sector</span></code>、<code class="docutils literal notranslate"><span class="pre">selection</span></code>（固有値の選び方。packed では
+セクターごとに。例: <code class="docutils literal notranslate"><span class="pre">+1:dense-LR;0:LR;-1:null-operator</span></code>）、およびギャップの
+アーカイブのスカラーの来歴メンバー。主固有値の分解
+<span class="math notranslate nohighlight">\(\lambda = \lambda^{pp} + \lambda^{fl}\)</span>と<code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span></code>の記録は
+<strong>ありません</strong>（どちらも非スピン軌道のボンドの経路のものです）。</p>
+<p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;sc_so_bond_static&quot;</span></code>）は、上のオンサイトの表の
+メンバーと<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>の来歴（<code class="docutils literal notranslate"><span class="pre">fp_capability</span> <span class="pre">=</span> <span class="pre">&quot;so_bond&quot;</span></code>、
+<code class="docutils literal notranslate"><span class="pre">delta_r</span></code>、<code class="docutils literal notranslate"><span class="pre">reverse</span></code>、<code class="docutils literal notranslate"><span class="pre">slot_convention</span></code>、<code class="docutils literal notranslate"><span class="pre">max_shells</span></code>を含む）に加えて、
+次のものを含みます。</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 70.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>キー</p></th>
+<th class="head"><p>内容</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap_status</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;certified&quot;</span></code>（報告した固有値が有限）、<code class="docutils literal notranslate"><span class="pre">&quot;uncertified&quot;</span></code>（ギャップは
+書くが固有値が確定しなかった。報告値は NaN）、<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>（ギャップなし。
+<code class="docutils literal notranslate"><span class="pre">gap</span></code>はゼロ）</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pp_sector</span></code></p></td>
+<td><p>int8: packed で書いたギャップの対の<span class="math notranslate nohighlight">\(S_z\)</span>のセクター（<code class="docutils literal notranslate"><span class="pre">1</span></code>、<code class="docutils literal notranslate"><span class="pre">0</span></code>、
+<code class="docutils literal notranslate"><span class="pre">-1</span></code>）。dense の結果、またはギャップを書かない場合は<code class="docutils literal notranslate"><span class="pre">2</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pp_sectors</span></code></p></td>
+<td><p>int8、一覧の固有値ごとに1つ: そのセクター（dense では<code class="docutils literal notranslate"><span class="pre">2</span></code>）</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">block_layout</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code></p></td>
+<td><p>報告した固有値が確定したかどうか</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sz_weight_upup</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_weight_dndn</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_weight_singlet0</span></code>、
+<code class="docutils literal notranslate"><span class="pre">sz_weight_triplet0</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_conservation_residual</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_conserved</span></code></p></td>
+<td><p><a class="reference internal" href="#sc-spin-polarized"><span class="std std-ref">スピン偏極した状態（Zeeman 磁場）</span></a>の<span class="math notranslate nohighlight">\(S_z\)</span>の報告。残差はボンドの頂点と Green
+関数のもの（packed では頂点の分は<code class="docutils literal notranslate"><span class="pre">0</span></code>）</p></td>
+</tr>
+</tbody>
+</table>
+<p>一覧のメンバー<code class="docutils literal notranslate"><span class="pre">eigenvalues</span></code>、<code class="docutils literal notranslate"><span class="pre">eigenvectors</span></code>、<code class="docutils literal notranslate"><span class="pre">eigenvector_spin_weights</span></code>、
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_match</span></code>、<code class="docutils literal notranslate"><span class="pre">pp_sectors</span></code>は、固有値の一覧が空でないときに限り
+書かれます。<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>では書かれず（ギャップとその重みはひとつの
+反復解のもの）、固有値解析がひとつも組を返さなかった場合も書かれません。ギャップの
+メンバー（<code class="docutils literal notranslate"><span class="pre">gap</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_spin_weights</span></code>、<span class="math notranslate nohighlight">\(S_z\)</span>の重み）はつねに書かれ、
+<code class="docutils literal notranslate"><span class="pre">gap_status</span> <span class="pre">=</span> <span class="pre">&quot;none&quot;</span></code>ではギャップはゼロ、そのスピンと<span class="math notranslate nohighlight">\(S_z\)</span>の重みは NaN です。
+k 格子の上でどの対の<span class="math notranslate nohighlight">\(S_z\)</span>のセクターにもフェルミオン反対称なギャップの空間が
+ないときは、WARNING で 1 回示します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond pairing: no pair-S_z sector has a fermion-antisymmetric gap space on this k grid; no gap is reported (gap_status = "none")
+</pre></div>
+</div>
+<p><strong>既定の</strong><code class="docutils literal notranslate"><span class="pre">max_iter</span></code><strong>での反復。</strong><code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>（および
+<code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>の反復の部分）は冪乗反復を行います（指定がなければ<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span>
+<span class="pre">&quot;auto&quot;</span></code>）。収束の遅い模型では既定値<code class="docutils literal notranslate"><span class="pre">max_iter</span> <span class="pre">=</span> <span class="pre">1000</span></code>では足りないことがあり、
+その場合は固有値を報告せず（NaN、<code class="docutils literal notranslate"><span class="pre">gap_status</span> <span class="pre">=</span> <span class="pre">&quot;uncertified&quot;</span></code>、
+<code class="docutils literal notranslate"><span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">false</span></code>。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は終了ステータス 3 で終わります）、
+WARNING が必要な<code class="docutils literal notranslate"><span class="pre">max_iter</span></code>を示します。例:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Failed to converge after 1000 iterations: no eigenvalue is reported (lambda = NaN, eigen_converged = false). The iterate difference was still decreasing by a factor 0.9949 per step (now 9.56e-05; the stopping rule needs diff / (1 - rate) &lt; convergence_tol 1.0e-05): about 1473 more steps are needed, i.e. max_iter of about 2473 -- or use solver_mode="eigenvalue", which does not depend on the eigenvalue gap this way.
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">max_iter</span></code>を示された値まで上げるか、影響を受けない既定の<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;eigenvalue&quot;</span></code>を使ってください。</p>
+</section>
+<section id="id50">
+<h4>適用範囲<a class="headerlink" href="#id50" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>のみ。<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code>は拒否されます（「拒否される組み合わせ」を参照）;</p></li>
+<li><p>ボンドのバブルはバンドの裸の Green 関数から作ります。ボンド分解した Green 関数は
+まだ与えられず（<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>は拒否）、chi0q や FLEX の出力は読みません
+（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>は使われず、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>は拒否）;</p></li>
+<li><p>CPU のみ（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は WARNING を出して無視され、<code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code>は
+拒否されます）;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span> <span class="pre">=</span> <span class="pre">&quot;arnoldi&quot;</span></code>のみ;</p></li>
+<li><p>計算全体のメモリは、ボンドの配列を作る前に一度だけ受け入れの判定をします
+（<a class="reference internal" href="#sc-so-bond-memory"><span class="std std-ref">メモリ</span></a>）。</p></li>
+</ul>
+</section>
+<section id="id51">
+<h4>非スピン軌道のボンドの設定からの切り替え<a class="headerlink" href="#id51" title="Link to this heading">¶</a></h4>
+<p>非スピン軌道の<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の入力には、スピン軌道の入力ファイル
+（上の「適用範囲」: Geometry の<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">=</span> <span class="pre">2N</span></code>、インターリーブした Transfer ファイル、
+物理軌道の添字の相互作用ファイル）に加えて、<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span></code>テーブルに次の変更が
+必要です。各項目には、その変更で避けられるメッセージを示します。</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>を<strong>削除</strong>します（ギャップはひとつです）:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] pairing_type = &lt;value&gt; has no meaning in spin-orbital mode: the gap is one general 2N x 2N spin-orbital matrix, not a singlet or a triplet channel. Remove pairing_type.
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_green</span></code>を<strong>削除</strong>します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_green is not available with bond_channels in spin-orbital mode: no run writes a spin-orbital bond-resolved Green function yet (it arrives with the spin-orbital bond FLEX). Remove bond_green; the Green function is built from the Transfer (and Extern) input.
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span></code>とすべての<code class="docutils literal notranslate"><span class="pre">bond_precondition_*</span></code>のキー
+（<code class="docutils literal notranslate"><span class="pre">bond_precondition_atol</span></code>、<code class="docutils literal notranslate"><span class="pre">bond_precondition_rtol</span></code>、
+<code class="docutils literal notranslate"><span class="pre">bond_precondition_dense_limit</span></code>）を<strong>削除</strong>します。これらは<strong>値によらず、
+false でも</strong>拒否されるので、無効にするのではなく削除してください:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_diagnostics is not available in spin-orbital mode (its character analysis is the singlet/triplet one of the non-spin-orbital bond path); the gap.npz S_z and spin decompositions describe the leading state. Remove bond_diagnostics.
+[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] &lt;key&gt; tunes the Hermiticity check of the non-spin-orbital bond kernel; the spin-orbital kernel is not Hermitian and has no such check. Remove &lt;key&gt;.
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>を<strong>削除</strong>します（キーごと削除。ここでは使われません）:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "flex" with bond_channels = true is not available yet: the spin-orbital bond path builds its bond bubble from the band's Green function and reads no FLEX output. Remove chi0q_mode (or leave it unset); it is not used on this path.
+</pre></div>
+</div>
+<p>すべてのスピン軌道の計算の値の検査が先に適用されます。<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>、
+<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>以外の値（値は大文字小文字を区別するので<code class="docutils literal notranslate"><span class="pre">&quot;FLEX&quot;</span></code>も含む）は、その
+検査のメッセージで拒否されます。その他の<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>や<code class="docutils literal notranslate"><span class="pre">chi0q_tensor</span></code>は
+受け付けますが使われず、WARNING を 1 回出します（<code class="docutils literal notranslate"><span class="pre">unset</span></code>は指定のないキー）:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] bond_channels=true in spin-orbital mode builds its own bond-resolved bubble directly from the Green function, so chi0q_mode = '&lt;value&gt;' and chi0q_tensor = '&lt;value&gt;' are not used: no chi0q file is read or computed on this path.
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">flex_chi_s</span></code>・<code class="docutils literal notranslate"><span class="pre">flex_chi_c</span></code>（オンサイトのスピン軌道の経路では拒否）は、
+ここでは WARNING を 1 回出します:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] &lt;keys&gt;: not used for bond_channels=true in spin-orbital mode (the spin-orbital bond path reads no FLEX output).
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>のみ。それ以外の値は拒否されます:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] eigenvalue_method = &lt;value&gt; is not supported; only "arnoldi" is. Set eigenvalue_method = "arnoldi" (or remove the key).
+</pre></div>
+</div>
+<p>固有値解析（<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;eigenvalue&quot;</span></code>（既定）または<code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>）では
+<code class="docutils literal notranslate"><span class="pre">sigma_shift</span></code>は WARNING を出して無視されます。べき乗法はこのキーを読みません。
+Arnoldi 法の選択を偏らせるには<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>を使ってください:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] sigma_shift is ignored for eigenvalue_method='arnoldi' (it targets the shift-invert methods); use spectral_shift to bias the arnoldi selection.
+</pre></div>
+</div>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は WARNING を出して無視され（この経路は CPU で動作します）、
+<code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code>は拒否されます:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[eliashberg] gpu=true is ignored for bond_channels=true in spin-orbital mode: the spin-orbital bond-resolved kernel is CPU-only (GPU support is a deferred follow-up).
+[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] gpu_required = true is not available with bond_channels = true: the spin-orbital bond-resolved kernel runs on the CPU only. Remove gpu_required (gpu = true alone is ignored with a warning).
+</pre></div>
+</div>
+</li>
+<li><p><strong>複素の結合</strong>は、すべてのスピン軌道の計算と同じく<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>の行に限り
+受け付けます。<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・
+<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の行の虚部は、その行を示して拒否されます（非スピン軌道のボンドの経路は
+オフサイトの複素の係数をすべて拒否します）。</p></li>
+<li><p><strong>結合ゼロで宣言された外側のシェル。</strong>結合ゼロでのみ宣言されたオフサイトの
+シェルはチャネルを保ち、メモリの見積もりに数えられます。上限を超えた場合、拒否の
+メッセージはそれらを落とす<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>の値を示します
+（<code class="docutils literal notranslate"><span class="pre">&lt;n&gt;</span> <span class="pre">outer</span> <span class="pre">shell(s)</span> <span class="pre">declared</span> <span class="pre">only</span> <span class="pre">with</span> <span class="pre">zero</span> <span class="pre">coupling;</span> <span class="pre">[eliashberg]</span>
+<span class="pre">bond_max_shells</span> <span class="pre">=</span> <span class="pre">&lt;m&gt;</span> <span class="pre">removes</span> <span class="pre">them</span></code>）。その値を設定するか、その行を削除して
+ください。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>: 指定なしは利用可能なメモリの<code class="docutils literal notranslate"><span class="pre">0.8</span></code>倍（非スピン軌道の
+既定値は固定の 8 GB）。正の値は GiB 単位。<code class="docutils literal notranslate"><span class="pre">0</span></code>は WARNING を出して検査を無効にします
+（非スピン軌道の経路は<code class="docutils literal notranslate"><span class="pre">0</span></code>を拒否します）。負の値・有限でない値は拒否されます。</p></li>
+<li><p><strong>出力。</strong><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>は非スピン軌道のボンドのアーカイブと異なります。
+<code class="docutils literal notranslate"><span class="pre">pp_sector</span></code>、<code class="docutils literal notranslate"><span class="pre">pp_sectors</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_status</span></code>、<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>と
+<span class="math notranslate nohighlight">\(S_z\)</span>の重みを含み、<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>では一覧のメンバーを
+書きません。一重項・三重項の<code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span></code>の記録はなく、
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>に<span class="math notranslate nohighlight">\(\lambda^{pp} + \lambda^{fl}\)</span>の分解もありません
+（上の「出力」）。</p></li>
+</ul>
+</section>
+<section id="sc-so-bond-memory">
+<span id="id52"></span><h4>メモリ<a class="headerlink" href="#sc-so-bond-memory" title="Link to this heading">¶</a></h4>
+<p>計算は、Green 関数やボンドの配列を作る前の見積もりで一度だけ受け入れの判定をします。
+受け入れた計算が後で拒否されることはありません。見積もりは、段階ごとの合計（計算の
+間ずっと保持する配列と、その段階の配列の和）の最大値の<span class="math notranslate nohighlight">\(1.25\)</span>倍です。
+<span class="math notranslate nohighlight">\(P = (2N)^2\)</span>、k 点の数<span class="math notranslate nohighlight">\(N_k\)</span>、<code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">P</span></code>として、現実的な大きさで
+大きいものから順に次の行があります。</p>
+<ul class="simple">
+<li><p>バブルのシフトごとの作業領域<code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">N_k</span> <span class="pre">(3</span> <span class="pre">Nmat</span> <span class="pre">P^2</span> <span class="pre">+</span> <span class="pre">3</span> <span class="pre">Nmat</span> <span class="pre">P</span> <span class="pre">+</span> <span class="pre">8</span> <span class="pre">P)</span></code>バイト
+（対形成の段階）。<span class="math notranslate nohighlight">\(N = 2\)</span>、<span class="math notranslate nohighlight">\(32 \times 32\)</span>の格子、<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>で
+約 12.8 GiB です。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>と<span class="math notranslate nohighlight">\(N_k\)</span>に比例し、<span class="math notranslate nohighlight">\(B\)</span>やレイアウトには
+依存しません;</p></li>
+<li><p>Green 関数<code class="docutils literal notranslate"><span class="pre">G</span> <span class="pre">=</span> <span class="pre">16</span> <span class="pre">Nmat</span> <span class="pre">N_k</span> <span class="pre">P</span></code>バイト。作る間は<code class="docutils literal notranslate"><span class="pre">4</span> <span class="pre">G</span></code>、その後は求解の終わりまで
+<code class="docutils literal notranslate"><span class="pre">3</span> <span class="pre">G</span></code>を保持します（同じ例で<code class="docutils literal notranslate"><span class="pre">G</span></code>あたり 0.25 GiB）;</p></li>
+<li><p><span class="math notranslate nohighlight">\((N_k, ND, ND)\)</span>の配列（<span class="math notranslate nohighlight">\(\Gamma_B\)</span>は常駐。対形成の段階では
+<span class="math notranslate nohighlight">\(\bar\chi_B\)</span>、<span class="math notranslate nohighlight">\(\chi_B\)</span>、<span class="math notranslate nohighlight">\(V\)</span>の裸の部分と揺らぎの部分、dense の
+バブルの一時配列、その7個分の繰り込みの作業領域）: dense ではそれぞれ
+<code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">N_k</span> <span class="pre">ND^2</span></code>バイト、packed ではその<span class="math notranslate nohighlight">\(6/16\)</span>。<span class="math notranslate nohighlight">\(32 \times 32\)</span>の k 点で
+<code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">144</span></code>（<span class="math notranslate nohighlight">\(B = 9\)</span>、<span class="math notranslate nohighlight">\(N = 2\)</span>）までなら、それぞれ約 0.32 GiB です;</p></li>
+<li><p>固有値ソルバー: Arnoldi 法の作業配列、その dense な代替計算の領域（LAPACK の作業領域を
+含む。次元 2000 までの演算子）、次元 2000 を超えると2つ目の Arnoldi の作業領域。
+<code class="docutils literal notranslate"><span class="pre">spectral_shift</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>または指定なしでは、シフトを決めるスペクトル半径の見積もりの
+数本のベクトルが加わります。これらの行は縮約したギャップの次元<code class="docutils literal notranslate"><span class="pre">dim</span></code>（約
+<code class="docutils literal notranslate"><span class="pre">N_k</span> <span class="pre">(2N)^2</span> <span class="pre">/</span> <span class="pre">2</span></code>）とともに増えます。Arnoldi 法では<code class="docutils literal notranslate"><span class="pre">num_eigenvalues</span></code>倍で線形に、
+dense な代替計算（<code class="docutils literal notranslate"><span class="pre">dim</span> <span class="pre">&lt;=</span> <span class="pre">2000</span></code>）では<code class="docutils literal notranslate"><span class="pre">dim^2</span></code>で、べき乗法では<code class="docutils literal notranslate"><span class="pre">max_iter</span></code>と
+ともに増え、レイアウトと<code class="docutils literal notranslate"><span class="pre">spectral_shift</span></code>にも依存します。k 点が少なく<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が
+小さいときは、dense な代替計算が最大の行になることがあります;</p></li>
+<li><p>カーネルの作業領域: 持ち上げたバーテックスのブロック（<span class="math notranslate nohighlight">\(N_k\,ND^2\)</span>に比例）と
+ギャップおよび matvec の作業配列で、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>には依存しません。</p></li>
+</ul>
+<p>上の例で<span class="math notranslate nohighlight">\(B = 9\)</span>とすると、見積もりのピークは dense で約 22 GiB、packed で
+19 GiB です。<code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">256</span></code>では dense で約 9.4 GiB になります。したがって<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>と
+k 格子が支配的です。対処は次の順です: <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を減らす、k 格子を小さくする、
+<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>を上げる。<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>で<span class="math notranslate nohighlight">\(B\)</span>を減らせるのは
+結合がゼロのシェルだけなので（非ゼロのシェルを落とすカットオフは拒否されます）、
+効果があるのは結合ゼロで宣言されたシェルに限られます。</p>
+<p><strong>上限。</strong><code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>の指定がなければ、利用可能なホストメモリの
+<code class="docutils literal notranslate"><span class="pre">0.8</span></code>倍とし、<code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">memory</span> <span class="pre">cap:</span> <span class="pre">&lt;c&gt;</span> <span class="pre">GiB</span> <span class="pre">=</span> <span class="pre">0.8</span> <span class="pre">x</span> <span class="pre">available</span> <span class="pre">&lt;a&gt;</span> <span class="pre">GiB</span>
+<span class="pre">(source:</span> <span class="pre">&lt;source&gt;)</span></code>と出力します。利用可能なメモリは、値を与える次の情報源の
+最小値です。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">psutil</span></code>（<code class="docutils literal notranslate"><span class="pre">virtual_memory().available</span></code>）。なければ<code class="docutils literal notranslate"><span class="pre">/proc/meminfo</span></code>の
+<code class="docutils literal notranslate"><span class="pre">MemAvailable</span></code>の行;</p></li>
+<li><p>有限のソフトな<code class="docutils literal notranslate"><span class="pre">RLIMIT_AS</span></code>からプロセスの仮想サイズを引いたもの、および有限の
+ソフトな<code class="docutils literal notranslate"><span class="pre">RLIMIT_DATA</span></code>からデータサイズを引いたもの;</p></li>
+<li><p>ジョブ自身の cgroup（v2、なければ v1）。プロセスの cgroup からマウントポイントまでの
+各階層で、残りの量は上限から working set を引いたもので、working set はカーネルの
+数え方どおり使用量から非アクティブなファイルキャッシュ（v2 は<code class="docutils literal notranslate"><span class="pre">memory.stat</span></code>の
+<code class="docutils literal notranslate"><span class="pre">inactive_file</span></code>、v1 は<code class="docutils literal notranslate"><span class="pre">total_inactive_file</span></code>）を引いたものです。したがって
+以前の出力ファイルの回収可能なキャッシュは使用中に数えません。各階層と、ジョブの
+cgroup が見えるすべてのマウントについての最小値をとります。</p></li>
+</ul>
+<p>これら以外で課されるバッチシステムの上限（たとえばジョブの cgroup ではない PBS の
+メモリ上限）は見積もりからは見えないので、<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span></code>をジョブの上限に
+設定してください。どの情報源も値を与えないときは、WARNING <code class="docutils literal notranslate"><span class="pre">no</span> <span class="pre">memory</span> <span class="pre">limit</span> <span class="pre">could</span>
+<span class="pre">be</span> <span class="pre">determined;</span> <span class="pre">the</span> <span class="pre">admission</span> <span class="pre">check</span> <span class="pre">is</span> <span class="pre">disabled;</span> <span class="pre">set</span> <span class="pre">[eliashberg]</span>
+<span class="pre">bond_memory_cap_gb</span> <span class="pre">to</span> <span class="pre">enable</span> <span class="pre">it</span></code>を出して計算を続けます。<code class="docutils literal notranslate"><span class="pre">bond_memory_cap_gb</span> <span class="pre">=</span>
+<span class="pre">0</span></code>は WARNING <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_memory_cap_gb</span> <span class="pre">=</span> <span class="pre">0:</span> <span class="pre">the</span> <span class="pre">memory</span> <span class="pre">admission</span> <span class="pre">check</span> <span class="pre">of</span>
+<span class="pre">the</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">path</span> <span class="pre">is</span> <span class="pre">disabled</span></code>を出して検査を無効にします。</p>
+<p><strong>拒否。</strong>上限を超える見積もりは、Green 関数と<span class="math notranslate nohighlight">\(\Gamma_B\)</span>を作る前に
+拒否されます:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond Eliashberg needs an estimated peak of &lt;peak&gt; GiB in phase &lt;phase&gt; (B = &lt;B&gt; channels, ND = B·(2·norb_phys)² = &lt;ND&gt;, nvol = &lt;nvol&gt;, Nmat = &lt;nmat&gt;; largest row in that phase: &lt;row&gt; = &lt;bytes&gt; GiB) but the cap is &lt;cap&gt; GiB ([eliashberg] bond_memory_cap_gb). Memory grows as Nmat · nvol · norb_phys⁴ (the bubble's per-shift workspace) and Nmat · nvol · norb_phys² (the Green function); independent of Nmat, as nvol · B² · norb_phys⁴ (the vertex arrays and the kernel workspace); the eigensolver rows grow with the reduced gap dimension dim (about nvol · (2·norb_phys)² / 2): linearly times num_eigenvalues for Arnoldi, as dim² for the dense fallback (dim &lt;= 2000), with max_iter for the power iteration, and they depend on the layout and spectral_shift. Reduce Nmat or the k grid, or raise [eliashberg] bond_memory_cap_gb (0 disables the check); pruning bond shells helps only for shells the per-shell table below shows with negligible coupling.
+rows (phase  name  bytes):
+  ...
+admitted cases (machine | path | admitted):
+  ...
+shells (shell  |dr|  max|v|):
+  ...
+</pre></div>
+</div>
+<p>行の表は見積もりのすべての行を示し、最初の段落はピークの段階で最大の行を挙げます。
+受け入れ例の表は、この静的な経路を CPU で使うとき、いくつかの模型の大きさについて、
+64 GiB と 256 GiB のホストで既定の上限（ホストのメモリの<code class="docutils literal notranslate"><span class="pre">0.8</span></code>倍）と既定の
+ソルバー設定のもとで受け入れられる最大の 2 の冪の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>を示します（レイアウト
+ごとにひとつの表で、この計算のレイアウトに<code class="docutils literal notranslate"><span class="pre">&lt;-</span> <span class="pre">this</span> <span class="pre">run</span></code>の印）。シェルごとの表は、各
+オフサイトのシェルのボンド長とその行の最大の結合を示し、外側のシェルが結合ゼロだけの
+ときは、それらを取り除く<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>の値を示す文で終わります。</p>
+</section>
+<section id="id53">
+<h4>検証<a class="headerlink" href="#id53" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>SU(2) 極限。</strong>スピンに依存しないホッピングとスピン回転不変な相互作用
+（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>、<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>と、すべてのボンドで
+<code class="docutils literal notranslate"><span class="pre">J_Exchange</span> <span class="pre">=</span> <span class="pre">J_Hund</span> <span class="pre">-</span> <span class="pre">2</span> <span class="pre">J_Ising</span></code>）では、スペクトルは非スピン軌道の一重項の
+ボンドカーネルのものを1回、三重項のボンドカーネルのものを3回含み、両方のレイアウトで
+約<span class="math notranslate nohighlight">\(10^{-8}\)</span>の相対精度で一致します。</p></li>
+<li><p><strong>チャネルがひとつの場合。</strong><span class="math notranslate nohighlight">\(B = 1\)</span>では固有値の一覧全体がオンサイトの経路
+（<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>）と一致します。スピン軌道相互作用のある模型（dense）と
+Zeeman 模型（packed）で確認しています。</p></li>
+<li><p><strong>S_z を保存するが回転不変でない場合。</strong>ボンド上の<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、<code class="docutils literal notranslate"><span class="pre">Ising</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>の単独では、同スピンの各セクター（対の<span class="math notranslate nohighlight">\(S_z = \pm 1\)</span>）は、
+非スピン軌道の頂点が厳密になる非スピン軌道の三重項のボンドのスペクトルを再現します。</p></li>
+<li><p><strong>Zeeman 磁場。</strong>SU(2) 模型に弱い Extern の磁場をかけると固有値は線形に動きます。
+三重項は対の<span class="math notranslate nohighlight">\(S_z\)</span>で分裂し（<span class="math notranslate nohighlight">\(S_z = 0\)</span>の成分は傾きがほぼゼロ、2つの
+同スピンの成分は逆符号の傾き）、一重項は1次では動きません。</p></li>
+<li><p><strong>厳密対角化。</strong>ボンドの頂点から作った対の感受率は、複素のスピン反転ホッピングを
+もつ2軌道の鎖の厳密対角化と、相互作用の1次と2次の係数で一致します
+（<code class="docutils literal notranslate"><span class="pre">tests/test_so_bond_pairing_ed.py</span></code>）。</p></li>
+<li><p><strong>カーネル。</strong>計算の対形成カーネルは、独立に作った Green 関数から作った参照の
+カーネルと、両方のレイアウトで一致します。</p></li>
+</ul>
+</section>
+</section>
 <section id="frequency-dynamic">
 <span id="sc-spin-orbital-dynamic"></span><h3>振動数に依存するギャップ（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>）<a class="headerlink" href="#frequency-dynamic" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>では、スピン軌道のギャップはフェルミオン
@@ -2921,8 +3393,8 @@ Pauli 禁制モードは現れません。</p></li>
 <span class="math notranslate nohighlight">\(n = 0, \ldots, N_\mathrm{mat} - 1\)</span>の上の
 <span class="math notranslate nohighlight">\(\Delta_{AB}(\mathbf{k}, i\omega_n)\)</span>を求め、pairing vertex はすべてのボソン
 振動数<span class="math notranslate nohighlight">\(\nu_m = (2m - N_\mathrm{mat})\pi T\)</span>で使います。</p>
-<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-12">
-<span class="eqno">(5.13)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-12" title="Link to this equation">¶</a></span>\[V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
+<div class="math notranslate nohighlight" id="equation-rpa-tutorial-sc-index-13">
+<span class="eqno">(5.14)<a class="headerlink" href="#equation-rpa-tutorial-sc-index-13" title="Link to this equation">¶</a></span>\[V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
 \Gamma\,\chi(\mathbf{q}, i\nu_m)\,\Gamma .\]</div>
 <p>裸の部分<span class="math notranslate nohighlight">\(\tfrac{1}{2}\Gamma\)</span>は振動数によりません。揺らぎの部分は
 <span class="math notranslate nohighlight">\(+\mathbf{q}\)</span>と、<span class="math notranslate nohighlight">\(\chi\)</span>と同じボソン添字で読みます。これは厳密対角化が
@@ -2943,8 +3415,8 @@ Pauli 禁制モードは現れません。</p></li>
 ありません（反転対称性がない場合やスピン軌道相互作用がある場合）。そのため
 スペクトルは振動数について偶と奇のギャップを含み、各固有ベクトルの偶・奇の
 成分は選択せずに出力します。</p>
-<section id="id45">
-<h4>適用範囲<a class="headerlink" href="#id45" title="Link to this heading">¶</a></h4>
+<section id="id54">
+<h4>適用範囲<a class="headerlink" href="#id54" title="Link to this heading">¶</a></h4>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;uniform&quot;</span></code>（既定値）のみ;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>を<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>に明示的に指定する
@@ -2965,7 +3437,8 @@ Pauli 禁制モードは現れません。</p></li>
 確認は<span class="math notranslate nohighlight">\(\nu = 0\)</span>だけでなく<strong>すべての</strong>ボソン振動数で行います;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>: 裸の Green 関数のスピンフルなバブルをすべてのボソン
 振動数で計算し、<span class="math notranslate nohighlight">\(\chi = [1 + \chi_0\Gamma]^{-1}\chi_0\)</span>とします;</p></li>
-<li><p>オンサイトおよびセル内の相互作用のみ、ボンドチャネルなし（静的な場合と同じ）;</p></li>
+<li><p>オンサイトおよびセル内の相互作用のみ、ボンドチャネルなし（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>は
+拒否されます。<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>のボンド分解の経路は静的のみです）;</p></li>
 <li><p>両方のモードで<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">filling</span></code>が必要（アーカイブの検査がフィリングの
 目標値を比較するため）;</p></li>
 <li><p>偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>;</p></li>
@@ -2975,11 +3448,12 @@ Pauli 禁制モードは現れません。</p></li>
 別のスピン軌道動的計算の<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>）を使えます。</p></li>
 </ul>
 </section>
-<section id="id46">
-<h4>拒否される組み合わせ<a class="headerlink" href="#id46" title="Link to this heading">¶</a></h4>
-<p>上の静的な場合の拒否（<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code>、オフサイトの行、<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>、
-<code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>以外の<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>など）に加えて、次のものはファイルを
-読む前に拒否します。どのエラーもキーを示します。</p>
+<section id="id55">
+<h4>拒否される組み合わせ<a class="headerlink" href="#id55" title="Link to this heading">¶</a></h4>
+<p>上の静的な場合の拒否（<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;arnoldi&quot;</span></code>以外の
+<code class="docutils literal notranslate"><span class="pre">eigenvalue_method</span></code>など）と、動的ソルバーがつねに拒否する<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code>とすべてのオフサイトの行（静的ソルバーの「拒否される組み合わせ」を参照）に
+加えて、次のものはファイルを読む前に拒否します。どのエラーもキーを示します。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>（スピン軌道モードではまだ IR 基底を使えません）;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>と、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>の指定なし（既定値が<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>の
@@ -2998,8 +3472,8 @@ Pauli 禁制モードは現れません。</p></li>
 <p><code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続きスピン軌道モードを拒否
 します。</p>
 </section>
-<section id="id47">
-<h4>初期ギャップ<a class="headerlink" href="#id47" title="Link to this heading">¶</a></h4>
+<section id="id56">
+<h4>初期ギャップ<a class="headerlink" href="#id56" title="Link to this heading">¶</a></h4>
 <p>べき乗反復（<code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>）の既定の初期値は
 <code class="docutils literal notranslate"><span class="pre">init_gap</span> <span class="pre">=</span> <span class="pre">&quot;random&quot;</span></code>です。すべての<span class="math notranslate nohighlight">\((A, B, \mathbf{k}, \omega_n)\)</span>に
 わたる固定シードの乱数ギャップを反対称空間へ射影したもので、振動数の偶奇の両方を
@@ -3010,8 +3484,8 @@ Pauli 禁制モードは現れません。</p></li>
 到達できません。特定の偶振動数の状態を追う場合を除き、乱数の既定値を使って
 ください。Arnoldi 法は<code class="docutils literal notranslate"><span class="pre">init_gap</span></code>を使いません。</p>
 </section>
-<section id="id48">
-<h4>出力<a class="headerlink" href="#id48" title="Link to this heading">¶</a></h4>
+<section id="id57">
+<h4>出力<a class="headerlink" href="#id57" title="Link to this heading">¶</a></h4>
 <p>ファイル名は動的ソルバーと同じ<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>・<code class="docutils literal notranslate"><span class="pre">gap.dat</span></code>・
 <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>です。規約は静的なスピン軌道ソルバーのもの（spin-block 順、
 <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span> <span class="pre">spin_block</span></code>、<code class="docutils literal notranslate"><span class="pre">pairing_type</span></code>なし）です。</p>
@@ -3114,7 +3588,7 @@ Pauli 禁制モードは現れません。</p></li>
 どちらの場合も計算は反対称空間に制限されます。</p>
 </section>
 <section id="sc-spin-orbital-dynamic-memory">
-<span id="id49"></span><h4>メモリと時間<a class="headerlink" href="#sc-spin-orbital-dynamic-memory" title="Link to this heading">¶</a></h4>
+<span id="id58"></span><h4>メモリと時間<a class="headerlink" href="#sc-spin-orbital-dynamic-memory" title="Link to this heading">¶</a></h4>
 <p>4脚のテンソル（<span class="math notranslate nohighlight">\(\chi\)</span>、<span class="math notranslate nohighlight">\(\chi_0\)</span>、頂点、その
 <span class="math notranslate nohighlight">\((\mathbf{r}, \tau)\)</span>表示、ペアバブル）はそれぞれ
 <span class="math notranslate nohighlight">\(T_4 = 16\,(2N)^4 N_k N_\mathrm{mat}\)</span>バイトで、同じ<span class="math notranslate nohighlight">\(N\)</span>の非スピン
@@ -3169,8 +3643,8 @@ CPU、<code class="docutils literal notranslate"><span class="pre">fft_workers</
 <span class="math notranslate nohighlight">\(10^{-10}\)</span>で一致し、反復法の解は収束時の残差の範囲で一致します。主要固有値が縮退している場合、ギャップは部分空間
 として比べます（<code class="docutils literal notranslate"><span class="pre">tests/test_sc_spin_orbital_gpu.py</span></code>）。</p>
 </section>
-<section id="id50">
-<h4>検証<a class="headerlink" href="#id50" title="Link to this heading">¶</a></h4>
+<section id="id59">
+<h4>検証<a class="headerlink" href="#id59" title="Link to this heading">¶</a></h4>
 <ul class="simple">
 <li><p><strong>厳密対角化との比較。</strong> 静的な検証と同じスピン混成のある鎖で、本番の演算子は、
 ペア感受率が相互作用の1次・2次で厳密対角化と一致するカーネルの作用に、丸め誤差

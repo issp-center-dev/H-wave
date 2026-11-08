@@ -715,7 +715,7 @@ enter the ring sum through their direct (Hartree-like) part
 :math:`V(\mathbf{q})` only, as in the non-spin-orbital RPA. The spin-orbital
 RPA logs this once per run, at INFO level, when the input has off-site rows::
 
-   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included.
+   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static").
 
 ``<types>`` is the sorted, comma-separated list of the interaction types that
 have a nonzero off-site row. ``PairHop`` is not named in this list. The line

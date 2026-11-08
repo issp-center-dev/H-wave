@@ -626,7 +626,7 @@ SO RPA、SO FLEX、SO hwave_sc の結果が変わります。</p></li>
 オフサイトの行は非スピン軌道の RPA と同じく、直接（Hartree 型）部分
 <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span>だけでリング和に入ります。入力にオフサイトの行があると、
 スピン軌道 RPA は 1 回の計算につき 1 回、INFO レベルで次の行を記録します:</p>
-<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>enable_spin_orbital: the off-site rows of &lt;types&gt; enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included.
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>enable_spin_orbital: the off-site rows of &lt;types&gt; enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static").
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">&lt;types&gt;</span></code>は、オフサイトの行がゼロでない相互作用の種類を、並べ替えてコンマで
