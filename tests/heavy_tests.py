@@ -517,3 +517,73 @@ def heavy_test_ids():
     return frozenset(
         "{}.{}.{}".format(mod, cls, meth)
         for mod, cls, meth, _reason in HEAVY_TESTS)
+
+
+#: The registry's own consistency gate, which the FULL job runs alongside
+#: the registered tests (it is the one fast test whose meaning depends on
+#: the full-suite switch: it drives both shapes in child processes).
+REGISTRY_TEST_FILE = "tests/test_heavy_tests_registry.py"
+
+
+def heavy_node_ids():
+    """The registry as pytest node ids, ``tests/<module>.py::Class::method``,
+    in registry order. The FULL CI job selects exactly these (plus
+    :data:`REGISTRY_TEST_FILE`), so the list is derived here at run time
+    and never written out by hand."""
+    return ["tests/{}.py::{}::{}".format(mod, cls, meth)
+            for mod, cls, meth, _reason in HEAVY_TESTS]
+
+
+def missing_from_collection(expected, collect_output):
+    """The ``expected`` node ids that do NOT appear in ``collect_output``,
+    the text ``pytest --collect-only -q`` printed (one node id per line).
+
+    A registered test that was renamed or removed without updating the
+    registry must fail the FULL job rather than drop out of it silently.
+    pytest does exit non-zero on a node id it cannot resolve, but that
+    behaviour is the runner's, not this project's, and its message names
+    only the first miss; the comparison here is explicit and names every
+    missing id."""
+    collected = set(line.strip() for line in collect_output.splitlines())
+    return [node for node in expected if node not in collected]
+
+
+def _main(argv=None):
+    """Command line used by the FULL CI job.
+
+    ``python -m tests.heavy_tests node-ids``
+        print the node ids to run, one per line.
+    ``python -m tests.heavy_tests check-collected FILE``
+        exit non-zero, naming them, if any registered node id is absent
+        from FILE (the output of ``pytest --collect-only -q``).
+    """
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m tests.heavy_tests")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("node-ids")
+    chk = sub.add_parser("check-collected")
+    chk.add_argument("collect_output")
+    args = parser.parse_args(argv)
+
+    ids = heavy_node_ids()
+    if args.cmd == "node-ids":
+        for node in ids + [REGISTRY_TEST_FILE]:
+            print(node)
+        return 0
+    with open(args.collect_output) as fh:
+        text = fh.read()
+    missing = missing_from_collection(ids, text)
+    if missing:
+        sys.stderr.write(
+            "registered heavy test(s) NOT collected by pytest -- renamed or "
+            "removed without updating tests/heavy_tests.py:\n  "
+            + "\n  ".join(missing) + "\n")
+        return 1
+    print("all {} registered heavy tests collected".format(len(ids)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

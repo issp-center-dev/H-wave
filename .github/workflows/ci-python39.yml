@@ -7,11 +7,13 @@ name: CI Python 3.10+
 #                 opt-in exact-diagonalization tests are skipped. Runs
 #                 the whole suite once, with pytest and the coverage
 #                 floor.
-#   test-full  -- the FULL-ONLY tests, HWAVE_FULL_TESTS=1: only the test
-#                 files that contain a test gated on that switch, run
-#                 once with pytest and without coverage, on Python 3.12
-#                 only (`test` keeps all three versions). Everything else
-#                 is the fast gate's job and is not repeated here.
+#   test-full  -- the FULL-ONLY tests, HWAVE_FULL_TESTS=1: exactly the
+#                 tests registered in tests/heavy_tests.py (HEAVY_TESTS),
+#                 plus the registry's own consistency gate, run once with
+#                 pytest and without coverage, on Python 3.12 only (`test`
+#                 keeps all three versions). The fast tests that share a
+#                 file with a registered test are the fast gate's job and
+#                 are not repeated here.
 #
 # Both jobs are driven by the single `on:` block below, so BOTH run on
 # push AND on pull_request. That is deliberate and is the decision on
@@ -29,6 +31,10 @@ name: CI Python 3.10+
 # 4086 s / 4698 s and the other 177 files 756 s / 1248 s; coverage added
 # 23%. So the full job's unique work -- the gated files, once, without
 # coverage -- is about an hour, against three hours for the old shape.
+# Within those files, the unregistered (fast) tests that rode along took
+# 3.7 of 33.4 and 5.6 of 50.9 minutes of summed test time on two measured
+# CI runs (41776574951, 42418446187). They already run in `test`, so
+# test-full now selects the registered ids only.
 # Coverage is NOT lost: the full suite's coverage.xml was byte-identical
 # to the fast gate's (see the coverage step of `test`).
 
@@ -351,26 +357,34 @@ jobs:
         poetry run python -c "import hwave; print('hwave imported successfully')"
 
     - name: Run the full-only tests with pytest
-      # Only the test files that contain a test gated on HWAVE_FULL_TESTS
-      # -- through the opt-in registry of tests/heavy_tests.py (`from
-      # tests.heavy_tests import heavy`) or a class-level
-      # full_suite_enabled() check. The files are selected at run time so
-      # the list cannot go stale; their fast tests ride along (a few
-      # minutes). Everything else is the fast gate's job (`test` above)
-      # and is not repeated here, and neither is the unittest pass: pytest
-      # runs every unittest-style test. No coverage either -- the full
-      # suite's coverage was byte-identical to the fast gate's, and the
-      # fast gate keeps the floor. --durations=30: the 30 slowest tests of
-      # the run, printed at the end.
+      # Exactly the tests registered in tests/heavy_tests.py (HEAVY_TESTS)
+      # plus tests/test_heavy_tests_registry.py. The node ids are derived
+      # from the registry at run time (`python -m tests.heavy_tests
+      # node-ids`), so the list cannot go stale and is never written out
+      # here. Before running, the ids are collected and compared with the
+      # registry: a registered test that was renamed or removed fails this
+      # step by name instead of dropping out of the job silently. The fast
+      # tests of the same files are the fast gate's job (`test` above) and
+      # are not repeated, and neither is the unittest pass: pytest runs
+      # every unittest-style test. No coverage either -- the full suite's
+      # coverage was byte-identical to the fast gate's, and the fast gate
+      # keeps the floor. --durations=30: the 30 slowest tests of the run,
+      # printed at the end.
       run: |
-        gated="$(grep -l -E 'full_suite_enabled|heavy_tests import|HWAVE_FULL_TESTS' tests/test_*.py | sort)"
-        if [ -z "$gated" ]; then
-          echo "::error::no test file is gated on HWAVE_FULL_TESTS; the selection rule above no longer matches the suite";
+        ids="$(poetry run python -m tests.heavy_tests node-ids)"
+        if [ -z "$ids" ]; then
+          echo "::error::tests/heavy_tests.py registers no test; the full-only job would run nothing";
           exit 1;
         fi
-        echo "full-only test files ($(echo "$gated" | wc -l | tr -d ' ')):"
-        echo "$gated"
-        poetry run pytest $gated -v --durations=30
+        echo "full-only test ids ($(echo "$ids" | wc -l | tr -d ' ')):"
+        echo "$ids"
+        poetry run pytest --collect-only -q $ids > "${RUNNER_TEMP}/heavy-collected.txt" || {
+          cat "${RUNNER_TEMP}/heavy-collected.txt";
+          echo "::error::pytest could not collect every registered heavy test id";
+          exit 1;
+        }
+        poetry run python -m tests.heavy_tests check-collected "${RUNNER_TEMP}/heavy-collected.txt"
+        poetry run pytest $ids -v --durations=30
 
     - name: Verify the test suite left the tracked tree clean
       # !cancelled(): report isolation defects even when the gating test

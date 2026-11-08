@@ -401,3 +401,24 @@ class TestFullSuiteEnvParsing(unittest.TestCase):
     def test_truthy_spellings_are_on(self):
         for value in ("1", "true", "TRUE", "yes", "on", "anything"):
             self.assertTrue(self._with_env(value), value)
+
+
+class TestFullJobSelection(unittest.TestCase):
+    """The FULL CI job runs ``heavy_node_ids()`` plus this file, and fails
+    when ``missing_from_collection`` reports a registered id that pytest
+    did not collect."""
+
+    def test_node_ids_mirror_the_registry(self):
+        ids = heavy_tests.heavy_node_ids()
+        self.assertEqual(len(ids), len(heavy_tests.HEAVY_TESTS))
+        self.assertEqual(len(ids), len(set(ids)))
+        for node, (mod, cls, meth, _r) in zip(ids, heavy_tests.HEAVY_TESTS):
+            self.assertEqual(node, "tests/{}.py::{}::{}".format(mod, cls, meth))
+
+    def test_missing_from_collection_names_every_miss(self):
+        ids = heavy_tests.heavy_node_ids()
+        text = "\n".join(ids[1:-1]) + "\n\n{} tests collected\n".format(len(ids) - 2)
+        self.assertEqual(
+            heavy_tests.missing_from_collection(ids, text), [ids[0], ids[-1]])
+        self.assertEqual(
+            heavy_tests.missing_from_collection(ids, "\n".join(ids)), [])
