@@ -1762,9 +1762,9 @@ class FLEX(RPA):
             axF, axB = self._ir_axF, self._ir_axB
             sigma = self._ir_densify(sigma, axF, 1)
             green_kw = self._ir_densify(green_kw, axF, 1)
-            chi_s = self._ir_densify(chi_s, axB, 0)
-            chi_c = self._ir_densify(chi_c, axB, 0)
-            chi0q_out = self._ir_densify(chi0q_out, axB, 0)
+            chi_s = self._ir_densify_chi(chi_s, axB)
+            chi_c = self._ir_densify_chi(chi_c, axB)
+            chi0q_out = self._ir_densify_chi(chi0q_out, axB)
         else:
             # uniform run, or IR-native (write_densified=false): the arrays
             # stay on their working frequency axis (sparse nodes for IR),
@@ -3317,6 +3317,53 @@ class FLEX(RPA):
         for idx in np.ndindex(lead_shape):
             np.matmul(evT, c[idx].T, out=out[idx].reshape(self.nmat, -1))
         return out
+
+    def _ir_densify_chi(self, chi_nodes, ax):
+        """:meth:`_ir_densify` for a ``(n_freq_B, nvol, nd, nd)``
+        susceptibility, keeping an exactly spin-redundant input exactly
+        spin-redundant.
+
+        On the reduced path of a spin-free run the ``(nd, nd)`` matrices
+        carry one ``(norb, norb)`` block on both spin diagonals and exact
+        zeros off them: the inflation writes the same array into both
+        blocks (:meth:`_inflate_chi0q_and_ham`) and the spin-block-diagonal
+        channel vertices keep it so through the RPA solve. The consumers
+        rely on that -- ``hwave_sc`` embeds the up block alone and checks
+        that what it discards is redundant to the bit
+        (``sc._check_spin_block_discarded``).
+
+        The densifying GEMM does not promise it: the two blocks are
+        different columns of one ``(nmat, L) @ (L, nvol*nd*nd)`` product,
+        and a BLAS may round different columns differently (measured:
+        numpy 2.2.6 + OpenBLAS on the Linux CI runners left the blocks
+        1.7e-18 apart; numpy 1.26 + OpenBLAS and numpy 2 + Accelerate kept
+        them identical). So, when the NODE values are exactly redundant,
+        the densified down block is set to the densified up block and the
+        cross blocks to zero. The up block is untouched (byte-identical to
+        a plain :meth:`_ir_densify`), the down block moves by at most the
+        BLAS's last-bit disagreement, and an input that is not redundant at
+        the nodes -- spin-diag, spinful, the general scheme, or any genuine
+        asymmetry -- is densified exactly as before.
+        """
+        dense = self._ir_densify(chi_nodes, ax, 0)
+        if self.spin_mode != "spin-free" or self._flex_general:
+            return dense
+        norb, nd = self.norb, self.nd
+        if (chi_nodes.ndim != 4 or chi_nodes.shape[-1] != nd
+                or chi_nodes.shape[-2] != nd or nd != self.ns * norb):
+            return dense
+        xp = _bk.array_module_of(chi_nodes)
+        up = chi_nodes[..., :norb, :norb]
+        down = chi_nodes[..., norb:, norb:]
+        if not bool(xp.array_equal(up, down)):
+            return dense
+        if bool(xp.any(chi_nodes[..., :norb, norb:])) or \
+                bool(xp.any(chi_nodes[..., norb:, :norb])):
+            return dense
+        dense[..., norb:, norb:] = dense[..., :norb, :norb]
+        dense[..., :norb, norb:] = 0.0
+        dense[..., norb:, :norb] = 0.0
+        return dense
 
     def _ir_coeff_decay_check(self, sigma, label="sigma"):
         """Always-on layer-1 diagnostic (design Sec. 5): warn when the tail
