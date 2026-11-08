@@ -34,7 +34,12 @@ What makes the sharing exact
   eigenvectors, up to ~100 MB for the largest total-N fixture), so two
   observables of one Hamiltonian share one diagonalization without the
   process accumulating every ED it ever built; their spectra are frozen
-  read-only as well.
+  read-only as well. Holding up to two engines beyond their callers'
+  lifetime raises the peak RSS of an ED-heavy module by about 31 %
+  (measured in review); :data:`ENGINE_LRU_SIZE` is the knob.
+* The one-body matrix is copied at construction (and the copy frozen),
+  so mutating the caller's array -- or the one ``EDFixture.build_h1``
+  caches -- after the stand-in exists cannot change its entry.
 
 The cache lives in this module so that every test module importing it
 shares one copy when they run in the same process (one ``pytest`` or
@@ -111,7 +116,12 @@ class CachedED:
         self.fx = fx
         self._name = engine_name
         self._terms = [tuple(t) for t in terms if t[-1] != 0]
-        self._h1 = fx.build_h1() if h1 is None else np.asarray(h1)
+        # an OWNED, read-only copy, taken before the key: the engine is
+        # built lazily, and a caller mutating its h1 (or the array
+        # EDFixture.build_h1 caches) in between must not change what is
+        # diagonalized under this key
+        self._h1 = np.array(fx.build_h1() if h1 is None else h1, copy=True)
+        self._h1.flags.writeable = False
         self.key = (engine_name, _fixture_key(fx),
                     _canon(tuple(self._terms)),
                     _array_key(np.asarray(self._h1)))

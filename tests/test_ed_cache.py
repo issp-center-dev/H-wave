@@ -89,6 +89,39 @@ class TestEDCache(unittest.TestCase):
                 self.assertEqual(ed_cache.sector(fx, with_zeros).key,
                                  ed_cache.sector(fx, without).key)
 
+    def _mutate_before_first_use(self, explicit):
+        """Construct a stand-in, mutate the h1 it was given (explicitly, or
+        the array EDFixture.build_h1 caches) BEFORE the lazy engine build,
+        and check the entry still holds the original content."""
+        fx = _fx(mu=0.2 + (1e-3 if explicit else 2e-3))   # a fresh key per case
+        terms = _terms(fx, 0.25)
+        original = fx.build_h1().copy()
+        want = U.SectorED(fx, terms=terms, h1=original.copy()).bond_correlator(CHANNELS)
+        if explicit:
+            src = original.copy()
+            cached = ed_cache.sector(fx, terms=terms, h1=src)
+        else:
+            src = fx.build_h1()                 # the fixture's own cached array
+            cached = ed_cache.sector(fx, terms=terms)
+        src[0, 2] += 0.5                       # mutate the source
+        src[2, 0] += 0.5
+        try:
+            first = cached.bond_correlator(CHANNELS)
+            self.assertTrue(np.array_equal(first, want))
+            again = ed_cache.sector(fx, terms=terms, h1=original.copy()
+                                    ).bond_correlator(CHANNELS)
+            self.assertTrue(np.array_equal(again, want))
+        finally:
+            if not explicit:
+                src[0, 2] -= 0.5
+                src[2, 0] -= 0.5
+
+    def test_mutating_an_explicit_h1_after_construction_is_harmless(self):
+        self._mutate_before_first_use(explicit=True)
+
+    def test_mutating_the_fixture_h1_after_construction_is_harmless(self):
+        self._mutate_before_first_use(explicit=False)
+
     def test_only_public_observables_are_served(self):
         with self.assertRaises(AttributeError):
             ed_cache.sector(_fx())._build_operator
