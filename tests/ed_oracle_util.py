@@ -399,9 +399,13 @@ def _scatter_rotate(pc, pos, states_ket, V_ket, V_bra, mode_terms, apply):
 
 #: contraction-axis block of the Lehmann products below. One BLAS product
 #: accumulates its contraction axis in a single running sum (error growing
-#: with the axis length, here up to ~1.6e5 eigenstate pairs per sector);
-#: splitting it into blocks combined pairwise keeps the summation error at
-#: the level of the per-cell pairwise sums the products replace.
+#: with the axis length, up to ~1e6 eigenstate pairs per sector pair);
+#: splitting it into blocks combined pairwise bounds that growth. The
+#: measured gain is in the Green function (:func:`lehmann_frequency_sum`):
+#: the old per-frequency product was up to 6e-14 off an exactly rounded
+#: sum, the blocked one at most 3e-16. The static correlators
+#: (:func:`_lehmann_gram`) sit at about 8e-15 of an exact sum either way;
+#: there the blocks are kept for uniformity, not for a measured gain.
 _ACC_CHUNK = 1024
 
 
@@ -464,6 +468,8 @@ def lehmann_frequency_sum(iws, Ar, Ac, weight, dE, budget=1 << 22):
     :data:`_ACC_CHUNK` (fewer when an operand would exceed ``budget``
     elements) whose products are combined pairwise."""
     n_w, n_r, n_c = len(iws), Ar.shape[0], Ac.shape[0]
+    if n_w == 0 or n_r == 0 or n_c == 0:
+        return np.zeros((n_w, n_r, n_c), dtype=complex)
     acc = _PairwiseSum()
     n_k = dE.size
     chunk = max(1, min(_ACC_CHUNK, budget // max(n_w, n_r * n_c, 1)))
@@ -1614,6 +1620,8 @@ class TotalNED:
         r_slot = np.asarray([slot[p] for p in rows], dtype=int)
         c_slot = np.asarray([slot[q] for q in cols], dtype=int)
         out = np.zeros((len(iws), len(rows), len(cols)), dtype=complex)
+        if out.size == 0:
+            return out          # no row, no column or no frequency
         for key_n in self._sector_states:
             A = self._rotated_lowering(key_n, -1, [[(p, 1.0)] for p in modes])
             if A is None:
