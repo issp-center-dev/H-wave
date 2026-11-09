@@ -561,8 +561,11 @@ Here :math:`\chi_0` is the bubble of the current dressed Green function and
 for the spin-orbital FLEX. For the one-band Hubbard model the spin value is
 :math:`U \max_{\mathbf{q}} \chi_0(\mathbf{q}, 0)`. :math:`\mathbf{q}` is
 given in units of the reciprocal lattice vectors. The bond-resolved path
-(``longitudinal_bond_channels = true``) prints no such line; its conditioning
-guard line plays this role.
+(``longitudinal_bond_channels = true``) prints, on the final iteration
+only, the same values for the bond-resolved bubble and vertices under the
+label ``RPA pole indicator (final map) max_q eig[chibar S] (spin) /
+eig[-chibar C] (charge) (q, i nu = 0)`` (see :ref:`bond_rpa_pole`); on the
+other iterations its conditioning guard line plays this role.
 
 How to read it: :math:`\lambda \ge 1` means that the channel's sum is
 statically unstable for that bubble. A converged FLEX solution stays below 1,
@@ -633,6 +636,131 @@ on the window is healthy (finite, inside the physical range and increasing);
 a distorted window gives the error above. A non-finite self-energy and
 a target below 0 or above the number of states are refused before the
 search starts.
+
+.. _bond_rpa_pole:
+
+The static RPA pole of the bond-resolved paths
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The bond-resolved paths dress the bond bubble :math:`\bar\chi` with the
+denominator :math:`1 + s\,\bar\chi W` (:math:`s = -1` and :math:`W = S`
+for spin, :math:`s = +1` and :math:`W = C` for charge, :math:`s = +1` and
+:math:`W = \Gamma` for the spinful channel of the spin-orbital path). The
+conditioning guard (``cond_tol``, ``longitudinal_bond_cond_tol``) refuses
+this denominator only within about ``cond_tol`` of its pole. Past the pole
+the denominator is well conditioned again: the run used to finish without a
+word, although the dressed susceptibility is no longer positive definite and the
+pairing eigenvalue describes no physical state. For a V-driven charge
+instability the pairing eigenvalue is smooth across the pole, so it gives
+no hint of the crossing.
+
+Every bond path now computes, at the zero bosonic frequency, the indicator
+
+.. math::
+
+   \lambda_{\mathrm{RPA}} = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+   e \in \mathrm{eig}\left[-s\,\bar\chi(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+   \right\},
+
+that is :math:`\mathrm{eig}(\bar\chi S)` for spin,
+:math:`\mathrm{eig}(-\bar\chi C)` for charge and
+:math:`\mathrm{eig}(-\bar\chi \Gamma)` for the spinful channel (over the
+:math:`S_z` sectors in the ``sz_packed`` layout). It is the Stoner factor of
+:ref:`flex_stoner_divergence` with the bond-resolved bubble and vertices
+(the same "real eigenvalue" rule), and at zero off-site interaction it
+equals the on-site FLEX Stoner factor. The pole is at
+:math:`\lambda_{\mathrm{RPA}} = 1`; the run is past it when
+:math:`\lambda_{\mathrm{RPA}} \ge 1`. :math:`\mathbf{q}` is in units of the
+reciprocal lattice vectors; among symmetry-equivalent maxima the lowest flat
+q index is reported.
+
+- **INFO.** The indicator is always logged at INFO level. ``hwave_sc``
+  writes ``RPA pole indicator max_q eig[-sign chibar W](q, i nu = 0): spin
+  ... at q = (...); charge ...``; FLEX writes it on the final iteration's
+  line ``RPA pole indicator (final map) max_q eig[chibar S] (spin) /
+  eig[-chibar C] (charge) (q, i nu = 0): spin ...; charge ...``.
+- **WARNING.** Past the pole, the run logs ONE WARNING (at the end of the
+  SCF loop for FLEX, for the final map only: a transient excursion during
+  the self-consistency is not reported). It names the channel, the
+  indicator and q, says that the dressed susceptibility is not positive
+  definite there, and what this means for the pairing eigenvalue. Do not
+  use such a :math:`\lambda` in a :math:`T_c` or phase-boundary analysis;
+  stay below the pole by reducing the interaction or raising the
+  temperature:
+
+  .. code-block:: text
+
+     eliashberg bond_channels (static): the static RPA denominator is past its pole in the spin channel: max_q eig[chibar S](q, i nu = 0) = 1.020004 >= 1 at q = (0.5, 0.5, 0). The conditioning guard refuses only within cond_tol of the pole, so the run continues, ...
+
+- **Nothing is refused and no number changes.** The pairing eigenvalue
+  :math:`\lambda` is still reported, ``eigen_converged`` keeps its meaning
+  of eigen-solver convergence, and ``flex_guard_policy`` is not involved.
+  Should the indicator itself not be computable (a non-finite input or a
+  failed eigenvalue solve), one WARNING says so (``... could not be
+  computed ...``), the run completes unchanged and no pole provenance is
+  written.
+- **Provenance, written only past the pole.** A run below the pole writes
+  exactly the outputs it wrote before. Past the pole:
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 35 65
+
+     * - key
+       - content
+     * - ``rpa_past_pole``
+       - ``true``
+     * - ``rpa_pole_indicator_<channel>``
+       - :math:`\lambda_{\mathrm{RPA}}` of the channel (``spin`` and
+         ``charge``, or ``spinful`` on the spin-orbital path); every channel
+         is listed, also one below the pole
+     * - ``rpa_pole_q_<channel>``
+       - the q of that channel's maximum, ``(qx, qy, qz)``
+
+  They are written
+
+  - by the static ``hwave_sc`` bond run (``bond_channels = true``) as
+    ``# key = value`` lines of ``eigenvalue.dat`` and, on the spin-orbital
+    path, as ``gap.npz`` members;
+  - by the FLEX bond gate as the static members
+    ``longitudinal_bond_rpa_past_pole``,
+    ``longitudinal_bond_rpa_pole_indicator_<channel>`` and
+    ``longitudinal_bond_rpa_pole_q_<channel>`` of the chiq archive and of
+    ``longitudinal_bond.npz``;
+  - by the in-process ``longitudinal_bond_pairing`` (the indicator of the
+    final map it re-dresses) in ``eliashberg_bond_<type>.npz`` and as
+    ``# key=value`` header lines of ``eigenvalue_bond_<type>.dat``;
+  - by the dynamic ``hwave_sc`` bond run on an archive in
+    ``gap_dynamic.npz`` and as ``# key=value`` header lines of
+    ``eigenvalue.dat``. The archive keeps the dressed
+    :math:`\chi = [1 + s\bar\chi W]^{-1}\bar\chi` only, so the indicator
+    is recovered from the eigenvalues :math:`\mu` of :math:`-s\,\chi W`
+    (:math:`\mu = \lambda / (1 - \lambda)`) as
+    :math:`\lambda = \mu / (1 + \mu)`.
+
+**Checking older outputs.** Outputs written before this check carry no
+indicator.
+
+- A FLEX bond run: its static dressed susceptibilities
+  ``longitudinal_bond_chi_s`` / ``longitudinal_bond_chi_c`` (chiq archive,
+  shape ``(nvol, ND, ND)``) are positive below the pole. The final map was
+  past the pole exactly when the Hermitian part of one of them has a
+  negative eigenvalue at some q. Use the full ``(ND, ND)`` block: the
+  channel-0 block ``longitudinal_bond_chiq_*_static`` can stay positive.
+
+  .. code-block:: python
+
+     import numpy as np
+     z = np.load("chiq_s.npz")       # or the combined chiq archive
+     for ch in ("s", "c"):
+         chi = z["longitudinal_bond_chi_" + ch]
+         h = 0.5 * (chi + np.swapaxes(chi.conj(), -1, -2))
+         print(ch, "past the pole" if np.linalg.eigvalsh(h).min() < 0 else "below the pole")
+
+  ``longitudinal_bond_cond_min_s`` / ``_c`` does not tell the two sides
+  apart. A ``hwave_sc`` dynamic run on such an archive inherits its state.
+- A static ``hwave_sc`` bond run: ``eigenvalue.dat`` and ``gap.npz`` carry
+  no susceptibility, so the run must be repeated with this version to know.
 
 .. _flex_bond_hf_tutorial:
 

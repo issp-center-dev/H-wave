@@ -235,7 +235,12 @@ of blocks decomposed exactly over the whole solve),
 count reached in any one iteration) and
 ``longitudinal_bond_guard_blocks_per_iteration`` (integer, the number of
 blocks the guard covers in one iteration -- the denominator the previous
-two counts are measured against). The
+two counts are measured against). When the final map is past the static
+RPA pole, and only then, it also carries ``longitudinal_bond_rpa_past_pole``
+(``True``), ``longitudinal_bond_rpa_pole_indicator_spin`` /
+``_charge`` (float) and ``longitudinal_bond_rpa_pole_q_spin`` / ``_charge``
+(float ``(3,)``, in units of the reciprocal lattice vectors); see
+:ref:`bond_rpa_pole`. The
 ordinary ``chi0q``, ``chiq_s`` and ``chiq_c`` arrays of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects at every bosonic
 frequency. Every archive of a run with ``flex_hartree_fock = true`` (``chi0q``,
@@ -359,6 +364,11 @@ on the bond of the transfer row :math:`(+R_m, a, b)`, with
 vertex, real ``ndarray(B, B)``; see ``[eliashberg] ir_fit_tol``).
 ``eigenvalue.dat`` gains the header lines ``# bond_channels=true``,
 ``# residency=<...>`` and, when computed, ``# parity_leakage=<...>``.
+When the archive's state is past the static RPA pole, and only then, both
+files also carry ``rpa_past_pole``, ``rpa_pole_indicator_spin`` /
+``_charge`` and ``rpa_pole_q_spin`` / ``_charge`` (npz keys, and
+``# key=value`` header lines of ``eigenvalue.dat``), recovered from the
+archived dressed susceptibilities; see :ref:`bond_rpa_pole`.
 
 Every dynamic-solver ``eigenvalue.dat`` -- the on-site one included -- also
 carries one ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
@@ -406,7 +416,11 @@ of the pairing step never costs the FLEX results:
   ``# scf_converged=<true|false>``, ``# state=<...>``,
   ``# residency=<...>``, when computed ``# parity_leakage=<...>``, and the
   ``# gap_sector_weights ...`` / ``# sector_selection=...`` lines
-  described above. ``# eigen_converged=<true|false>`` has no spaces around
+  described above. When the final FLEX map is past the static RPA pole,
+  both ``eliashberg_bond_<type>.npz`` and this header also carry
+  ``rpa_past_pole``, ``rpa_pole_indicator_<channel>`` and
+  ``rpa_pole_q_<channel>`` (see :ref:`bond_rpa_pole`).
+  ``# eigen_converged=<true|false>`` has no spaces around
   ``=``, while the static ``eigenvalue.dat`` writes
   ``# eigen_converged = true``; a pipeline should test it
   whitespace-tolerantly (take the text after ``eigen_converged``, strip
