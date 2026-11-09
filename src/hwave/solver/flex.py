@@ -1836,7 +1836,7 @@ class FLEX(RPA):
                      "_bond_xp_name", "_bond_mirror_guarded", "_bond_store_resident",
                      "_bond_est_host_store", "_bond_transfer_estimate",
                      "_bond_guard_exact_total", "_bond_guard_exact_max", "_bond_guard_blocks",
-                     "_bond_pole", "_phase_b_seed", "_hf_tables"):
+                     "_bond_pole", "_bond_pole_final", "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
                 delattr(self, attr)
         self.scf_converged = False
@@ -2478,6 +2478,7 @@ class FLEX(RPA):
             self._scf_monitor.stoner_label = (
                 "RPA pole indicator (final map) max_q eig[chibar S] (spin) / "
                 "eig[-chibar C] (charge) (q, i nu = 0)")
+            self._scf_monitor.context_label = "RPA pole indicator (final map)"
         converged = False
         n_iter_done = 0
         chi0q_out = chi_s = chi_c = None
@@ -2486,7 +2487,9 @@ class FLEX(RPA):
         self._bond_guard_exact_total = 0
         self._bond_guard_exact_max = 0
         self._bond_guard_blocks = 0
-        # the static RPA pole check of the final map (issue #345)
+        # the static RPA pole check of the final map (issue #345): the raw
+        # indicators of the final map, then the report (or None) made of them
+        self._bond_pole_final = {}
         self._bond_pole = None
         if gate:
             # Device admission at its true baseline (spec 4.6): the backend is
@@ -2601,7 +2604,7 @@ class FLEX(RPA):
                     # the final map's static RPA pole indicators (issue #345):
                     # its Stoner line, then the check after the loop
                     indicators = self._bond_pole_indicators()
-                    self._bond_pole = indicators
+                    self._bond_pole_final = indicators
                     self._stoner_last = indicators or None
                 self._scf_monitor.record(iteration + 1, res_sigma, self._stoner_last,
                                          last=last)
@@ -2819,11 +2822,13 @@ class FLEX(RPA):
 
     def _check_final_bond_pole(self):
         """WARN when the final bond map is past its static RPA pole (issue
-        #345) and keep the report for the outputs (``_bond_pole``). The
+        #345) and keep the report for the outputs (``_bond_pole``, always
+        an :class:`~hwave.solver.bond_channels.RpaPoleReport` or ``None``;
+        the raw indicators of the final map are ``_bond_pole_final``). The
         indicators were logged on the final iteration's Stoner line. Never
         refuses."""
         from hwave.solver import bond_channels as _bc
-        indicators = self._bond_pole
+        indicators = getattr(self, "_bond_pole_final", None)
         if not indicators:
             self._bond_pole = None
             return

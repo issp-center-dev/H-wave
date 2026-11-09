@@ -768,12 +768,23 @@ class TestRealnessAfterTheInversion(unittest.TestCase):
         self.assertFalse(rep.past)
         self.assertEqual(rep.npz_members(), {})
 
-    def test_mu_exactly_minus_one_is_left_out(self):
-        lam, _, max_re = self._inv([-1.0, 0.5])
-        self.assertAlmostEqual(lam, 1.0 / 3.0, delta=1e-12)
-        self.assertTrue(np.isfinite(max_re))
-        lam, q, max_re = self._inv([-1.0])
-        self.assertTrue(np.isnan(lam) and q is None and np.isnan(max_re))
+    def test_mu_exactly_minus_one_is_undetermined(self):
+        """mu = -1 is lambda = +inf or -inf: on neither side of the pole, so
+        a stable remainder does not certify the channel below it, while a
+        remainder past the pole still is past it."""
+        from hwave.solver import bond_channels as bc
+        for mus in ([-1.0, 0.5], [-1.0]):
+            lam, q, max_re = self._inv(mus)
+            self.assertTrue(np.isnan(lam) and q is None and np.isnan(max_re), mus)
+        lam, q, _ = self._inv([-1.0, -2.0])          # mu = -2 is lambda = 2
+        self.assertAlmostEqual(lam, 2.0, delta=1e-12)
+        self.assertEqual(q, (0.0, 0.0, 0.0))
+        with _captured() as rec:
+            rep = bc.check_rpa_pole({"spin": self._inv([-1.0, 0.5])}, where="t",
+                                    consequence=".", log=logging.getLogger("t"))
+        self.assertFalse(rep.past)
+        self.assertEqual(rep.npz_members(), {})
+        self.assertEqual(len([m for m in _warnings(rec) if "could not be computed" in m]), 1)
 
     def test_complex_pairs_on_either_side_of_real_tol(self):
         from hwave.solver import bond_channels as bc
@@ -791,6 +802,111 @@ class TestRealnessAfterTheInversion(unittest.TestCase):
             self.assertEqual(np.isfinite(lam), real, (frac, lam))
             if real:
                 self.assertAlmostEqual(lam, t, delta=1e-9)
+
+
+class TestReportedQAttainsTheValue(unittest.TestCase):
+    """The q tie never pairs a q below the pole with a maximum past it: the
+    reported value is the reported q's own."""
+
+    def test_tie_across_the_threshold(self):
+        from hwave.solver import bond_channels as bc
+        ev = np.array([[1.0 - 4e-10], [1.0 + 1e-10]], dtype=complex)
+        lam, q, _ = bc._pole_reduce(ev, lambda e: e, (2, 1, 1))
+        self.assertEqual(lam, 1.0 + 1e-10)
+        self.assertEqual(q, (0.5, 0.0, 0.0))
+
+    def test_value_is_the_q_own(self):
+        from hwave.solver import bond_channels as bc
+        ev = np.array([[0.7 - 4e-10], [0.7]], dtype=complex)
+        lam, q, _ = bc._pole_reduce(ev, lambda e: e, (2, 1, 1))
+        self.assertEqual(q, (0.0, 0.0, 0.0))
+        self.assertEqual(lam, 0.7 - 4e-10)
+
+
+class TestScfContextLabel(unittest.TestCase):
+    """A failed post-SCF step quotes the last iteration's indicator under the
+    path's own name: the bond path's is no Stoner factor."""
+
+    def test_label(self):
+        from hwave.solver import flex_diagnostics as diag
+        m = diag.ScfMonitor(logging.getLogger("t"))
+        m.iteration, m.step = 3, 0.1
+        m.stoner = {"spin": (0.5, (0.0, 0.0, 0.0), 0.5)}
+        self.assertIn("and Stoner factor ", m.context())
+        m.context_label = "RPA pole indicator (final map)"
+        self.assertIn("and RPA pole indicator (final map) ", m.context())
+        self.assertNotIn("Stoner", m.context())
+
+
+class TestOneWarningWithAnUnavailableChannel(unittest.TestCase):
+    """One channel past the pole and the other unavailable: ONE WARNING that
+    names both, and keys only for the channel that was computed."""
+
+    def test_mixed(self):
+        from hwave.solver import bond_channels as bc
+        with _captured() as rec:
+            rep = bc.check_rpa_pole({"spin": bc.POLE_UNAVAILABLE,
+                                     "charge": (1.2, (0.5, 0.5, 0.0), 1.2)},
+                                    where="t", consequence=".", log=logging.getLogger("t"))
+        msgs = _warnings(rec)
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn(POLE_TEXT, msgs[0])
+        self.assertIn("could not be computed", msgs[0])
+        self.assertIn("spin channel(s)", msgs[0])
+        self.assertTrue(rep.past)
+        self.assertEqual(set(rep.npz_members()),
+                         {"rpa_past_pole", "rpa_pole_indicator_charge", "rpa_pole_q_charge"})
+
+
+class TestPackedSectors(unittest.TestCase):
+    """The S_z-packed check takes every sector (a maximum in a +-1 sector
+    is found) and treats one failing sector as undetermined."""
+
+    def _run(self, per_sector):
+        import types
+        from hwave import sc
+        from hwave.solver import bond_channels as bc
+        from hwave.solver import so_bond
+        sm = so_bond.sz_sector_map(types.SimpleNamespace(reverse=np.array([0])), 2)
+        X = so_bond.PackedArrays.zeros(sm, (1,))
+        G = so_bond.PackedArrays.zeros(sm, (1,))
+        vals = iter(per_sector[name] for name in sm.sector_order)
+        with mock.patch.object(bc, "static_pole_indicator",
+                               side_effect=lambda *a, **k: next(vals)), \
+                _captured() as rec:
+            rep = sc._so_bond_static_pole(X, G, (1, 1, 1))
+        return rep, rec
+
+    def test_maximum_in_a_transverse_sector(self):
+        q = (0.0, 0.0, 0.0)
+        for name in ("+1", "-1"):
+            per = {"0": (0.3, q, 0.3), "+1": (0.2, q, 0.2), "-1": (0.1, q, 0.1)}
+            per[name] = (1.4, q, 1.4)
+            rep, rec = self._run(per)
+            self.assertTrue(rep.past, name)
+            self.assertEqual(rep.indicators["spinful"][0], 1.4)
+            msgs = _pole_warnings(rec)
+            self.assertEqual(len(msgs), 1)
+            self.assertIn("S_z sector " + name, msgs[0])
+
+    def test_one_failing_sector(self):
+        from hwave.solver import bond_channels as bc
+        q = (0.0, 0.0, 0.0)
+        rep, rec = self._run({"0": (0.3, q, 0.3), "+1": bc.POLE_UNAVAILABLE,
+                              "-1": (0.1, q, 0.1)})
+        self.assertFalse(rep.past)
+        self.assertEqual(len([m for m in _warnings(rec) if "could not be computed" in m]), 1)
+        rep, rec = self._run({"0": (0.3, q, 0.3), "+1": bc.POLE_UNAVAILABLE,
+                              "-1": (1.1, q, 1.1)})
+        self.assertTrue(rep.past)
+        self.assertEqual(len(_warnings(rec)), 1)
+
+    def test_no_real_eigenvalue_is_not_a_failure(self):
+        rep, rec = self._run({"0": (float("nan"), None, 0.2),
+                              "+1": (float("nan"), None, 0.4),
+                              "-1": (float("nan"), None, 0.1)})
+        self.assertFalse(rep.past)
+        self.assertEqual(_warnings(rec), [])
 
 
 class TestDiagnosticFailureDoesNotEndARun(unittest.TestCase):

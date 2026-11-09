@@ -3566,8 +3566,12 @@ def _so_bond_static_pole(X, gamma_b, shape):
         if finite:
             worst = max(finite, key=lambda k: finite[k][0])
             entry = finite[worst]
-        else:
+        elif unavailable or not per:
             worst, entry = None, bond_channels.POLE_UNAVAILABLE
+        else:
+            # no sector has a real eigenvalue: no indicator, as on the dense path
+            worst = None
+            entry = (float("nan"), None, max(float(v[2]) for v in per.values()))
         logger.info("spin-orbital bond (static, S_z-packed): the spinful pole indicator "
                     "per S_z sector: %s", "; ".join("{} {:.6f}".format(k, v[0]) for k, v in per.items()))
         where = ("eliashberg bond_channels (spin-orbital, static, S_z-packed{})".format(

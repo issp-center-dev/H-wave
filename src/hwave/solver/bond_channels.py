@@ -665,11 +665,15 @@ def _pole_reduce(ev, transform, shape):
     ``REAL_TOL`` rule of
     :func:`hwave.solver.flex_diagnostics.static_instability`, with the scale
     ``max|t|`` of the finite transformed values at that q), maximized over q
-    with the tie rule of :data:`_POLE_Q_TIE`. Selecting after the transform
-    matters for ``mu / (1 + mu)``: next to ``mu = -1`` a negligible
-    imaginary part of ``mu`` becomes a large one. A transformed value that
-    is not finite (``mu = -1`` exactly, which no finite ``lambda`` maps to)
-    is left out."""
+    with the tie rule of :data:`_POLE_Q_TIE` (the tie never pairs a value
+    below the pole with a maximum past it, and the returned value is the
+    returned q's own). Selecting after the transform matters for ``mu / (1 +
+    mu)``: next to ``mu = -1`` a negligible imaginary part of ``mu`` becomes
+    a large one. A transformed value that is not finite (``mu = -1``
+    exactly, which only ``lambda -> +inf`` or ``-inf`` maps to, so it lies
+    on neither side of the pole) is left out; if one was left out and no
+    remaining value is past the pole, the result is
+    :data:`POLE_UNAVAILABLE` (undetermined, not below the pole)."""
     from . import flex_diagnostics as _diag
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
         t = np.asarray(transform(np.asarray(ev, dtype=np.complex128)))
@@ -679,14 +683,21 @@ def _pole_reduce(ev, transform, shape):
     tf = np.where(finite, t, 0.0)
     real = finite & (np.abs(tf.imag) <= _diag.REAL_TOL * np.maximum(scale, 1e-300))
     max_re = float(tf.real[finite].max()) if np.any(finite) else float("nan")
+    dropped = not bool(np.all(finite))
     lam = np.where(real, tf.real, -np.inf).max(axis=-1)
     if not np.any(np.isfinite(lam)):
-        return float("nan"), None, max_re
+        return POLE_UNAVAILABLE if dropped else (float("nan"), None, max_re)
     top = float(lam.max())
-    iq = int(np.flatnonzero(lam >= top - _POLE_Q_TIE * max(1.0, abs(top)))[0])
+    cand = lam >= top - _POLE_Q_TIE * max(1.0, abs(top))
+    if top >= RPA_POLE_THRESHOLD:
+        cand &= lam >= RPA_POLE_THRESHOLD
+    iq = int(np.flatnonzero(cand)[0])
+    val = float(lam[iq])
+    if dropped and val < RPA_POLE_THRESHOLD:
+        return POLE_UNAVAILABLE
     idx = np.unravel_index(iq, shape)
     q = tuple(float(i) / float(n) for i, n in zip(idx, shape))
-    return top, q, max_re
+    return val, q, max_re
 
 
 def static_pole_indicator(chibar, W, channel, spatial_shape):
@@ -760,7 +771,8 @@ class RpaPoleReport:
     The provenance is written ONLY past the pole, so a stable run's outputs
     are unchanged: :meth:`npz_members` and :meth:`text_members` are empty
     otherwise. Past the pole they give ``rpa_past_pole`` (true) and, for
-    every channel with a finite indicator, ``rpa_pole_indicator_<channel>``
+    every channel with a finite indicator (a channel whose indicator could
+    not be computed has no keys), ``rpa_pole_indicator_<channel>``
     and ``rpa_pole_q_<channel>`` (the q of that channel's maximum, in units
     of the reciprocal lattice vectors)."""
 
@@ -808,7 +820,9 @@ def check_rpa_pole(indicators, *, where, consequence, log=None, info=True):
     caller, as FLEX does through its Stoner line). When some channel has
     ``lambda >= 1`` (:data:`RPA_POLE_THRESHOLD`), ONE WARNING names
     ``where``, each such channel, its indicator and q, and ``consequence``
-    (what this means for the run's pairing eigenvalue). Nothing is refused
+    (what this means for the run's pairing eigenvalue). A channel whose
+    indicator is :data:`POLE_UNAVAILABLE` is named in that same WARNING, or,
+    below the pole, in one WARNING of its own: one WARNING per call. Nothing is refused
     and no number of the run changes; returns the :class:`RpaPoleReport`
     whose members the caller writes."""
     from . import flex_diagnostics as _diag
@@ -819,13 +833,15 @@ def check_rpa_pole(indicators, *, where, consequence, log=None, info=True):
                  where, _diag.format_stoner(rep.indicators))
     missing = [ch for ch, e in rep.indicators.items()
                if e[1] is None and not np.isfinite(e[0]) and not np.isfinite(e[2])]
-    if missing:
-        log.warning(
-            "%s: the static RPA pole indicator of the %s channel(s) could not be computed "
-            "(non-finite input or a failed eigenvalue solve); whether the run is past the "
-            "RPA pole there is unknown, and no pole provenance is written for it. The run "
-            "and its results are otherwise unaffected.", where, ", ".join(missing))
+    unknown = ("the static RPA pole indicator of the {} channel(s) could not be computed "
+               "(a non-finite input, a failed eigenvalue solve, or an archived eigenvalue "
+               "at the inversion's singular point mu = -1); whether the run is past the RPA "
+               "pole there is unknown, and no pole provenance is written for it.".format(
+                   ", ".join(missing)) if missing else "")
     if not rep.past:
+        if missing:
+            log.warning("%s: %s The run and its results are otherwise unaffected.",
+                        where, unknown)
         return rep
     parts = []
     for ch, entry in rep.indicators.items():
@@ -840,8 +856,8 @@ def check_rpa_pole(indicators, *, where, consequence, log=None, info=True):
         "susceptibility of that channel is not positive definite there and describes no "
         "stable state. %s The outputs carry rpa_past_pole = true and the indicator(s). Do "
         "not use this lambda in a T_c or phase-boundary analysis; stay below the pole by "
-        "reducing the interaction or raising the temperature.", where, "; ".join(parts),
-        consequence)
+        "reducing the interaction or raising the temperature.%s", where, "; ".join(parts),
+        consequence, (" Also, " + unknown) if unknown else "")
     return rep
 
 
