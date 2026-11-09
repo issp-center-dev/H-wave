@@ -609,6 +609,242 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
 _DRESS_CHANNELS = {"spin": -1.0, "charge": +1.0, "spinful": +1.0}
 
 
+# ---------------------------------------------------------------------------
+# The static RPA pole of the bond dressing (issue #345)
+# ---------------------------------------------------------------------------
+
+#: the indicator at and above which the static RPA denominator of a channel
+#: is past its pole (inclusive)
+RPA_POLE_THRESHOLD = 1.0
+
+#: the matrix whose spectrum each channel's indicator is, for the messages
+_POLE_MATRIX = {"spin": "chibar S", "charge": "-chibar C", "spinful": "-chibar Gamma"}
+
+
+def _pole_channel(channel):
+    if channel not in _DRESS_CHANNELS:
+        raise ValueError("RPA pole indicator: channel must be 'spin', 'charge' or 'spinful', "
+                         "got {!r}".format(channel))
+    return _DRESS_CHANNELS[channel]
+
+
+#: two q points whose indicators differ by at most this (relative to
+#: ``max(1, |lambda|)``) are a tie, resolved to the lower flat q index, so
+#: that symmetry-equivalent maxima give one q whatever the round-off
+_POLE_Q_TIE = 1.0e-9
+
+
+def _pole_eigvals(m):
+    """The eigenvalues of the pole indicator's matrices (one place, so that a
+    failure of this diagnostic can be told from the run's own algebra)."""
+    return np.linalg.eigvals(m)
+
+
+#: the indicator of a channel whose eigenvalues could not be computed (a
+#: non-finite input or a failed eigenvalue solve): no value, no q, no real
+#: part; :func:`check_rpa_pole` says so and writes no provenance for it
+POLE_UNAVAILABLE = (float("nan"), None, float("nan"))
+
+
+def _pole_spectrum(m):
+    """``_pole_eigvals(m)``, or ``None`` when the input is not finite or the
+    solve fails (``LinAlgError``): the diagnostic never ends a run."""
+    if not np.all(np.isfinite(m)):
+        return None
+    try:
+        return _pole_eigvals(m)
+    except np.linalg.LinAlgError as exc:
+        logger.debug("RPA pole indicator: eigenvalue solve failed: %s", exc)
+        return None
+
+
+def _pole_reduce(ev, transform, shape):
+    """``(lambda, q, max_re)`` from the per-q eigenvalues ``ev`` ``(nvol,
+    ndx)``: ``transform`` is applied to the COMPLEX eigenvalues first, and
+    the real ones are then selected among the transformed values (the
+    ``REAL_TOL`` rule of
+    :func:`hwave.solver.flex_diagnostics.static_instability`, with the scale
+    ``max|t|`` of the finite transformed values at that q), maximized over q
+    with the tie rule of :data:`_POLE_Q_TIE`. Selecting after the transform
+    matters for ``mu / (1 + mu)``: next to ``mu = -1`` a negligible
+    imaginary part of ``mu`` becomes a large one. A transformed value that
+    is not finite (``mu = -1`` exactly, which no finite ``lambda`` maps to)
+    is left out."""
+    from . import flex_diagnostics as _diag
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        t = np.asarray(transform(np.asarray(ev, dtype=np.complex128)))
+    finite = np.isfinite(t)
+    absf = np.where(finite, np.abs(np.where(finite, t, 0.0)), 0.0)
+    scale = absf.max(axis=-1, keepdims=True)
+    tf = np.where(finite, t, 0.0)
+    real = finite & (np.abs(tf.imag) <= _diag.REAL_TOL * np.maximum(scale, 1e-300))
+    max_re = float(tf.real[finite].max()) if np.any(finite) else float("nan")
+    lam = np.where(real, tf.real, -np.inf).max(axis=-1)
+    if not np.any(np.isfinite(lam)):
+        return float("nan"), None, max_re
+    top = float(lam.max())
+    iq = int(np.flatnonzero(lam >= top - _POLE_Q_TIE * max(1.0, abs(top)))[0])
+    idx = np.unravel_index(iq, shape)
+    q = tuple(float(i) / float(n) for i, n in zip(idx, shape))
+    return top, q, max_re
+
+
+def static_pole_indicator(chibar, W, channel, spatial_shape):
+    """The static RPA pole indicator of one bond channel.
+
+    ``lambda = max_q max { e real : e eigenvalue of -sign chibar(q) W(q) }``
+    with the sign of :func:`dress_batch` (``-1`` spin, ``+1`` charge and
+    spinful): ``chibar S`` for spin, ``-chibar C`` for charge, ``-chibar
+    Gamma`` for the spinful channel. The dressing's denominator ``1 + sign
+    chibar W`` has the eigenvalues ``1 - e``, so the pole is at ``lambda = 1``
+    and ``lambda >= 1`` (:data:`RPA_POLE_THRESHOLD`) is past it. "Real" is
+    the rule of :func:`hwave.solver.flex_diagnostics.static_instability`
+    (``|Im e| <= REAL_TOL max|e|``): with ``W = -S`` (spin) and ``+C`` that
+    function is the FLEX Stoner factor of the on-site path, and this value
+    equals it.
+
+    ``chibar`` and ``W`` are host ``(nvol, ND, ND)`` arrays of the zero
+    bosonic frequency; ``spatial_shape`` is ``(Nx, Ny, Nz)`` (the flat q
+    index is C-ordered over it). Returns ``(lambda, q, max_re)``: ``q`` in
+    units of the reciprocal lattice vectors (of the lowest flat index among
+    the maxima, see :data:`_POLE_Q_TIE`) and ``max_re`` the largest real
+    part over all eigenvalues; ``(nan, None, max_re)`` when no eigenvalue
+    is real; :data:`POLE_UNAVAILABLE` when the input is not finite or the
+    eigenvalue solve fails (the diagnostic never ends a run). Read-only."""
+    sign = _pole_channel(channel)
+    c = np.asarray(_bk.to_host(chibar))
+    nvol, ndx = c.shape[0], c.shape[-1]
+    w = np.asarray(_bk.to_host(W)).reshape(nvol, ndx, ndx)
+    if not (np.all(np.isfinite(c)) and np.all(np.isfinite(w))):
+        return POLE_UNAVAILABLE
+    ev = _pole_spectrum(-sign * (c @ w))
+    if ev is None:
+        return POLE_UNAVAILABLE
+    return _pole_reduce(ev, lambda e: e, tuple(int(x) for x in spatial_shape))
+
+
+def pole_indicator_from_dressed(chi, W, channel, spatial_shape):
+    """:func:`static_pole_indicator` from the DRESSED static susceptibility
+    ``chi = [1 + sign chibar W]^{-1} chibar`` (an archive that keeps no
+    ``chibar``).
+
+    The eigenvalues ``mu`` of ``-sign chi W`` are ``lambda / (1 - lambda)``
+    for the eigenvalues ``lambda`` of ``-sign chibar W`` (same
+    eigenvectors), so ``lambda = mu / (1 + mu)``; past the pole is a real
+    ``mu < -1``. Each real ``mu`` (the rule of
+    :func:`static_pole_indicator`) is inverted and the largest result is
+    returned, as ``(lambda, q, max_re)`` (``max_re`` is the largest real
+    part of the inverted eigenvalues, complex ones included); the realness
+    is judged on the inverted values (:func:`_pole_reduce`).
+    :data:`POLE_UNAVAILABLE` as in :func:`static_pole_indicator`."""
+    sign = _pole_channel(channel)
+    c = np.asarray(_bk.to_host(chi))
+    nvol, ndx = c.shape[0], c.shape[-1]
+    w = np.asarray(_bk.to_host(W)).reshape(nvol, ndx, ndx)
+    if not (np.all(np.isfinite(c)) and np.all(np.isfinite(w))):
+        return POLE_UNAVAILABLE
+    mu = _pole_spectrum(-sign * (c @ w))
+    if mu is None:
+        return POLE_UNAVAILABLE
+    return _pole_reduce(mu, lambda m: m / (1.0 + m), tuple(int(x) for x in spatial_shape))
+
+
+def _format_q(q):
+    return "({})".format(", ".join("{:.4g}".format(x) for x in q))
+
+
+class RpaPoleReport:
+    """The result of :func:`check_rpa_pole`: ``indicators`` ``{channel:
+    (lambda, q, max_re)}`` and whether any channel is past its pole.
+
+    The provenance is written ONLY past the pole, so a stable run's outputs
+    are unchanged: :meth:`npz_members` and :meth:`text_members` are empty
+    otherwise. Past the pole they give ``rpa_past_pole`` (true) and, for
+    every channel with a finite indicator, ``rpa_pole_indicator_<channel>``
+    and ``rpa_pole_q_<channel>`` (the q of that channel's maximum, in units
+    of the reciprocal lattice vectors)."""
+
+    def __init__(self, indicators):
+        self.indicators = dict(indicators or {})
+
+    @property
+    def past(self):
+        return any(entry[0] >= RPA_POLE_THRESHOLD for entry in self.indicators.values()
+                   if entry[0] is not None and np.isfinite(entry[0]))
+
+    def _finite(self):
+        return [(ch, e) for ch, e in self.indicators.items()
+                if e[0] is not None and np.isfinite(e[0]) and e[1] is not None]
+
+    def npz_members(self, prefix=""):
+        """``{prefix + key: numpy scalar or array}``; empty below the pole."""
+        if not self.past:
+            return {}
+        out = {prefix + "rpa_past_pole": np.bool_(True)}
+        for ch, (lam, q) in ((c, e[:2]) for c, e in self._finite()):
+            out[prefix + "rpa_pole_indicator_" + ch] = np.float64(lam)
+            out[prefix + "rpa_pole_q_" + ch] = np.asarray(q, dtype=np.float64)
+        return out
+
+    def text_members(self):
+        """``{key: text}`` for the ``# key = value`` lines of a text output;
+        empty below the pole."""
+        if not self.past:
+            return {}
+        out = {"rpa_past_pole": "true"}
+        for ch, (lam, q) in ((c, e[:2]) for c, e in self._finite()):
+            out["rpa_pole_indicator_" + ch] = repr(float(lam))
+            out["rpa_pole_q_" + ch] = _format_q(q)
+        return out
+
+
+def check_rpa_pole(indicators, *, where, consequence, log=None, info=True):
+    """Log the static RPA pole indicators of a bond run and say so when the
+    run is past the pole (issue #345).
+
+    ``indicators`` is ``{channel: (lambda, q, max_re)}``
+    (:func:`static_pole_indicator` / :func:`pole_indicator_from_dressed`).
+    One INFO line gives every channel (``info=False`` leaves it to the
+    caller, as FLEX does through its Stoner line). When some channel has
+    ``lambda >= 1`` (:data:`RPA_POLE_THRESHOLD`), ONE WARNING names
+    ``where``, each such channel, its indicator and q, and ``consequence``
+    (what this means for the run's pairing eigenvalue). Nothing is refused
+    and no number of the run changes; returns the :class:`RpaPoleReport`
+    whose members the caller writes."""
+    from . import flex_diagnostics as _diag
+    log = logger if log is None else log
+    rep = RpaPoleReport(indicators)
+    if info and rep.indicators:
+        log.info("%s: RPA pole indicator max_q eig[-sign chibar W](q, i nu = 0): %s",
+                 where, _diag.format_stoner(rep.indicators))
+    missing = [ch for ch, e in rep.indicators.items()
+               if e[1] is None and not np.isfinite(e[0]) and not np.isfinite(e[2])]
+    if missing:
+        log.warning(
+            "%s: the static RPA pole indicator of the %s channel(s) could not be computed "
+            "(non-finite input or a failed eigenvalue solve); whether the run is past the "
+            "RPA pole there is unknown, and no pole provenance is written for it. The run "
+            "and its results are otherwise unaffected.", where, ", ".join(missing))
+    if not rep.past:
+        return rep
+    parts = []
+    for ch, entry in rep.indicators.items():
+        lam, q = entry[0], entry[1]
+        if lam is not None and np.isfinite(lam) and lam >= RPA_POLE_THRESHOLD:
+            parts.append("the {} channel: max_q eig[{}](q, i nu = 0) = {:.6f} >= {:g} at "
+                         "q = {}".format(ch, _POLE_MATRIX[ch], lam, RPA_POLE_THRESHOLD,
+                                         _format_q(q)))
+    log.warning(
+        "%s: the static RPA denominator is past its pole in %s. The conditioning guard "
+        "refuses only within cond_tol of the pole, so the run continues, but the dressed "
+        "susceptibility of that channel is not positive definite there and describes no "
+        "stable state. %s The outputs carry rpa_past_pole = true and the indicator(s). Do "
+        "not use this lambda in a T_c or phase-boundary analysis; stay below the pole by "
+        "reducing the interaction or raising the temperature.", where, "; ".join(parts),
+        consequence)
+    return rep
+
+
 def dress_channel(chi_bar, W, channel, *, spatial_shape, cond_tol=_BOND_COND_FLOOR):
     """Dress ONE RPA channel on the (bond-enlarged) pair basis::
 

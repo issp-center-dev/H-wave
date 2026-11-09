@@ -1044,7 +1044,7 @@ class TestAdmission(unittest.TestCase):
             s._log_bond_transfer_volume(est)
         line = [m for m in cm.output if "transfer volume" in m][0]
         u = est["nslices"] * est["nvol"] * est["ND"] ** 2 * 16
-        d2h = 2 * u + 2 * est["S_bytes"] + 3 * est["C_bytes"] + est["G_bytes"]
+        d2h = 2 * u + 3 * est["S_bytes"] + 3 * est["C_bytes"] + est["G_bytes"]
         self.assertIn("host to device 0.0000 GiB", line)
         self.assertIn("device to host {:.4f} GiB".format(d2h / 1024.0 ** 3), line)
 

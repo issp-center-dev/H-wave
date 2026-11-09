@@ -1836,7 +1836,7 @@ class FLEX(RPA):
                      "_bond_xp_name", "_bond_mirror_guarded", "_bond_store_resident",
                      "_bond_est_host_store", "_bond_transfer_estimate",
                      "_bond_guard_exact_total", "_bond_guard_exact_max", "_bond_guard_blocks",
-                     "_phase_b_seed", "_hf_tables"):
+                     "_bond_pole", "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
                 delattr(self, attr)
         self.scf_converged = False
@@ -2266,18 +2266,19 @@ class FLEX(RPA):
 
             H2D = U + B^2 C
             D2H = U + U (1 + 2 [guard = all] + 2 [output_full])
-                  + 2 S + 2 S [guard = static] + 3 C + G
+                  + 3 S + 2 S [guard = static] + 3 C + G
 
         where the leading ``U`` is the bubble's ``B^2`` blocks (``B^2 C``
-        written in the ND symbols); the ``2 S`` terms are the two static
-        ND x ND slices the dressing always brings back and, under
+        written in the ND symbols); the ``3 S`` terms are the three static
+        ND x ND slices the dressing always brings back (chi_s, chi_c and
+        the bare chibar of the RPA pole indicator, issue #345) and, under
         ``"static"``, the two guard copies of that same slice (the
         ``"all"`` guard instead copies the whole batch, which is the
         ``2 U`` term); ``3 C`` are the three channel-0 collapses and
         ``G`` the self-energy the transport returns.
 
         With the block store in DEVICE memory (issue #275) the store's own
-        traffic is gone: H2D = 0 and D2H = 2 U [guard = all] + 2 S
+        traffic is gone: H2D = 0 and D2H = 2 U [guard = all] + 3 S
         + 2 S [guard = static] + 3 C + G (the full dynamic channels of
         ``output_full`` come to the host once, at publication)."""
         from hwave.solver import flex_bond
@@ -2293,11 +2294,12 @@ class FLEX(RPA):
         u_total = nslices * int(est["nvol"]) * int(est["ND"]) ** 2 * 16
         guard_all = self.longitudinal_bond_guard_freqs == "all"
         device_store = est.get("store_resident", "host") == "device"
-        # the small terms every residency has: the two static slices, plus the
-        # "static" guard's two copies of that slice ("all" copies the whole
-        # batch, counted with the guard below), the three collapses and the
-        # self-energy the transport returns
-        small = (2 * int(est["S_bytes"]) * (1 if guard_all else 2)
+        # the small terms every residency has: the three static slices
+        # (chi_s, chi_c and the bare chibar of the pole indicator, issue
+        # #345), plus the "static" guard's two copies of that slice ("all"
+        # copies the whole batch, counted with the guard below), the three
+        # collapses and the self-energy the transport returns
+        small = (int(est["S_bytes"]) * (3 if guard_all else 5)
                  + 3 * int(est["C_bytes"]) + int(est["G_bytes"]))
         if device_store:
             # issue #275: the bubble blocks, the chibar and W batches, the
@@ -2470,6 +2472,12 @@ class FLEX(RPA):
                            "instability; consider mixing_scheme='anderson'.")
         counter = PassCounter(self.eps, needed=3)
         self._scf_monitor = _diag.ScfMonitor(logger)   # log-only (issue #282)
+        if gate:
+            # the bond path reports the final map's static RPA pole indicators
+            # (issue #345) on this line, labelled as in its WARNING
+            self._scf_monitor.stoner_label = (
+                "RPA pole indicator (final map) max_q eig[chibar S] (spin) / "
+                "eig[-chibar C] (charge) (q, i nu = 0)")
         converged = False
         n_iter_done = 0
         chi0q_out = chi_s = chi_c = None
@@ -2478,6 +2486,8 @@ class FLEX(RPA):
         self._bond_guard_exact_total = 0
         self._bond_guard_exact_max = 0
         self._bond_guard_blocks = 0
+        # the static RPA pole check of the final map (issue #345)
+        self._bond_pole = None
         if gate:
             # Device admission at its true baseline (spec 4.6): the backend is
             # resolved and the general path's device arrays are resident, while
@@ -2586,8 +2596,15 @@ class FLEX(RPA):
                 done, count = counter.update(res_sigma, res_g, res_comp)
                 logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
                             .format(res_sigma, res_g, res_comp, count))
+                last = done or iteration + 1 == self.max_iter
+                if gate and last:
+                    # the final map's static RPA pole indicators (issue #345):
+                    # its Stoner line, then the check after the loop
+                    indicators = self._bond_pole_indicators()
+                    self._bond_pole = indicators
+                    self._stoner_last = indicators or None
                 self._scf_monitor.record(iteration + 1, res_sigma, self._stoner_last,
-                                         last=done or iteration + 1 == self.max_iter)
+                                         last=last)
                 # the guard diagnostics of this map (issue #199): the values the
                 # tolerances are compared against, iteration by iteration, so that
                 # an approach to an instability is visible before it refuses
@@ -2663,6 +2680,7 @@ class FLEX(RPA):
                                               sym_tol=self.flex_hf_density_tol)
                 if gate:
                     self._refuse_final_bond_guard()
+                    self._check_final_bond_pole()
                 if self.calc_mu:
                     # NOT named `dev`: that name holds the solve-scoped bond
                     # device context here, which the pairing hook below needs
@@ -2781,6 +2799,37 @@ class FLEX(RPA):
             if est is not None:
                 self._log_bond_transfer_volume(est)
             return build(np)
+
+    #: what a final bond map past the static RPA pole means (issue #345)
+    _BOND_POLE_CONSEQUENCE = (
+        "The final FLEX state (its effective interaction W and self-energy) is built on that "
+        "susceptibility, and so is every pairing eigenvalue computed from it -- the "
+        "in-process longitudinal_bond_pairing result and a hwave_sc run on this bond "
+        "archive; they describe no physical state and are still reported (eigen_converged "
+        "keeps its meaning of eigen-solver convergence; flex_guard_policy is not involved).")
+
+    def _bond_pole_indicators(self):
+        """``{channel: (lambda, q, max_re)}``: the static RPA pole indicators
+        of the last bond map (issue #345), computed by the dressing from its
+        bare static bubble and the host vertices; empty when it has none."""
+        res = getattr(self, "_bond_last", None)
+        if res is None or getattr(res, "pole", None) is None:
+            return {}
+        return dict(res.pole)
+
+    def _check_final_bond_pole(self):
+        """WARN when the final bond map is past its static RPA pole (issue
+        #345) and keep the report for the outputs (``_bond_pole``). The
+        indicators were logged on the final iteration's Stoner line. Never
+        refuses."""
+        from hwave.solver import bond_channels as _bc
+        indicators = self._bond_pole
+        if not indicators:
+            self._bond_pole = None
+            return
+        self._bond_pole = _bc.check_rpa_pole(
+            indicators, where="FLEX longitudinal_bond_channels (final map)",
+            consequence=self._BOND_POLE_CONSEQUENCE, log=logger, info=False)
 
     def _refuse_final_bond_guard(self):
         """Refuse a FINAL state that sits inside the instability region of
@@ -2917,7 +2966,8 @@ class FLEX(RPA):
                     cond_tol=self.longitudinal_bond_cond_tol,
                     guard_policy=self.flex_guard_policy,
                     guard_method="auto", workers=workers,
-                    bond_w2=self._bond_w2_on(xp), guard_exact=guard_exact)
+                    bond_w2=self._bond_w2_on(xp), guard_exact=guard_exact,
+                    pole_vertices=(self._bond_S, self._bond_C))
             phase = "transport"
             with self._traced("transport"):
                 sigma_fluct = flex_bond.calc_self_energy_bond(
@@ -3038,6 +3088,11 @@ class FLEX(RPA):
             "longitudinal_bond_guard_exact_blocks_max": np.int64(self._bond_guard_exact_max),
             "longitudinal_bond_guard_blocks_per_iteration": np.int64(self._bond_guard_blocks),
         }
+        pole = getattr(self, "_bond_pole", None)
+        if pole is not None:
+            # issue #345: only past the static RPA pole, so a stable run's
+            # outputs are unchanged
+            out.update(pole.npz_members("longitudinal_bond_"))
         if self.longitudinal_bond_half_grid:
             # provenance (issue #223): cond_min and the guard statistics above
             # cover the solved non-negative frequencies only. Added only on a

@@ -520,6 +520,35 @@ def _frequency_batch(nmat, nvol, ND, host_cap, device_cap=None):
     return max(1, min(int(nmat), nb))
 
 
+def _pole_header_lines(report):
+    """The ``key=value`` header lines of an
+    :class:`~hwave.solver.bond_channels.RpaPoleReport` (issue #345); empty
+    below the pole or without a report."""
+    if report is None:
+        return []
+    return ["{}={}".format(k, v) for k, v in report.text_members().items()]
+
+
+def _archive_pole_indicators(arch, member, channel, spatial_shape):
+    """The static RPA pole indicator of one channel of a bond archive
+    (issue #345), from the dressed static susceptibility ``member``
+    (``chi_s_w`` / ``chi_c_w``) at the zero bosonic frequency ``nmat // 2``
+    and the archived vertex, through the inversion
+    :func:`~hwave.solver.bond_channels.pole_indicator_from_dressed`."""
+    from . import bond_channels as _bc
+    W = arch.S_bond if channel == "spin" else arch.C_bond
+    chi0 = np.array(member[int(arch.nmat) // 2])
+    return _bc.pole_indicator_from_dressed(chi0, W, channel, spatial_shape)
+
+
+#: what a dynamic bond solve on an archive past the static RPA pole means
+_ARCHIVE_POLE_CONSEQUENCE = (
+    "The archive's FLEX state and the pairing vertex built from it here rest on that "
+    "susceptibility, so the pairing eigenvalue lambda of this run describes no physical "
+    "state; it is still reported (eigen_converged keeps its meaning of eigen-solver "
+    "convergence).")
+
+
 def solve_dynamic_bond(input_dict):
     """Bond-resolved dynamic Eliashberg solve from a FLEX bond archive (spec 6).
 
@@ -641,15 +670,24 @@ def solve_dynamic_bond(input_dict):
             spatial_shape=(Nx, Ny, Nz), ir=((axF, axB) if use_ir else None),
             ir_keep_static=ctl.ir_keep_static_chi, workers=ctl.fft_workers)
 
+        pole_indicators = {}
+
         def stages(a):
             # one archive member resident at a time (spec 6): the IR residual
             # pass replays this and re-reads each member once more
             for channel, name in (("spin", "chi_s_w"), ("charge", "chi_c_w")):
                 arr = arch.member(name)
+                if channel not in pole_indicators:
+                    # issue #345, on the member already read (first pass only)
+                    pole_indicators[channel] = _archive_pole_indicators(
+                        arch, arr, channel, (Nx, Ny, Nz))
                 a.add_channel(channel, _eb.ArrayBlockSource({name: arr}, nd), name)
                 del arr
 
         stages(acc)
+        pole = _bc.check_rpa_pole(
+            pole_indicators, where="hwave_sc dynamic bond_channels (archive {})".format(arch_path),
+            consequence=_ARCHIVE_POLE_CONSEQUENCE, log=logger)
         vertex = acc.finish(ir_fit_tol=ctl.ir_fit_tol, stage_callable=stages)[pairing_type]
         del acc
         V_inst = _eb.instantaneous_vertex(arch.S_bond, arch.C_bond, nd, pairing_type,
@@ -683,6 +721,7 @@ def solve_dynamic_bond(input_dict):
     head = ["bond_channels=true", "residency=" + residency_used]
     if leakage is not None:
         head.append("parity_leakage={:.6e}".format(leakage))
+    head += _pole_header_lines(pole)
     _ed.write_eigenvalue_file(
         os.path.join(out_dir, eli_param.get("output_eigenvalue", "eigenvalue.dat")),
         lam, eigenvalues_all, eigenvalue_match, note, header_lines=head,
@@ -693,6 +732,7 @@ def solve_dynamic_bond(input_dict):
              "gap_bond_projection": _eb.gap_bond_projection(gap_w, view, (Nx, Ny, Nz))}
     if leakage is not None:
         extra["bond_parity_leakage"] = float(leakage)
+    extra.update(pole.npz_members())
     if use_ir:
         extra.update({"matsubara_basis": "ir", "ir_tol": axF.eps, "ir_wmax": axF.wmax,
                       "ir_L": axF.L, "bond_ir_fit_residual_rel": vertex.fit_residual_rel})
@@ -1019,6 +1059,12 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                     meta["eigenvalue_selection"] = str(eigenvalue_selection)
                 if leakage is not None:
                     meta["bond_parity_leakage"] = float(leakage)
+                # issue #345: the FLEX final map's static RPA pole check (the
+                # vertex is re-dressed from that map's chibar), only past the
+                # pole
+                pole = getattr(solver, "_bond_pole", None)
+                if pole is not None:
+                    meta.update(pole.npz_members())
                 if use_ir:
                     meta.update({"ir_tol": axF.eps, "ir_wmax": axF.wmax, "ir_L": axF.L,
                                  "bond_ir_fit_residual_rel": vertices[eta].fit_residual_rel})
@@ -1170,7 +1216,8 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
                      "state={}".format(meta["state"]),
                      "residency={}".format(meta["bond_residency"])]
                     + (["parity_leakage={:.6e}".format(meta["bond_parity_leakage"])]
-                       if "bond_parity_leakage" in meta else [])),
+                       if "bond_parity_leakage" in meta else [])
+                    + _pole_header_lines(getattr(solver, "_bond_pole", None))),
                 # the weights travelled here inside meta (they are npz keys);
                 # rebuild the dict the header writer takes
                 sector_weights=(

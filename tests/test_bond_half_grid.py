@@ -628,7 +628,7 @@ class TestMemory(unittest.TestCase):
         u = 5 * est["nvol"] * est["ND"] ** 2 * 16
         S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
         h2d = u + est["B"] ** 2 * C_b
-        d2h = u + u * 3 + 3 * C_b + 2 * S_b + G_b
+        d2h = u + u * 3 + 3 * C_b + 3 * S_b + G_b
         gib = 1024.0 ** 3
         self.assertIn("host to device {:.4f} GiB".format(h2d / gib), line)
         self.assertIn("device to host {:.4f} GiB".format(d2h / gib), line)

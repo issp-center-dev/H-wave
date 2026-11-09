@@ -142,6 +142,9 @@ class ScfMonitor:
 
     window = 3
     step_floor = 0.5
+    #: the head of the per-iteration line; the bond-resolved path replaces it
+    #: with the RPA pole indicator's (issue #345)
+    stoner_label = "Stoner factor max_q eig[U chi0(q, i nu = 0)]"
 
     def __init__(self, logger):
         self.logger = logger
@@ -169,7 +172,7 @@ class ScfMonitor:
             self._run = 0
         diverging = (not math.isfinite(self.step)) or self._run >= self.window
         if stoner:
-            line = "  Stoner factor max_q eig[U chi0(q, i nu = 0)]: " + format_stoner(stoner)
+            line = "  " + self.stoner_label + ": " + format_stoner(stoner)
             if iteration == 1 or last or (diverging and not self.warned):
                 self.logger.info(line)
             else:
