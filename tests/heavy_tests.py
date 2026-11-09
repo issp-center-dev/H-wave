@@ -517,3 +517,101 @@ def heavy_test_ids():
     return frozenset(
         "{}.{}.{}".format(mod, cls, meth)
         for mod, cls, meth, _reason in HEAVY_TESTS)
+
+
+#: The registry's own consistency gate, which the FULL job runs alongside
+#: the registered tests (it is the one fast test whose meaning depends on
+#: the full-suite switch: it drives both shapes in child processes).
+REGISTRY_TEST_FILE = "tests/test_heavy_tests_registry.py"
+
+
+def heavy_node_ids(shard=None):
+    """The registry as pytest node ids, ``tests/<module>.py::Class::method``,
+    in registry order. The FULL CI job selects exactly these (plus
+    :data:`REGISTRY_TEST_FILE`), so the list is derived here at run time
+    and never written out by hand.
+
+    ``shard`` (1-based) restricts the list to the files of that shard of
+    ``tests/heavy_shards.py``; a registered file that is in no shard is an
+    error, so it can never be left out of every job."""
+    ids = [("tests/{}.py::{}::{}".format(mod, cls, meth), mod)
+           for mod, cls, meth, _reason in HEAVY_TESTS]
+    if shard is None:
+        return [node for node, _mod in ids]
+    from tests import heavy_shards
+
+    if not 1 <= shard <= heavy_shards.N_SHARDS:
+        raise ValueError("shard {} out of 1..{}".format(shard, heavy_shards.N_SHARDS))
+    where = heavy_shards.shard_of_module()
+    unplaced = sorted({mod for _node, mod in ids if mod not in where})
+    if unplaced:
+        raise ValueError(
+            "registered heavy test file(s) in no shard of tests/heavy_shards.py: "
+            "{}".format(unplaced))
+    return [node for node, mod in ids if where[mod] == shard]
+
+
+def run_list(shard=None):
+    """What one FULL job runs: :func:`heavy_node_ids` of the shard, plus
+    :data:`REGISTRY_TEST_FILE` in shard 1 (and in the unsharded run)."""
+    out = heavy_node_ids(shard)
+    if shard in (None, 1):
+        out.append(REGISTRY_TEST_FILE)
+    return out
+
+
+def missing_from_collection(expected, collect_output):
+    """The ``expected`` node ids that do NOT appear in ``collect_output``,
+    the text ``pytest --collect-only -q`` printed (one node id per line).
+
+    A registered test that was renamed or removed without updating the
+    registry must fail the FULL job rather than drop out of it silently.
+    pytest does exit non-zero on a node id it cannot resolve, but that
+    behaviour is the runner's, not this project's, and its message names
+    only the first miss; the comparison here is explicit and names every
+    missing id."""
+    collected = set(line.strip() for line in collect_output.splitlines())
+    return [node for node in expected if node not in collected]
+
+
+def _main(argv=None):
+    """Command line used by the FULL CI job.
+
+    ``python -m tests.heavy_tests node-ids [--shard N]``
+        print the node ids to run, one per line (:func:`run_list`).
+    ``python -m tests.heavy_tests check-collected FILE [--shard N]``
+        exit non-zero, naming them, if any registered node id (of shard N)
+        is absent from FILE (the output of ``pytest --collect-only -q``).
+    """
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m tests.heavy_tests")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    ids_p = sub.add_parser("node-ids")
+    ids_p.add_argument("--shard", type=int, default=None)
+    chk = sub.add_parser("check-collected")
+    chk.add_argument("collect_output")
+    chk.add_argument("--shard", type=int, default=None)
+    args = parser.parse_args(argv)
+
+    if args.cmd == "node-ids":
+        for node in run_list(args.shard):
+            print(node)
+        return 0
+    ids = heavy_node_ids(args.shard)
+    with open(args.collect_output) as fh:
+        text = fh.read()
+    missing = missing_from_collection(ids, text)
+    if missing:
+        sys.stderr.write(
+            "registered heavy test(s) NOT collected by pytest -- renamed or "
+            "removed without updating tests/heavy_tests.py:\n  "
+            + "\n  ".join(missing) + "\n")
+        return 1
+    print("all {} registered heavy tests collected".format(len(ids)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
