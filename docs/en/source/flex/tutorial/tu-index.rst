@@ -695,10 +695,13 @@ q index is reported.
 - **Nothing is refused and no number changes.** The pairing eigenvalue
   :math:`\lambda` is still reported, ``eigen_converged`` keeps its meaning
   of eigen-solver convergence, and ``flex_guard_policy`` is not involved.
-  Should the indicator itself not be computable (a non-finite input or a
-  failed eigenvalue solve), one WARNING says so (``... could not be
-  computed ...``), the run completes unchanged and no pole provenance is
-  written.
+  Should the indicator of a channel not be computable (a non-finite input,
+  a failed eigenvalue solve, or, for an archive, an eigenvalue at the
+  inversion's singular point :math:`\mu = -1`), the WARNING says so
+  (``... could not be computed ...``): on its own, or inside the pole
+  WARNING when another channel is past the pole, so a run logs at most one
+  of them. The run completes unchanged, and that channel gets no pole
+  provenance keys.
 - **Provenance, written only past the pole.** A run below the pole writes
   exactly the outputs it wrote before. Past the pole:
 
@@ -709,13 +712,15 @@ q index is reported.
      * - key
        - content
      * - ``rpa_past_pole``
-       - ``true``
+       - ``true`` (a boolean scalar ``True`` in an ``.npz`` file)
      * - ``rpa_pole_indicator_<channel>``
        - :math:`\lambda_{\mathrm{RPA}}` of the channel (``spin`` and
          ``charge``, or ``spinful`` on the spin-orbital path); every channel
-         is listed, also one below the pole
+         with a finite indicator is listed, also one below the pole
      * - ``rpa_pole_q_<channel>``
-       - the q of that channel's maximum, ``(qx, qy, qz)``
+       - the q of that channel's maximum, in units of the reciprocal lattice
+         vectors: ``(qx, qy, qz)`` in a text header, a float array of shape
+         ``(3,)`` in an ``.npz`` file
 
   They are written
 
