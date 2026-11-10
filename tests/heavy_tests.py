@@ -396,25 +396,37 @@ HEAVY_TESTS = (
     ("test_so_bond_second_order", "TestFullGrid", "test_adjoint_64_directions",
      "the directional check of the spin-orbital bond second-order self-energy "
      "against its functional on FIXTURE_I at Nmat 64, 64 directions and both Green "
-     "functions (stacked eight-node stencils at two radii), 20.8 s measured on "
-     "macOS, about 56 s on Linux (x2.7 projection); smoke: "
+     "functions (stacked eight-node stencils at two radii), 15.7 s measured on "
+     "macOS with numpy 1.26 (17 s with one BLAS thread; 3.8 s with numpy 2), "
+     "about 42 s on Linux (x2.7 projection of the numpy 1.26 time); smoke: "
      "TestAdjoint.test_directional_fast"),
     ("test_so_bond_second_order", "TestFullGrid", "test_formula_and_mapping",
-     "C1a-F and C1a-P at Nmat 64: the controls (controls_pass(64), 8.1 s of the "
-     "total), the second-order formula against the explicit Wick second order and "
+     "C1a-F and C1a-P at Nmat 64: the controls (controls_pass(64)), the "
+     "second-order formula against the explicit Wick second order and "
      "the production chain through p_b against it on both fixtures and both Green "
-     "functions, every wrong filing and rejected reading missing, 26.6 s measured "
-     "on macOS, about 72 s on Linux (x2.7 projection); smoke: "
+     "functions, every wrong filing and rejected reading missing, 9.8 s measured "
+     "on macOS with numpy 1.26 (10 s with one BLAS thread; 3.6 s with numpy 2), "
+     "about 26 s on Linux (x2.7 projection of the numpy 1.26 time); smoke: "
      "TestFormula.test_formula_fast and TestMapping.test_chain_fast"),
     # --- tests/test_so_bond_second_order_ed.py -- spin-orbital bond 2nd order vs ED
+    ("test_so_bond_second_order_ed", "TestSecondOrderED", "test_all_types",
+     "the C1a-ED gate: the second-order coefficient of the exact self-energy of "
+     "FIXTURE_I's five-site ring with every interaction type (four ED couplings, "
+     "Nmat 4096, x = 6.25e-3) against the production chain, plus the 1/Nmat "
+     "scaling of its residual against the smoke point, 8.0 s measured on macOS "
+     "with numpy 1.26 (10.5 s with one BLAS thread; 4.5 s with numpy 2), about "
+     "22 s on Linux (x2.7 projection of the numpy 1.26 time); over the 5 s rule "
+     "on the CI numpy; smoke: TestSecondOrderEDSmoke.test_all_types_smoke (the "
+     "same row at Nmat 512, x = 0.0125, tolerance 2e-2) and its mutation rows"),
     ("test_so_bond_second_order_ed", "TestSecondOrderED", "test_each_type",
      "the second-order coefficient of the exact self-energy of FIXTURE_I's "
      "five-site ring for each of the seven interaction types alone (four ED "
      "couplings per type, production chain at the gate's working point Nmat 4096, "
      "x = 6.25e-3, reached without refinement rounds; reported, "
-     "anti-vacuity floor only), 20.5 s measured on macOS, about 55 s on Linux "
-     "(x2.7 projection); smoke: TestSecondOrderEDSmoke.test_all_types_smoke; the "
-     "all-types gate TestSecondOrderED.test_all_types (3.5 s) stays in the fast gate"),
+     "anti-vacuity floor only), 34.0 s measured on macOS with numpy 1.26 (55 s "
+     "with one BLAS thread; 20.5 s with numpy 2), about 92 s on Linux (x2.7 "
+     "projection of the numpy 1.26 time); smoke: "
+     "TestSecondOrderEDSmoke.test_all_types_smoke"),
     # --- tests/test_so_pairing_ed.py -- spin-orbital pairing vertex vs ED (#83)
     ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
      "test_first_and_second_order",

@@ -26,6 +26,19 @@ grid and compare it with the production chain ``p_b(1/2 Gamma_B chibar_B
 Gamma_B) -> calc_self_energy_bond`` at the free Green function
 (``tests.so_bond_fixtures.c1a_sigma_prod``). The ``"all"`` row is the gate;
 the rows of the single interaction types are reported.
+
+The ED side truncates nothing but the comparison does: the production chain
+sums a finite frequency grid. The residual ``dev`` of the ``"all"`` row
+therefore falls as ``1/Nmat`` (2.60e-3 at Nmat 512, 3.29e-4 at 4096, a
+ratio of 7.9 for the expected 8; the smoke point's doubled coupling
+adds an extraction error of 1.8e-4 only); ``TestSecondOrderED.test_all_types``
+asserts this ratio (window 6 to 10), so the gate's residual is the
+truncated frequency sum and not a defect of the formula.
+
+``TestSecondOrderED`` is opt-in (``HWAVE_FULL_TESTS=1``): on numpy 1.26
+(the CI numpy) the gate alone takes 8 s on macOS (4.5 s on numpy 2), over
+the 5 s rule of ``tests/heavy_tests.py``; the smoke row and its mutation
+rows stay in the fast gate.
 """
 import functools
 import unittest
@@ -265,6 +278,7 @@ class TestSecondOrderED(unittest.TestCase):
     """C1a-ED at the working point (Nmat 4096, x = 6.25e-3): the ``"all"``
     row is the gate, the single-type rows are reported."""
 
+    @heavy
     def test_all_types(self):
         m = metric_ed("all", NMAT_GATE, X_GATE)
         print("C1a-ED gate:", m)
@@ -274,6 +288,13 @@ class TestSecondOrderED(unittest.TestCase):
         self.assertLessEqual(m["extraction"], 5e-4, m)
         self.assertGreaterEqual(m["offsite"], 0.1, m)
         self.assertGreaterEqual(m["spinflip"], 0.1, m)
+        # the residual is the production chain's truncated frequency sum:
+        # it falls as 1/Nmat between the smoke point and the gate (ratio 8)
+        smoke = metric_ed("all", NMAT_SMOKE, X_SMOKE)
+        _assert_finite(self, smoke)
+        ratio = smoke["dev"] / m["dev"]
+        print("C1a-ED dev ratio Nmat %d / %d: %.2f" % (NMAT_SMOKE, NMAT_GATE, ratio))
+        self.assertTrue(6.0 <= ratio <= 10.0, (ratio, smoke["dev"], m["dev"]))
 
     @heavy
     def test_each_type(self):
