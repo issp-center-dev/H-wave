@@ -2138,12 +2138,14 @@ def _ring_inputs(green, gamma_label, geom, where):
     """Shape checks shared by the ring functionals; returns ``(green, gamma(-q),
     NL)`` with ``green`` complex128 of shape ``(..., nmat, nvol, nd, nd)``."""
     green = np.asarray(green, dtype=np.complex128)
+    if green.ndim not in (4, 5):
+        raise ValueError("{}: green {} is not (nmat, nvol, nd, nd) or a stack of those"
+                         .format(where, green.shape))
     nvol, nd = green.shape[-3], green.shape[-1]
     shape = tuple(int(x) for x in geom.spatial_shape)
     gamma = np.asarray(gamma_label, dtype=np.complex128)
     NL = np.asarray(geom.delta_r).reshape(-1, 3).shape[0] * nd * nd
-    if green.ndim not in (4, 5) or int(np.prod(shape)) != nvol \
-            or gamma.shape != (nvol, NL, NL):
+    if int(np.prod(shape)) != nvol or gamma.shape != (nvol, NL, NL):
         raise ValueError("{}: green {} and Gamma {} do not share the labels and the mesh {}"
                          .format(where, green.shape, gamma.shape, shape))
     return green, gamma[mesh_negate(shape)], NL
