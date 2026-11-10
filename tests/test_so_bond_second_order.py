@@ -32,8 +32,17 @@ on FIXTURE_I's ring, that the explicit Wick second-order self-energy is the
 gradient of ``Psi = sum_{q,l} Tr[(chibar Gamma(-q))**2]`` with the one
 scalar ``-T/8``, and reports the production second order of one
 spin-orbital FLEX map (``chi := chibar``) against the same Wick contraction.
+
+``TestFormula`` (C1a-F) checks, on FIXTURE_I and FIXTURE_II with every
+interaction type, that ``Sigma_F = beta dPhi_2/dG`` equals the explicit Wick
+second order to 1e-12, once the controls (``controls_pass``, Ruling R12)
+hold; the vertex filed at ``+q`` or without the crossed part misses. Its
+complex PairHop and spin-flip rows also pin the pair orientation of the
+second vertex in the Wick contraction, which the real on-site control
+cannot.
 """
 import ast
+import functools
 import os
 import unittest
 from unittest import mock
@@ -220,6 +229,75 @@ def prod_dev(kind, nmat, *, rpa_return):
     nothing."""
     G, sigma = _onsite_wick(kind, nmat)
     return rel(c1a_onsite_flex_sigma(G, rpa_return=rpa_return), sigma)
+
+
+#: C1a-F tolerance: ``max|Sigma_F - Sigma_Wick| <= F_TOL max|Sigma_Wick|``
+F_TOL = 1e-12
+
+
+def _finite(*values):
+    return all(np.isfinite(v) for v in values)
+
+
+@functools.lru_cache(maxsize=None)
+def controls_pass(nmat):
+    """The control verdict of Ruling R12 at ``nmat`` (cached per ``nmat``,
+    the only cached metric): the AND of the finiteness of every number read
+    and of C1a-T (``metric_t <= 1e-13``), C1a-C1 and C1a-C2 on FIXTURE_I
+    (both kinds; the residual ``<= 1e-12`` and ``|s - beta| <= 1e-12 beta``,
+    resp. ``|s + T/8| <= 1e-12 T/8``) and the R7 adjoint check on FIXTURE_I
+    and FIXTURE_II (both kinds, 8 directions).
+
+    Returns ``(ok, numbers)``; ``numbers`` maps each control name to a dict
+    with its numbers and ``"pass"``. Asserts nothing."""
+    beta = FIXTURE_I.beta
+    T = 1.0 / beta
+    numbers = {}
+    dev = metric_t(nmat)
+    numbers["C1a-T"] = {"dev": dev, "pass": bool(_finite(dev) and dev <= 1e-13)}
+    for kind in ("band", "rand"):
+        residual, s = metric_c1(kind, nmat)
+        numbers["C1a-C1/" + kind] = {
+            "residual": residual, "s": s,
+            "pass": bool(_finite(residual, s) and residual <= 1e-12
+                         and abs(s - beta) <= 1e-12 * beta)}
+        residual, s = metric_c2(kind, nmat)
+        numbers["C1a-C2/" + kind] = {
+            "residual": residual, "s": s,
+            "pass": bool(_finite(residual, s) and residual <= 1e-12
+                         and abs(s + T / 8.0) <= 1e-12 * T / 8.0)}
+    for name, fx in (("I", FIXTURE_I), ("II", FIXTURE_II)):
+        for kind in ("band", "rand"):
+            worst, rows = metric_adjoint(fx, kind, nmat, 8)
+            accepted = sum(r["accepted"] for r in rows)
+            numbers["adjoint/{}/{}".format(name, kind)] = {
+                "worst": worst, "accepted": accepted,
+                "pass": bool(_finite(worst) and accepted == 8 and worst <= R7_TOL)}
+    return all(v["pass"] for v in numbers.values()), numbers
+
+
+def _wick_f(fx, kind, nmat, tables):
+    """``(G, Sigma_Wick)``: the Green function ``c1a_green(fx, kind, nmat)``
+    and the explicit Wick second order of ``tables`` on ``fx``'s ring."""
+    G = c1a_green(fx, kind, nmat)
+    terms = build_terms(tables, fx.L, fx.norb_phys)
+    return G, wick_sigma2(G, fx.beta, terms, fx.spatial_shape, fx.norb_phys)
+
+
+def metric_f(fx, kind, nmat, *, filing=None, tables=None):
+    """The C1a-F deviation on ``fx``: ``Sigma_F = -ring2_gradient/8`` of the
+    label vertex of ``tables`` (default ``fx.tables_dict``; ``filing``
+    selects a wrong filing) on ``fx``'s label geometry against the explicit
+    Wick second order of the same tables, max-norm relative. Returns
+    ``None`` when ``controls_pass(nmat)`` is False. Asserts nothing."""
+    if not controls_pass(nmat)[0]:
+        return None
+    tables = fx.tables_dict if tables is None else tables
+    geom = geom_of(fx)
+    G, sigma_wick = _wick_f(fx, kind, nmat, tables)
+    gamma = c1a_gamma_label(fx, tables, geom, **(filing or {}))
+    sigma_f = -ring2_gradient(G, fx.beta, gamma, geom) / 8.0
+    return rel(sigma_f, sigma_wick)
 
 
 class TestConventions(unittest.TestCase):
@@ -421,6 +499,48 @@ class TestAdjoint(unittest.TestCase):
                     self.assertTrue(np.isfinite(worst), "non-finite metric")
                     self.assertEqual(sum(r["accepted"] for r in rows), 8)
                     self.assertLessEqual(worst, R7_TOL, rows)
+
+
+class TestFormula(unittest.TestCase):
+    """C1a-F: the adjoint gradient of ``Phi_2`` (direct plus crossed filing,
+    ``Gamma(-q)``) is the explicit Wick second order on both fixtures."""
+
+    def _controls(self, nmat):
+        ok, numbers = controls_pass(nmat)
+        if not ok:
+            failed = {k: v for k, v in numbers.items() if not v["pass"]}
+            self.fail("C1a-F verdict void: control {} failed ({})".format(
+                ", ".join(sorted(failed)), failed))
+
+    def test_formula_fast(self):
+        self._controls(C1A_NMAT_FAST)
+        devs = {(fx.L, kind): metric_f(fx, kind, C1A_NMAT_FAST)
+                for fx in (FIXTURE_I, FIXTURE_II) for kind in ("band", "rand")}
+        for key, dev in devs.items():
+            with self.subTest(fixture=key[0], kind=key[1]):
+                self.assertIsNotNone(dev, devs)
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                self.assertLessEqual(dev, F_TOL, devs)
+
+    def test_two_sided(self):
+        self._controls(C1A_NMAT_FAST)
+        devs = {name: metric_f(FIXTURE_I, "rand", C1A_NMAT_FAST, filing=filing)
+                for name, filing in (("q_sign", {"q_sign": -1}), ("crossed", {"crossed": False}))}
+        for name, dev in devs.items():
+            with self.subTest(reading=name):
+                self.assertIsNotNone(dev, devs)
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                self.assertGreaterEqual(dev, 1e-3, devs)
+
+    def test_non_vacuity(self):
+        _, sigma = _wick_f(FIXTURE_I, "rand", C1A_NMAT_FAST, FIXTURE_I.tables_dict)
+        smax = float(np.abs(sigma).max())
+        self.assertTrue(np.isfinite(smax) and smax > 0.0, "non-finite metric")
+        off_k = float(np.abs(sigma - sigma.mean(axis=1, keepdims=True)).max())
+        spin = float(np.abs(sigma[..., 0, 1]).max())
+        numbers = {"max": smax, "k_dependent": off_k / smax, "spin_01": spin / smax}
+        self.assertGreaterEqual(off_k, 0.1 * smax, numbers)
+        self.assertGreaterEqual(spin, 0.1 * smax, numbers)
 
 
 if __name__ == "__main__":
