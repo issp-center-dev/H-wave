@@ -238,6 +238,23 @@ class TestSecondOrderEDSmoke(unittest.TestCase):
         self.assertGreaterEqual(m["offsite"], 0.1, m)
         self.assertGreaterEqual(m["spinflip"], 0.1, m)
 
+    def test_mutation_rows(self):
+        # E1: the ring at its full staged factor 1 (instead of 1/2)
+        changed1 = rel(_c_array("all", NMAT_SMOKE, ring_factor=1.0), _c_array("all", NMAT_SMOKE))
+        m1 = metric_ed("all", NMAT_SMOKE, X_SMOKE, ring_factor=1.0)
+        # E2: the Hartree-Fock subtraction at the free density (instead of the exact one)
+        changed2 = rel(_ed_hf("all", X_SMOKE, hf_density="free"), _ed_hf("all", X_SMOKE))
+        m2 = metric_ed("all", NMAT_SMOKE, X_SMOKE, hf_density="free")
+        report = ("E1 ring_factor=1: applied %.3e, dev %.3e; E2 hf_density=free: applied %.3e, "
+                  "dev %.3e" % (changed1, m1["dev"], changed2, m2["dev"]))
+        print("\nC1a-ED mutation rows (Nmat %d, x %g): %s" % (NMAT_SMOKE, X_SMOKE, report))
+        with self.subTest(row="E1"):
+            self.assertGreaterEqual(changed1, 1e-3, report)
+            self.assertFalse(np.isfinite(m1["dev"]) and m1["dev"] <= 2e-2, report)
+        with self.subTest(row="E2"):
+            self.assertGreaterEqual(changed2, 1e-6, report)
+            self.assertFalse(np.isfinite(m2["dev"]) and m2["dev"] <= 2e-2, report)
+
 
 class TestSecondOrderED(unittest.TestCase):
     """C1a-ED at the working point (Nmat 4096, x = 6.25e-3): the ``"all"``

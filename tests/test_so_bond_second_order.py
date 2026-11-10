@@ -55,6 +55,10 @@ the same chain at third order: ``c1a_sigma_prod(..., ring_order=3)``
 (``p_b`` of ``Gamma_B chibar_B Gamma_B chibar_B Gamma_B``) against the
 directional derivative of ``Phi_3 = -(T/6) sum_{q,l} Tr[(chibar Gamma(-q))**3]``
 of the oracle; the inner ``chibar_B`` transposed (``"3T"``) misses.
+
+``TestMutationTable`` applies one mutation per gate (a hook argument, or a
+module attribute looked up at call time), asserts that it was applied and
+that the gate it targets then fails; it never calls ``controls_pass``.
 """
 import ast
 import functools
@@ -64,13 +68,14 @@ from unittest import mock
 
 import numpy as np
 
-from hwave.solver import flex_bond, matsubara
+from hwave.solver import flex_bond, hartree_fock, matsubara
 from hwave.solver.flex_hf import build_flex_hf_tables, hf_map_spin_orbital
 from hwave.solver import eliashberg_bond as eb
 from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_NMAT_FULL, C1A_ONSITE_GEOM, C1A_ONSITE_TABLES, READINGS,
                                     c1a_gamma_label, c1a_green, c1a_hf_param_ham,
                                     c1a_onsite_flex_sigma, c1a_rho_r,
                                     c1a_sigma_prod, chain_setup, rel, win)
+import tests.so_bond_oracles as so_bond_oracles
 from tests.so_bond_oracles import OracleGeometry
 from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, antisym_tensor, band_k, build_h1,
                                    build_terms, delta23_monomials, ed_mode,
@@ -90,13 +95,16 @@ def metric_t(nmat):
     """The C1a-T deviation on FIXTURE_I ``"rand"``: the tau route
     ``B [g_ab g_ab g~_ba]`` against the circular frequency sum
     ``T^2 sum_{n,n'} G_ab(n) G_ab(n') G_ba((n + n' - m) mod nmat)``, both in
-    the mode space (max-norm relative). Asserts nothing."""
+    the mode space (max-norm relative); ``minus_tau`` is looked up through
+    the module attribute ``so_bond_oracles.minus_tau`` at call time (a
+    mutation hook). Asserts nothing."""
     fx = FIXTURE_I
     beta, shape, norb = fx.beta, fx.spatial_shape, fx.norb_phys
     G = c1a_green(fx, "rand", nmat)
     Gm = modes_of_k(G, shape, norb)                                     # (nmat, M, M)
     g = modes_of_k(green_tau(G, beta), shape, norb)
-    tau_route = tau_to_matsubara(g * g * np.swapaxes(minus_tau(g), -1, -2), beta)
+    tau_route = tau_to_matsubara(g * g * np.swapaxes(so_bond_oracles.minus_tau(g), -1, -2),
+                                 beta)
     T = 1.0 / beta
     GmT = np.swapaxes(Gm, -1, -2)
     n = np.arange(nmat)
@@ -862,6 +870,114 @@ class TestHartreeFockMap(unittest.TestCase):
         self.assertTrue(np.isfinite(off_site) and np.isfinite(spin_off), "non-finite metric")
         self.assertGreaterEqual(off_site, HF_CONTENT)
         self.assertGreaterEqual(spin_off, HF_CONTENT)
+
+
+def _minus_tau_sgn0_minus(g_tau):
+    """The M3 mutant of ``minus_tau``: ``sgn_0 = -1`` (every sign -1)."""
+    g_tau = np.asarray(g_tau)
+    nmat = g_tau.shape[0]
+    return -g_tau[(nmat - np.arange(nmat)) % nmat]
+
+
+def _antisym_tensor_no_1032(terms, nmode):
+    """The M4 mutant of ``antisym_tensor``: the ``V.transpose(1, 0, 3, 2)``
+    term dropped."""
+    M = int(nmode)
+    V = np.zeros((M, M, M, M), dtype=np.complex128)
+    for p, q, r, s, v in terms:
+        V[p, r, q, s] += v
+    return V - V.transpose(1, 0, 2, 3) - V.transpose(0, 1, 3, 2)
+
+
+class TestMutationTable(unittest.TestCase):
+    """Each mutation of a hook (or of a module attribute looked up at call
+    time) is applied, and the gate it targets then fails. The rows read only
+    the uncached per-gate metrics, never ``controls_pass``."""
+
+    def test_mutation_table(self):
+        info = controls_pass.cache_info()
+        fx, kind, nmat = FIXTURE_I, "rand", C1A_NMAT_FAST
+        rows = []      # (row, applied, applied evidence, metric, tol, fails)
+
+        def add(name, applied, evidence, metric, tol):
+            rows.append((name, bool(applied), evidence, float(metric), tol,
+                         bool(not np.isfinite(metric) or metric > tol)))
+
+        # M1: the label vertex filed without the crossed part
+        orig_file = so_bond_oracles.file_gamma_label
+        with mock.patch("tests.so_bond_oracles.file_gamma_label",
+                        side_effect=lambda *a, **k: orig_file(*a, **{**k, "crossed": False})) as spy:
+            residual, _ = metric_c1(kind, nmat)
+        add("M1 crossed=False -> C1a-C1", spy.call_count > 0, "calls %d" % spy.call_count,
+            residual, 1e-12)
+
+        # M2: the adjoint without its second leg
+        with mock.patch("tests.so_bond_oracles._ring2_second_leg",
+                        side_effect=lambda green, *a, **k: np.zeros_like(green,
+                                                                          dtype=np.complex128)) as spy:
+            worst, _ = metric_adjoint(fx, kind, nmat, 8)
+        add("M2 no second leg -> R7", spy.call_count > 0, "calls %d" % spy.call_count,
+            worst, R7_TOL)
+
+        # M3: G~(tau_0) with sgn_0 = -1
+        with mock.patch("tests.so_bond_oracles.minus_tau",
+                        side_effect=_minus_tau_sgn0_minus) as spy:
+            dev = metric_t(nmat)
+        add("M3 minus_tau sgn_0=-1 -> C1a-T", spy.call_count > 0, "calls %d" % spy.call_count,
+            dev, 1e-13)
+
+        # M4: U without the V^(1032) term
+        with mock.patch("tests.so_bond_oracles.antisym_tensor",
+                        side_effect=_antisym_tensor_no_1032) as spy:
+            residual, _ = metric_c2(kind, nmat)
+        add("M4 antisym w/o V^1032 -> C1a-C2", spy.call_count > 0,
+            "calls %d" % spy.call_count, residual, 1e-12)
+
+        # M5: p_b the identity (also proves the call-time lookup of READINGS["p_b"])
+        with mock.patch("hwave.solver.so_bond.p_b",
+                        side_effect=lambda M, nd, **k: M.copy()) as spy:
+            dev = metric_p(fx, kind, nmat, "p_b")
+        add("M5 p_b identity -> C1a-P", spy.call_count > 0, "calls %d" % spy.call_count,
+            dev, P_TOL)
+
+        # M6: the bosonic tau transform replaced by the fermionic one
+        with mock.patch("hwave.solver.flex_bond._ms.boson_to_tau",
+                        wraps=matsubara.fermion_to_tau) as spy:
+            dev = metric_p(fx, kind, nmat, "p_b")
+        add("M6 boson_to_tau=fermion -> C1a-P", spy.call_count > 0,
+            "calls %d" % spy.call_count, dev, P_TOL)
+
+        # M7: the Hartree-Fock kernel without its Fock part
+        orig_hf = hartree_fock.accumulate_hf
+        with mock.patch("hwave.solver.flex_hf._hf.accumulate_hf",
+                        side_effect=lambda *a, **k: orig_hf(*a, **{**k,
+                                                                   "include_fock": False})) as spy:
+            dev = min(metric_hf(d, nmat) for d in HF_DENSITIES)     # every density
+        add("M7 include_fock=False -> C1a-HF", spy.call_count > 0,
+            "calls %d" % spy.call_count, dev, HF_TOL)
+
+        # M8: the on-site FLEX map fed 2 chibar
+        spy = mock.MagicMock(side_effect=lambda c: 2 * c)
+        dev = prod_dev(kind, nmat, rpa_return=spy)
+        add("M8 rpa_return 2 chibar -> prod", spy.call_count == 1,
+            "calls %d" % spy.call_count, dev, 1e-12)
+
+        # M9: the inner chibar_B transposed at third order
+        G = c1a_green(fx, kind, nmat)
+        changed = rel(c1a_sigma_prod(fx, fx.tables_dict, G, ring_order="3T"),
+                      c1a_sigma_prod(fx, fx.tables_dict, G, ring_order=3))
+        dev = metric_o3(fx, kind, nmat, "3T")
+        add("M9 ring_order 3T -> third order", changed >= 1e-3,
+            "Sigma change %.3e" % changed, dev, P_TOL)
+
+        table = "\n".join("  %-34s applied %-5s (%s)  metric %.3e  tol %.0e  fails %s"
+                           % (r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows)
+        print("\nmutation table (FIXTURE_I %s, Nmat %d):\n%s" % (kind, nmat, table))
+        for r in rows:
+            with self.subTest(row=r[0]):
+                self.assertTrue(r[1], "mutation not applied\n" + table)
+                self.assertTrue(r[5], "gate did not fail\n" + table)
+        self.assertEqual(controls_pass.cache_info(), info)
 
 
 if __name__ == "__main__":
