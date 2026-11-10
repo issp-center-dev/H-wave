@@ -1140,6 +1140,13 @@ def _bond_kernel_parts(S, C, dressed, green_kw, view, norb, spatial_shape,
     return A, A_fl, A_pp, vec_size
 
 
+#: what a static bond run past the RPA pole means for its result (issue #345)
+_BOND_POLE_CONSEQUENCE = (
+    "The pairing eigenvalue lambda of this run is built on that susceptibility, so it "
+    "describes no physical state; it is still reported (eigen_converged keeps its meaning "
+    "of eigen-solver convergence).")
+
+
 def _build_bond_operator(topo, split, green_carrier, norb, kx_array, ky_array,
                          kz_array, beta, pairing_type, *, bond_max_shells,
                          bond_memory_cap_gb, precondition_opts=None,
@@ -1208,6 +1215,12 @@ def _build_bond_operator(topo, split, green_carrier, norb, kx_array, ky_array,
         spatial_shape=shape)
 
     S, C = _build_bond_vertices(topo, split, norb, shape)
+    # the static RPA pole (issue #345): read-only, before the dressing
+    pole = bond_channels.check_rpa_pole(
+        {ch: bond_channels.static_pole_indicator(chi_bar, W, ch, shape)
+         for ch, W in (("spin", S), ("charge", C))},
+        where="eliashberg bond_channels (static)", consequence=_BOND_POLE_CONSEQUENCE,
+        log=logger)
 
     def _dressed(chi_bar, S, C):
         # one dressed channel at a time, on a one-slice batch at the zero
@@ -1293,6 +1306,8 @@ def _build_bond_operator(topo, split, green_carrier, norb, kx_array, ky_array,
     provenance["kernel_hermiticity_method"] = diagnostics["method"]
     provenance["pair_weight_min_eigenvalue"] = "{:.6e}".format(
         diagnostics["weight_min_eigenvalue"])
+    # written only past the pole: a stable run's eigenvalue.dat is unchanged
+    provenance.update(pole.text_members())
 
     return (A, vec_size), provenance, attribution
 
@@ -3474,7 +3489,8 @@ class _SOBondStatic(NamedTuple):
     S_z sector, :meth:`sector_op`) and ``operator``, ``basis`` are ``None``.
     ``r_V`` and ``r_G`` are the S_z-conservation residuals of the pairing
     vertex and of the Green function (``r_V = 0`` by construction in the
-    packed layout)."""
+    packed layout). ``pole`` is the static RPA pole check of the run
+    (:func:`_so_bond_static_pole`; ``None`` when not made)."""
     layout: str
     layout_reason: str
     geom: object
@@ -3484,6 +3500,7 @@ class _SOBondStatic(NamedTuple):
     kernel: object
     r_V: float
     r_G: float
+    pole: object = None
 
 
 def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
@@ -3527,7 +3544,46 @@ def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
     return _SOBondAdmission(caps, cap_summary, geom, layout, reason, sector_map, plan)
 
 
-def _so_bond_static_vertex(so_run, admission, so_green, *, beta, nmat):
+def _so_bond_static_pole(X, gamma_b, shape):
+    """The static RPA pole check of a spin-orbital bond run (issue #345):
+    the indicator ``max_q eig[-chibar_B Gamma_B](q, 0)`` of the spinful
+    channel, over the dense block or over the S_z sectors of the packed
+    layout (whose spectra are together the dense block's), logged and
+    returned as the :class:`~hwave.solver.bond_channels.RpaPoleReport`."""
+    from hwave.solver import so_bond
+    if isinstance(X, so_bond.PackedArrays):
+        per = {}
+        for name, xb, gb in zip(X.sector_map.sector_order, X.blocks, gamma_b.blocks):
+            if xb.shape[-1]:
+                per[name] = bond_channels.static_pole_indicator(xb, gb, "spinful", shape)
+        finite = {k: v for k, v in per.items() if np.isfinite(v[0])}
+        unavailable = [k for k, v in per.items() if v[1] is None and not np.isfinite(v[2])]
+        if unavailable and not any(v[0] >= bond_channels.RPA_POLE_THRESHOLD
+                                   for v in finite.values()):
+            # a sector without an indicator: the run cannot be certified
+            # below the pole (check_rpa_pole says so)
+            finite = {}
+        if finite:
+            worst = max(finite, key=lambda k: finite[k][0])
+            entry = finite[worst]
+        elif unavailable or not per:
+            worst, entry = None, bond_channels.POLE_UNAVAILABLE
+        else:
+            # no sector has a real eigenvalue: no indicator, as on the dense path
+            worst = None
+            entry = (float("nan"), None, max(float(v[2]) for v in per.values()))
+        logger.info("spin-orbital bond (static, S_z-packed): the spinful pole indicator "
+                    "per S_z sector: %s", "; ".join("{} {:.6f}".format(k, v[0]) for k, v in per.items()))
+        where = ("eliashberg bond_channels (spin-orbital, static, S_z-packed{})".format(
+            "" if worst is None else "; S_z sector " + worst))
+    else:
+        entry = bond_channels.static_pole_indicator(X, gamma_b, "spinful", shape)
+        where = "eliashberg bond_channels (spin-orbital, static)"
+    return bond_channels.check_rpa_pole({"spinful": entry}, where=where,
+                                        consequence=_BOND_POLE_CONSEQUENCE, log=logger)
+
+
+def _so_bond_static_vertex(so_run, admission, so_green, *, beta, nmat, pole_out=None):
     """``(Gamma_B, V)``: the bond vertex of the run's compiled interaction and
     the static pairing vertex ``V = V_bare + V_fluct``, ``V_bare = 0.25
     (Gamma_B + Gamma_B^P)``, ``V_fluct = -Gamma_B chi_B Gamma_B`` with the
@@ -3535,7 +3591,9 @@ def _so_bond_static_vertex(so_run, admission, so_green, *, beta, nmat):
     bubble of the carrier's deflated Green function (a batch of one at the
     grid index ``l0 = nmat // 2``, the zero bosonic frequency). ``V`` is
     formed in place in ``V_bare``; the temporaries are released before
-    return."""
+    return. ``pole_out`` (a dict, optional) receives ``"report"``, the RPA
+    pole check of the static bubble (:func:`_so_bond_static_pole`); it is
+    made in either case."""
     from hwave.solver import so_bond
     plan, geom = admission.plan, admission.geom
     shape = tuple(geom.spatial_shape)
@@ -3551,6 +3609,9 @@ def _so_bond_static_vertex(so_run, admission, so_green, *, beta, nmat):
     X = so_bond.so_bond_bubble(carrier.deflated_kw, carrier.green0_tail, beta, geom, shape,
                                plan=plan, freq="static", sink=sink)
     del sink
+    report = _so_bond_static_pole(X, gamma_b, shape)
+    if pole_out is not None:
+        pole_out["report"] = report
     if admission.layout == "sz_packed":
         Xb = so_bond.PackedArrays(sm, tuple(b[None] for b in X.blocks))
         cb = so_bond.so_bond_dress(Xb, gamma_b, plan=plan, l0=nmat // 2, spatial_shape=shape)
@@ -3617,13 +3678,15 @@ def _build_so_bond_operator(so_run, admission, so_green, *, beta, nmat, g2_tail,
     :func:`_so_bond_static_vertex`, :func:`_so_bond_static_g2` and
     :func:`_so_bond_static_kernel` in order (each phase releases its
     temporaries before the next starts)."""
-    gamma_b, V = _so_bond_static_vertex(so_run, admission, so_green, beta=beta, nmat=nmat)
+    pole = {}
+    gamma_b, V = _so_bond_static_vertex(so_run, admission, so_green, beta=beta, nmat=nmat,
+                                        pole_out=pole)
     # Gamma_B is released here; the admission rows keep counting it as resident
     # to the end of the solve (conservative)
     del gamma_b
     G2 = _so_bond_static_g2(so_green, beta=beta, g2_tail=g2_tail)
     return _so_bond_static_kernel(so_run, admission, V, G2, so_green, beta=beta,
-                                  norb_phys=norb_phys)
+                                  norb_phys=norb_phys)._replace(pole=pole["report"])
 
 
 # ---------------------------------------------------------------------------
@@ -9340,13 +9403,22 @@ _SO_BOND_GAP_LISTING = ("eigenvalues", "eigenvectors", "eigenvector_spin_weights
                         "eigenvalue_match", "pp_sectors")
 
 
-def _so_bond_gap_members(listed):
+def _so_bond_gap_members(listed, pole=()):
     """The member set of a static spin-orbital bond gap archive: the stage's
     provenance members, :data:`_SO_BOND_GAP_BASE` and, when ``listed`` (the
-    eigenvalue listing is not empty), :data:`_SO_BOND_GAP_LISTING`."""
+    eigenvalue listing is not empty), :data:`_SO_BOND_GAP_LISTING`. A run
+    past the static RPA pole (issue #345) also has the members ``pole`` of
+    its :class:`~hwave.solver.bond_channels.RpaPoleReport`
+    (``rpa_past_pole``, ``rpa_pole_indicator_spinful``,
+    ``rpa_pole_q_spinful``); ``pole`` must be exactly those or empty."""
     from hwave.solver import fingerprint
+    pole = tuple(pole)
+    if pole and set(pole) != {"rpa_past_pole", "rpa_pole_indicator_spinful",
+                              "rpa_pole_q_spinful"}:
+        raise ValueError("_so_bond_gap_members: unexpected pole members {}".format(sorted(pole)))
     names = set(fingerprint.required_members("gap", "sc_so_bond_static"))
     names.update(_SO_BOND_GAP_BASE)
+    names.update(pole)
     if listed:
         names.update(_SO_BOND_GAP_LISTING)
     return frozenset(names)
@@ -9386,7 +9458,8 @@ def _so_provenance_lines(members):
 def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
                       eigenvectors, match, kx_array, ky_array, kz_array,
                       sz_residual=None, provenance_members=None,
-                      eigen_converged=None, bond_report=None, block_layout=None):
+                      eigen_converged=None, bond_report=None, block_layout=None,
+                      pole_report=None):
     """The spin-orbital output schema (issue #83).
 
     ``eigen_converged`` (bool, optional) is stored as the archive key of
@@ -9435,7 +9508,13 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
     a dense result or no gap), ``gap_status``, ``block_layout`` and, when the
     listing is not empty, the listing with ``pp_sectors`` (int8). The S_z
     weights run over the listing when it is not empty and its first value is
-    finite, else over the written gap (a zero gap gives NaN weights)."""
+    finite, else over the written gap (a zero gap gives NaN weights).
+
+    ``pole_report`` (bond runs only; the
+    :class:`~hwave.solver.bond_channels.RpaPoleReport` of the static RPA
+    pole check, issue #345) adds its members to the archive and its lines
+    to ``provenance`` -- only past the pole, where they are part of the
+    member policy; below it nothing is added."""
     from hwave.solver import so_pairing, spin_orbital
     listed = False
     if bond_report is not None:
@@ -9525,13 +9604,19 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
         # kernel used): the npz holds all of them, eigenvalue.dat the scalars
         record.update(provenance_members)
         prov.update(_so_provenance_lines(provenance_members))
+    pole_members = {} if pole_report is None else pole_report.npz_members()
+    if pole_members:
+        if bond_report is None:
+            raise ValueError("_so_output_record: a pole report applies to a bond run only")
+        record.update(pole_members)
+        prov.update(pole_report.text_members())
     if bond_report is not None:
         record["pp_sector"] = np.array(int(bond_report.pp_sector), dtype=np.int8)
         record["gap_status"] = np.array(str(bond_report.gap_status))
         record["block_layout"] = np.array(str(block_layout))
         if listed:
             record["pp_sectors"] = np.asarray(bond_report.pp_sectors, dtype=np.int8)
-        expected = _so_bond_gap_members(listed)
+        expected = _so_bond_gap_members(listed, pole=tuple(pole_members))
         if set(record) != expected:
             raise RuntimeError(
                 "_so_output_record: the bond gap archive members differ from the "
@@ -11240,6 +11325,7 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
                                  so_green.fp_green, state, bond=so_run.bond.inputs)
     block_layout, layout_reason = static.layout, static.layout_reason
     sz_residual = max(static.r_V, static.r_G)
+    pole = static.pole
     # the operator (its kernel, V and G2) and the Green function carrier are
     # not needed by the outputs: release them before the archive is written
     # (the packed kernel's cached sector operators refer back to it: drop
@@ -11251,7 +11337,8 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
     prov, weights, gap_comments = _so_output_record(
         output_dir, gap_file, norb_phys, None, None, None, eigenvalue_match,
         kx_array, ky_array, kz_array, sz_residual=sz_residual,
-        provenance_members=members, bond_report=report, block_layout=block_layout)
+        provenance_members=members, bond_report=report, block_layout=block_layout,
+        pole_report=pole)
     bond_lines = {
         "bond_channels": "true",
         "bond_n_channels": str(n_channels),

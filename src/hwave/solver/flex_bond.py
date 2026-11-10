@@ -577,6 +577,10 @@ class DressResult:
     #: on the full grid
     mirror_guarded: bool = None
     time_reversal_deviation: float = None
+    #: the static RPA pole indicators of the map (issue #345), ``{"spin":
+    #: (lambda, q, max_re), "charge": ...}`` of its bare chibar at Omega = 0;
+    #: ``None`` when the caller passed no ``pole_vertices``
+    pole: dict = None
 
 
 class HalfGridDressing:
@@ -674,7 +678,8 @@ class HalfGridDressing:
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
                       guard_freqs="all", guard_policy="refuse",
-                      guard_method="auto", workers=1, bond_w2=None, guard_exact="always"):
+                      guard_method="auto", workers=1, bond_w2=None, guard_exact="always",
+                      pole_vertices=None):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -747,6 +752,12 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     channel-0 kernel, the mixed-block rule and the zero bond-bond blocks
     above are not used; ``factors`` is then ignored.
 
+    ``pole_vertices`` (issue #345): the HOST spin and charge vertices
+    ``(S, C)``. When given, the static RPA pole indicators of the map
+    (:func:`~hwave.solver.bond_channels.static_pole_indicator` of the bare
+    static chibar, one slice copied to the host on the device path) are
+    returned as ``DressResult.pole``; read-only.
+
     The ring's pair orientation (issue #251): with or without ``bond_w2``,
     the ring, third order and up, is taken with the two orbitals of every
     pair swapped inside its channel block -- the conserving orientation
@@ -804,6 +815,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                                guard_freqs=guard_freqs, guard_policy=guard_policy)
         mirror_guard, trs_dev = hgd.mirror_guard, hgd.deviation
     cond_s, cond_c = _CondMin(), _CondMin()
+    pole = None
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
     violations = []
@@ -831,6 +843,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         # cb is then a VIEW of the slot that the W batch below overwrites
         # (with "W" aliased onto "chibar"), as on the CPU path
         cb = freq_batch_on(store, "chibar", l0, l1, xp)
+        if pole_vertices is not None and l0 <= l_static < l1:
+            # the static RPA pole indicators of the map (issue #345), from the
+            # bare static bubble before the W batch below can overwrite it;
+            # one slice to the host on the device path, and nothing is kept
+            bar = _bk.to_host(cb[l_static - l0])
+            pole = {ch: _bc.static_pole_indicator(bar, Wh, ch, spatial_shape)
+                    for ch, Wh in zip(("spin", "charge"), pole_vertices)}
+            del bar
         if mirror_guard:
             # time reversal is broken: the mirrored slices l' = nmat - l of
             # this batch (l = 0 and nmat/2 are their own mirrors and are not
@@ -926,7 +946,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                                                      if v["kind"] == "residual"),
                        guard_exact_blocks=int(stats["guard_exact_blocks"]),
                        guard_blocks=int(stats["guard_blocks"]),
-                       mirror_guarded=mirror_guard, time_reversal_deviation=trs_dev)
+                       mirror_guarded=mirror_guard, time_reversal_deviation=trs_dev,
+                       pole=pole)
 
 
 class _CondMin:

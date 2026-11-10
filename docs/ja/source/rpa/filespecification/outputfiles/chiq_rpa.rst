@@ -226,7 +226,10 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 （整数。いずれか1回の反復で厳密に分解されたブロック数の最大値）、
 ``longitudinal_bond_guard_blocks_per_iteration``\ （整数。1回の反復で
 ガードが判定対象とするブロック数 -- 上記2つのカウントの分母）が
-格納されます。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
+格納されます。最終マップが静的 RPA 極を越えたときに限り、
+``longitudinal_bond_rpa_past_pole``\ （\ ``True``\ ）、\ ``longitudinal_bond_rpa_pole_indicator_spin``\ /
+``_charge``\ （実数）、\ ``longitudinal_bond_rpa_pole_q_spin``\ / ``_charge``\ （実数\ ``(3,)``\ 、
+逆格子ベクトル単位）も格納されます（\ :ref:`bond_rpa_pole`\ ）。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
 ``chiq_c``\ 配列は、ボンド分解した量の全ボソン振動数における
 :math:`(m = 0, m' = 0)`\ ブロックです。\ ``flex_hartree_fock = true``\ の計算の全ての
 アーカイブ（``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ ・\ ``chiq``\ ・\ ``sigma``\ ・
@@ -350,6 +353,10 @@ parity_leakage_tol``\ を参照）、\ ``gap_bond_projection``\ （各ボンド
 ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
 ``# bond_channels=true``\ ・\ ``# residency=<...>``\ 、計算された
 場合は\ ``# parity_leakage=<...>``\ のヘッダー行が追加されます。
+アーカイブの状態が静的 RPA 極を越えているときに限り、両ファイルに
+``rpa_past_pole``\ 、\ ``rpa_pole_indicator_spin``\ / ``_charge``\ 、\ ``rpa_pole_q_spin``\ /
+``_charge``\ （npz のキー、および\ ``eigenvalue.dat``\ の\ ``# key=value``\ ヘッダー行）も
+加わります。値はアーカイブの dress した感受率から復元します（\ :ref:`bond_rpa_pole`\ ）。
 
 動的ソルバーの\ ``eigenvalue.dat``\ は、オンサイトのものも含めて
 ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
@@ -398,7 +405,10 @@ longitudinal_bond_pairing``\ ）。リクエストされたチャネル
   ``# scf_converged=<true|false>``\ ・\ ``# state=<...>``\ ・
   ``# residency=<...>``\ 、計算された場合は\ ``#
   parity_leakage=<...>``\ 、および上記の\ ``# gap_sector_weights ...``
-  と\ ``# sector_selection=...``\ のヘッダー行を持ちます。
+  と\ ``# sector_selection=...``\ のヘッダー行を持ちます。最終 FLEX マップが静的 RPA 極を
+  越えたときは、\ ``eliashberg_bond_<type>.npz``\ とこのヘッダーに\ ``rpa_past_pole``\ 、
+  ``rpa_pole_indicator_<channel>``\ 、\ ``rpa_pole_q_<channel>``\ も加わります
+  （\ :ref:`bond_rpa_pole`\ ）。
   ``# eigen_converged=<true|false>``\ は\ ``=``\ の前後に空白がなく、静的な
   ``eigenvalue.dat``\ では\ ``# eigen_converged = true``\ と書かれるため、パイプラインは
   空白に寛容な方法（\ ``eigen_converged``\ の後の文字列から\ ``=``\ と空白を取り除く）

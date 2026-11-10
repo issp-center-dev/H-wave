@@ -526,7 +526,10 @@ Stoner 因子と発散した計算
 バーテックスによる 1 つの\ ``spinful``\ の値です。1 バンド Hubbard 模型ではスピンの値は
 :math:`U \max_{\mathbf{q}} \chi_0(\mathbf{q}, 0)`\ です。\ :math:`\mathbf{q}`\ は
 逆格子ベクトル単位です。ボンド分解経路（\ ``longitudinal_bond_channels = true``\ ）では
-この行は出力されず、条件数ガードの行がその役割を担います。
+ボンド分解したバブルとバーテックスでの同じ値が、最終反復にだけ
+``RPA pole indicator (final map) max_q eig[chibar S] (spin) / eig[-chibar C] (charge) (q, i nu = 0)``
+というラベルで出力され（\ :ref:`bond_rpa_pole`\ ）、
+それ以外の反復では条件数ガードの行がその役割を担います。
 
 読み方: :math:`\lambda \ge 1`\ は、そのバブルに対してチャネルの和が静的に不安定で
 あることを意味します。収束した FLEX 解は 1 未満にとどまり、1 からの距離が不安定点への
@@ -587,6 +590,114 @@ warm start した例です。
 （有限で、物理的範囲内にあり、増加する）場合に限ります。歪んだ窓では上記のエラーに
 なります。有限でない自己エネルギーと、0 未満または
 状態数を超える目標値は、探索の前に拒否されます。
+
+.. _bond_rpa_pole:
+
+ボンド分解経路の静的 RPA 極
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ボンド分解経路はボンドバブル\ :math:`\bar\chi`\ を分母\ :math:`1 + s\,\bar\chi W`\ で
+dress します（スピンは\ :math:`s = -1`, :math:`W = S`\ 、電荷は\ :math:`s = +1`, :math:`W = C`\ 、
+スピン軌道経路の spinful チャネルは\ :math:`s = +1`, :math:`W = \Gamma`\ ）。条件数ガード
+（\ ``cond_tol``\ 、\ ``longitudinal_bond_cond_tol``\ ）がこの分母を拒否するのは、極から
+およそ\ ``cond_tol``\ 以内に限られます。極を越えると分母は再び良条件になるため、
+dress した感受率がもはや正定値でなく、ペアリング固有値が物理的な状態を表さないにもかかわらず、
+計算は何も言わずに終了していました。V による電荷不安定性では、ペアリング固有値は極の前後で
+滑らかに変化するため、固有値から極の通過を知ることはできません。
+
+すべてのボンド経路は、ボソン振動数 0 で次の指標を計算するようになりました。
+
+.. math::
+
+   \lambda_{\mathrm{RPA}} = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+   e \in \mathrm{eig}\left[-s\,\bar\chi(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+   \right\}
+
+すなわちスピンは\ :math:`\mathrm{eig}(\bar\chi S)`\ 、電荷は\ :math:`\mathrm{eig}(-\bar\chi C)`\ 、
+spinful チャネルは\ :math:`\mathrm{eig}(-\bar\chi \Gamma)`\ （\ ``sz_packed``\ レイアウトでは
+:math:`S_z`\ セクターにわたる最大）です。これは\ :ref:`flex_stoner_divergence`\ の Stoner 因子を
+ボンド分解したバブルとバーテックスで評価したもので（「実固有値」の規則も同じ）、サイト外相互作用が
+0 のときはサイト上 FLEX の Stoner 因子に一致します。極は\ :math:`\lambda_{\mathrm{RPA}} = 1`\ にあり、
+:math:`\lambda_{\mathrm{RPA}} \ge 1`\ のとき極を越えています。\ :math:`\mathbf{q}`\ は逆格子ベクトル単位で、
+対称性で等価な最大値が複数あるときは平坦化した q の添字が最小のものを報告します。
+
+- **INFO.** 指標は常に INFO レベルで出力されます。\ ``hwave_sc``\ は
+  ``RPA pole indicator max_q eig[-sign chibar W](q, i nu = 0): spin ... at q = (...); charge ...``
+  を書き、FLEX は最終反復の
+  ``RPA pole indicator (final map) max_q eig[chibar S] (spin) / eig[-chibar C] (charge) (q, i nu = 0): spin ...; charge ...``
+  行に書きます。
+- **WARNING.** 極を越えると WARNING を 1 回だけ出力します（FLEX では SCF ループの終了時に、
+  最終マップについてのみ。自己無撞着計算の途中の一時的な逸脱は報告しません）。WARNING は
+  チャネル、指標、q と、そこで dress した感受率が正定値でないこと、それがペアリング固有値に
+  とって何を意味するかを述べます。そのような\ :math:`\lambda`\ を\ :math:`T_c`\ や相境界の解析に
+  使わず、相互作用を弱めるか温度を上げて極より下にとどまってください。
+
+  .. code-block:: text
+
+     eliashberg bond_channels (static): the static RPA denominator is past its pole in the spin channel: max_q eig[chibar S](q, i nu = 0) = 1.020004 >= 1 at q = (0.5, 0.5, 0). The conditioning guard refuses only within cond_tol of the pole, so the run continues, ...
+
+- **拒否はせず、数値も変わりません。** ペアリング固有値\ :math:`\lambda`\ はそのまま報告され、
+  ``eigen_converged``\ は固有値ソルバの収束という意味を保ち、\ ``flex_guard_policy``\ は関与しません。
+  あるチャネルの指標が計算できない場合（入力が有限でない、固有値計算の失敗、またはアーカイブで
+  逆変換の特異点\ :math:`\mu = -1`\ にある固有値）は、WARNING がそのことを述べます
+  （\ ``... could not be computed ...``\ ）。単独の WARNING として、または別のチャネルが極を
+  越えているときは極の WARNING の中で述べるので、出る WARNING は 1 回までです。計算はそのまま
+  完了し、そのチャネルには極の来歴キーを書きません。
+- **来歴は極を越えたときだけ書きます。** 極より下の計算は以前とまったく同じ出力を書きます。
+  極を越えたときは次を書きます。
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 35 65
+
+     * - キー
+       - 内容
+     * - ``rpa_past_pole``
+       - ``true``\ （\ ``.npz``\ ファイルではブール値のスカラー\ ``True``\ ）
+     * - ``rpa_pole_indicator_<channel>``
+       - そのチャネルの\ :math:`\lambda_{\mathrm{RPA}}`\ （\ ``spin``\ と\ ``charge``\ 、
+         スピン軌道経路では\ ``spinful``\ ）。有限の指標を持つチャネルは、極より下のものも含め
+         すべて書きます
+     * - ``rpa_pole_q_<channel>``
+       - そのチャネルの最大を与える q（逆格子ベクトル単位）。テキストのヘッダでは
+         ``(qx, qy, qz)``\ 、\ ``.npz``\ ファイルでは形状\ ``(3,)``\ の浮動小数点配列
+
+  書き出し先は次の通りです。
+
+  - 静的\ ``hwave_sc``\ のボンド計算（\ ``bond_channels = true``\ ）: ``eigenvalue.dat``\ の
+    ``# key = value``\ 行、スピン軌道経路ではさらに\ ``gap.npz``\ のメンバー。
+  - FLEX のボンドゲート: chiq アーカイブと\ ``longitudinal_bond.npz``\ の静的メンバー
+    ``longitudinal_bond_rpa_past_pole``\ 、\ ``longitudinal_bond_rpa_pole_indicator_<channel>``\ 、
+    ``longitudinal_bond_rpa_pole_q_<channel>``\ 。
+  - プロセス内の\ ``longitudinal_bond_pairing``\ （再 dress する最終マップの指標）:
+    ``eliashberg_bond_<type>.npz``\ と\ ``eigenvalue_bond_<type>.dat``\ の\ ``# key=value``\ ヘッダ行。
+  - アーカイブに対する動的\ ``hwave_sc``\ のボンド計算: ``gap_dynamic.npz``\ と
+    ``eigenvalue.dat``\ の\ ``# key=value``\ ヘッダ行。アーカイブは dress した
+    :math:`\chi = [1 + s\bar\chi W]^{-1}\bar\chi`\ しか持たないため、指標は
+    :math:`-s\,\chi W`\ の固有値\ :math:`\mu`\ （\ :math:`\mu = \lambda / (1 - \lambda)`\ ）から
+    :math:`\lambda = \mu / (1 + \mu)`\ として復元します。
+
+**以前の出力の確認方法。** このチェック以前に書かれた出力には指標がありません。
+
+- FLEX のボンド計算: 静的に dress した感受率\ ``longitudinal_bond_chi_s``\ /
+  ``longitudinal_bond_chi_c``\ （chiq アーカイブ、形状\ ``(nvol, ND, ND)``\ ）は極より下では正です。
+  ある q でそのどちらかのエルミート部が負の固有値を持つとき、そしてそのときに限り、
+  最終マップは極を越えています。\ ``(ND, ND)``\ ブロック全体を使ってください。チャネル 0 の
+  ブロック\ ``longitudinal_bond_chiq_*_static``\ は正のままのことがあります。
+
+  .. code-block:: python
+
+     import numpy as np
+     z = np.load("chiq_s.npz")       # or the combined chiq archive
+     for ch in ("s", "c"):
+         chi = z["longitudinal_bond_chi_" + ch]
+         h = 0.5 * (chi + np.swapaxes(chi.conj(), -1, -2))
+         print(ch, "past the pole" if np.linalg.eigvalsh(h).min() < 0 else "below the pole")
+
+  ``longitudinal_bond_cond_min_s``\ / ``_c``\ では両側を区別できません。そのアーカイブに対する
+  ``hwave_sc``\ の動的計算は、アーカイブの状態を引き継ぎます。
+- 静的\ ``hwave_sc``\ のボンド計算: ``eigenvalue.dat``\ と\ ``gap.npz``\ は感受率を持たないため、
+  確認するにはこの版で計算し直す必要があります。
 
 .. _flex_bond_hf_tutorial:
 
