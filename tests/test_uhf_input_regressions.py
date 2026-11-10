@@ -100,5 +100,46 @@ class TestUHFrInterAllOneBody(_TempDir):
         self.assertAlmostEqual(g_all[1], -0.5, places=8)
 
 
+class TestUHFkSOSpinSign(_TempDir):
+    """#350: one spin-orbital site in a field H = -sigma_alpha has
+    <S_alpha> = +1/2 for alpha = x, y, z (Transfer entry (a, b) is the
+    coefficient of c^dag_a c_b, index 2*orb + spin + 1)."""
+
+    FIELDS = {
+        "Sx": [(1, 2, -1.0, 0.0), (2, 1, -1.0, 0.0)],
+        "Sy": [(1, 2, 0.0, 1.0), (2, 1, 0.0, -1.0)],
+        "Sz": [(1, 1, -1.0, 0.0), (2, 2, 1.0, 0.0)],
+    }
+
+    def _case(self, name, rows):
+        d = os.path.join(self.d, name)
+        os.makedirs(d)
+        _write(d, "geom.dat", "1 0 0\n0 1 0\n0 0 1\n2\n0 0 0\n0 0 0\n")
+        body = "".join("0 0 0 {} {} {} {}\n".format(*r) for r in rows)
+        _write(d, "transfer.dat", "field\n2\n1\n 1\n" + body)
+        inp = {
+            "log": {"print_level": 0},
+            "mode": {"mode": "UHFk", "enable_spin_orbital": True, "param": {
+                "CellShape": [1, 1, 1], "SubShape": [1, 1, 1], "T": 0.0,
+                "Ncond": 1, "IterationMax": 3}},
+            "file": {"input": {"path_to_input": d, "interaction": {
+                "path_to_input": d, "Geometry": "geom.dat",
+                "Transfer": "transfer.dat"}},
+                "output": {"path_to_output": os.path.join(d, "out"),
+                           "energy": "energy", "green": "green"}},
+        }
+        self._run(inp)
+        return _energy(os.path.join(d, "out", "energy"))
+
+    def test_field_along_each_axis(self):
+        for comp, rows in self.FIELDS.items():
+            with self.subTest(component=comp):
+                e = self._case(comp, rows)
+                self.assertAlmostEqual(e["Energy_Total"], -1.0, places=10)
+                for other in ("Sx", "Sy", "Sz"):
+                    want = 0.5 if other == comp else 0.0
+                    self.assertAlmostEqual(e[other], want, places=10, msg=other)
+
+
 if __name__ == "__main__":
     unittest.main()
