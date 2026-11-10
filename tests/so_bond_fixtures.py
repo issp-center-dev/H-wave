@@ -767,7 +767,7 @@ def sector_op_of(p, basis, M, *, adjoint=True, matmat=True):
 
 
 # ---------------------------------------------------------------------------
-# Second order (PR C1a): grids, the on-site control and the Green functions
+# Second order: grids, the on-site control and the Green functions
 # ---------------------------------------------------------------------------
 
 from tests.so_bond_oracles import FIXTURES, fixture_name, free_green, rel  # noqa: E402,F401
@@ -886,7 +886,7 @@ def c1a_onsite_flex_sigma(green, *, rpa_return):
 
 
 # ---------------------------------------------------------------------------
-# C1a-P: the production chain of the second-order (and third-order) ring
+# The production chain of the second-order (and third-order) ring (gate C1a-P)
 # ---------------------------------------------------------------------------
 
 def _pair_fields(geom, nd):
@@ -920,7 +920,7 @@ def _reading_channel0_identity(M, geom, nd):
     return _read(M, np.where(m == 0, I, m * nd * nd + y * nd + x))
 
 
-#: Ruling R8: the pair readings ``(M, geom, nd) -> W`` of the ring ``M``
+#: the pair readings ``(M, geom, nd) -> W`` of the ring ``M``
 #: ``(nmat, nvol, ND, ND)`` on the slot geometry; ``"p_b"`` is accepted (the
 #: module attribute ``so_bond.p_b`` is looked up at call time), the others
 #: are rejected readings ``W[..., I, J] = M[..., f(I), f(J)]`` (the phased
@@ -943,8 +943,10 @@ def c1a_sigma_prod(fx, tables, green, *, reading="p_b", ring_factor=0.5, ring_or
     ``Gamma_B`` (``so_bond_vertex``) and ``chibar_B`` (``so_bond_bubble``
     into a store, detached) give the ring ``M = ring_factor Gamma_B chibar_B
     Gamma_B`` (``ring_order = 2``), ``Gamma_B chibar_B Gamma_B chibar_B
-    Gamma_B`` (``3``; coefficient 1) or its negative control with the inner
-    ``chibar_B`` transposed (``"3T"``); ``W = READINGS[reading](M, geom,
+    Gamma_B`` (``3``; coefficient +1, the NEGATIVE of the third-order part
+    ``-Gamma chibar Gamma chibar Gamma`` of the solver's ``Gamma (chi -
+    chibar/2) Gamma``) or its negative control with the first ``chibar_B``
+    transposed (``"3T"``); ``W = READINGS[reading](M, geom,
     nd)`` on the slot geometry ``so_bond.slot_geometry(topo, shape)``
     (looked up at call time), and ``flex_bond.calc_self_energy_bond`` of
     ``W``. A geometry that is not a ``BondSlotGeometry`` with the channels

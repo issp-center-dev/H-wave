@@ -394,7 +394,7 @@ HEAVY_TESTS = (
      "stays in the fast gate"),
     # --- tests/test_so_bond_second_order.py -- spin-orbital bond 2nd order identity
     ("test_so_bond_second_order", "TestFullGrid", "test_adjoint_64_directions",
-     "the R7 directional check of the spin-orbital bond second-order self-energy "
+     "the directional check of the spin-orbital bond second-order self-energy "
      "against its functional on FIXTURE_I at Nmat 64, 64 directions and both Green "
      "functions (stacked eight-node stencils at two radii), 20.8 s measured on "
      "macOS, about 56 s on Linux (x2.7 projection); smoke: "

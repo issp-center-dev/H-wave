@@ -1,4 +1,4 @@
-"""Exact diagonalization of the spin-orbital bond second order (C1a-ED).
+"""Exact diagonalization of the spin-orbital bond second order (gate C1a-ED).
 
 The interacting five-site ring of FIXTURE_I (a random complex spin hop at
 ``R = +-1``, which breaks ``q -> -q`` and S_z, and every interaction type on
@@ -11,18 +11,21 @@ solver.
 ``TestEDEngines`` checks both engines at ``x = 0`` against the free Green
 function and density.
 
-``TestFirstOrderED`` (the ED part of C1a-HF) extracts the first-order
+``TestFirstOrderED`` (the ED part of the Hartree-Fock check C1a-HF of
+``tests.test_so_bond_second_order``) extracts the first-order
 coefficient of the exact self-energy ``Sigma_ED = G0^-1 - G^-1`` (central
 difference plus one Richardson step) and compares it with the Wick
 Hartree-Fock self-energy at the free density.
 
 ``TestSecondOrderEDSmoke`` / ``TestSecondOrderED`` (C1a-ED) extract the
 second-order coefficient of the remainder ``Sigma_ED - Sigma_HF[rho_ED]``
-(the stencils of ``tests.test_flex_second_order_ed_onsite``, Ruling R11) on
-the inner eighth of the frequency grid and compare it with the production
-chain ``p_b(1/2 Gamma_B chibar_B Gamma_B) -> calc_self_energy_bond`` at the
-free Green function (``tests.so_bond_fixtures.c1a_sigma_prod``). The ``"all"``
-row is the gate; the rows of the single interaction types are reported.
+with the stencils of ``tests.test_flex_second_order_ed_onsite``
+(``_coeff2``: ``(f(2x) - 2 f(x)) / (2 x^2)``, then one Richardson step
+``_refine``: ``2 c(x/2) - c(x)``) on the inner eighth of the frequency
+grid and compare it with the production chain ``p_b(1/2 Gamma_B chibar_B
+Gamma_B) -> calc_self_energy_bond`` at the free Green function
+(``tests.so_bond_fixtures.c1a_sigma_prod``). The ``"all"`` row is the gate;
+the rows of the single interaction types are reported.
 """
 import functools
 import unittest
@@ -37,7 +40,7 @@ from tests.so_bond_fixtures import c1a_green, c1a_sigma_prod, rel, win
 from tests.so_bond_oracles import (FIXTURE_I, JWED, build_terms, free_density, hf_onebody,
                                    k_of_modes, wick_hf_sigma_k)
 
-#: the C1a-ED working point (Ruling R11)
+#: the C1a-ED working point (the gate passed here without refinement rounds)
 NMAT_GATE = 4096
 X_GATE = 6.25e-3
 #: the smoke point
@@ -134,7 +137,8 @@ def _ed_remainder(row, x, nmat, *, hf_density="ed"):
 
 
 def _c_ed(row, x, nmat, level, *, hf_density="ed"):
-    """R11's second-order coefficient of the remainder at refinement ``level``."""
+    """The second-order coefficient of the remainder at refinement ``level``:
+    ``_refine(_coeff2)`` at the coupling ``x / 2**level``."""
     return G3._refine(
         lambda h: G3._coeff2(
             lambda y: _ed_remainder(row, y, nmat, hf_density=hf_density), h),
@@ -150,7 +154,7 @@ def _c_array(row, nmat, *, ring_factor=0.5):
 
 
 def metric_ed(row, nmat, x, *, ring_factor=0.5, hf_density="ed"):
-    """The C1a-ED numbers of one row (Ruling R11); asserts nothing.
+    """The C1a-ED numbers of one row; asserts nothing.
 
     ``c0``/``c1`` are the ED coefficients at refinement levels 0 and 1,
     ``ca`` the production array. ``scale = max|c1|``; ``dev``,
@@ -217,7 +221,8 @@ class TestEDEngines(unittest.TestCase):
 
 
 class TestFirstOrderED(unittest.TestCase):
-    """C1a-HF, ED part (E106): the first-order coefficient of the exact
+    """C1a-HF, ED part (tolerance 1e-6, the extraction's accuracy; the
+    array check of C1a-HF is 1e-12): the first-order coefficient of the exact
     self-energy is the Wick Hartree-Fock self-energy."""
 
     def test_first_order_coefficient(self):

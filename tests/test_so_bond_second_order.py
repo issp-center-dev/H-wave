@@ -25,7 +25,9 @@ plus crossed filing) has the Wick Hartree-Fock self-energy as its gradient,
 ``TestAdjoint`` checks the adjoint gradient of the second-order functional
 ``Phi_2 = -(T/8) sum_{q,l} Tr[(chibar(q, l) Gamma(-q))**2]``: against the
 exhaustive circle stencil of every entry at Nmat 4, and by circle stencils
-along random directions (Ruling R7) at Nmat 8.
+along random directions at Nmat 8 (the directional check: a
+``DIR_NODES``-point circle stencil at two radii per direction, every
+direction below a non-vacuity floor redrawn; see :func:`directional_rows`).
 
 ``TestOnsiteControl`` (C1a-C2) checks, for the on-site CoulombIntra control
 on FIXTURE_I's ring, that the explicit Wick second-order self-energy is the
@@ -35,8 +37,9 @@ spin-orbital FLEX map (``chi := chibar``) against the same Wick contraction.
 
 ``TestFormula`` (C1a-F) checks, on FIXTURE_I and FIXTURE_II with every
 interaction type, that ``Sigma_F = beta dPhi_2/dG`` equals the explicit Wick
-second order to 1e-12, once the controls (``controls_pass``, Ruling R12)
-hold; the vertex filed at ``+q`` or without the crossed part misses. Its
+second order to 1e-12, once the controls hold (``controls_pass``: the
+discretization, first-order, on-site second-order and adjoint checks; a
+failed control voids the verdict instead of passing or failing it); the vertex filed at ``+q`` or without the crossed part misses. Its
 complex PairHop and spin-flip rows also pin the pair orientation of the
 second vertex in the Wick contraction, which the real on-site control
 cannot.
@@ -51,10 +54,25 @@ permuted label geometry, misses with) a geometry that is not the slot
 geometry of the topology.
 
 ``TestThirdOrder`` (reported, not part of the second-order verdict) checks
-the same chain at third order: ``c1a_sigma_prod(..., ring_order=3)``
-(``p_b`` of ``Gamma_B chibar_B Gamma_B chibar_B Gamma_B``) against the
-directional derivative of ``Phi_3 = -(T/6) sum_{q,l} Tr[(chibar Gamma(-q))**3]``
-of the oracle; the inner ``chibar_B`` transposed (``"3T"``) misses.
+the same chain at third order. ``c1a_sigma_prod(..., ring_order=3)`` is the
+POSITIVE chain ``Gamma_B chibar_B Gamma_B chibar_B Gamma_B`` through
+``p_b`` and the transport; the test pins it to ``beta d/dG`` of
+``-(T/6) Psi_3``, ``Psi_3 = sum_{q,l} Tr[(chibar Gamma(-q))**3]`` (directional
+derivatives of the oracle's ``ring3_value``). This is NOT the physical third
+order: with ``chibar = -(T/N) sum G G`` and the solver's RPA ``chi = [1 +
+chibar Gamma]^-1 chibar``, the FLEX functional ``(T/2) Tr[ln(1 + chibar
+Gamma) - chibar Gamma] + (T/8) Tr[(chibar Gamma)**2]`` (whose quadratic
+part is the ``-(T/8) Psi`` pinned above) has the cubic term ``+(T/6)
+Psi_3``, and ``V = P[Gamma (chi - chibar/2) Gamma]`` has the third-order
+part ``-P[Gamma chibar Gamma chibar Gamma]``: the physical third-order
+self-energy is the negative of the tested chain. The chain with the first
+``chibar_B`` transposed (``"3T"``) misses.
+
+Gate labels in the messages: C1a-T the discretization control, C1a-C1 the
+first-order control, C1a-C2 the on-site second-order control, C1a-F the
+formula, C1a-P the production chain, C1a-HF the Hartree-Fock map with
+off-site rows (C1a-ED, in ``tests.test_so_bond_second_order_ed``, is the
+exact-diagonalization check).
 
 ``TestMutationTable`` applies one mutation per gate (a hook argument, or a
 module attribute looked up at call time), asserts that it was applied and
@@ -116,7 +134,7 @@ def metric_t(nmat):
 
 
 def fit_scalar(g, sigma):
-    """The R6 one-scalar fit ``sigma = s g`` over the whole array:
+    """The one-scalar fit ``sigma = s g`` over the whole array:
     ``s = vdot(g, sigma) / vdot(g, g)`` and the residual
     ``max|s g - sigma| / max|sigma|``. Returns ``(residual, s)``."""
     s = np.vdot(g, sigma) / np.vdot(g, g)
@@ -141,17 +159,18 @@ def metric_c1(kind, nmat, **filing):
     return fit_scalar(g, sigma)
 
 
-#: R7: stencil nodes, radii, seed of the first direction and the tolerance
-R7_NODES = 8
-R7_RADII = (1.0, 0.25)
-R7_SEED0 = 2710
-R7_TOL = 1e-12
-#: R7 non-vacuity floor: a direction with ``|a| < R7_FLOOR max|Sigma|`` is redrawn
-R7_FLOOR = 1e-6
+#: the directional check: stencil nodes, radii, seed of the first direction and the
+#: tolerance
+DIR_NODES = 8
+DIR_RADII = (1.0, 0.25)
+DIR_SEED0 = 2710
+DIR_TOL = 1e-12
+#: its non-vacuity floor: a direction with ``|a| < DIR_FLOOR max|Sigma|`` is redrawn
+DIR_FLOOR = 1e-6
 
 
-def directional_rows(value_fn, sigma, green, beta, n_dir, seed0=R7_SEED0):
-    """The R7 directional rows of a gradient ``sigma[n, k, A, B] = beta
+def directional_rows(value_fn, sigma, green, beta, n_dir, seed0=DIR_SEED0):
+    """The directional rows of a gradient ``sigma[n, k, A, B] = beta
     dPhi/dG_BA(k, n)`` of the functional ``value_fn`` (a stack ``(S, nmat,
     nvol, nd, nd)`` of Green functions -> ``(S,)`` values of ``Phi``).
 
@@ -159,26 +178,26 @@ def directional_rows(value_fn, sigma, green, beta, n_dir, seed0=R7_SEED0):
     ``np.random.default_rng(seed)``, scaled to ``max|dG| = max|G|``; the
     first ``n_dir`` seeds are ``seed0 + i``. For each direction ``a(s) =
     beta (1/(M s)) sum_j Phi(G + s w^j dG) w^{-j}`` (``w = e^{2 pi i/M}``,
-    ``M = R7_NODES``) at the radii ``s = 1`` and ``s = 1/4``, ``a = a(1)``,
+    ``M = DIR_NODES``) at the radii ``s = 1`` and ``s = 1/4``, ``a = a(1)``,
     and ``b = sum sigma[n, k, A, B] dG[n, k, B, A]`` (bilinear). A direction
-    with ``|a| < R7_FLOOR max|sigma|`` is not accepted and is replaced by the
+    with ``|a| < DIR_FLOOR max|sigma|`` is not accepted and is replaced by the
     next unused seed ``seed0 + n_dir + j`` (``j = 0, 1, ...``), with at most
     ``4 n_dir`` draws in all.
 
     Each row records ``seed``, ``accepted``, ``a``, ``a_quarter``, ``b``,
     ``r_ab = |a - b| / max(max|sigma|, |a|)``, ``r_s = |a(1) - a(1/4)| /
-    max(|a(1)|, max|sigma|)``, and the failure report of R7: ``phi`` =
+    max(|a(1)|, max|sigma|)``, and a failure report: ``phi`` =
     ``|Phi(G)|``, ``max_g``, ``max_dg``, ``s`` = the radii and ``fourier`` =
     the ``M`` coefficients ``(1/M) sum_j Phi(G + s w^j dG) w^{-jp}`` of each
     radius. Asserts nothing."""
     green = np.asarray(green, dtype=np.complex128)
     sigma = np.asarray(sigma, dtype=np.complex128)
-    M = R7_NODES
+    M = DIR_NODES
     w = np.exp(2j * np.pi * np.arange(M) / M)
     smax = float(np.abs(sigma).max())
     gmax = float(np.abs(green).max())
     phi0 = abs(complex(np.asarray(value_fn(green[None])).reshape(-1)[0]))
-    radii = np.array(R7_RADII)
+    radii = np.array(DIR_RADII)
     nodes = (radii[:, None] * w[None, :]).reshape(-1)                   # (len(radii) M,)
     rows, accepted = [], 0
     seeds = list(range(seed0, seed0 + n_dir))
@@ -194,12 +213,12 @@ def directional_rows(value_fn, sigma, green, beta, n_dir, seed0=R7_SEED0):
         a_s = beta * fourier[:, 1] / radii
         a = complex(a_s[0])
         b = complex(np.sum(sigma * np.swapaxes(dg, -1, -2)))
-        ok = abs(a) >= R7_FLOOR * smax
+        ok = abs(a) >= DIR_FLOOR * smax
         rows.append({"seed": seed, "accepted": bool(ok), "a": a, "a_quarter": complex(a_s[1]),
                      "b": b, "r_ab": abs(a - b) / max(smax, abs(a)),
                      "r_s": abs(a_s[0] - a_s[1]) / max(abs(a_s[0]), smax),
                      "phi": phi0, "max_g": gmax, "max_dg": float(np.abs(dg).max()),
-                     "s": tuple(R7_RADII), "fourier": fourier})
+                     "s": tuple(DIR_RADII), "fourier": fourier})
         if ok:
             accepted += 1
         else:
@@ -209,14 +228,14 @@ def directional_rows(value_fn, sigma, green, beta, n_dir, seed0=R7_SEED0):
 
 
 def metric_adjoint(fx, kind, nmat, n_dir):
-    """The R7 check of ``Sigma_F = -ring2_gradient/8`` (``beta dPhi_2/dG``)
+    """The directional check of ``Sigma_F = -ring2_gradient/8`` (``beta dPhi_2/dG``)
     against ``Phi_2 = -(T/8) ring2_value`` on ``fx`` (its tables on its label
     geometry, the Green function ``c1a_green(fx, kind, nmat)``).
 
     Returns ``(worst, rows)``: ``rows`` from :func:`directional_rows` and
     ``worst`` the largest ``r_ab`` / ``r_s`` of the accepted rows; when fewer
     than ``n_dir`` directions are accepted the shortfall counts as a relative
-    miss of 1. R7 passes iff ``worst <= R7_TOL``. Asserts nothing."""
+    miss of 1. The check passes iff ``worst <= DIR_TOL``. Asserts nothing."""
     beta = fx.beta
     geom = geom_of(fx)
     gamma = c1a_gamma_label(fx, fx.tables_dict, geom)
@@ -271,11 +290,11 @@ def _finite(*values):
 
 @functools.lru_cache(maxsize=None)
 def controls_pass(nmat):
-    """The control verdict of Ruling R12 at ``nmat`` (cached per ``nmat``,
+    """The control verdict at ``nmat`` (cached per ``nmat``,
     the only cached metric): the AND of the finiteness of every number read
     and of C1a-T (``metric_t <= 1e-13``), C1a-C1 and C1a-C2 on FIXTURE_I
     (both kinds; the residual ``<= 1e-12`` and ``|s - beta| <= 1e-12 beta``,
-    resp. ``|s + T/8| <= 1e-12 T/8``) and the R7 adjoint check on FIXTURE_I
+    resp. ``|s + T/8| <= 1e-12 T/8``) and the directional adjoint check on FIXTURE_I
     and FIXTURE_II (both kinds, 8 directions).
 
     Returns ``(ok, numbers)``; ``numbers`` maps each control name to a dict
@@ -302,7 +321,7 @@ def controls_pass(nmat):
             accepted = sum(r["accepted"] for r in rows)
             numbers["adjoint/{}/{}".format(name, kind)] = {
                 "worst": worst, "accepted": accepted,
-                "pass": bool(_finite(worst) and accepted == 8 and worst <= R7_TOL)}
+                "pass": bool(_finite(worst) and accepted == 8 and worst <= DIR_TOL)}
     return all(v["pass"] for v in numbers.values()), numbers
 
 
@@ -497,7 +516,7 @@ class TestOnsiteControl(unittest.TestCase):
                 self.assertLessEqual(abs(s + T / 8.0), 1e-12 * T / 8.0)
 
     def test_production_onsite_second_order(self):
-        # reported (Ruling R12): not part of the control verdict
+        # reported: not part of the control verdict of controls_pass
         for kind in ("band", "rand"):
             with self.subTest(kind=kind):
                 spy = mock.MagicMock(side_effect=lambda c: c)
@@ -528,7 +547,7 @@ class TestAdjoint(unittest.TestCase):
                     worst, rows = metric_adjoint(fx, kind, C1A_NMAT_FAST, 8)
                     self.assertTrue(np.isfinite(worst), "non-finite metric")
                     self.assertEqual(sum(r["accepted"] for r in rows), 8)
-                    self.assertLessEqual(worst, R7_TOL, rows)
+                    self.assertLessEqual(worst, DIR_TOL, rows)
 
 
 class TestFormula(unittest.TestCase):
@@ -665,7 +684,7 @@ FULL_NDIR = 64
 
 
 class TestFullGrid(unittest.TestCase):
-    """The full-grid gates (Nmat 64): the 64-direction R7 check, C1a-F and
+    """The full-grid gates (Nmat 64): the 64-direction adjoint check, C1a-F and
     C1a-P."""
 
     @heavy
@@ -674,13 +693,13 @@ class TestFullGrid(unittest.TestCase):
             with self.subTest(kind=kind):
                 worst, rows = metric_adjoint(FIXTURE_I, kind, C1A_NMAT_FULL, FULL_NDIR)
                 accepted = sum(r["accepted"] for r in rows)
-                print("\nR7 (Nmat %d, %d directions, FIXTURE_I %s): worst %.3e, "
+                print("\nadjoint (Nmat %d, %d directions, FIXTURE_I %s): worst %.3e, "
                       "accepted %d of %d draws"
                       % (C1A_NMAT_FULL, FULL_NDIR, kind, worst, accepted, len(rows)))
                 self.assertTrue(np.isfinite(worst), "non-finite metric")
                 self.assertEqual(accepted, FULL_NDIR)
-                self.assertLessEqual(worst, R7_TOL, [r for r in rows
-                                                     if max(r["r_ab"], r["r_s"]) > R7_TOL])
+                self.assertLessEqual(worst, DIR_TOL, [r for r in rows
+                                                     if max(r["r_ab"], r["r_s"]) > DIR_TOL])
 
     @heavy
     def test_formula_and_mapping(self):
@@ -733,12 +752,16 @@ def metric_o3(fx, kind, nmat, ring_order):
     c1a_sigma_prod(fx, fx.tables_dict, G, ring_order=ring_order)`` against
     ``c3 a`` with ``c3 = -T/6`` and ``a = beta dPsi_3/deps`` along ``dG``
     (``ring3_value`` of the label vertex on the label geometry, the
-    ``R7_NODES``-point circle stencil at ``s = 1/4``; exact for the degree-6
-    ``Psi_3``), ``b = sum Sigma[n, k, A, B] dG[n, k, B, A]``.
+    ``DIR_NODES``-point circle stencil at ``s = 1/4``; exact for the degree-6
+    ``Psi_3``), ``b = sum Sigma[n, k, A, B] dG[n, k, B, A]``. ``c3 a`` is
+    ``beta d/deps`` of ``-(T/6) Psi_3``: the positive chain is minus the
+    gradient of the FLEX cubic term ``+(T/6) Psi_3`` (module docstring), so
+    the physical third order is ``-c1a_sigma_prod(..., ring_order=3)``.
 
     Returns the worst ``|b - c3 a| / max(|c3 a|, max|Sigma| max|dG|)`` over
-    ``O3_NDIR`` accepted directions (R7 seeds and redraw: a direction with
-    ``|c3 a| < R7_FLOOR max|Sigma| max|dG|`` is redrawn from the next unused
+    ``O3_NDIR`` accepted directions (the seeds and redraw of
+    :func:`directional_rows`: a direction with
+    ``|c3 a| < DIR_FLOOR max|Sigma| max|dG|`` is redrawn from the next unused
     seed, at most ``O3_MAX_DRAWS`` draws; a shortfall counts as 1), or NaN if
     any of ``Sigma``, ``a``, ``b`` is non-finite. Asserts nothing."""
     beta = fx.beta
@@ -749,12 +772,12 @@ def metric_o3(fx, kind, nmat, ring_order):
         return float("nan")
     geom = geom_of(fx)
     gamma = c1a_gamma_label(fx, fx.tables_dict, geom)
-    M = R7_NODES
+    M = DIR_NODES
     w = np.exp(2j * np.pi * np.arange(M) / M)
     smax = float(np.abs(sigma).max())
     gmax = float(np.abs(G).max())
-    seeds = list(range(R7_SEED0, R7_SEED0 + O3_NDIR))
-    spare = R7_SEED0 + O3_NDIR
+    seeds = list(range(DIR_SEED0, DIR_SEED0 + O3_NDIR))
+    spare = DIR_SEED0 + O3_NDIR
     worst, accepted, draws = 0.0, 0, 0
     while seeds and draws < O3_MAX_DRAWS and accepted < O3_NDIR:
         seed = seeds.pop(0)
@@ -769,7 +792,7 @@ def metric_o3(fx, kind, nmat, ring_order):
         if not (np.isfinite(a) and np.isfinite(b)):
             return float("nan")
         scale = smax * float(np.abs(dg).max())
-        if abs(c3 * a) < R7_FLOOR * scale:
+        if abs(c3 * a) < DIR_FLOOR * scale:
             seeds.append(spare)
             spare += 1
             continue
@@ -916,8 +939,8 @@ class TestMutationTable(unittest.TestCase):
                         side_effect=lambda green, *a, **k: np.zeros_like(green,
                                                                           dtype=np.complex128)) as spy:
             worst, _ = metric_adjoint(fx, kind, nmat, 8)
-        add("M2 no second leg -> R7", spy.call_count > 0, "calls %d" % spy.call_count,
-            worst, R7_TOL)
+        add("M2 no second leg -> adjoint", spy.call_count > 0, "calls %d" % spy.call_count,
+            worst, DIR_TOL)
 
         # M3: G~(tau_0) with sgn_0 = -1
         with mock.patch("tests.so_bond_oracles.minus_tau",
@@ -962,7 +985,7 @@ class TestMutationTable(unittest.TestCase):
         add("M8 rpa_return 2 chibar -> prod", spy.call_count == 1,
             "calls %d" % spy.call_count, dev, 1e-12)
 
-        # M9: the inner chibar_B transposed at third order
+        # M9: the first chibar_B transposed at third order
         G = c1a_green(fx, kind, nmat)
         changed = rel(c1a_sigma_prod(fx, fx.tables_dict, G, ring_order="3T"),
                       c1a_sigma_prod(fx, fx.tables_dict, G, ring_order=3))

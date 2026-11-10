@@ -1974,7 +1974,7 @@ def phi2_gradient(green, beta, gamma_label, geom, *, nodes=8, radius=0.3, chunk=
 
 
 # ---------------------------------------------------------------------------
-# Second order (PR C1a): imaginary-time grid, mode bridge, equal-time sample
+# Second order: imaginary-time grid, mode bridge, equal-time sample
 # ---------------------------------------------------------------------------
 
 def tau_grid_dft(nmat, beta):
@@ -2131,7 +2131,7 @@ def phi1_gradient(green, beta, gamma_label, geom):
 
 
 # ---------------------------------------------------------------------------
-# Second order (PR C1a): the ring value Psi and its adjoint gradient
+# Second order: the ring value Psi and its adjoint gradient
 # ---------------------------------------------------------------------------
 
 def _ring_inputs(green, gamma_label, geom, where):
@@ -2239,7 +2239,7 @@ def ring2_gradient(green, beta, gamma_label, geom):
 
 
 # ---------------------------------------------------------------------------
-# Second order (PR C1a): the Wick second-order self-energy
+# Second order: the Wick second-order self-energy
 # ---------------------------------------------------------------------------
 
 def antisym_tensor(terms, nmode):
@@ -2273,7 +2273,9 @@ def wick_sigma2(green, beta, terms, spatial_shape, norb_phys):
                              G~[h,c](tau) U[f,g,b,h],
 
     ``U`` = :func:`antisym_tensor`, evaluated in four two-operand stages
-    (Ruling R5), then :func:`tau_to_matsubara` and :func:`k_of_modes`."""
+    (the five-operand ``einsum`` takes the naive O(M^9) path, about 18 s at
+    Nmat 64), then :func:`tau_to_matsubara` and :func:`k_of_modes`. Memory
+    grows as ``nmat M^4`` (the stage arrays ``A1``-``A3``)."""
     green = np.asarray(green, dtype=np.complex128)
     shape = _shape(spatial_shape)
     nmat = green.shape[0]
@@ -2291,7 +2293,15 @@ def wick_sigma2(green, beta, terms, spatial_shape, norb_phys):
 def ring3_value(green, beta, gamma_label, geom, *, chunk=32):
     """``Psi_3 = sum_{q, l} Tr[(chibar(q, l) Gamma(-q))**3]`` of the label
     bubble (:func:`_lindhard_batch`, every bosonic slice, wrapped second leg)
-    and ``Gamma(-q)`` read at :func:`mesh_negate`; ``Phi_3 = -(T/6) Psi_3``.
+    and ``Gamma(-q)`` read at :func:`mesh_negate`.
+
+    Sign: with ``chibar = -(T/N) sum G G`` and the RPA ``chi = [1 + chibar
+    Gamma]^-1 chibar``, the cubic term of the FLEX functional is ``+(T/6)
+    Psi_3`` and the third-order part of ``Gamma (chi - chibar/2) Gamma`` is
+    ``-Gamma chibar Gamma chibar Gamma``. The positive chain ``Gamma chibar
+    Gamma chibar Gamma`` (through ``p_b`` and the transport) is therefore
+    ``beta d/dG`` of ``-(T/6) Psi_3``, the negative of the physical third
+    order.
 
     ``green`` is ``(nmat, nvol, nd, nd)`` (returns a complex) or a stack
     ``(S, nmat, nvol, nd, nd)`` (returns ``(S,)``), at most ``chunk`` Green
