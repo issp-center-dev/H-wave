@@ -1881,23 +1881,36 @@ def restrict(M, lists):
 
 def _lindhard_batch(green, beta, geom):
     """:func:`lindhard_discrete` of a stack of Green functions ``(S, nmat,
-    nvol, nd, nd)``, the same arithmetic with a leading batch axis; returns
-    ``(S, nmat, nvol, NL, NL)``."""
+    nvol, nd, nd)``, the same sum with a leading batch axis; returns
+    ``(S, nmat, nvol, NL, NL)``.
+
+    The sum over ``(n, k)`` is one matrix product per bosonic slice ``l``:
+    ``first[s, (a, Y, Z), (n, k)] = p_a(k) G_YZ(k, n)`` times
+    ``second[s, (n, k), (q, b, W, X)] = p_b(k+q) G_WX(k+q, n_l(n))``, the
+    second leg read from a frequency-doubled copy so that the circular shift
+    ``n_l(n) = (n - l + nmat/2) mod nmat`` is a contiguous slice. (A batched
+    ``einsum`` of the same sum is an order of magnitude slower on numpy 1.x.)
+    """
     S, nmat, nvol, nd, _ = green.shape
     shape = tuple(int(x) for x in geom.spatial_shape)
     D = np.asarray(geom.delta_r, dtype=np.int64)
-    NL = D.shape[0] * nd * nd
+    B = D.shape[0]
+    NL = B * nd * nd
     pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))       # (k, a)
     add = mesh_add(shape)                                              # (q, k) -> k + q
     pkq = pk[add]                                                      # (q, k, b)
-    first = pk[None, None, :, :, None, None] * green[:, :, :, None, :, :]
+    first = pk[None, None, :, :, None, None] * green[:, :, :, None, :, :]   # (s, n, k, a, y, z)
+    first = np.ascontiguousarray(
+        first.reshape(S, nmat * nvol, NL).transpose(0, 2, 1))          # (s, ayz, nk)
+    second = pkq[None, None, :, :, :, None, None] * green[:, :, add][:, :, :, :, None, :, :]
+    second = second.transpose(0, 1, 3, 2, 4, 5, 6).reshape(S, nmat, nvol, nvol * NL)
+    second = np.concatenate([second, second], axis=1)                 # (s, 2 n, k, (q, bwx))
     out = np.empty((S, nmat, nvol, NL, NL), dtype=np.complex128)
     for l in range(nmat):
-        shifted = green[:, (np.arange(nmat) - l + nmat // 2) % nmat]   # (s, n, k, w, x)
-        second = (pkq[None, None, :, :, :, None, None]
-                  * shifted[:, :, add][:, :, :, :, None, :, :])
-        t = np.einsum("snkayz,snqkbwx->sqaxybzw", first, second, optimize=True)
-        out[:, l] = (-(1.0 / beta) / nvol) * t.reshape(S, nvol, NL, NL)
+        c = (nmat // 2 - l) % nmat                                     # n_l(n) = n + c (mod nmat)
+        t = first @ second[:, c:c + nmat].reshape(S, nmat * nvol, nvol * NL)
+        t = t.reshape(S, B, nd, nd, nvol, B, nd, nd).transpose(0, 4, 1, 7, 2, 5, 3, 6)
+        out[:, l] = (-(1.0 / beta) / nvol) * t.reshape(S, nvol, NL, NL)  # (s, q, axy, bzw)
     return out
 
 
@@ -2160,22 +2173,25 @@ def _ring2_first_leg(green, lam, beta, geom):
     p_b(k+q) G_WX(k+q, n_l(n))``, ``I = (a; X, Y)``, ``J = (b; Z, W)``,
     ``p_a(k) = e^{+ik.d_a}``, ``n_l(n) = (n - l + nmat/2) mod nmat``: the
     derivative of ``Psi`` through the first leg ``G_YZ(k, n)`` of the bubble.
-    ``lam`` is ``(nmat, nvol, NL, NL)``. One ``l`` at a time, two-operand
-    stages."""
+    ``lam`` is ``(nmat, nvol, NL, NL)``. One ``l`` at a time: the sum over
+    ``(q, b, W, X)`` is one matrix product, ``p_a(k)`` is applied once at
+    the end."""
     nmat, nvol, nd, _ = green.shape
     shape = tuple(int(x) for x in geom.spatial_shape)
     D = np.asarray(geom.delta_r, dtype=np.int64).reshape(-1, 3)
     B = D.shape[0]
+    NL = B * nd * nd
     pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))        # (k, a)
     add = mesh_add(shape)                                              # (q, k) -> k + q
     pkq = pk[add]                                                      # (q, k, b)
-    out = np.zeros((nmat, nvol, nd, nd), dtype=np.complex128)
+    acc = np.zeros((nmat * nvol, NL), dtype=np.complex128)             # [(n, k), (a, Y, Z)]
     for l in range(nmat):
         lam_l = lam[l].reshape(nvol, B, nd, nd, B, nd, nd)             # (q, a, X, Y, b, Z, W)
+        L = lam_l.transpose(0, 4, 6, 2, 1, 3, 5).reshape(nvol * NL, NL)  # [(q, b, W, X), (a, Y, Z)]
         shifted = green[(np.arange(nmat) - l + nmat // 2) % nmat][:, add]   # (n, q, k, W, X)
         E = pkq[None, :, :, :, None, None] * shifted[:, :, :, None, :, :]   # (n, q, k, b, W, X)
-        t = np.einsum("qaxybzw,nqkbwx->nkqayz", lam_l, E)
-        out += np.einsum("nkqayz,ka->nkyz", t, pk)
+        acc += E.transpose(0, 2, 1, 3, 4, 5).reshape(nmat * nvol, nvol * NL) @ L
+    out = np.einsum("nkayz,ka->nkyz", acc.reshape(nmat, nvol, B, nd, nd), pk)
     return (-(1.0 / beta) / nvol) * out
 
 
@@ -2183,22 +2199,25 @@ def _ring2_second_leg(green, lam, beta, geom):
     """``F2[m, k', W, X] = -(T/N) sum_{q, l, a, b, Y, Z} Lambda_IJ(q, l)
     p_a(k'-q) p_b(k') G_YZ(k'-q, (m + l - nmat/2) mod nmat)``: the derivative
     of ``Psi`` through the second leg ``G_WX(k', m)`` of the bubble
-    (``k' = k + q``, ``m = n_l(n)``). One ``l`` at a time, two-operand
-    stages."""
+    (``k' = k + q``, ``m = n_l(n)``). One ``l`` at a time: the sum over
+    ``(q, a, Y, Z)`` is one matrix product, ``p_b(k')`` is applied once at
+    the end."""
     nmat, nvol, nd, _ = green.shape
     shape = tuple(int(x) for x in geom.spatial_shape)
     D = np.asarray(geom.delta_r, dtype=np.int64).reshape(-1, 3)
     B = D.shape[0]
+    NL = B * nd * nd
     pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))        # (k, a)
     sub = mesh_add(shape)[mesh_negate(shape)]                          # (q, k') -> k' - q
     pkmq = pk[sub]                                                     # (q, k', a)
-    out = np.zeros((nmat, nvol, nd, nd), dtype=np.complex128)
+    acc = np.zeros((nmat * nvol, NL), dtype=np.complex128)             # [(m, k'), (b, W, X)]
     for l in range(nmat):
         lam_l = lam[l].reshape(nvol, B, nd, nd, B, nd, nd)             # (q, a, X, Y, b, Z, W)
+        L = lam_l.transpose(0, 1, 3, 5, 4, 6, 2).reshape(nvol * NL, NL)  # [(q, a, Y, Z), (b, W, X)]
         shifted = green[(np.arange(nmat) + l - nmat // 2) % nmat][:, sub]   # (m, q, k', Y, Z)
         E = pkmq[None, :, :, :, None, None] * shifted[:, :, :, None, :, :]  # (m, q, k', a, Y, Z)
-        t = np.einsum("qaxybzw,mqkayz->mkqbwx", lam_l, E)
-        out += np.einsum("mkqbwx,kb->mkwx", t, pk)
+        acc += E.transpose(0, 2, 1, 3, 4, 5).reshape(nmat * nvol, nvol * NL) @ L
+    out = np.einsum("mkbwx,kb->mkwx", acc.reshape(nmat, nvol, B, nd, nd), pk)
     return (-(1.0 / beta) / nvol) * out
 
 
