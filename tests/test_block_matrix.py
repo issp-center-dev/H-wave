@@ -2206,14 +2206,15 @@ class TestUHFkSOSpinVector(unittest.TestCase):
         return stub.physics
 
     def test_so_spin_vector(self):
-        # on-site density matrix rho_{ij} = <c^dag_j c_i>, spin (up,down)
+        # on-site Green function G_{ij} = <c^dag_i c_j>, spin (up,down):
+        # <S^+> = G_{up,down} = 0.1 + 0.2i, so Sy = Im<S^+> = 0.2 (issue #350)
         rho = [[0.6, 0.1 + 0.2j],
                [0.1 - 0.2j, 0.4]]
         phys = self._stub_calc_phys(rho)
         self.assertAlmostEqual(phys["NCond"], 1.0)
         self.assertAlmostEqual(phys["Sz"], 0.1)
         self.assertAlmostEqual(phys["Sx"], 0.1)
-        self.assertAlmostEqual(phys["Sy"], -0.2)
+        self.assertAlmostEqual(phys["Sy"], 0.2)
 
     def test_collinear_has_zero_transverse(self):
         # diagonal (collinear) density matrix -> Sx = Sy = 0

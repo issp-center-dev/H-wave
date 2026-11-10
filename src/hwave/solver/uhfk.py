@@ -5,7 +5,7 @@ import os
 from .base import solver_base
 from .perf import do_profile
 from . import fold
-from .kgrid import reverse_fft_axes
+from .kgrid import fold_rvec, reverse_fft_axes
 from . import hartree_fock
 from . import spin_orbital
 from ..qlmsio import wan90
@@ -772,7 +772,7 @@ class UHFk(solver_base):
                     # warning), so they are not part of the Hamiltonian this
                     # check guards
                     continue
-                tab_r[(*irvec, *orbvec)] += v
+                tab_r[(*fold_rvec(irvec, (nx, ny, nz)), *orbvec)] += v
 
             t = np.conjugate(
                     np.transpose(
@@ -1012,7 +1012,7 @@ class UHFk(solver_base):
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                tab_r[(*irvec, *orbvec)] += v
+                tab_r[(*fold_rvec(irvec, (nx, ny, nz)), *orbvec)] += v
 
             # fourier transform
             tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
@@ -1027,7 +1027,7 @@ class UHFk(solver_base):
             has_spin_dep = False
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
-                    tab_r[(*irvec, *orbvec)] += v
+                    tab_r[(*fold_rvec(irvec, (nx, ny, nz)), *orbvec)] += v
                 else:
                     has_spin_dep = True
             if has_spin_dep:
@@ -1587,20 +1587,20 @@ class UHFk(solver_base):
 
         # expectation value of the spin vector (Sx, Sy, Sz)
         if self.enable_spin_orbital:
-            # The on-site density matrix rho_{ij} = <c^dag_j c_i> has spin
+            # The on-site Green function G_{ij} = <c^dag_i c_j> has spin
             # structure, so the full spin vector is meaningful (Sx, Sy nonzero
             # under spin mixing / SOC).
-            #   S_alpha = (1/2) sum_a Tr[ sigma_alpha rho_a ]
-            # with rho_a the 2x2 (up,down) on-site block of orbital a, read in
-            # the virtual spin-block frame m[s, a, t, b].
+            #   S_alpha = (1/2) sum_a sum_{st} (sigma_alpha)_{st} <c^dag_{as} c_{at}>
+            # read in the virtual spin-block frame m[s, a, t, b] (issue #350):
+            # Sx = (1/2)(ud + du), Sy = -(i/2)(ud - du).
             m = self._so_to_virtual_green(self.Green)[0]
             g0 = np.diagonal(gab_r[0])           # rho_{ii}, interleaved
             sz_diag = np.where(spin_orbital.spin_of(np.arange(nd)) == 0, 1.0, -1.0)
-            ud = np.diagonal(m[0, :, 1, :])      # <c^dag_down c_up>
-            du = np.diagonal(m[1, :, 0, :])      # <c^dag_up c_down>
+            ud = np.diagonal(m[0, :, 1, :])      # <c^dag_up c_down> = <S^+>
+            du = np.diagonal(m[1, :, 0, :])      # <c^dag_down c_up> = <S^->
             sz = np.sum(g0 * sz_diag) * nvol
             sx = np.sum(ud + du) * nvol
-            sy = np.sum(1j * (ud - du)) * nvol
+            sy = np.sum(-1j * (ud - du)) * nvol
             self.physics["Sz"] = 0.5 * sz.real
             self.physics["Sx"] = 0.5 * sx.real
             self.physics["Sy"] = 0.5 * sy.real

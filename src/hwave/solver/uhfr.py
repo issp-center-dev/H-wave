@@ -83,7 +83,9 @@ class Interact_UHFr_base:
             self.Ham_tmp[site[0]][site[1]][site[2]][site[3]] += value
             self.Ham_tmp[site[2]][site[3]][site[0]][site[1]] += value
             if site[1] == site[2]:
-                self.Ham_trans_tmp[site[1]][site[2]] += value
+                # c^dag_i c_j c^dag_k c_l with j == k carries the one-body
+                # term c^dag_i c_l (issue #349)
+                self.Ham_trans_tmp[site[0]][site[3]] += value
         pass
 
     def _calc_fock(self):

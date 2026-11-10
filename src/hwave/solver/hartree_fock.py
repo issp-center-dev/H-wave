@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .kgrid import reverse_fft_axes
+from .kgrid import fold_rvec, reverse_fft_axes
 from ..qlmsio import wan90
 
 InteractionTables = namedtuple("InteractionTables",
@@ -93,9 +93,9 @@ def build_interaction_tables(param_ham, norb, shape):
         uab_r = _zeros()
         vab_r = _zeros()
         for (irvec, orbvec), v in coulomb_intra.items():
-            uab_r[(*irvec, *orbvec)] += v
+            uab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
         for (irvec, orbvec), v in coulomb_inter.items():
-            vab_r[(*irvec, *orbvec)] += v
+            vab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
         inter_table["CoulombIntra"] = uab_r  # r=0 component
         spin_table["CoulombIntra"] = np.zeros((2, 2, 2, 2), dtype=int)
         spin_table["CoulombIntra"][0, 1, 1, 0] = 1
@@ -114,7 +114,7 @@ def build_interaction_tables(param_ham, norb, shape):
             for (irvec, orbvec), v in param_ham["CoulombIntra"].items():
                 alpha, beta = orbvec
                 if irvec == (0, 0, 0) and alpha == beta:
-                    uab_r[(*irvec, *orbvec)] += v
+                    uab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
                 else:
                     discarded.append(("CoulombIntra", tuple(irvec),
                                       tuple(orbvec), v))
@@ -125,7 +125,7 @@ def build_interaction_tables(param_ham, norb, shape):
         if 'CoulombInter' in param_ham.keys():
             vab_r = _zeros()
             for (irvec, orbvec), v in param_ham["CoulombInter"].items():
-                vab_r[(*irvec, *orbvec)] += v
+                vab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
             inter_table["CoulombInter"] = _reverse_closed(vab_r)
             spin_table["CoulombInter"] = np.zeros((2, 2, 2, 2), dtype=int)
             spin_table["CoulombInter"][0, 0, 0, 0] = 1
@@ -135,7 +135,7 @@ def build_interaction_tables(param_ham, norb, shape):
     if 'Hund' in param_ham.keys():
         jab_r = _zeros()
         for (irvec, orbvec), v in param_ham["Hund"].items():
-            jab_r[(*irvec, *orbvec)] += v
+            jab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
         inter_table["Hund"] = -_reverse_closed(jab_r)
         spin_table["Hund"] = np.zeros((2, 2, 2, 2), dtype=int)
         spin_table["Hund"][0, 0, 0, 0] = 1
@@ -145,7 +145,7 @@ def build_interaction_tables(param_ham, norb, shape):
     if 'Ising' in param_ham.keys():
         jab_r = _zeros()
         for (irvec, orbvec), v in param_ham["Ising"].items():
-            jab_r[(*irvec, *orbvec)] += v
+            jab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
         inter_table["Ising"] = _reverse_closed(jab_r)
         spin_table["Ising"] = np.zeros((2, 2, 2, 2), dtype=int)
         spin_table["Ising"][0, 0, 0, 0] = 1
@@ -157,7 +157,7 @@ def build_interaction_tables(param_ham, norb, shape):
     if 'PairLift' in param_ham.keys():
         jab_r = _zeros()
         for (irvec, orbvec), v in param_ham["PairLift"].items():
-            jab_r[(*irvec, *orbvec)] += v
+            jab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
         inter_table["PairLift"] = _reverse_closed(jab_r)
         spin_table["PairLift"] = np.zeros((2, 2, 2, 2), dtype=int)
         spin_table["PairLift"][0, 0, 1, 1] = 1
@@ -167,7 +167,7 @@ def build_interaction_tables(param_ham, norb, shape):
     if 'Exchange' in param_ham.keys():
         jab_r = _zeros()
         for (irvec, orbvec), v in param_ham["Exchange"].items():
-            jab_r[(*irvec, *orbvec)] += v
+            jab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
         inter_table["Exchange"] = -_reverse_closed(jab_r)
         spin_table["Exchange"] = np.zeros((2, 2, 2, 2), dtype=int)
         spin_table["Exchange"][0, 1, 0, 1] = 1
@@ -177,7 +177,7 @@ def build_interaction_tables(param_ham, norb, shape):
     if 'PairHop' in param_ham.keys():
         jab_r = _zeros()
         for (irvec, orbvec), v in param_ham["PairHop"].items():
-            jab_r[(*irvec, *orbvec)] += v
+            jab_r[(*fold_rvec(irvec, shape), *orbvec)] += v
         inter_table["PairHop"] = _reverse_closed(jab_r)
         spin_table["PairHop"] = np.zeros((2, 2, 2, 2), dtype=int)
         spin_table["PairHop"][0, 1, 1, 0] = 1

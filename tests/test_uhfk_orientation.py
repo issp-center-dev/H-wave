@@ -463,6 +463,14 @@ def _refixed(case):
     return {"Energy_" + t for t in case.files if case.fock or t == "PairHop"}
 
 
+def _sign_fixed(case):
+    """The ``energy.dat`` members of ``case`` whose SIGN the fix of issue
+    #350 changed: ``Sy`` of a spin-orbital run (it read ``<c^dag_up
+    c_down>`` as ``<c^dag_down c_up>``). The Green function is unchanged, so
+    the member must be exactly the negative of the reference's."""
+    return {"Sy"} if case.spin_orbital else set()
+
+
 class _OrientationMixin:
     """Shared assertions, mixed into the two gates below (a plain mixin, so
     that no empty ``TestCase`` is discovered for it)."""
@@ -536,8 +544,14 @@ class _OrientationMixin:
             # an exempted member must still be there, on both sides
             self.assertIn(key, ea, "{}: energy.dat has no {}".format(what, key))
             self.assertIn(key, eb, "{}: the reference has no {}".format(what, key))
+        flipped = _sign_fixed(case)
+        for key in sorted(flipped):
+            self.assertEqual(
+                ea[key], -eb[key],
+                "{}: energy.dat member {} is not the negative of the "
+                "reference's (issue #350)".format(what, key))
         for key in sorted(ea):
-            if key in refixed or key in _TOTALS:
+            if key in refixed or key in _TOTALS or key in flipped:
                 continue
             self.assertEqual(
                 ea[key], eb[key],
