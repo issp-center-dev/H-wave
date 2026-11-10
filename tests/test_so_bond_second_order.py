@@ -65,14 +65,17 @@ from unittest import mock
 import numpy as np
 
 from hwave.solver import flex_bond, matsubara
+from hwave.solver.flex_hf import build_flex_hf_tables, hf_map_spin_orbital
 from hwave.solver import eliashberg_bond as eb
 from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_ONSITE_GEOM, C1A_ONSITE_TABLES, READINGS,
-                                    c1a_gamma_label, c1a_green, c1a_onsite_flex_sigma,
+                                    c1a_gamma_label, c1a_green, c1a_hf_param_ham,
+                                    c1a_onsite_flex_sigma, c1a_rho_r,
                                     c1a_sigma_prod, chain_setup, rel, win)
 from tests.so_bond_oracles import OracleGeometry
 from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, antisym_tensor, band_k, build_h1,
                                    build_terms, delta23_monomials, ed_mode,
                                    equal_time_density, equal_time_sample, expand_tables,
+                                   free_density,
                                    geom_of, green_tau, k_of_modes, mesh_grid, mesh_momenta,
                                    minus_tau, modes_of_k, phi1_gradient, phi2_gradient,
                                    random_green, ring2_gradient, ring2_value, ring3_value,
@@ -723,6 +726,79 @@ class TestThirdOrder(unittest.TestCase):
                     self.assertLessEqual(dev, P_TOL, "\n" + table)
                 else:
                     self.assertGreaterEqual(dev, P_MISS, "\n" + table)
+
+
+#: C1a-HF: the array tolerance and the content floor of the non-vacuity check
+HF_TOL = 1e-12
+HF_CONTENT = 0.1
+HF_DENSITIES = ("band", "herm", "free")
+
+
+def _hf_density(density, nmat):
+    """The density ``rho[p, q] = <c+_p c_q>`` (interleaved modes) on
+    FIXTURE_I: ``"free"`` = ``free_density(h1, mu, beta)``; ``"band"`` and
+    ``"herm"`` = ``equal_time_density`` of ``c1a_green(FIXTURE_I, density,
+    nmat)``."""
+    fx = FIXTURE_I
+    if density == "free":
+        return free_density(fx.h1, fx.mu, fx.beta)
+    if density not in ("band", "herm"):
+        raise ValueError("unknown density {!r}".format(density))
+    return equal_time_density(c1a_green(fx, density, nmat), fx.beta, fx.spatial_shape,
+                              fx.norb_phys)
+
+
+def _hf_wick(rho):
+    """The Wick Hartree-Fock self-energy in k of FIXTURE_I's tables at ``rho``."""
+    fx = FIXTURE_I
+    return wick_hf_sigma_k(build_terms(fx.tables_dict, fx.L, fx.norb_phys), rho,
+                           fx.spatial_shape, fx.norb_phys)
+
+
+def metric_hf(density, nmat=C1A_NMAT_FAST):
+    """The C1a-HF deviation on FIXTURE_I: ``hf_map_spin_orbital`` of
+    ``c1a_rho_r(rho)`` with the tables ``build_flex_hf_tables(
+    c1a_hf_param_ham(tables))`` against the Wick Hartree-Fock self-energy of
+    the documented operators at the same density, max-norm relative.
+    Asserts nothing."""
+    fx = FIXTURE_I
+    shape, norb = fx.spatial_shape, fx.norb_phys
+    rho = _hf_density(density, nmat)
+    hf_tables = build_flex_hf_tables(c1a_hf_param_ham(fx.tables_dict, shape), norb, shape)
+    sigma = hf_map_spin_orbital(c1a_rho_r(rho, shape, norb), hf_tables, shape, norb)
+    return rel(sigma, _hf_wick(rho))
+
+
+def hf_content(density="free", nmat=C1A_NMAT_FAST):
+    """``(off_site, spin_off_diagonal)``: the max-norm of the off-site part
+    (``Sigma(k)`` minus its k-average, the on-site block) and of the
+    spin-off-diagonal blocks of the Wick Hartree-Fock self-energy on
+    FIXTURE_I, each relative to its max. Asserts nothing."""
+    sigma = _hf_wick(_hf_density(density, nmat))
+    norb = FIXTURE_I.norb_phys
+    scale = float(np.abs(sigma).max())
+    off_site = float(np.abs(sigma - sigma.mean(axis=0)[None]).max()) / scale
+    spin_off = float(max(np.abs(sigma[:, :norb, norb:]).max(),
+                         np.abs(sigma[:, norb:, :norb]).max())) / scale
+    return off_site, spin_off
+
+
+class TestHartreeFockMap(unittest.TestCase):
+    """C1a-HF: the spin-orbital Hartree-Fock map with off-site rows."""
+
+    def test_matches_wick_oracle(self):
+        devs = {d: metric_hf(d) for d in HF_DENSITIES}
+        off_site, spin_off = hf_content("free")
+        report = "  ".join("%s %.3e" % kv for kv in devs.items())
+        print("\nC1a-HF (Nmat %d): %s; content off-site %.3f, spin-off-diagonal %.3f"
+              % (C1A_NMAT_FAST, report, off_site, spin_off))
+        for d, dev in devs.items():
+            with self.subTest(density=d):
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                self.assertLessEqual(dev, HF_TOL, report)
+        self.assertTrue(np.isfinite(off_site) and np.isfinite(spin_off), "non-finite metric")
+        self.assertGreaterEqual(off_site, HF_CONTENT)
+        self.assertGreaterEqual(spin_off, HF_CONTENT)
 
 
 if __name__ == "__main__":

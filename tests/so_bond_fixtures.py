@@ -988,3 +988,37 @@ def c1a_sigma_prod(fx, tables, green, *, reading="p_b", ring_factor=0.5, ring_or
     return flex_bond.calc_self_energy_bond(eb.ArrayBlockSource({"W": W}, fx.nd ** 2),
                                            green[None].copy(), fx.beta, geom, fx.spatial_shape,
                                            fx.nd, 1)[0]
+
+
+def c1a_hf_param_ham(tables, spatial_shape):
+    """The production ``param_ham`` of ``tables`` for ``build_flex_hf_tables``:
+    ``{type: {((Rx mod Nx, Ry mod Ny, Rz mod Nz), (a, b)): complex}}`` with
+    0-based orbitals and the values of keys that coincide on the mesh summed
+    (the structure ``QLMSkInput`` hands the solver)."""
+    shape = tuple(int(n) for n in spatial_shape)
+    out = {}
+    for itype, tbl in tables.items():
+        rows = {}
+        for (R, (a, b)), v in tbl.items():
+            R = (int(R), 0, 0) if isinstance(R, (int, np.integer)) else tuple(int(x) for x in R)
+            key = (tuple(r % n for r, n in zip(R, shape)), (int(a), int(b)))
+            rows[key] = rows.get(key, 0.0) + complex(v)
+        out[itype] = rows
+    return out
+
+
+def c1a_rho_r(rho_modes, spatial_shape, norb_phys):
+    """The real-space spin-block density ``(nvol, nd, nd)`` of the
+    interleaved-mode density ``rho_modes[p, q] = <c+_p c_q>``:
+    ``rho_r[r, X, Y] = rho[ed_mode(r, X), ed_mode(0, Y)] = <c+_X(r) c_Y(0)>``,
+    the convention of ``hartree_fock.accumulate_hf`` (``r`` the C-order cell
+    index)."""
+    rho = np.asarray(rho_modes)
+    nvol = int(np.prod(spatial_shape))
+    nd = 2 * int(norb_phys)
+    X = np.arange(nd)
+    rows = so_bond_oracles.ed_mode(np.arange(nvol)[:, None], X[None, :], norb_phys)  # [r, X]
+    cols = so_bond_oracles.ed_mode(0, X, norb_phys)                                   # [Y]
+    if rho.shape != (nvol * nd, nvol * nd):
+        raise ValueError("c1a_rho_r: density {0} is not ({1}, {1})".format(rho.shape, nvol * nd))
+    return np.ascontiguousarray(rho[rows[:, :, None], cols[None, None, :]], dtype=np.complex128)
