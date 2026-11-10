@@ -1958,3 +1958,119 @@ def phi2_gradient(green, beta, gamma_label, geom, *, nodes=8, radius=0.3, chunk=
         vals[s0:s0 + chunk] = (-(1.0 / beta) / 8.0) * np.einsum("slqij,slqji->s", A, A)
     grad = (vals.reshape(len(entries), M) * w.conj()[None]).sum(axis=1) / (M * radius)
     return beta * grad.reshape(nmat, nvol, nd, nd).transpose(0, 1, 3, 2)
+
+
+# ---------------------------------------------------------------------------
+# Second order (PR C1a): imaginary-time grid, mode bridge, equal-time sample
+# ---------------------------------------------------------------------------
+
+def tau_grid_dft(nmat, beta):
+    """The explicit DFT matrices of the grid ``tau_j = j beta / nmat`` and the
+    fermion frequencies ``w_n = (2 n + 1 - nmat) pi T``: ``F[j, n] =
+    e^{-i w_n tau_j}`` and ``B[m, j] = (beta / nmat) e^{+i w_m tau_j}``, each
+    ``(nmat, nmat)`` complex128 (``G(tau) = T F G``, ``S(i w) = B S(tau)``)."""
+    nmat = int(nmat)
+    w = (2 * np.arange(nmat) + 1 - nmat) * np.pi / beta
+    tau = np.arange(nmat) * beta / nmat
+    F = np.exp(-1j * np.outer(tau, w))
+    B = (beta / nmat) * np.exp(1j * np.outer(w, tau))
+    return F, B
+
+
+def green_tau(green, beta):
+    """``G(tau_j) = T sum_n e^{-i w_n tau_j} G(i w_n)`` along axis 0."""
+    green = np.asarray(green, dtype=np.complex128)
+    F, _ = tau_grid_dft(green.shape[0], beta)
+    return np.tensordot(F, green, axes=(1, 0)) / beta
+
+
+def minus_tau(g_tau):
+    """``G~(tau_j) = sgn_j G(tau_{(nmat - j) mod nmat})`` along axis 0, with
+    ``sgn_0 = +1`` and ``sgn_j = -1`` otherwise: ``G(-tau_j)`` for ``j > 0``
+    and the equal-time sample itself for ``j = 0``."""
+    g_tau = np.asarray(g_tau)
+    nmat = g_tau.shape[0]
+    j = np.arange(nmat)
+    sgn = np.where(j == 0, 1.0, -1.0).reshape((nmat,) + (1,) * (g_tau.ndim - 1))
+    return sgn * g_tau[(nmat - j) % nmat]
+
+
+def tau_to_matsubara(s_tau, beta):
+    """``S(i w_m) = (beta / nmat) sum_j e^{+i w_m tau_j} S(tau_j)`` along axis 0."""
+    s_tau = np.asarray(s_tau, dtype=np.complex128)
+    _, B = tau_grid_dft(s_tau.shape[0], beta)
+    return np.tensordot(B, s_tau, axes=(1, 0))
+
+
+def _mode_index(spatial_shape, norb_phys):
+    """``idx[j, X] = ed_mode(j, X)`` ``(nvol, nd)``."""
+    nvol = int(np.prod(spatial_shape))
+    nd = 2 * int(norb_phys)
+    return ed_mode(np.arange(nvol)[:, None], np.arange(nd)[None, :], norb_phys)
+
+
+def modes_of_k(a_k, spatial_shape, norb_phys):
+    """The interleaved-mode matrix ``(..., M, M)`` (``M = nvol nd``) of a
+    translation-invariant k-space array ``a_k`` ``(..., nvol, nd, nd)`` in the
+    spin-block index: ``A[ed_mode(j, X), ed_mode(j', Y)] = (1/N) sum_k
+    e^{+ik.(j - j')} A_XY(k)``."""
+    shape = _shape(spatial_shape)
+    a_k = np.asarray(a_k, dtype=np.complex128)
+    nvol, nd = int(np.prod(shape)), 2 * int(norb_phys)
+    if a_k.shape[-3:] != (nvol, nd, nd):
+        raise ValueError("modes_of_k: array {} is not (..., {}, {}, {})".format(
+            a_k.shape, nvol, nd, nd))
+    U = np.exp(1j * (mesh_momenta(shape) @ mesh_grid(shape).T))           # [k, j]
+    P = U[:, :, None] * U.conj()[:, None, :] / nvol                        # [k, j, j']
+    tmp = np.einsum("kjl,...kxy->...jxly", P, a_k)
+    idx = _mode_index(shape, norb_phys)
+    out = np.zeros(a_k.shape[:-3] + (nvol * nd, nvol * nd), dtype=np.complex128)
+    out[..., idx[:, :, None, None], idx[None, None, :, :]] = tmp
+    return out
+
+
+def k_of_modes(a_modes, spatial_shape, norb_phys, *, tol=1e-12):
+    """The k-space spin-block array ``(..., nvol, nd, nd)`` of an
+    interleaved-mode matrix ``(..., M, M)``: ``A_XY(k) = sum_R e^{+ik.R}
+    A[ed_mode(0, X), ed_mode(R, Y)]``. Refuses a matrix that is not
+    translation invariant (deviation of the reconstruction above
+    ``tol max|A|``)."""
+    shape = _shape(spatial_shape)
+    a = np.asarray(a_modes, dtype=np.complex128)
+    nvol, nd = int(np.prod(shape)), 2 * int(norb_phys)
+    if a.shape[-2:] != (nvol * nd, nvol * nd):
+        raise ValueError("k_of_modes: array {} is not (..., {}, {})".format(
+            a.shape, nvol * nd, nvol * nd))
+    idx = _mode_index(shape, norb_phys)
+    row0 = a[..., idx[0][:, None, None], idx[None, :, :]]                 # [..., X, R, Y]
+    E = np.exp(1j * (mesh_momenta(shape) @ mesh_grid(shape).T))           # [k, R]
+    out = np.einsum("kr,...xry->...kxy", E, row0)
+    dev = float(np.abs(modes_of_k(out, shape, norb_phys) - a).max()) if a.size else 0.0
+    if dev > tol * float(np.abs(a).max()):
+        raise ValueError("k_of_modes: not translation invariant (deviation {:.3e} > {:.3e})"
+                         .format(dev, tol * float(np.abs(a).max())))
+    return out
+
+
+def equal_time_sample(green, beta):
+    """The tau = 0 sample ``T sum_n G(k, i w_n)`` ``(nvol, nd, nd)`` of the
+    truncated frequency grid (``green_tau(green, beta)[0]``)."""
+    return green_tau(green, beta)[0]
+
+
+def equal_time_density(green, beta, spatial_shape, norb_phys):
+    """The density reading ``rho_pq = S_qp`` ``(M, M)`` of the equal-time
+    sample in the interleaved modes: the mode-axis transpose of
+    ``modes_of_k(equal_time_sample(green, beta))``."""
+    S = modes_of_k(equal_time_sample(green, beta), spatial_shape, norb_phys)
+    return np.ascontiguousarray(S.T)
+
+
+def delta23_monomials(monomials, spatial_shape):
+    """The monomials whose operators 2 and 3 are the same mode in the same
+    cell (``modes[1] == modes[2]`` and equal cells on the mesh): these carry
+    a one-body remainder ``delta_23`` when normal ordered."""
+    shape = _shape(spatial_shape)
+    return [m for m in monomials
+            if m.modes[1] == m.modes[2]
+            and int(mesh_index(m.cells[1], shape)) == int(mesh_index(m.cells[2], shape))]

@@ -764,3 +764,56 @@ def sector_op_of(p, basis, M, *, adjoint=True, matmat=True):
         KH = np.ascontiguousarray(K.conj().T)
         kw["rmatvec"] = lambda y: KH @ np.asarray(y).ravel()
     return sc.SectorOp(p, LinearOperator((n, n), dtype=complex, **kw), basis, adjoint)
+
+
+# ---------------------------------------------------------------------------
+# Second order (PR C1a): grids, the on-site control and the Green functions
+# ---------------------------------------------------------------------------
+
+from tests.so_bond_oracles import FIXTURES, fixture_name, free_green, rel  # noqa: E402,F401
+
+#: Matsubara grids of the fast and the full-grid gates
+C1A_NMAT_FAST = 8
+C1A_NMAT_FULL = 64
+#: seed of the random (non-factorized) Green function ``"rand"``
+C1A_SEED = 2701
+#: the on-site control: FIXTURE_I's band with CoulombIntra only, on the
+#: single-channel (B = 1) label geometry
+C1A_ONSITE_TABLES = {"CoulombIntra": {((0, 0, 0), (0, 0)): 0.83}}
+C1A_ONSITE_GEOM = OracleGeometry([(0, 0, 0)], [0], (5, 1, 1))
+
+_C1A_KINDS = ("band", "rand", "herm")
+
+
+@functools.lru_cache(maxsize=None)
+def _c1a_green_cached(name, kind, nmat):
+    fx = FIXTURES[name]
+    if kind == "band":
+        h1_k, mu, beta = fx.band
+        g = free_green(h1_k, mu, beta, nmat)
+    else:
+        g = random_green(C1A_SEED, nmat, fx.nvol, fx.nd)
+        if kind == "herm":
+            g = 0.5 * (g + np.conj(np.swapaxes(g[::-1], -1, -2)))
+    g = np.ascontiguousarray(g, dtype=np.complex128)
+    g.flags.writeable = False
+    return g
+
+
+def c1a_green(fx, kind, nmat):
+    """The Green function ``(nmat, nvol, nd, nd)`` of a pinned fixture (no
+    tail): ``"band"`` = the free Green function of ``fx.band``, ``"rand"`` =
+    ``random_green(C1A_SEED, ...)``, ``"herm"`` = ``1/2 [G_r(k, n) +
+    G_r(k, nmat - 1 - n)^dagger]``. Each call returns a fresh copy."""
+    name = fixture_name(fx)
+    if name is None:
+        raise ValueError("c1a_green: the fixture is not a pinned (named) fixture")
+    if kind not in _C1A_KINDS:
+        raise ValueError("c1a_green: unknown kind {!r} (expected one of {})".format(
+            kind, _C1A_KINDS))
+    return _c1a_green_cached(name, kind, int(nmat)).copy()
+
+
+def win(nmat):
+    """The inner eighth of a frequency grid of ``nmat`` points."""
+    return slice(nmat // 2 - nmat // 16, nmat // 2 + nmat // 16)
