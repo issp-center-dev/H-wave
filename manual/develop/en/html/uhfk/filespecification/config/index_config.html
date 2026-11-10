@@ -231,7 +231,12 @@ This parameter specifies the tolerance for the Hermiticity condition
 Boolean (default value is false)</p>
 <p><strong>Description :</strong></p>
 <p>Relax the checks that the distances of hopping and interaction are within the halves of <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>;
-if true, warn and continue execution, otherwise stop.</p>
+if true, warn and continue execution, otherwise stop.
+When true, a translation vector outside <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> is folded back into the cell
+(component-wise modulo <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>), and entries that fold onto the same vector are summed.
+On the <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> k-mesh this gives the same Hamiltonian as the unfolded table.
+The type of each row is still judged on the vector as written: for example, an inter-site
+row whose vector folds to zero remains an inter-site interaction with a periodic image.</p>
 </li>
 </ul>
 </section>

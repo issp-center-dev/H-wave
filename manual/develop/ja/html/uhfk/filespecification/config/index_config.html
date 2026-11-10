@@ -183,7 +183,11 @@ simple-mixingについては<a class="reference internal" href="../../../algorit
 <li><p><code class="docutils literal notranslate"><span class="pre">trustme_interaction_range</span></code></p>
 <p><strong>形式 :</strong> bool型 (デフォルトは false)</p>
 <p><strong>説明 :</strong> ホッピングや相互作用の距離が<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>の半分以内におさまっているかのチェックを緩和します。
-true の場合、warning を表示して実行を継続し、 false の場合、エラー終了します。</p>
+true の場合、warning を表示して実行を継続し、 false の場合、エラー終了します。
+true のとき、<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>の外にある並進ベクトルは成分ごとに<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>を法として
+セル内に折り返し、同じベクトルに折り返された項は足し合わせます。<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>の k メッシュ上では、
+折り返す前の表と同じハミルトニアンになります。各行の種類は書かれたベクトルのまま判定するので、
+たとえば折り返すとゼロになるサイト間の行は、周期的な像とのサイト間相互作用のまま扱います。</p>
 </li>
 </ul>
 </section>
