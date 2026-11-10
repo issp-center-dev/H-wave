@@ -392,6 +392,20 @@ HEAVY_TESTS = (
      "each), 3.7 s measured on macOS, 7.7 s on Linux (numpy 1.26); heavy because "
      "of the fast-gate budget, not its own runtime; the two-orbital subset "
      "stays in the fast gate"),
+    # --- tests/test_so_bond_second_order.py -- spin-orbital bond 2nd order identity
+    ("test_so_bond_second_order", "TestFullGrid", "test_adjoint_64_directions",
+     "the R7 directional check of the spin-orbital bond second-order self-energy "
+     "against its functional on FIXTURE_I at Nmat 64, 64 directions and both Green "
+     "functions (stacked eight-node stencils at two radii), 20.8 s measured on "
+     "macOS, about 56 s on Linux (x2.7 projection); smoke: "
+     "TestAdjoint.test_directional_fast"),
+    ("test_so_bond_second_order", "TestFullGrid", "test_formula_and_mapping",
+     "C1a-F and C1a-P at Nmat 64: the controls (controls_pass(64), 8.1 s of the "
+     "total), the second-order formula against the explicit Wick second order and "
+     "the production chain through p_b against it on both fixtures and both Green "
+     "functions, every wrong filing and rejected reading missing, 26.6 s measured "
+     "on macOS, about 72 s on Linux (x2.7 projection); smoke: "
+     "TestFormula.test_formula_fast and TestMapping.test_chain_fast"),
     # --- tests/test_so_bond_second_order_ed.py -- spin-orbital bond 2nd order vs ED
     ("test_so_bond_second_order_ed", "TestSecondOrderED", "test_each_type",
      "the second-order coefficient of the exact self-energy of FIXTURE_I's "

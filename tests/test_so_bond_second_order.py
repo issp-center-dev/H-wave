@@ -67,7 +67,7 @@ import numpy as np
 from hwave.solver import flex_bond, matsubara
 from hwave.solver.flex_hf import build_flex_hf_tables, hf_map_spin_orbital
 from hwave.solver import eliashberg_bond as eb
-from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_ONSITE_GEOM, C1A_ONSITE_TABLES, READINGS,
+from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_NMAT_FULL, C1A_ONSITE_GEOM, C1A_ONSITE_TABLES, READINGS,
                                     c1a_gamma_label, c1a_green, c1a_hf_param_ham,
                                     c1a_onsite_flex_sigma, c1a_rho_r,
                                     c1a_sigma_prod, chain_setup, rel, win)
@@ -80,6 +80,7 @@ from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, antisym_tensor, band_k
                                    minus_tau, modes_of_k, phi1_gradient, phi2_gradient,
                                    random_green, ring2_gradient, ring2_value, ring3_value,
                                    tau_to_matsubara, wick_hf_sigma_k, wick_sigma2)
+from tests.heavy_tests import heavy
 from tests.test_so_bond_oracles import _imported_modules
 
 _ORACLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "so_bond_oracles.py")
@@ -649,6 +650,68 @@ class TestMapping(unittest.TestCase):
         self.assertTrue(np.isfinite(dev) and np.isfinite(dev_slot), "non-finite metric")
         self.assertLessEqual(dev_slot, P_TOL)
         self.assertGreaterEqual(dev, P_MISS)
+
+
+#: the full-grid adjoint check: directions
+FULL_NDIR = 64
+
+
+class TestFullGrid(unittest.TestCase):
+    """The full-grid gates (Nmat 64): the 64-direction R7 check, C1a-F and
+    C1a-P."""
+
+    @heavy
+    def test_adjoint_64_directions(self):
+        for kind in ("band", "rand"):
+            with self.subTest(kind=kind):
+                worst, rows = metric_adjoint(FIXTURE_I, kind, C1A_NMAT_FULL, FULL_NDIR)
+                accepted = sum(r["accepted"] for r in rows)
+                print("\nR7 (Nmat %d, %d directions, FIXTURE_I %s): worst %.3e, "
+                      "accepted %d of %d draws"
+                      % (C1A_NMAT_FULL, FULL_NDIR, kind, worst, accepted, len(rows)))
+                self.assertTrue(np.isfinite(worst), "non-finite metric")
+                self.assertEqual(accepted, FULL_NDIR)
+                self.assertLessEqual(worst, R7_TOL, [r for r in rows
+                                                     if max(r["r_ab"], r["r_s"]) > R7_TOL])
+
+    @heavy
+    def test_formula_and_mapping(self):
+        nmat = C1A_NMAT_FULL
+        ok, numbers = controls_pass(nmat)
+        if not ok:
+            failed = {k: v for k, v in numbers.items() if not v["pass"]}
+            self.fail("C1a-F verdict void: control {} failed ({})".format(
+                ", ".join(sorted(failed)), failed))
+        f_devs = {(fx.L, kind): metric_f(fx, kind, nmat)
+                  for fx in (FIXTURE_I, FIXTURE_II) for kind in ("band", "rand")}
+        wrong = {name: metric_f(FIXTURE_I, "rand", nmat, filing=filing)
+                 for name, filing in (("q_sign", {"q_sign": -1}),
+                                      ("crossed", {"crossed": False}))}
+        p_devs = {(fx.L, kind, reading): metric_p(fx, kind, nmat, reading)
+                  for fx in (FIXTURE_I, FIXTURE_II) for kind in ("band", "rand")
+                  for reading in READINGS}
+        table = "\n".join(
+            ["  C1a-F  L %d  %-4s  %.3e" % (k + (v,)) for k, v in f_devs.items()]
+            + ["  C1a-F  wrong filing %-8s %.3e" % kv for kv in wrong.items()]
+            + ["  C1a-P  L %d  %-4s  %-18s %.3e" % (k + (v,)) for k, v in p_devs.items()])
+        print("\nFull grid (Nmat %d):\n%s" % (nmat, table))
+        for key, dev in f_devs.items():
+            with self.subTest(gate="C1a-F", fixture=key[0], kind=key[1]):
+                self.assertIsNotNone(dev, table)
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                self.assertLessEqual(dev, F_TOL, "\n" + table)
+        for name, dev in wrong.items():
+            with self.subTest(gate="C1a-F", reading=name):
+                self.assertIsNotNone(dev, table)
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                self.assertGreaterEqual(dev, 1e-3, "\n" + table)
+        for key, dev in p_devs.items():
+            with self.subTest(gate="C1a-P", fixture=key[0], kind=key[1], reading=key[2]):
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                if key[2] == "p_b":
+                    self.assertLessEqual(dev, P_TOL, "\n" + table)
+                else:
+                    self.assertGreaterEqual(dev, P_MISS, "\n" + table)
 
 
 #: the third-order check: directions, draws, stencil radius

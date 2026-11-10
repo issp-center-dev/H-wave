@@ -35,9 +35,12 @@ MEASUREMENT = (
     "CI runner: CI run 42418446187 (2026-11-07, Python 3.12, numpy 1.26.4) "
     "times the after/before ratio of the ED speed-ups of 2026-11-08 "
     "measured on a 32-core Linux host (numpy 1.26.4, "
-    "OPENBLAS_NUM_THREADS=4). Loads of the checked-in map: 460 / 471 / "
-    "465 s (shard 2 includes test_sc_spin_orbital_bond_full, placed by "
-    "hand after the partition at a 10 s CI estimate)")
+    "OPENBLAS_NUM_THREADS=4). Loads of the checked-in map: 515 / 471 / "
+    "593 s (shard 2 includes test_sc_spin_orbital_bond_full, placed by "
+    "hand after the partition at a 10 s CI estimate; "
+    "test_so_bond_second_order_ed (shard 1, 55 s) and "
+    "test_so_bond_second_order (shard 3, 128 s) placed by hand on the "
+    "then-lightest shard at a x2.7 projection of their macOS times)")
 
 #: Files that must share a shard: they diagonalize identical Hamiltonians,
 #: which ``tests/ed_cache.py`` shares only within one process (the case-M
@@ -77,6 +80,7 @@ SHARDS = (
         "test_bond_longitudinal_ed",               # 109 } one item (TOGETHER)
         "test_bond_vs_ed_oracle",                  # 61  }
         "test_so_bond_pairing_ed",                 # 135
+        "test_so_bond_second_order",               # 128 (x2.7 projection of 47.4 s on macOS)
         "test_so_bond_conventions",                # 56
         "test_bond_transverse_ed",                 # 44
         "test_bond_half_grid",                     # 30
