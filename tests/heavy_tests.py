@@ -392,6 +392,15 @@ HEAVY_TESTS = (
      "each), 3.7 s measured on macOS, 7.7 s on Linux (numpy 1.26); heavy because "
      "of the fast-gate budget, not its own runtime; the two-orbital subset "
      "stays in the fast gate"),
+    # --- tests/test_so_bond_second_order_ed.py -- spin-orbital bond 2nd order vs ED
+    ("test_so_bond_second_order_ed", "TestSecondOrderED", "test_each_type",
+     "the second-order coefficient of the exact self-energy of FIXTURE_I's "
+     "five-site ring for each of the seven interaction types alone (four ED "
+     "couplings per type, production chain at the gate's working point Nmat 4096, "
+     "x = 6.25e-3, reached without refinement rounds; reported, "
+     "anti-vacuity floor only), 20.5 s measured on macOS, about 55 s on Linux "
+     "(x2.7 projection); smoke: TestSecondOrderEDSmoke.test_all_types_smoke; the "
+     "all-types gate TestSecondOrderED.test_all_types (3.5 s) stays in the fast gate"),
     # --- tests/test_so_pairing_ed.py -- spin-orbital pairing vertex vs ED (#83)
     ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
      "test_first_and_second_order",

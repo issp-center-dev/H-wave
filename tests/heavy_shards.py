@@ -54,6 +54,7 @@ SHARDS = (
         "test_so_pairing_ed",                      # 193
         "test_offsite_exchange_ed_longitudinal",   # 96
         "test_eliashberg_dynamic_so",              # 79
+        "test_so_bond_second_order_ed",            # 55 (x2.7 projection of 20.5 s on macOS)
         "test_bond_pairing_ed",                    # 37
         "test_flex_second_order_sopt",             # 32
         "test_flex_sigma_hermitian",               # 13
