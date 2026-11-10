@@ -571,6 +571,25 @@ class TestFormula(unittest.TestCase):
                 self.assertTrue(np.isfinite(dev), "non-finite metric")
                 self.assertLessEqual(dev, F_TOL, devs)
 
+    def test_formula_each_type(self):
+        # one interaction type at a time: no cancellation between types hides a
+        # per-type error in the all-types gate
+        self._controls(C1A_NMAT_FAST)
+        devs = {(fx.L, kind, t): metric_f(fx, kind, C1A_NMAT_FAST,
+                                          tables={t: fx.tables_dict[t]})
+                for fx in (FIXTURE_I, FIXTURE_II) for kind in ("band", "rand")
+                for t in sorted(fx.tables_dict)}
+        for fx in (FIXTURE_I, FIXTURE_II):
+            self.assertEqual(set(fx.tables_dict),
+                             {"CoulombIntra", "CoulombInter", "Hund", "Ising", "Exchange",
+                              "PairHop", "PairLift"})
+        table = "\n".join("  L %d  %-4s  %-12s %.3e" % (k + (v,)) for k, v in devs.items())
+        for key, dev in devs.items():
+            with self.subTest(fixture=key[0], kind=key[1], type=key[2]):
+                self.assertIsNotNone(dev, table)
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                self.assertLessEqual(dev, F_TOL, "\n" + table)
+
     def test_two_sided(self):
         self._controls(C1A_NMAT_FAST)
         devs = {name: metric_f(FIXTURE_I, "rand", C1A_NMAT_FAST, filing=filing)
