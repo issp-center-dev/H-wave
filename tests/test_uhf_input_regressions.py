@@ -49,6 +49,78 @@ class _TempDir(unittest.TestCase):
         qlms.run(input_dict=copy.deepcopy(inp))
 
 
+_CHAIN_GEOM = "1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n1\n0.0 0.0 0.0\n"
+
+
+def _wan(rows):
+    lines = ["table", "1", str(len(rows)), " ".join(["1"] * len(rows))]
+    lines += ["{} 0 0 1 1 {} 0.0".format(r, v) for r, v in rows]
+    return "\n".join(lines) + "\n"
+
+
+class TestUHFkTrustmeFolding(_TempDir):
+    """#348: a hopping or interaction vector outside the cell is folded
+    modulo CellShape at accumulation; for an off-site table the result
+    equals the pre-folded table's exactly. The type of each row is still
+    judged on the vector as written (an aggregate Coulomb row at R = L
+    stays an inter-site row), so folding never reclassifies a row."""
+
+    INTER_TYPES = ("CoulombInter", "Hund", "Ising", "Exchange", "PairLift", "PairHop")
+
+    def _case(self, name, transfer, inter, subshape, inter_type="CoulombInter",
+              trustme=True):
+        d = os.path.join(self.d, name)
+        os.makedirs(d)
+        _write(d, "geom.dat", _CHAIN_GEOM)
+        _write(d, "transfer.dat", _wan(transfer))
+        _write(d, "inter.dat", _wan(inter))
+        inp = {
+            "log": {"print_level": 0},
+            "mode": {"mode": "UHFk", "param": {
+                "CellShape": [4, 1, 1], "SubShape": subshape,
+                "trustme_interaction_range": trustme, "T": 0.0, "Ncond": 4,
+                "IterationMax": 50}},
+            "file": {"input": {"path_to_input": d, "interaction": {
+                "path_to_input": d, "Geometry": "geom.dat",
+                "Transfer": "transfer.dat", inter_type: "inter.dat"}},
+                "output": {"path_to_output": os.path.join(d, "out"),
+                           "energy": "energy", "green": "green"}},
+        }
+        self._run(inp)
+        out = os.path.join(d, "out")
+        return (_energy(os.path.join(out, "energy")),
+                np.load(os.path.join(out, "green.npz"))["green"])
+
+    def test_folded_equals_prefolded(self):
+        far_t = [(1, -1.0), (-1, -1.0), (5, -0.1), (-5, -0.1)]
+        near_t = [(1, -1.1), (-1, -1.1), (0, 0.0)]
+        far_v = [(5, 0.3), (-5, 0.3)]
+        near_v = [(1, 0.3), (-1, 0.3)]
+        for sub in ([1, 1, 1], [2, 1, 1]):
+            with self.subTest(subshape=sub):
+                tag = "".join(map(str, sub))
+                e_far, g_far = self._case("far" + tag, far_t, far_v, sub)
+                e_near, g_near = self._case("near" + tag, near_t, near_v, sub)
+                self.assertEqual(e_far, e_near)
+                np.testing.assert_array_equal(g_far, g_near)
+
+    def test_every_offsite_type(self):
+        t = [(1, -1.0), (-1, -1.0)]
+        for typ in self.INTER_TYPES:
+            with self.subTest(type=typ):
+                e_far, g_far = self._case("f" + typ, t, [(5, 0.3), (-5, 0.3)],
+                                          [1, 1, 1], typ)
+                e_near, g_near = self._case("n" + typ, t, [(1, 0.3), (-1, 0.3)],
+                                            [1, 1, 1], typ)
+                self.assertEqual(e_far, e_near)
+                np.testing.assert_array_equal(g_far, g_near)
+
+    def test_out_of_range_still_refused_without_trustme(self):
+        with self.assertRaises(SystemExit):
+            self._case("refused", [(1, -1.0), (-1, -1.0), (5, -0.1), (-5, -0.1)],
+                       [(1, 0.3), (-1, 0.3)], [1, 1, 1], trustme=False)
+
+
 class TestUHFrInterAllOneBody(_TempDir):
     """#349: InterAll entries that are exactly one-body operators give the
     same state as the operator written in Trans (H = sigma_x, E = -1,

@@ -5,7 +5,7 @@ import os
 from .base import solver_base
 from .perf import do_profile
 from . import fold
-from .kgrid import reverse_fft_axes
+from .kgrid import fold_rvec, reverse_fft_axes
 from . import hartree_fock
 from . import spin_orbital
 from ..qlmsio import wan90
@@ -772,7 +772,7 @@ class UHFk(solver_base):
                     # warning), so they are not part of the Hamiltonian this
                     # check guards
                     continue
-                tab_r[(*irvec, *orbvec)] += v
+                tab_r[(*fold_rvec(irvec, (nx, ny, nz)), *orbvec)] += v
 
             t = np.conjugate(
                     np.transpose(
@@ -1012,7 +1012,7 @@ class UHFk(solver_base):
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
-                tab_r[(*irvec, *orbvec)] += v
+                tab_r[(*fold_rvec(irvec, (nx, ny, nz)), *orbvec)] += v
 
             # fourier transform
             tab_k = np.fft.ifftn(tab_r, axes=(0,1,2), norm='forward')
@@ -1027,7 +1027,7 @@ class UHFk(solver_base):
             has_spin_dep = False
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
                 if orbvec[0] < norb and orbvec[1] < norb:
-                    tab_r[(*irvec, *orbvec)] += v
+                    tab_r[(*fold_rvec(irvec, (nx, ny, nz)), *orbvec)] += v
                 else:
                     has_spin_dep = True
             if has_spin_dep:
