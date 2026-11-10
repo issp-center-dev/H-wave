@@ -211,6 +211,11 @@ that has no effect under the current settings.
 
   Relax the checks that the distances of hopping and interaction are within the halves of ``CellShape``;
   if true, warn and continue execution, otherwise stop.
+  When true, a translation vector outside ``CellShape`` is folded back into the cell
+  (component-wise modulo ``CellShape``), and entries that fold onto the same vector are summed.
+  On the ``CellShape`` k-mesh this gives the same Hamiltonian as the unfolded table.
+  The type of each row is still judged on the vector as written: for example, an inter-site
+  row whose vector folds to zero remains an inter-site interaction with a periodic image.
 
 ``log`` section
 ================================
