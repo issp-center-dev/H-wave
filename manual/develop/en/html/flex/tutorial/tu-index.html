@@ -581,8 +581,11 @@ Here <span class="math notranslate nohighlight">\(\chi_0\)</span> is the bubble 
 for the spin-orbital FLEX. For the one-band Hubbard model the spin value is
 <span class="math notranslate nohighlight">\(U \max_{\mathbf{q}} \chi_0(\mathbf{q}, 0)\)</span>. <span class="math notranslate nohighlight">\(\mathbf{q}\)</span> is
 given in units of the reciprocal lattice vectors. The bond-resolved path
-(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>) prints no such line; its conditioning
-guard line plays this role.</p>
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>) prints, on the final iteration
+only, the same values for the bond-resolved bubble and vertices under the
+label <code class="docutils literal notranslate"><span class="pre">RPA</span> <span class="pre">pole</span> <span class="pre">indicator</span> <span class="pre">(final</span> <span class="pre">map)</span> <span class="pre">max_q</span> <span class="pre">eig[chibar</span> <span class="pre">S]</span> <span class="pre">(spin)</span> <span class="pre">/</span>
+<span class="pre">eig[-chibar</span> <span class="pre">C]</span> <span class="pre">(charge)</span> <span class="pre">(q,</span> <span class="pre">i</span> <span class="pre">nu</span> <span class="pre">=</span> <span class="pre">0)</span></code> (see <a class="reference internal" href="#bond-rpa-pole"><span class="std std-ref">The static RPA pole of the bond-resolved paths</span></a>); on the
+other iterations its conditioning guard line plays this role.</p>
 <p>How to read it: <span class="math notranslate nohighlight">\(\lambda \ge 1\)</span> means that the channel’s sum is
 statically unstable for that bubble. A converged FLEX solution stays below 1,
 and the distance from 1 tells how close the run is to the instability. A
@@ -647,6 +650,138 @@ on the window is healthy (finite, inside the physical range and increasing);
 a distorted window gives the error above. A non-finite self-energy and
 a target below 0 or above the number of states are refused before the
 search starts.</p>
+</section>
+<section id="the-static-rpa-pole-of-the-bond-resolved-paths">
+<span id="bond-rpa-pole"></span><h3>The static RPA pole of the bond-resolved paths<a class="headerlink" href="#the-static-rpa-pole-of-the-bond-resolved-paths" title="Link to this heading">¶</a></h3>
+<p>The bond-resolved paths dress the bond bubble <span class="math notranslate nohighlight">\(\bar\chi\)</span> with the
+denominator <span class="math notranslate nohighlight">\(1 + s\,\bar\chi W\)</span> (<span class="math notranslate nohighlight">\(s = -1\)</span> and <span class="math notranslate nohighlight">\(W = S\)</span>
+for spin, <span class="math notranslate nohighlight">\(s = +1\)</span> and <span class="math notranslate nohighlight">\(W = C\)</span> for charge, <span class="math notranslate nohighlight">\(s = +1\)</span> and
+<span class="math notranslate nohighlight">\(W = \Gamma\)</span> for the spinful channel of the spin-orbital path). The
+conditioning guard (<code class="docutils literal notranslate"><span class="pre">cond_tol</span></code>, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>) refuses
+this denominator only within about <code class="docutils literal notranslate"><span class="pre">cond_tol</span></code> of its pole. Past the pole
+the denominator is well conditioned again: the run used to finish without a
+word, although the dressed susceptibility is no longer positive definite and the
+pairing eigenvalue describes no physical state. For a V-driven charge
+instability the pairing eigenvalue is smooth across the pole, so it gives
+no hint of the crossing.</p>
+<p>Every bond path now computes, at the zero bosonic frequency, the indicator</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
+<span class="eqno">(6.9)<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[\lambda_{\mathrm{RPA}} = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+e \in \mathrm{eig}\left[-s\,\bar\chi(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+\right\},\]</div>
+<p>that is <span class="math notranslate nohighlight">\(\mathrm{eig}(\bar\chi S)\)</span> for spin,
+<span class="math notranslate nohighlight">\(\mathrm{eig}(-\bar\chi C)\)</span> for charge and
+<span class="math notranslate nohighlight">\(\mathrm{eig}(-\bar\chi \Gamma)\)</span> for the spinful channel (over the
+<span class="math notranslate nohighlight">\(S_z\)</span> sectors in the <code class="docutils literal notranslate"><span class="pre">sz_packed</span></code> layout). It is the Stoner factor of
+<a class="reference internal" href="#flex-stoner-divergence"><span class="std std-ref">Stoner factor and a diverged run</span></a> with the bond-resolved bubble and vertices
+(the same “real eigenvalue” rule), and at zero off-site interaction it
+equals the on-site FLEX Stoner factor. The pole is at
+<span class="math notranslate nohighlight">\(\lambda_{\mathrm{RPA}} = 1\)</span>; the run is past it when
+<span class="math notranslate nohighlight">\(\lambda_{\mathrm{RPA}} \ge 1\)</span>. <span class="math notranslate nohighlight">\(\mathbf{q}\)</span> is in units of the
+reciprocal lattice vectors; among symmetry-equivalent maxima the lowest flat
+q index is reported.</p>
+<ul>
+<li><p><strong>INFO.</strong> The indicator is always logged at INFO level. <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
+writes <code class="docutils literal notranslate"><span class="pre">RPA</span> <span class="pre">pole</span> <span class="pre">indicator</span> <span class="pre">max_q</span> <span class="pre">eig[-sign</span> <span class="pre">chibar</span> <span class="pre">W](q,</span> <span class="pre">i</span> <span class="pre">nu</span> <span class="pre">=</span> <span class="pre">0):</span> <span class="pre">spin</span>
+<span class="pre">...</span> <span class="pre">at</span> <span class="pre">q</span> <span class="pre">=</span> <span class="pre">(...);</span> <span class="pre">charge</span> <span class="pre">...</span></code>; FLEX writes it on the final iteration’s
+line <code class="docutils literal notranslate"><span class="pre">RPA</span> <span class="pre">pole</span> <span class="pre">indicator</span> <span class="pre">(final</span> <span class="pre">map)</span> <span class="pre">max_q</span> <span class="pre">eig[chibar</span> <span class="pre">S]</span> <span class="pre">(spin)</span> <span class="pre">/</span>
+<span class="pre">eig[-chibar</span> <span class="pre">C]</span> <span class="pre">(charge)</span> <span class="pre">(q,</span> <span class="pre">i</span> <span class="pre">nu</span> <span class="pre">=</span> <span class="pre">0):</span> <span class="pre">spin</span> <span class="pre">...;</span> <span class="pre">charge</span> <span class="pre">...</span></code>.</p></li>
+<li><p><strong>WARNING.</strong> Past the pole, the run logs ONE WARNING (at the end of the
+SCF loop for FLEX, for the final map only: a transient excursion during
+the self-consistency is not reported). It names the channel, the
+indicator and q, says that the dressed susceptibility is not positive
+definite there, and what this means for the pairing eigenvalue. Do not
+use such a <span class="math notranslate nohighlight">\(\lambda\)</span> in a <span class="math notranslate nohighlight">\(T_c\)</span> or phase-boundary analysis;
+stay below the pole by reducing the interaction or raising the
+temperature:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>eliashberg bond_channels (static): the static RPA denominator is past its pole in the spin channel: max_q eig[chibar S](q, i nu = 0) = 1.020004 &gt;= 1 at q = (0.5, 0.5, 0). The conditioning guard refuses only within cond_tol of the pole, so the run continues, ...
+</pre></div>
+</div>
+</li>
+<li><p><strong>Nothing is refused and no number changes.</strong> The pairing eigenvalue
+<span class="math notranslate nohighlight">\(\lambda\)</span> is still reported, <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> keeps its meaning
+of eigen-solver convergence, and <code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span></code> is not involved.
+Should the indicator of a channel not be computable (a non-finite input,
+a failed eigenvalue solve, or, for an archive, an eigenvalue at the
+inversion’s singular point <span class="math notranslate nohighlight">\(\mu = -1\)</span>), the WARNING says so
+(<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">could</span> <span class="pre">not</span> <span class="pre">be</span> <span class="pre">computed</span> <span class="pre">...</span></code>): on its own, or inside the pole
+WARNING when another channel is past the pole, so a run logs at most one
+of them. The run completes unchanged, and that channel gets no pole
+provenance keys.</p></li>
+<li><p><strong>Provenance, written only past the pole.</strong> A run below the pole writes
+exactly the outputs it wrote before. Past the pole:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 35.0%" />
+<col style="width: 65.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>key</p></th>
+<th class="head"><p>content</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code> (a boolean scalar <code class="docutils literal notranslate"><span class="pre">True</span></code> in an <code class="docutils literal notranslate"><span class="pre">.npz</span></code> file)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_&lt;channel&gt;</span></code></p></td>
+<td><p><span class="math notranslate nohighlight">\(\lambda_{\mathrm{RPA}}\)</span> of the channel (<code class="docutils literal notranslate"><span class="pre">spin</span></code> and
+<code class="docutils literal notranslate"><span class="pre">charge</span></code>, or <code class="docutils literal notranslate"><span class="pre">spinful</span></code> on the spin-orbital path); every channel
+with a finite indicator is listed, also one below the pole</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rpa_pole_q_&lt;channel&gt;</span></code></p></td>
+<td><p>the q of that channel’s maximum, in units of the reciprocal lattice
+vectors: <code class="docutils literal notranslate"><span class="pre">(qx,</span> <span class="pre">qy,</span> <span class="pre">qz)</span></code> in a text header, a float array of shape
+<code class="docutils literal notranslate"><span class="pre">(3,)</span></code> in an <code class="docutils literal notranslate"><span class="pre">.npz</span></code> file</p></td>
+</tr>
+</tbody>
+</table>
+<p>They are written</p>
+<ul class="simple">
+<li><p>by the static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond run (<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>) as
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code> lines of <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> and, on the spin-orbital
+path, as <code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> members;</p></li>
+<li><p>by the FLEX bond gate as the static members
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_past_pole</span></code>,
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_pole_indicator_&lt;channel&gt;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_pole_q_&lt;channel&gt;</span></code> of the chiq archive and of
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>;</p></li>
+<li><p>by the in-process <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> (the indicator of the
+final map it re-dresses) in <code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code> and as
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key=value</span></code> header lines of <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>;</p></li>
+<li><p>by the dynamic <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond run on an archive in
+<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code> and as <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key=value</span></code> header lines of
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>. The archive keeps the dressed
+<span class="math notranslate nohighlight">\(\chi = [1 + s\bar\chi W]^{-1}\bar\chi\)</span> only, so the indicator
+is recovered from the eigenvalues <span class="math notranslate nohighlight">\(\mu\)</span> of <span class="math notranslate nohighlight">\(-s\,\chi W\)</span>
+(<span class="math notranslate nohighlight">\(\mu = \lambda / (1 - \lambda)\)</span>) as
+<span class="math notranslate nohighlight">\(\lambda = \mu / (1 + \mu)\)</span>.</p></li>
+</ul>
+</li>
+</ul>
+<p><strong>Checking older outputs.</strong> Outputs written before this check carry no
+indicator.</p>
+<ul>
+<li><p>A FLEX bond run: its static dressed susceptibilities
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chi_s</span></code> / <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chi_c</span></code> (chiq archive,
+shape <code class="docutils literal notranslate"><span class="pre">(nvol,</span> <span class="pre">ND,</span> <span class="pre">ND)</span></code>) are positive below the pole. The final map was
+past the pole exactly when the Hermitian part of one of them has a
+negative eigenvalue at some q. Use the full <code class="docutils literal notranslate"><span class="pre">(ND,</span> <span class="pre">ND)</span></code> block: the
+channel-0 block <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chiq_*_static</span></code> can stay positive.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"chiq_s.npz"</span><span class="p">)</span>       <span class="c1"># or the combined chiq archive</span>
+<span class="k">for</span> <span class="n">ch</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"s"</span><span class="p">,</span> <span class="s2">"c"</span><span class="p">):</span>
+    <span class="n">chi</span> <span class="o">=</span> <span class="n">z</span><span class="p">[</span><span class="s2">"longitudinal_bond_chi_"</span> <span class="o">+</span> <span class="n">ch</span><span class="p">]</span>
+    <span class="n">h</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">chi</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">swapaxes</span><span class="p">(</span><span class="n">chi</span><span class="o">.</span><span class="n">conj</span><span class="p">(),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">ch</span><span class="p">,</span> <span class="s2">"past the pole"</span> <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">eigvalsh</span><span class="p">(</span><span class="n">h</span><span class="p">)</span><span class="o">.</span><span class="n">min</span><span class="p">()</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">"below the pole"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code> / <code class="docutils literal notranslate"><span class="pre">_c</span></code> does not tell the two sides
+apart. A <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> dynamic run on such an archive inherits its state.</p>
+</li>
+<li><p>A static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond run: <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> and <code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> carry
+no susceptibility, so the run must be repeated with this version to know.</p></li>
+</ul>
 </section>
 <section id="hartree-fock-renormalisation-and-the-bond-resolved-channel-experimental">
 <span id="flex-bond-hf-tutorial"></span><h3>Hartree-Fock renormalisation and the bond-resolved channel (experimental)<a class="headerlink" href="#hartree-fock-renormalisation-and-the-bond-resolved-channel-experimental" title="Link to this heading">¶</a></h3>
@@ -1222,8 +1357,8 @@ repulsive on-site mode and should be recomputed.</p>
 <h3>Model<a class="headerlink" href="#id10" title="Link to this heading">¶</a></h3>
 <p>The second sample is a <strong>two-orbital Hubbard model</strong> with
 inter-orbital Coulomb interaction and Hund’s coupling:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
-<span class="eqno">(6.9)<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-9">
+<span class="eqno">(6.10)<a class="headerlink" href="#equation-flex-tutorial-tu-index-9" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
     \varepsilon_{\alpha\beta}(\mathbf{k})\,
     c^\dagger_{\mathbf{k}\alpha\sigma} c_{\mathbf{k}\beta\sigma}
   + U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
@@ -1944,20 +2079,20 @@ run looks under-provisioned).</p>
 superconductors</strong> proposed by Raghu et al. <a class="footnote-reference brackets" href="#id17" id="id16" role="doc-noteref"><span class="fn-bracket">[</span>5<span class="fn-bracket">]</span></a>
 The model describes the Fe-As plane using <span class="math notranslate nohighlight">\(d_{xz}\)</span> and
 <span class="math notranslate nohighlight">\(d_{yz}\)</span> orbitals on a square lattice (1-Fe unit cell).</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-9">
-<span class="eqno">(6.10)<a class="headerlink" href="#equation-flex-tutorial-tu-index-9" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-10">
+<span class="eqno">(6.11)<a class="headerlink" href="#equation-flex-tutorial-tu-index-10" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
 \varepsilon_x(\mathbf{k}) &amp; \varepsilon_{xy}(\mathbf{k}) \\
 \varepsilon_{xy}(\mathbf{k}) &amp; \varepsilon_y(\mathbf{k})
 \end{pmatrix}\end{split}\]</div>
 <p>where</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-10">
-<span class="eqno">(6.11)<a class="headerlink" href="#equation-flex-tutorial-tu-index-10" title="Link to this equation">¶</a></span>\[\begin{split}\varepsilon_x(\mathbf{k}) &amp;= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
+<span class="eqno">(6.12)<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[\begin{split}\varepsilon_x(\mathbf{k}) &amp;= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
 \varepsilon_y(\mathbf{k}) &amp;= -2t_2 \cos k_x - 2t_1 \cos k_y - 4t_3 \cos k_x \cos k_y \\
 \varepsilon_{xy}(\mathbf{k}) &amp;= -4t_4 \sin k_x \sin k_y\end{split}\]</div>
 <p>with <span class="math notranslate nohighlight">\(t_1 = -1.0\)</span>, <span class="math notranslate nohighlight">\(t_2 = 1.3\)</span>, <span class="math notranslate nohighlight">\(t_3 = t_4 = -0.85\)</span>.</p>
 <p>The interactions follow the Kanamori parameterization:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
-<span class="eqno">(6.12)<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
+<span class="eqno">(6.13)<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
 + U' \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
 - 2J \sum_{i,\alpha\neq\beta} \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}
 + J' \sum_{i,\alpha\neq\beta} c^\dagger_{i\alpha\uparrow} c^\dagger_{i\alpha\downarrow}
@@ -2354,8 +2489,8 @@ All current sample files use this case.</p>
 <p><strong>Long-range interactions</strong> (with non-zero <code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code>):</p>
 <p>These are automatically transformed into momentum-dependent
 interactions via FFT:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
-<span class="eqno">(6.13)<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}\]</div>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-13">
+<span class="eqno">(6.14)<a class="headerlink" href="#equation-flex-tutorial-tu-index-13" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}\]</div>
 <p>For example, to include nearest-neighbor Coulomb interactions,
 add entries with lattice vectors <code class="docutils literal notranslate"><span class="pre">(1,0,0)</span></code>, <code class="docutils literal notranslate"><span class="pre">(0,1,0)</span></code>, etc.
 to the interaction file.</p>
@@ -2374,8 +2509,8 @@ the 4-body interaction tensor
 <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma',\alpha\sigma,\beta\sigma'}\)</span>
 to a 2-body contracted form <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma'}\)</span>.</p>
 <p>Specifically, same-spin and cross-spin components are separated:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-13">
-<span class="eqno">(6.14)<a class="headerlink" href="#equation-flex-tutorial-tu-index-13" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-14">
+<span class="eqno">(6.15)<a class="headerlink" href="#equation-flex-tutorial-tu-index-14" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
 U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <p>where <span class="math notranslate nohighlight">\(W_{\mathrm{same}}\)</span> is the same-spin interaction and
 <span class="math notranslate nohighlight">\(W_{\mathrm{cross}}\)</span> is the cross-spin interaction.</p>

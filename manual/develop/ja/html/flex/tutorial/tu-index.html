@@ -546,7 +546,10 @@ e \in \mathrm{eig}\left[-\chi_0(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
 バーテックスによる 1 つの<code class="docutils literal notranslate"><span class="pre">spinful</span></code>の値です。1 バンド Hubbard 模型ではスピンの値は
 <span class="math notranslate nohighlight">\(U \max_{\mathbf{q}} \chi_0(\mathbf{q}, 0)\)</span>です。<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>は
 逆格子ベクトル単位です。ボンド分解経路（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）では
-この行は出力されず、条件数ガードの行がその役割を担います。</p>
+ボンド分解したバブルとバーテックスでの同じ値が、最終反復にだけ
+<code class="docutils literal notranslate"><span class="pre">RPA</span> <span class="pre">pole</span> <span class="pre">indicator</span> <span class="pre">(final</span> <span class="pre">map)</span> <span class="pre">max_q</span> <span class="pre">eig[chibar</span> <span class="pre">S]</span> <span class="pre">(spin)</span> <span class="pre">/</span> <span class="pre">eig[-chibar</span> <span class="pre">C]</span> <span class="pre">(charge)</span> <span class="pre">(q,</span> <span class="pre">i</span> <span class="pre">nu</span> <span class="pre">=</span> <span class="pre">0)</span></code>
+というラベルで出力され（<a class="reference internal" href="#bond-rpa-pole"><span class="std std-ref">ボンド分解経路の静的 RPA 極</span></a>）、
+それ以外の反復では条件数ガードの行がその役割を担います。</p>
 <p>読み方: <span class="math notranslate nohighlight">\(\lambda \ge 1\)</span>は、そのバブルに対してチャネルの和が静的に不安定で
 あることを意味します。収束した FLEX 解は 1 未満にとどまり、1 からの距離が不安定点への
 近さを表します。コールドスタートでは 1 を超えた値から始まって回復することがあります
@@ -601,6 +604,116 @@ start (no sigma_init).
 （有限で、物理的範囲内にあり、増加する）場合に限ります。歪んだ窓では上記のエラーに
 なります。有限でない自己エネルギーと、0 未満または
 状態数を超える目標値は、探索の前に拒否されます。</p>
+</section>
+<section id="rpa">
+<span id="bond-rpa-pole"></span><h3>ボンド分解経路の静的 RPA 極<a class="headerlink" href="#rpa" title="Link to this heading">¶</a></h3>
+<p>ボンド分解経路はボンドバブル<span class="math notranslate nohighlight">\(\bar\chi\)</span>を分母<span class="math notranslate nohighlight">\(1 + s\,\bar\chi W\)</span>で
+dress します（スピンは<span class="math notranslate nohighlight">\(s = -1\)</span>, <span class="math notranslate nohighlight">\(W = S\)</span>、電荷は<span class="math notranslate nohighlight">\(s = +1\)</span>, <span class="math notranslate nohighlight">\(W = C\)</span>、
+スピン軌道経路の spinful チャネルは<span class="math notranslate nohighlight">\(s = +1\)</span>, <span class="math notranslate nohighlight">\(W = \Gamma\)</span>）。条件数ガード
+（<code class="docutils literal notranslate"><span class="pre">cond_tol</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>）がこの分母を拒否するのは、極から
+およそ<code class="docutils literal notranslate"><span class="pre">cond_tol</span></code>以内に限られます。極を越えると分母は再び良条件になるため、
+dress した感受率がもはや正定値でなく、ペアリング固有値が物理的な状態を表さないにもかかわらず、
+計算は何も言わずに終了していました。V による電荷不安定性では、ペアリング固有値は極の前後で
+滑らかに変化するため、固有値から極の通過を知ることはできません。</p>
+<p>すべてのボンド経路は、ボソン振動数 0 で次の指標を計算するようになりました。</p>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
+<span class="eqno">(6.9)<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[\lambda_{\mathrm{RPA}} = \max_{\mathbf{q}} \max \left\{ e \in \mathbb{R} :
+e \in \mathrm{eig}\left[-s\,\bar\chi(\mathbf{q}, i\nu = 0)\, W(\mathbf{q})\right]
+\right\}\]</div>
+<p>すなわちスピンは<span class="math notranslate nohighlight">\(\mathrm{eig}(\bar\chi S)\)</span>、電荷は<span class="math notranslate nohighlight">\(\mathrm{eig}(-\bar\chi C)\)</span>、
+spinful チャネルは<span class="math notranslate nohighlight">\(\mathrm{eig}(-\bar\chi \Gamma)\)</span>（<code class="docutils literal notranslate"><span class="pre">sz_packed</span></code>レイアウトでは
+<span class="math notranslate nohighlight">\(S_z\)</span>セクターにわたる最大）です。これは<a class="reference internal" href="#flex-stoner-divergence"><span class="std std-ref">Stoner 因子と発散した計算</span></a>の Stoner 因子を
+ボンド分解したバブルとバーテックスで評価したもので（「実固有値」の規則も同じ）、サイト外相互作用が
+0 のときはサイト上 FLEX の Stoner 因子に一致します。極は<span class="math notranslate nohighlight">\(\lambda_{\mathrm{RPA}} = 1\)</span>にあり、
+<span class="math notranslate nohighlight">\(\lambda_{\mathrm{RPA}} \ge 1\)</span>のとき極を越えています。<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>は逆格子ベクトル単位で、
+対称性で等価な最大値が複数あるときは平坦化した q の添字が最小のものを報告します。</p>
+<ul>
+<li><p><strong>INFO.</strong> 指標は常に INFO レベルで出力されます。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
+<code class="docutils literal notranslate"><span class="pre">RPA</span> <span class="pre">pole</span> <span class="pre">indicator</span> <span class="pre">max_q</span> <span class="pre">eig[-sign</span> <span class="pre">chibar</span> <span class="pre">W](q,</span> <span class="pre">i</span> <span class="pre">nu</span> <span class="pre">=</span> <span class="pre">0):</span> <span class="pre">spin</span> <span class="pre">...</span> <span class="pre">at</span> <span class="pre">q</span> <span class="pre">=</span> <span class="pre">(...);</span> <span class="pre">charge</span> <span class="pre">...</span></code>
+を書き、FLEX は最終反復の
+<code class="docutils literal notranslate"><span class="pre">RPA</span> <span class="pre">pole</span> <span class="pre">indicator</span> <span class="pre">(final</span> <span class="pre">map)</span> <span class="pre">max_q</span> <span class="pre">eig[chibar</span> <span class="pre">S]</span> <span class="pre">(spin)</span> <span class="pre">/</span> <span class="pre">eig[-chibar</span> <span class="pre">C]</span> <span class="pre">(charge)</span> <span class="pre">(q,</span> <span class="pre">i</span> <span class="pre">nu</span> <span class="pre">=</span> <span class="pre">0):</span> <span class="pre">spin</span> <span class="pre">...;</span> <span class="pre">charge</span> <span class="pre">...</span></code>
+行に書きます。</p></li>
+<li><p><strong>WARNING.</strong> 極を越えると WARNING を 1 回だけ出力します（FLEX では SCF ループの終了時に、
+最終マップについてのみ。自己無撞着計算の途中の一時的な逸脱は報告しません）。WARNING は
+チャネル、指標、q と、そこで dress した感受率が正定値でないこと、それがペアリング固有値に
+とって何を意味するかを述べます。そのような<span class="math notranslate nohighlight">\(\lambda\)</span>を<span class="math notranslate nohighlight">\(T_c\)</span>や相境界の解析に
+使わず、相互作用を弱めるか温度を上げて極より下にとどまってください。</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>eliashberg bond_channels (static): the static RPA denominator is past its pole in the spin channel: max_q eig[chibar S](q, i nu = 0) = 1.020004 &gt;= 1 at q = (0.5, 0.5, 0). The conditioning guard refuses only within cond_tol of the pole, so the run continues, ...
+</pre></div>
+</div>
+</li>
+<li><p><strong>拒否はせず、数値も変わりません。</strong> ペアリング固有値<span class="math notranslate nohighlight">\(\lambda\)</span>はそのまま報告され、
+<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>は固有値ソルバの収束という意味を保ち、<code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span></code>は関与しません。
+あるチャネルの指標が計算できない場合（入力が有限でない、固有値計算の失敗、またはアーカイブで
+逆変換の特異点<span class="math notranslate nohighlight">\(\mu = -1\)</span>にある固有値）は、WARNING がそのことを述べます
+（<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">could</span> <span class="pre">not</span> <span class="pre">be</span> <span class="pre">computed</span> <span class="pre">...</span></code>）。単独の WARNING として、または別のチャネルが極を
+越えているときは極の WARNING の中で述べるので、出る WARNING は 1 回までです。計算はそのまま
+完了し、そのチャネルには極の来歴キーを書きません。</p></li>
+<li><p><strong>来歴は極を越えたときだけ書きます。</strong> 極より下の計算は以前とまったく同じ出力を書きます。
+極を越えたときは次を書きます。</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 35.0%" />
+<col style="width: 65.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>キー</p></th>
+<th class="head"><p>内容</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">.npz</span></code>ファイルではブール値のスカラー<code class="docutils literal notranslate"><span class="pre">True</span></code>）</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_&lt;channel&gt;</span></code></p></td>
+<td><p>そのチャネルの<span class="math notranslate nohighlight">\(\lambda_{\mathrm{RPA}}\)</span>（<code class="docutils literal notranslate"><span class="pre">spin</span></code>と<code class="docutils literal notranslate"><span class="pre">charge</span></code>、
+スピン軌道経路では<code class="docutils literal notranslate"><span class="pre">spinful</span></code>）。有限の指標を持つチャネルは、極より下のものも含め
+すべて書きます</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rpa_pole_q_&lt;channel&gt;</span></code></p></td>
+<td><p>そのチャネルの最大を与える q（逆格子ベクトル単位）。テキストのヘッダでは
+<code class="docutils literal notranslate"><span class="pre">(qx,</span> <span class="pre">qy,</span> <span class="pre">qz)</span></code>、<code class="docutils literal notranslate"><span class="pre">.npz</span></code>ファイルでは形状<code class="docutils literal notranslate"><span class="pre">(3,)</span></code>の浮動小数点配列</p></td>
+</tr>
+</tbody>
+</table>
+<p>書き出し先は次の通りです。</p>
+<ul class="simple">
+<li><p>静的<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のボンド計算（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>）: <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key</span> <span class="pre">=</span> <span class="pre">value</span></code>行、スピン軌道経路ではさらに<code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>のメンバー。</p></li>
+<li><p>FLEX のボンドゲート: chiq アーカイブと<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>の静的メンバー
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_past_pole</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_pole_indicator_&lt;channel&gt;</span></code>、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_pole_q_&lt;channel&gt;</span></code>。</p></li>
+<li><p>プロセス内の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>（再 dress する最終マップの指標）:
+<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_&lt;type&gt;.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key=value</span></code>ヘッダ行。</p></li>
+<li><p>アーカイブに対する動的<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のボンド計算: <code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>と
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key=value</span></code>ヘッダ行。アーカイブは dress した
+<span class="math notranslate nohighlight">\(\chi = [1 + s\bar\chi W]^{-1}\bar\chi\)</span>しか持たないため、指標は
+<span class="math notranslate nohighlight">\(-s\,\chi W\)</span>の固有値<span class="math notranslate nohighlight">\(\mu\)</span>（<span class="math notranslate nohighlight">\(\mu = \lambda / (1 - \lambda)\)</span>）から
+<span class="math notranslate nohighlight">\(\lambda = \mu / (1 + \mu)\)</span>として復元します。</p></li>
+</ul>
+</li>
+</ul>
+<p><strong>以前の出力の確認方法。</strong> このチェック以前に書かれた出力には指標がありません。</p>
+<ul>
+<li><p>FLEX のボンド計算: 静的に dress した感受率<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chi_s</span></code>/
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chi_c</span></code>（chiq アーカイブ、形状<code class="docutils literal notranslate"><span class="pre">(nvol,</span> <span class="pre">ND,</span> <span class="pre">ND)</span></code>）は極より下では正です。
+ある q でそのどちらかのエルミート部が負の固有値を持つとき、そしてそのときに限り、
+最終マップは極を越えています。<code class="docutils literal notranslate"><span class="pre">(ND,</span> <span class="pre">ND)</span></code>ブロック全体を使ってください。チャネル 0 の
+ブロック<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_chiq_*_static</span></code>は正のままのことがあります。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="n">z</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s2">"chiq_s.npz"</span><span class="p">)</span>       <span class="c1"># or the combined chiq archive</span>
+<span class="k">for</span> <span class="n">ch</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">"s"</span><span class="p">,</span> <span class="s2">"c"</span><span class="p">):</span>
+    <span class="n">chi</span> <span class="o">=</span> <span class="n">z</span><span class="p">[</span><span class="s2">"longitudinal_bond_chi_"</span> <span class="o">+</span> <span class="n">ch</span><span class="p">]</span>
+    <span class="n">h</span> <span class="o">=</span> <span class="mf">0.5</span> <span class="o">*</span> <span class="p">(</span><span class="n">chi</span> <span class="o">+</span> <span class="n">np</span><span class="o">.</span><span class="n">swapaxes</span><span class="p">(</span><span class="n">chi</span><span class="o">.</span><span class="n">conj</span><span class="p">(),</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">ch</span><span class="p">,</span> <span class="s2">"past the pole"</span> <span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">eigvalsh</span><span class="p">(</span><span class="n">h</span><span class="p">)</span><span class="o">.</span><span class="n">min</span><span class="p">()</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">"below the pole"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_min_s</span></code>/ <code class="docutils literal notranslate"><span class="pre">_c</span></code>では両側を区別できません。そのアーカイブに対する
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の動的計算は、アーカイブの状態を引き継ぎます。</p>
+</li>
+<li><p>静的<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のボンド計算: <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>と<code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>は感受率を持たないため、
+確認するにはこの版で計算し直す必要があります。</p></li>
+</ul>
 </section>
 <section id="hartree-fock">
 <span id="flex-bond-hf-tutorial"></span><h3>Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）<a class="headerlink" href="#hartree-fock" title="Link to this heading">¶</a></h3>
@@ -1167,8 +1280,8 @@ IR の結果をそのまま信頼する前に、自分のモデルの<code class
 <h3>モデル<a class="headerlink" href="#id25" title="Link to this heading">¶</a></h3>
 <p>2番目のサンプルは、軌道間クーロン相互作用とフント結合を含む
 <strong>2軌道Hubbardモデル</strong> です:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-8">
-<span class="eqno">(6.9)<a class="headerlink" href="#equation-flex-tutorial-tu-index-8" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-9">
+<span class="eqno">(6.10)<a class="headerlink" href="#equation-flex-tutorial-tu-index-9" title="Link to this equation">¶</a></span>\[H = \sum_{\mathbf{k},\alpha,\beta,\sigma}
     \varepsilon_{\alpha\beta}(\mathbf{k})\,
     c^\dagger_{\mathbf{k}\alpha\sigma} c_{\mathbf{k}\beta\sigma}
   + U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
@@ -1844,21 +1957,21 @@ reduced スキームの自己エネルギーが本来あるべき通り機械精
 <strong>鉄系超伝導体の2軌道最小モデル</strong> です。
 Fe-As面を正方格子（1-Fe単位胞）上の<span class="math notranslate nohighlight">\(d_{xz}\)</span>と
 <span class="math notranslate nohighlight">\(d_{yz}\)</span>軌道で記述します。</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-9">
-<span class="eqno">(6.10)<a class="headerlink" href="#equation-flex-tutorial-tu-index-9" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-10">
+<span class="eqno">(6.11)<a class="headerlink" href="#equation-flex-tutorial-tu-index-10" title="Link to this equation">¶</a></span>\[\begin{split}H_0(\mathbf{k}) = \begin{pmatrix}
 \varepsilon_x(\mathbf{k}) &amp; \varepsilon_{xy}(\mathbf{k}) \\
 \varepsilon_{xy}(\mathbf{k}) &amp; \varepsilon_y(\mathbf{k})
 \end{pmatrix}\end{split}\]</div>
 <p>ここで</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-10">
-<span class="eqno">(6.11)<a class="headerlink" href="#equation-flex-tutorial-tu-index-10" title="Link to this equation">¶</a></span>\[\begin{split}\varepsilon_x(\mathbf{k}) &amp;= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
+<span class="eqno">(6.12)<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[\begin{split}\varepsilon_x(\mathbf{k}) &amp;= -2t_1 \cos k_x - 2t_2 \cos k_y - 4t_3 \cos k_x \cos k_y \\
 \varepsilon_y(\mathbf{k}) &amp;= -2t_2 \cos k_x - 2t_1 \cos k_y - 4t_3 \cos k_x \cos k_y \\
 \varepsilon_{xy}(\mathbf{k}) &amp;= -4t_4 \sin k_x \sin k_y\end{split}\]</div>
 <p>パラメータ: <span class="math notranslate nohighlight">\(t_1 = -1.0\)</span>, <span class="math notranslate nohighlight">\(t_2 = 1.3\)</span>,
 <span class="math notranslate nohighlight">\(t_3 = t_4 = -0.85\)</span>。</p>
 <p>相互作用はKanamoriパラメータ化に従います:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-11">
-<span class="eqno">(6.12)<a class="headerlink" href="#equation-flex-tutorial-tu-index-11" title="Link to this equation">¶</a></span>\[H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
+<span class="eqno">(6.13)<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[H_{\mathrm{int}} = U \sum_{i,\alpha} n_{i\alpha\uparrow} n_{i\alpha\downarrow}
 + U' \sum_{i,\alpha\neq\beta} n_{i\alpha} n_{i\beta}
 - 2J \sum_{i,\alpha\neq\beta} \mathbf{S}_{i\alpha} \cdot \mathbf{S}_{i\beta}
 + J' \sum_{i,\alpha\neq\beta} c^\dagger_{i\alpha\uparrow} c^\dagger_{i\alpha\downarrow}
@@ -2251,8 +2364,8 @@ q非依存な相互作用<span class="math notranslate nohighlight">\(W(\mathbf{
 現在のサンプルはすべてこのケースです。</p>
 <p><strong>長距離相互作用</strong> (非零の<code class="docutils literal notranslate"><span class="pre">(rx,</span> <span class="pre">ry,</span> <span class="pre">rz)</span></code>を含む場合):</p>
 <p>FFT変換により自動的にq依存の相互作用となります:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-12">
-<span class="eqno">(6.13)<a class="headerlink" href="#equation-flex-tutorial-tu-index-12" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}\]</div>
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-13">
+<span class="eqno">(6.14)<a class="headerlink" href="#equation-flex-tutorial-tu-index-13" title="Link to this equation">¶</a></span>\[W(\mathbf{q}) = \sum_{\mathbf{r}} W(\mathbf{r})\, e^{+i\mathbf{q}\cdot\mathbf{r}}\]</div>
 <p>例えば、最近接サイト間のクーロン相互作用を含める場合は、
 相互作用ファイルに<code class="docutils literal notranslate"><span class="pre">(1,0,0)</span></code>や<code class="docutils literal notranslate"><span class="pre">(0,1,0)</span></code>等の格子ベクトルを持つ
 エントリを追加します。</p>
@@ -2271,8 +2384,8 @@ q非依存な相互作用<span class="math notranslate nohighlight">\(W(\mathbf{
 <span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma',\alpha\sigma,\beta\sigma'}\)</span>
 を2体の縮約形式<span class="math notranslate nohighlight">\(W_{\alpha\sigma,\beta\sigma'}\)</span>に変換します。</p>
 <p>具体的には、同一スピン成分と異スピン成分に分離されます:</p>
-<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-13">
-<span class="eqno">(6.14)<a class="headerlink" href="#equation-flex-tutorial-tu-index-13" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
+<div class="math notranslate nohighlight" id="equation-flex-tutorial-tu-index-14">
+<span class="eqno">(6.15)<a class="headerlink" href="#equation-flex-tutorial-tu-index-14" title="Link to this equation">¶</a></span>\[\begin{split}U_s &amp;= W_{\mathrm{cross}} - W_{\mathrm{same}} \\
 U_c &amp;= W_{\mathrm{cross}} + W_{\mathrm{same}}\end{split}\]</div>
 <p>ここで<span class="math notranslate nohighlight">\(W_{\mathrm{same}}\)</span>は同一スピン間、
 <span class="math notranslate nohighlight">\(W_{\mathrm{cross}}\)</span>は異スピン間の相互作用です。</p>

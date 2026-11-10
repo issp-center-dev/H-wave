@@ -243,7 +243,12 @@ of blocks decomposed exactly over the whole solve),
 count reached in any one iteration) and
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_blocks_per_iteration</span></code> (integer, the number of
 blocks the guard covers in one iteration – the denominator the previous
-two counts are measured against). The
+two counts are measured against). When the final map is past the static
+RPA pole, and only then, it also carries <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_past_pole</span></code>
+(<code class="docutils literal notranslate"><span class="pre">True</span></code>), <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_pole_indicator_spin</span></code> /
+<code class="docutils literal notranslate"><span class="pre">_charge</span></code> (float) and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_pole_q_spin</span></code> / <code class="docutils literal notranslate"><span class="pre">_charge</span></code>
+(float <code class="docutils literal notranslate"><span class="pre">(3,)</span></code>, in units of the reciprocal lattice vectors); see
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">The static RPA pole of the bond-resolved paths</span></a>. The
 ordinary <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>, <code class="docutils literal notranslate"><span class="pre">chiq_s</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code> arrays of such a run are the
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span> blocks of the bond-resolved objects at every bosonic
 frequency. Every archive of a run with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>,
@@ -360,7 +365,12 @@ on the bond of the transfer row <span class="math notranslate nohighlight">\((+R
 <code class="docutils literal notranslate"><span class="pre">bond_ir_fit_residual_rel</span></code> (the componentwise IR fit residual of the bond
 vertex, real <code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">B)</span></code>; see <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">ir_fit_tol</span></code>).
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> gains the header lines <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>,
-<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code> and, when computed, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code> and, when computed, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>.
+When the archive’s state is past the static RPA pole, and only then, both
+files also carry <code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code>, <code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_spin</span></code> /
+<code class="docutils literal notranslate"><span class="pre">_charge</span></code> and <code class="docutils literal notranslate"><span class="pre">rpa_pole_q_spin</span></code> / <code class="docutils literal notranslate"><span class="pre">_charge</span></code> (npz keys, and
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key=value</span></code> header lines of <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>), recovered from the
+archived dressed susceptibilities; see <a class="reference internal" href="../../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">The static RPA pole of the bond-resolved paths</span></a>.</p>
 <p>Every dynamic-solver <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> – the on-site one included – also
 carries one <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">even_k_even_w=...</span> <span class="pre">odd_k_even_w=...</span>
 <span class="pre">even_k_odd_w=...</span> <span class="pre">odd_k_odd_w=...</span></code> header line (six decimals), the same four
@@ -406,7 +416,11 @@ with header lines <code class="docutils literal notranslate"><span class="pre">#
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=&lt;true|false&gt;</span></code>, <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">state=&lt;...&gt;</span></code>,
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>, when computed <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>, and the
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">...</span></code> / <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code> lines
-described above. <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code> has no spaces around
+described above. When the final FLEX map is past the static RPA pole,
+both <code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code> and this header also carry
+<code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code>, <code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_&lt;channel&gt;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">rpa_pole_q_&lt;channel&gt;</span></code> (see <a class="reference internal" href="../../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">The static RPA pole of the bond-resolved paths</span></a>).
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code> has no spaces around
 <code class="docutils literal notranslate"><span class="pre">=</span></code>, while the static <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> writes
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">true</span></code>; a pipeline should test it
 whitespace-tolerantly (take the text after <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>, strip

@@ -2046,6 +2046,14 @@ Hermiticity check of the kernel.</p></li>
 channels, displacements, the Green function used) and the split
 <span class="math notranslate nohighlight">\(\lambda = \lambda^{pp} + \lambda^{fl}\)</span> of the leading eigenvalue
 into its bare and its fluctuation part.</p></li>
+<li><p><strong>The static RPA pole.</strong> The run logs the indicator
+<span class="math notranslate nohighlight">\(\max_{\mathbf{q}}\mathrm{eig}[-s\,\bar\chi W]\)</span> of the spin and
+charge denominators at INFO level. Past the pole (indicator
+<span class="math notranslate nohighlight">\(\ge 1\)</span>), which the conditioning guard does not refuse, it logs one
+WARNING and <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code> gains <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">rpa_past_pole</span> <span class="pre">=</span> <span class="pre">true</span></code>,
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">rpa_pole_indicator_&lt;channel&gt;</span> <span class="pre">=</span> <span class="pre">...</span></code> and <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">rpa_pole_q_&lt;channel&gt;</span> <span class="pre">=</span>
+<span class="pre">(...)</span></code>; <span class="math notranslate nohighlight">\(\lambda\)</span> and <code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code> are unchanged. See
+<a class="reference internal" href="../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">The static RPA pole of the bond-resolved paths</span></a>.</p></li>
 <li><p><strong>Scope.</strong> The static and the dynamic bond pairing (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
 <span class="pre">&quot;dynamic&quot;</span></code>, and the in-process <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> of FLEX) no
 longer restrict <code class="docutils literal notranslate"><span class="pre">norb</span></code> (earlier versions refused <code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code> on the
@@ -3342,7 +3350,13 @@ it came from), <code class="docutils literal notranslate"><span class="pre">g2_t
 <code class="docutils literal notranslate"><span class="pre">approximation</span> <span class="pre">=</span> <span class="pre">static</span> <span class="pre">RPA-ladder</span> <span class="pre">bond</span> <span class="pre">dressing</span></code>, <code class="docutils literal notranslate"><span class="pre">gap_status</span></code>,
 <code class="docutils literal notranslate"><span class="pre">pp_sector</span></code> and <code class="docutils literal notranslate"><span class="pre">selection</span></code> (the eigen-selection, per sector in the
 packed layout, e.g. <code class="docutils literal notranslate"><span class="pre">+1:dense-LR;0:LR;-1:null-operator</span></code>), plus the scalar
-provenance members of the gap archive. There is <strong>no</strong> split <span class="math notranslate nohighlight">\(\lambda
+provenance members of the gap archive. Past the static RPA pole of the
+spinful channel (<a class="reference internal" href="../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">The static RPA pole of the bond-resolved paths</span></a>; the indicator
+<span class="math notranslate nohighlight">\(\max_{\mathbf{q}}\mathrm{eig}[-\bar\chi\Gamma]\)</span>, over the
+<span class="math notranslate nohighlight">\(S_z\)</span> sectors in the packed layout, is logged at INFO level on every
+run) one WARNING is logged and both files also carry <code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code>,
+<code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_spinful</span></code> and <code class="docutils literal notranslate"><span class="pre">rpa_pole_q_spinful</span></code>; these three
+<code class="docutils literal notranslate"><span class="pre">gap.npz</span></code> members are written only then. There is <strong>no</strong> split <span class="math notranslate nohighlight">\(\lambda
 = \lambda^{pp} + \lambda^{fl}\)</span> of the leading eigenvalue and no
 <code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span></code> record (both belong to the non-spin-orbital bond
 path).</p>

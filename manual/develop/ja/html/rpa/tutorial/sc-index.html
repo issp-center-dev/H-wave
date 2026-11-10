@@ -1900,6 +1900,12 @@ reduced の2インデックス chi0q にはまったく同じ非密度成分が�
 <li><p><strong>出力。</strong> <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>にはボンドの来歴（チャネル数・変位・
 用いた Green 関数）と、主要固有値の裸の部分と揺らぎの部分への分解
 <span class="math notranslate nohighlight">\(\lambda = \lambda^{pp} + \lambda^{fl}\)</span>が記録されます。</p></li>
+<li><p><strong>静的 RPA 極。</strong> スピンと電荷の分母の指標
+<span class="math notranslate nohighlight">\(\max_{\mathbf{q}}\mathrm{eig}[-s\,\bar\chi W]\)</span>を INFO レベルで出力します。
+条件数ガードが拒否しない極の向こう側（指標<span class="math notranslate nohighlight">\(\ge 1\)</span>）では WARNING を 1 回出力し、
+<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>に<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">rpa_past_pole</span> <span class="pre">=</span> <span class="pre">true</span></code>、<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">rpa_pole_indicator_&lt;channel&gt;</span> <span class="pre">=</span> <span class="pre">...</span></code>、
+<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">rpa_pole_q_&lt;channel&gt;</span> <span class="pre">=</span> <span class="pre">(...)</span></code>が加わります。<span class="math notranslate nohighlight">\(\lambda\)</span>と<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>は
+変わりません。<a class="reference internal" href="../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">ボンド分解経路の静的 RPA 極</span></a>を参照してください。</p></li>
 <li><p><strong>適用範囲。</strong> 静的・動的なボンド分解対形成（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>、
 および FLEX のインプロセスの<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>）は<code class="docutils literal notranslate"><span class="pre">norb</span></code>を
 制限しません（以前の版では静的経路は<code class="docutils literal notranslate"><span class="pre">norb</span> <span class="pre">&gt;</span> <span class="pre">1</span></code>を拒否し、動的経路は警告を
@@ -3119,7 +3125,11 @@ packed の一覧はセクターごとの解の和集合なので、<code class="
 <code class="docutils literal notranslate"><span class="pre">bond_coeff_tail_source</span></code>、<code class="docutils literal notranslate"><span class="pre">approximation</span> <span class="pre">=</span> <span class="pre">static</span> <span class="pre">RPA-ladder</span> <span class="pre">bond</span> <span class="pre">dressing</span></code>、
 <code class="docutils literal notranslate"><span class="pre">gap_status</span></code>、<code class="docutils literal notranslate"><span class="pre">pp_sector</span></code>、<code class="docutils literal notranslate"><span class="pre">selection</span></code>（固有値の選び方。packed では
 セクターごとに。例: <code class="docutils literal notranslate"><span class="pre">+1:dense-LR;0:LR;-1:null-operator</span></code>）、およびギャップの
-アーカイブのスカラーの来歴メンバー。主固有値の分解
+アーカイブのスカラーの来歴メンバー。spinful チャネルの静的 RPA 極を越えたとき
+（<a class="reference internal" href="../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">ボンド分解経路の静的 RPA 極</span></a>。指標<span class="math notranslate nohighlight">\(\max_{\mathbf{q}}\mathrm{eig}[-\bar\chi\Gamma]\)</span>は、packed
+レイアウトでは<span class="math notranslate nohighlight">\(S_z\)</span>セクターにわたって、毎回 INFO レベルで出力されます）は WARNING を
+1 回出力し、両ファイルに<code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code>、<code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_spinful</span></code>、
+<code class="docutils literal notranslate"><span class="pre">rpa_pole_q_spinful</span></code>も加わります。<code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>のこの 3 メンバーはそのときだけ書かれます。主固有値の分解
 <span class="math notranslate nohighlight">\(\lambda = \lambda^{pp} + \lambda^{fl}\)</span>と<code class="docutils literal notranslate"><span class="pre">bond_diagnostics</span></code>の記録は
 <strong>ありません</strong>（どちらも非スピン軌道のボンドの経路のものです）。</p>
 <p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;sc_so_bond_static&quot;</span></code>）は、上のオンサイトの表の

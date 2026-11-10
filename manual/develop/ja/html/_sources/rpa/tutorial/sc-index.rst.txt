@@ -1938,6 +1938,12 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
 - **出力。** ``eigenvalue.dat``\ にはボンドの来歴（チャネル数・変位・
   用いた Green 関数）と、主要固有値の裸の部分と揺らぎの部分への分解
   :math:`\lambda = \lambda^{pp} + \lambda^{fl}`\ が記録されます。
+- **静的 RPA 極。** スピンと電荷の分母の指標
+  :math:`\max_{\mathbf{q}}\mathrm{eig}[-s\,\bar\chi W]`\ を INFO レベルで出力します。
+  条件数ガードが拒否しない極の向こう側（指標\ :math:`\ge 1`\ ）では WARNING を 1 回出力し、
+  ``eigenvalue.dat``\ に\ ``# rpa_past_pole = true``\ 、\ ``# rpa_pole_indicator_<channel> = ...``\ 、
+  ``# rpa_pole_q_<channel> = (...)``\ が加わります。\ :math:`\lambda`\ と\ ``eigen_converged``\ は
+  変わりません。\ :ref:`bond_rpa_pole`\ を参照してください。
 - **適用範囲。** 静的・動的なボンド分解対形成（\ ``frequency = "dynamic"``\ 、
   および FLEX のインプロセスの\ ``longitudinal_bond_pairing``\ ）は\ ``norb``\ を
   制限しません（以前の版では静的経路は\ ``norb > 1``\ を拒否し、動的経路は警告を
@@ -3125,7 +3131,11 @@ packed の一覧はセクターごとの解の和集合なので、\ ``num_eigen
 ``bond_coeff_tail_source``\ 、\ ``approximation = static RPA-ladder bond dressing``\ 、
 ``gap_status``\ 、\ ``pp_sector``\ 、\ ``selection``\ （固有値の選び方。packed では
 セクターごとに。例: ``+1:dense-LR;0:LR;-1:null-operator``\ ）、およびギャップの
-アーカイブのスカラーの来歴メンバー。主固有値の分解
+アーカイブのスカラーの来歴メンバー。spinful チャネルの静的 RPA 極を越えたとき
+（\ :ref:`bond_rpa_pole`\ 。指標\ :math:`\max_{\mathbf{q}}\mathrm{eig}[-\bar\chi\Gamma]`\ は、packed
+レイアウトでは\ :math:`S_z`\ セクターにわたって、毎回 INFO レベルで出力されます）は WARNING を
+1 回出力し、両ファイルに\ ``rpa_past_pole``\ 、\ ``rpa_pole_indicator_spinful``\ 、
+``rpa_pole_q_spinful``\ も加わります。\ ``gap.npz``\ のこの 3 メンバーはそのときだけ書かれます。主固有値の分解
 :math:`\lambda = \lambda^{pp} + \lambda^{fl}`\ と\ ``bond_diagnostics``\ の記録は
 **ありません**\ （どちらも非スピン軌道のボンドの経路のものです）。
 

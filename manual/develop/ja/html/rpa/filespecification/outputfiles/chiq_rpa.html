@@ -232,7 +232,10 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 厳密に分解されたブロック数の累計）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact_blocks_max</span></code>（整数。いずれか1回の反復で厳密に分解されたブロック数の最大値）、
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_blocks_per_iteration</span></code>（整数。1回の反復で
 ガードが判定対象とするブロック数 -- 上記2つのカウントの分母）が
-格納されます。そのような計算の通常の<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・
+格納されます。最終マップが静的 RPA 極を越えたときに限り、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_past_pole</span></code>（<code class="docutils literal notranslate"><span class="pre">True</span></code>）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_pole_indicator_spin</span></code>/
+<code class="docutils literal notranslate"><span class="pre">_charge</span></code>（実数）、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_rpa_pole_q_spin</span></code>/ <code class="docutils literal notranslate"><span class="pre">_charge</span></code>（実数<code class="docutils literal notranslate"><span class="pre">(3,)</span></code>、
+逆格子ベクトル単位）も格納されます（<a class="reference internal" href="../../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">ボンド分解経路の静的 RPA 極</span></a>）。そのような計算の通常の<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・
 <code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>配列は、ボンド分解した量の全ボソン振動数における
 <span class="math notranslate nohighlight">\((m = 0, m' = 0)\)</span>ブロックです。<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算の全ての
 アーカイブ（<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_s</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq_c</span></code>・<code class="docutils literal notranslate"><span class="pre">chiq</span></code>・<code class="docutils literal notranslate"><span class="pre">sigma</span></code>・
@@ -349,7 +352,11 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 フィット残差。実数<code class="docutils literal notranslate"><span class="pre">ndarray(B,</span> <span class="pre">B)</span></code>。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
 <span class="pre">ir_fit_tol</span></code>を参照）を持ちます。<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>には
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">bond_channels=true</span></code>・<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>、計算された
-場合は<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>のヘッダー行が追加されます。</p>
+場合は<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">parity_leakage=&lt;...&gt;</span></code>のヘッダー行が追加されます。
+アーカイブの状態が静的 RPA 極を越えているときに限り、両ファイルに
+<code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code>、<code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_spin</span></code>/ <code class="docutils literal notranslate"><span class="pre">_charge</span></code>、<code class="docutils literal notranslate"><span class="pre">rpa_pole_q_spin</span></code>/
+<code class="docutils literal notranslate"><span class="pre">_charge</span></code>（npz のキー、および<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">key=value</span></code>ヘッダー行）も
+加わります。値はアーカイブの dress した感受率から復元します（<a class="reference internal" href="../../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">ボンド分解経路の静的 RPA 極</span></a>）。</p>
 <p>動的ソルバーの<code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>は、オンサイトのものも含めて
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">even_k_even_w=...</span> <span class="pre">odd_k_even_w=...</span>
 <span class="pre">even_k_odd_w=...</span> <span class="pre">odd_k_odd_w=...</span></code>のヘッダー行（小数6桁）を
@@ -396,7 +403,10 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">scf_converged=&lt;true|false&gt;</span></code>・<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">state=&lt;...&gt;</span></code>・
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">residency=&lt;...&gt;</span></code>、計算された場合は<code class="docutils literal notranslate"><span class="pre">#</span>
 <span class="pre">parity_leakage=&lt;...&gt;</span></code>、および上記の<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">gap_sector_weights</span> <span class="pre">...</span></code>
-と<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code>のヘッダー行を持ちます。
+と<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">sector_selection=...</span></code>のヘッダー行を持ちます。最終 FLEX マップが静的 RPA 極を
+越えたときは、<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_&lt;type&gt;.npz</span></code>とこのヘッダーに<code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code>、
+<code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_&lt;channel&gt;</span></code>、<code class="docutils literal notranslate"><span class="pre">rpa_pole_q_&lt;channel&gt;</span></code>も加わります
+（<a class="reference internal" href="../../../flex/tutorial/tu-index.html#bond-rpa-pole"><span class="std std-ref">ボンド分解経路の静的 RPA 極</span></a>）。
 <code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged=&lt;true|false&gt;</span></code>は<code class="docutils literal notranslate"><span class="pre">=</span></code>の前後に空白がなく、静的な
 <code class="docutils literal notranslate"><span class="pre">eigenvalue.dat</span></code>では<code class="docutils literal notranslate"><span class="pre">#</span> <span class="pre">eigen_converged</span> <span class="pre">=</span> <span class="pre">true</span></code>と書かれるため、パイプラインは
 空白に寛容な方法（<code class="docutils literal notranslate"><span class="pre">eigen_converged</span></code>の後の文字列から<code class="docutils literal notranslate"><span class="pre">=</span></code>と空白を取り除く）

@@ -2081,6 +2081,14 @@ each off-site row acts on the bond it was declared on.
   channels, displacements, the Green function used) and the split
   :math:`\lambda = \lambda^{pp} + \lambda^{fl}` of the leading eigenvalue
   into its bare and its fluctuation part.
+- **The static RPA pole.** The run logs the indicator
+  :math:`\max_{\mathbf{q}}\mathrm{eig}[-s\,\bar\chi W]` of the spin and
+  charge denominators at INFO level. Past the pole (indicator
+  :math:`\ge 1`), which the conditioning guard does not refuse, it logs one
+  WARNING and ``eigenvalue.dat`` gains ``# rpa_past_pole = true``,
+  ``# rpa_pole_indicator_<channel> = ...`` and ``# rpa_pole_q_<channel> =
+  (...)``; :math:`\lambda` and ``eigen_converged`` are unchanged. See
+  :ref:`bond_rpa_pole`.
 - **Scope.** The static and the dynamic bond pairing (``frequency =
   "dynamic"``, and the in-process ``longitudinal_bond_pairing`` of FLEX) no
   longer restrict ``norb`` (earlier versions refused ``norb > 1`` on the
@@ -3344,7 +3352,13 @@ it came from), ``g2_tail``, ``bond_coeff_tail``, ``bond_coeff_tail_source``,
 ``approximation = static RPA-ladder bond dressing``, ``gap_status``,
 ``pp_sector`` and ``selection`` (the eigen-selection, per sector in the
 packed layout, e.g. ``+1:dense-LR;0:LR;-1:null-operator``), plus the scalar
-provenance members of the gap archive. There is **no** split :math:`\lambda
+provenance members of the gap archive. Past the static RPA pole of the
+spinful channel (:ref:`bond_rpa_pole`; the indicator
+:math:`\max_{\mathbf{q}}\mathrm{eig}[-\bar\chi\Gamma]`, over the
+:math:`S_z` sectors in the packed layout, is logged at INFO level on every
+run) one WARNING is logged and both files also carry ``rpa_past_pole``,
+``rpa_pole_indicator_spinful`` and ``rpa_pole_q_spinful``; these three
+``gap.npz`` members are written only then. There is **no** split :math:`\lambda
 = \lambda^{pp} + \lambda^{fl}` of the leading eigenvalue and no
 ``bond_diagnostics`` record (both belong to the non-spin-orbital bond
 path).
