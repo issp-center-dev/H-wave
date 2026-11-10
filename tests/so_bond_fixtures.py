@@ -829,3 +829,57 @@ def c1a_gamma_label(fx, tables, geom, **filing):
     ``so_bond_oracles.file_gamma_label`` at call time."""
     return so_bond_oracles.file_gamma_label(
         so_bond_oracles.expand_tables(tables, fx.norb_phys), geom, fx.nd, **filing)
+
+
+def c1a_onsite_flex_sigma(green, *, rpa_return):
+    """The production second order ``(nmat, nvol, nd, nd)`` of one
+    spin-orbital FLEX map (``calc_scheme = "general"``, ``flex_hartree_fock
+    = true``) with the on-site control tables on FIXTURE_I's ring, at the
+    Green function ``green`` ``(nmat, 5, 2, 2)``.
+
+    The inputs (identity cell, FIXTURE_I's Transfer rows in 1-based
+    interleaved indices, ``C1A_ONSITE_TABLES`` with norb 1) are written to a
+    temporary directory that is removed before returning. The bubble is
+    ``_calc_chi0q(G[None], 0, beta)``; ``_flex_compute_veff_spinful`` runs
+    with ``_solve_rpa`` replaced by ``rpa_return(chi0q)`` (with the identity,
+    ``chi := chibar`` and ``V = P[1/2 Gamma chibar Gamma]`` exactly, the
+    second order); the result is ``_calc_self_energy_general(G[None], V,
+    beta)[0]``. ``rpa_return`` is a required callable ``chi0q -> chi``."""
+    import hwave.solver.flex as flex_mod
+    from unittest import mock
+    from tests.test_second_order_factors import _write_wan
+    from tests.so_bond_oracles import FIXTURE_I
+    fx = FIXTURE_I
+    beta = fx.beta
+    green = np.asarray(green, dtype=np.complex128)
+    nmat = green.shape[0]
+    d = tempfile.mkdtemp(prefix="c1a_onsite_")
+    try:
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1 0 0\n0 1 0\n0 0 1\n2\n" + "0 0 0\n" * 2)
+        rows = [(R[0], R[1], R[2], A + 1, B + 1, complex(v).real, complex(v).imag)
+                for (R, (A, B)), v in sorted(fx.transfer_dict.items())]
+        _write_wan(os.path.join(d, "transfer.dat"), "Transfer", 2, rows)
+        idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+        for t, tbl in C1A_ONSITE_TABLES.items():
+            crows = [(R[0], R[1], R[2], a + 1, b + 1, complex(v).real, complex(v).imag)
+                     for (R, (a, b)), v in sorted(tbl.items())]
+            _write_wan(os.path.join(d, t + ".dat"), t, 1, crows)
+            idict[t] = t + ".dat"
+        r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+        par = {"T": 1.0 / beta, "mu": fx.mu, "CellShape": list(fx.spatial_shape),
+               "SubShape": [1, 1, 1], "Nmat": nmat, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
+               "flex_hartree_fock": True}
+        with quiet():
+            s = flex_mod.FLEX(r.get_param("ham"), {}, {
+                "mode": "FLEX", "param": par, "enable_spin_orbital": True,
+                "calc_scheme": "general"})
+            s._calc_epsilon_k({})
+            Gk = green[None]
+            chi0 = s._calc_chi0q(Gk, np.zeros_like(Gk), beta)[0]
+            with mock.patch.object(s, "_solve_rpa",
+                                   side_effect=lambda chi0q, ham: rpa_return(chi0q)):
+                _, v, _ = s._flex_compute_veff_spinful(chi0)
+            return s._calc_self_energy_general(Gk, v, beta)[0]
+    finally:
+        shutil.rmtree(d, ignore_errors=True)

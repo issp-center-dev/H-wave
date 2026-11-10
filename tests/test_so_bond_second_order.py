@@ -26,22 +26,30 @@ plus crossed filing) has the Wick Hartree-Fock self-energy as its gradient,
 ``Phi_2 = -(T/8) sum_{q,l} Tr[(chibar(q, l) Gamma(-q))**2]``: against the
 exhaustive circle stencil of every entry at Nmat 4, and by circle stencils
 along random directions (Ruling R7) at Nmat 8.
+
+``TestOnsiteControl`` (C1a-C2) checks, for the on-site CoulombIntra control
+on FIXTURE_I's ring, that the explicit Wick second-order self-energy is the
+gradient of ``Psi = sum_{q,l} Tr[(chibar Gamma(-q))**2]`` with the one
+scalar ``-T/8``, and reports the production second order of one
+spin-orbital FLEX map (``chi := chibar``) against the same Wick contraction.
 """
 import ast
 import os
 import unittest
+from unittest import mock
 
 import numpy as np
 
 from hwave.solver import matsubara
-from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_ONSITE_TABLES, c1a_gamma_label,
-                                    c1a_green, rel)
-from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, band_k, build_h1, build_terms,
-                                   delta23_monomials, ed_mode, equal_time_density,
-                                   equal_time_sample, expand_tables, geom_of, green_tau,
-                                   k_of_modes, mesh_grid, mesh_momenta, minus_tau,
-                                   modes_of_k, phi1_gradient, phi2_gradient, ring2_gradient,
-                                   ring2_value, tau_to_matsubara, wick_hf_sigma_k)
+from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_ONSITE_GEOM, C1A_ONSITE_TABLES,
+                                    c1a_gamma_label, c1a_green, c1a_onsite_flex_sigma, rel, win)
+from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, antisym_tensor, band_k, build_h1,
+                                   build_terms, delta23_monomials, ed_mode,
+                                   equal_time_density, equal_time_sample, expand_tables,
+                                   geom_of, green_tau, k_of_modes, mesh_grid, mesh_momenta,
+                                   minus_tau, modes_of_k, phi1_gradient, phi2_gradient,
+                                   random_green, ring2_gradient, ring2_value,
+                                   tau_to_matsubara, wick_hf_sigma_k, wick_sigma2)
 from tests.test_so_bond_oracles import _imported_modules
 
 _ORACLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "so_bond_oracles.py")
@@ -184,6 +192,36 @@ def metric_adjoint(fx, kind, nmat, n_dir):
     return float(worst), rows
 
 
+def _onsite_wick(kind, nmat):
+    """``(G, sigma)``: FIXTURE_I's Green function and the Wick second order
+    of the on-site control tables on the 5-ring."""
+    fx = FIXTURE_I
+    G = c1a_green(fx, kind, nmat)
+    terms = build_terms(C1A_ONSITE_TABLES, fx.spatial_shape, fx.norb_phys)
+    return G, wick_sigma2(G, fx.beta, terms, fx.spatial_shape, fx.norb_phys)
+
+
+def metric_c2(kind, nmat):
+    """The C1a-C2 fit on FIXTURE_I with the on-site control tables: the Wick
+    second-order self-energy against ``beta ring2_gradient`` of the B = 1
+    label vertex (expected scalar ``-T/8``). Returns ``(residual, s)``;
+    asserts nothing."""
+    fx = FIXTURE_I
+    G, sigma = _onsite_wick(kind, nmat)
+    gamma = c1a_gamma_label(fx, C1A_ONSITE_TABLES, C1A_ONSITE_GEOM)
+    g = fx.beta * ring2_gradient(G, fx.beta, gamma, C1A_ONSITE_GEOM)
+    return fit_scalar(g, sigma)
+
+
+def prod_dev(kind, nmat, *, rpa_return):
+    """The production second order of one spin-orbital FLEX map with the
+    on-site control tables (``rpa_return`` the hook in place of the RPA
+    solve) against the Wick second order, max-norm relative. Asserts
+    nothing."""
+    G, sigma = _onsite_wick(kind, nmat)
+    return rel(c1a_onsite_flex_sigma(G, rpa_return=rpa_return), sigma)
+
+
 class TestConventions(unittest.TestCase):
     def test_oracle_imports_no_hwave(self):
         with open(_ORACLE_PATH, encoding="utf-8") as fh:
@@ -259,6 +297,55 @@ class TestConventions(unittest.TestCase):
                     if kind != "rand":
                         self.assertLessEqual(rel(rho.conj().T, rho), 1e-14)
 
+    def test_wick_sigma2_hubbard_atom(self):
+        U = 0.83
+        beta = FIXTURE_I.beta
+        tables = {"CoulombIntra": {((0, 0, 0), (0, 0)): U}}
+        shape = (1, 1, 1)
+        terms = build_terms(tables, shape, 1)
+        # (a) spin-diagonal random G: Sigma_up = FT[-U^2 g_up g_dn G~_dn], and the mirror
+        rng = np.random.default_rng(2705)
+        nmat = C1A_NMAT_FAST
+        G = np.zeros((nmat, 1, 2, 2), dtype=np.complex128)
+        for s in (0, 1):
+            G[:, 0, s, s] = rng.normal(size=nmat) + 1j * rng.normal(size=nmat)
+        sig = wick_sigma2(G, beta, terms, shape, 1)
+        self.assertEqual(sig.shape, G.shape)
+        g = green_tau(G, beta)[:, 0]
+        gt = minus_tau(g)
+        for s, o in ((0, 1), (1, 0)):
+            with self.subTest(spin=s):
+                ref = tau_to_matsubara(-U * U * g[:, s, s] * g[:, o, o] * gt[:, o, o], beta)
+                self.assertLessEqual(rel(sig[:, 0, s, s], ref), 1e-14)
+        # (b) analytic half-filled atom G = 1/(i w): Sigma = U^2/(4 i w), first order in 1/N
+        errs = {}
+        for N in (512, 1024):
+            w = (2 * np.arange(N) + 1 - N) * np.pi / beta
+            Ga = np.zeros((N, 1, 2, 2), dtype=np.complex128)
+            Ga[:, 0, 0, 0] = Ga[:, 0, 1, 1] = 1.0 / (1j * w)
+            sa = wick_sigma2(Ga, beta, terms, shape, 1)
+            ref = (U * U / (4j * w))[:, None, None] * np.eye(2)
+            errs[N] = rel(sa[win(N), 0], ref[win(N)])
+            self.assertTrue(np.isfinite(errs[N]), "non-finite metric")
+            self.assertLessEqual(errs[N], 10.0 / N, errs)
+        ratio = errs[512] / errs[1024]
+        self.assertTrue(1.5 <= ratio <= 2.5, (ratio, errs))
+        # (c) spin-mixing random G: the spin-off-diagonal entries are populated
+        Gm = random_green(2706, nmat, 1, 2)
+        sm = wick_sigma2(Gm, beta, terms, shape, 1)
+        smax = float(np.abs(sm).max())
+        for (a, b) in ((0, 1), (1, 0)):
+            self.assertGreater(float(np.abs(sm[..., a, b]).max()), 1e-3 * smax)
+
+    def test_antisym_tensor_refuses_mode2_equal_mode3(self):
+        U = antisym_tensor([(0, 0, 1, 1, 0.5)], 2)
+        H = {(0, 1, 0, 1): 0.5, (1, 0, 0, 1): -0.5, (0, 1, 1, 0): -0.5, (1, 0, 1, 0): 0.5}
+        for idx in np.ndindex(U.shape):
+            self.assertEqual(U[idx], H.get(idx, 0.0))
+        with self.assertRaisesRegex(ValueError, r"^antisym_tensor: term \(0, 1, 1, 0, 0\.5\) "
+                                                r"has mode 2 = mode 3$"):
+            antisym_tensor([(0, 1, 1, 0, 0.5)], 2)
+
     def test_no_record_has_mode2_equal_mode3(self):
         cases = ((FIXTURE_I.tables_dict, FIXTURE_I.norb_phys, FIXTURE_I.spatial_shape),
                  (FIXTURE_II.tables_dict, FIXTURE_II.norb_phys, FIXTURE_II.spatial_shape),
@@ -290,6 +377,26 @@ class TestFirstOrderControl(unittest.TestCase):
                 self.assertTrue(np.isfinite(residual) and np.isfinite(s), "non-finite metric")
                 self.assertGreaterEqual(residual, 1e-3)
 
+
+class TestOnsiteControl(unittest.TestCase):
+    def test_one_scalar_is_minus_t_over_8(self):
+        T = 1.0 / FIXTURE_I.beta
+        for kind in ("band", "rand"):
+            with self.subTest(kind=kind):
+                residual, s = metric_c2(kind, C1A_NMAT_FAST)
+                self.assertTrue(np.isfinite(residual) and np.isfinite(s), "non-finite metric")
+                self.assertLessEqual(residual, 1e-12)
+                self.assertLessEqual(abs(s + T / 8.0), 1e-12 * T / 8.0)
+
+    def test_production_onsite_second_order(self):
+        # reported (Ruling R12): not part of the control verdict
+        for kind in ("band", "rand"):
+            with self.subTest(kind=kind):
+                spy = mock.MagicMock(side_effect=lambda c: c)
+                dev = prod_dev(kind, C1A_NMAT_FAST, rpa_return=spy)
+                self.assertEqual(spy.call_count, 1)
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                self.assertLessEqual(dev, 1e-12)
 
 
 class TestAdjoint(unittest.TestCase):

@@ -2217,3 +2217,53 @@ def ring2_gradient(green, beta, gamma_label, geom):
     lam = 2.0 * np.swapaxes((gmq[None] @ chi) @ gmq[None], -1, -2)
     F = _ring2_first_leg(green, lam, beta, geom) + _ring2_second_leg(green, lam, beta, geom)
     return np.ascontiguousarray(np.swapaxes(F, -1, -2))
+
+
+# ---------------------------------------------------------------------------
+# Second order (PR C1a): the Wick second-order self-energy
+# ---------------------------------------------------------------------------
+
+def antisym_tensor(terms, nmode):
+    """The antisymmetrized two-body tensor ``(M, M, M, M)`` of quartic terms
+    ``(p, q, r, s, v)`` = ``v c+_p c_q c+_r c_s`` on ``nmode = M`` modes.
+
+    With ``q != r`` (refused otherwise: such a term carries a one-body
+    remainder ``delta_qr``) a term is ``v c+_p c+_r c_s c_q``, so ``V[p, r,
+    q, s] += v`` gives ``H = sum V_ijkl c+_i c+_j c_l c_k``, and ``U = V -
+    V^(1023) - V^(0132) + V^(1032)`` gives ``H = 1/4 sum U_ijkl c+_i c+_j
+    c_l c_k``."""
+    M = int(nmode)
+    V = np.zeros((M, M, M, M), dtype=np.complex128)
+    for term in terms:
+        p, q, r, s, v = term
+        if q == r:
+            raise ValueError("antisym_tensor: term {} has mode 2 = mode 3".format(tuple(term)))
+        V[p, r, q, s] += v
+    return V - V.transpose(1, 0, 2, 3) - V.transpose(0, 1, 3, 2) + V.transpose(1, 0, 3, 2)
+
+
+def wick_sigma2(green, beta, terms, spatial_shape, norb_phys):
+    """The second-order Wick self-energy ``(nmat, nvol, nd, nd)`` (k space,
+    spin-block index) of the quartic ``terms`` (interleaved modes) at the
+    Green function ``green`` ``(nmat, nvol, nd, nd)``.
+
+    On the grid ``tau_j = j beta / nmat`` (:func:`green_tau`, read in the
+    modes by :func:`modes_of_k`) with ``G~ = minus_tau(g)``::
+
+        Sigma_ab(tau) = -1/2 sum U[a,c,d,e] g[d,f](tau) g[e,g](tau)
+                             G~[h,c](tau) U[f,g,b,h],
+
+    ``U`` = :func:`antisym_tensor`, evaluated in four two-operand stages
+    (Ruling R5), then :func:`tau_to_matsubara` and :func:`k_of_modes`."""
+    green = np.asarray(green, dtype=np.complex128)
+    shape = _shape(spatial_shape)
+    nmat = green.shape[0]
+    M = int(np.prod(shape)) * 2 * int(norb_phys)
+    g = modes_of_k(green_tau(green, beta), shape, norb_phys)              # (n, M, M)
+    gt = minus_tau(g)
+    U = antisym_tensor(terms, M)
+    A1 = np.einsum("acde,jdf->jacfe", U, g)
+    A2 = np.einsum("jacfe,jeg->jacfg", A1, g)
+    A3 = (A2.reshape(nmat, M * M, M * M) @ U.reshape(M * M, M * M)).reshape(nmat, M, M, M, M)
+    sigma_tau = -0.5 * np.einsum("jacbh,jhc->jab", A3, gt)
+    return k_of_modes(tau_to_matsubara(sigma_tau, beta), shape, norb_phys)
