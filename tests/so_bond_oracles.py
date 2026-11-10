@@ -2074,3 +2074,44 @@ def delta23_monomials(monomials, spatial_shape):
     return [m for m in monomials
             if m.modes[1] == m.modes[2]
             and int(mesh_index(m.cells[1], shape)) == int(mesh_index(m.cells[2], shape))]
+
+
+def wick_hf_sigma_k(terms, rho, spatial_shape, norb_phys):
+    """The Wick Hartree-Fock self-energy ``(nvol, nd, nd)`` in k (spin-block
+    index): :func:`hf_onebody` of the quartic ``terms`` at the density
+    ``rho[p, q] = <c+_p c_q>`` (interleaved modes), read back through
+    :func:`k_of_modes`."""
+    return k_of_modes(hf_onebody(terms, rho), spatial_shape, norb_phys)
+
+
+def phi1_gradient(green, beta, gamma_label, geom):
+    """``out[n, k, A, B] = dPhi_1/dG_BA(k, i w_n)`` ``(nmat, nvol, nd, nd)``
+    of the first-order functional of the label vertex
+
+    ``Phi_1 = (N/2) sum_IJ Gamma_IJ(0) n_I n_J``,
+
+    ``Gamma(0)`` the ``q = 0`` slice (grid index 0) and ``n_{(d;Z,W)} =
+    (1/N) sum_k e^{+ik.d} S_WZ(k)`` the label densities of the equal-time
+    sample ``S`` (:func:`equal_time_sample`). With ``dn_{(a;X,Y)}/dG_BA(k, n)
+    = (T/N) e^{+ik.d_a} delta_XA delta_YB`` the gradient is
+    ``T sum_a e^{+ik.d_a} (Gamma^ n)_{(a;A,B)}``, ``Gamma^ = (Gamma(0) +
+    Gamma(0)^T)/2``, the same at every frequency (both phases are the
+    ``e^{+ik.d}`` of the density, the ``pk`` of :func:`lindhard_discrete`).
+    """
+    green = np.asarray(green, dtype=np.complex128)
+    nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    D = np.asarray(geom.delta_r, dtype=np.int64).reshape(-1, 3)
+    NL = D.shape[0] * nd * nd
+    gamma = np.asarray(gamma_label, dtype=np.complex128)
+    if int(np.prod(shape)) != nvol or gamma.shape != (nvol, NL, NL):
+        raise ValueError("phi1_gradient: green {} and Gamma {} do not share the labels and the "
+                         "mesh {}".format(green.shape, gamma.shape, shape))
+    g0 = gamma[0]
+    ghat = 0.5 * (g0 + g0.T)
+    pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))         # (k, m)
+    S = equal_time_sample(green, beta)                                  # (k, W, Z)
+    n = np.einsum("km,kzw->mzw", pk, np.swapaxes(S, -1, -2)).reshape(NL) / nvol
+    v = (ghat @ n).reshape(-1, nd, nd)                                  # (a, A, B)
+    grad = np.einsum("ka,aij->kij", pk, v) / beta
+    return np.repeat(grad[None], nmat, axis=0)

@@ -16,6 +16,11 @@ interaction, with an explicit Wick contraction of the documented operators
 * the equal-time sample ``G(tau = 0)`` and its density reading
   ``rho_pq = G_qp``;
 * the absence of records whose operators 2 and 3 coincide.
+
+``TestFirstOrderControl`` (C1a-C1) checks that the first-order functional
+``Phi_1 = (N/2) sum_IJ Gamma_IJ(0) n_I n_J`` of the label vertex (direct
+plus crossed filing) has the Wick Hartree-Fock self-energy as its gradient,
+``Sigma_AB = beta dPhi_1/dG_BA``, with the one scalar ``beta``.
 """
 import ast
 import os
@@ -24,12 +29,14 @@ import unittest
 import numpy as np
 
 from hwave.solver import matsubara
-from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_ONSITE_TABLES, c1a_green, rel)
-from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, band_k, build_h1,
+from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_ONSITE_TABLES, c1a_gamma_label,
+                                    c1a_green, rel)
+from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, band_k, build_h1, build_terms,
                                    delta23_monomials, ed_mode, equal_time_density,
-                                   equal_time_sample, expand_tables, green_tau,
+                                   equal_time_sample, expand_tables, geom_of, green_tau,
                                    k_of_modes, mesh_grid, mesh_momenta, minus_tau,
-                                   modes_of_k, tau_to_matsubara)
+                                   modes_of_k, phi1_gradient, tau_to_matsubara,
+                                   wick_hf_sigma_k)
 from tests.test_so_bond_oracles import _imported_modules
 
 _ORACLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "so_bond_oracles.py")
@@ -54,6 +61,32 @@ def metric_t(nmat):
         for n1 in range(nmat):
             ref[m] += (Gm[n1][None] * Gm * GmT[(n1 + n - m) % nmat]).sum(axis=0)
     return rel(tau_route, T * T * ref)
+
+
+def fit_scalar(g, sigma):
+    """The R6 one-scalar fit ``sigma = s g`` over the whole array:
+    ``s = vdot(g, sigma) / vdot(g, g)`` and the residual
+    ``max|s g - sigma| / max|sigma|``. Returns ``(residual, s)``."""
+    s = np.vdot(g, sigma) / np.vdot(g, g)
+    return float(np.abs(s * g - sigma).max() / np.abs(sigma).max()), complex(s)
+
+
+def metric_c1(kind, nmat, **filing):
+    """The C1a-C1 fit on FIXTURE_I: the Wick Hartree-Fock self-energy
+    (``hf_onebody`` of the documented terms at the equal-time density, in k,
+    the same at every frequency) against the gradient of ``Phi_1`` of the
+    label vertex (``filing`` selects a wrong filing of ``Gamma``). Returns
+    ``(residual, s)``; asserts nothing."""
+    fx = FIXTURE_I
+    beta, shape, norb = fx.beta, fx.spatial_shape, fx.norb_phys
+    tables = fx.tables_dict
+    G = c1a_green(fx, kind, nmat)
+    rho = equal_time_density(G, beta, shape, norb)
+    sigma = wick_hf_sigma_k(build_terms(tables, shape, norb), rho, shape, norb)
+    sigma = np.broadcast_to(sigma[None], G.shape)
+    geom = geom_of(fx)
+    g = phi1_gradient(G, beta, c1a_gamma_label(fx, tables, geom, **filing), geom)
+    return fit_scalar(g, sigma)
 
 
 class TestConventions(unittest.TestCase):
@@ -143,6 +176,24 @@ class TestConventions(unittest.TestCase):
         # non-vacuity: on-site same-orbital Hund has mode 2 = mode 3
         hund = expand_tables({"Hund": {((0, 0, 0), (0, 0)): 1.0}}, 1)
         self.assertTrue(delta23_monomials(hund, (5, 1, 1)))
+
+
+class TestFirstOrderControl(unittest.TestCase):
+    def test_one_scalar_is_beta(self):
+        beta = FIXTURE_I.beta
+        for kind in ("band", "rand"):
+            with self.subTest(kind=kind):
+                residual, s = metric_c1(kind, C1A_NMAT_FAST)
+                self.assertTrue(np.isfinite(residual) and np.isfinite(s), "non-finite metric")
+                self.assertLessEqual(residual, 1e-12)
+                self.assertLessEqual(abs(s - beta), 1e-12 * beta)
+
+    def test_fock_is_carried_by_the_crossed_filing(self):
+        for kind in ("band", "rand"):
+            with self.subTest(kind=kind):
+                residual, s = metric_c1(kind, C1A_NMAT_FAST, crossed=False)
+                self.assertTrue(np.isfinite(residual) and np.isfinite(s), "non-finite metric")
+                self.assertGreaterEqual(residual, 1e-3)
 
 
 if __name__ == "__main__":

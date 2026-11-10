@@ -817,3 +817,15 @@ def c1a_green(fx, kind, nmat):
 def win(nmat):
     """The inner eighth of a frequency grid of ``nmat`` points."""
     return slice(nmat // 2 - nmat // 16, nmat // 2 + nmat // 16)
+
+
+import tests.so_bond_oracles as so_bond_oracles  # noqa: E402
+
+
+def c1a_gamma_label(fx, tables, geom, **filing):
+    """The label vertex ``Gamma(q)`` of ``tables`` on the labels of ``geom``
+    (``file_gamma_label`` of the documented operators; ``filing`` selects a
+    wrong filing). Looked up through the module attribute
+    ``so_bond_oracles.file_gamma_label`` at call time."""
+    return so_bond_oracles.file_gamma_label(
+        so_bond_oracles.expand_tables(tables, fx.norb_phys), geom, fx.nd, **filing)
