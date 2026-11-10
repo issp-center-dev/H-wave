@@ -883,3 +883,108 @@ def c1a_onsite_flex_sigma(green, *, rpa_return):
             return s._calc_self_energy_general(Gk, v, beta)[0]
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# C1a-P: the production chain of the second-order (and third-order) ring
+# ---------------------------------------------------------------------------
+
+def _pair_fields(geom, nd):
+    """``(I, m, x, y)`` of the flat slot ``I = m nd**2 + x nd + y``."""
+    npair = nd * nd
+    I = np.arange(len(geom.delta_r) * npair)
+    return I, I // npair, (I % npair) // nd, I % nd
+
+
+def _read(M, f):
+    """``W[..., I, J] = M[..., f(I), f(J)]``."""
+    return M[..., f[:, None], f]
+
+
+def _reading_reversed(M, geom, nd):
+    _, m, x, y = _pair_fields(geom, nd)
+    return _read(M, np.asarray(geom.reverse)[m] * nd * nd + y * nd + x)
+
+
+def _reading_reversed_phased(sign):
+    def reading(M, geom, nd):
+        _, m, _, _ = _pair_fields(geom, nd)
+        ph = np.asarray(geom.phase)[:, m]                       # (nvol, ND)
+        p = ph if sign > 0 else 1.0 / ph
+        return _reading_reversed(M, geom, nd) * (p[:, :, None] * np.conj(p)[:, None, :])
+    return reading
+
+
+def _reading_channel0_identity(M, geom, nd):
+    I, m, x, y = _pair_fields(geom, nd)
+    return _read(M, np.where(m == 0, I, m * nd * nd + y * nd + x))
+
+
+#: Ruling R8: the pair readings ``(M, geom, nd) -> W`` of the ring ``M``
+#: ``(nmat, nvol, ND, ND)`` on the slot geometry; ``"p_b"`` is accepted (the
+#: module attribute ``so_bond.p_b`` is looked up at call time), the others
+#: are rejected readings ``W[..., I, J] = M[..., f(I), f(J)]`` (the phased
+#: ones times ``e^{+-iq.(dr_m(I) - dr_m(J))}``)
+READINGS = {
+    "p_b": lambda M, geom, nd: so_bond.p_b(M, nd),
+    "reversed": _reading_reversed,
+    "reversed_plus": _reading_reversed_phased(+1),
+    "reversed_minus": _reading_reversed_phased(-1),
+    "no_swap": lambda M, geom, nd: M,
+    "channel0_identity": _reading_channel0_identity,
+}
+
+
+def c1a_sigma_prod(fx, tables, green, *, reading="p_b", ring_factor=0.5, ring_order=2):
+    """The production self-energy ``(nmat, nvol, nd, nd)`` of the ring of
+    ``tables`` on ``fx``'s mesh at the Green function ``green`` ``(nmat,
+    nvol, nd, nd)`` (dense layout, no caps).
+
+    ``Gamma_B`` (``so_bond_vertex``) and ``chibar_B`` (``so_bond_bubble``
+    into a store, detached) give the ring ``M = ring_factor Gamma_B chibar_B
+    Gamma_B`` (``ring_order = 2``), ``Gamma_B chibar_B Gamma_B chibar_B
+    Gamma_B`` (``3``; coefficient 1) or its negative control with the inner
+    ``chibar_B`` transposed (``"3T"``); ``W = READINGS[reading](M, geom,
+    nd)`` on the slot geometry ``so_bond.slot_geometry(topo, shape)``
+    (looked up at call time), and ``flex_bond.calc_self_energy_bond`` of
+    ``W``. A geometry that is not a ``BondSlotGeometry`` with the channels
+    of the topology is refused before the transport."""
+    if ring_order not in (2, 3, "3T"):
+        raise ValueError("c1a_sigma_prod: unknown ring_order {!r}".format(ring_order))
+    if ring_order != 2 and ring_factor != 0.5:
+        raise ValueError("c1a_sigma_prod: ring_factor applies to ring_order=2 only")
+    nmat = green.shape[0]
+    c = compile_interaction(tables, fx.norb_phys)
+    topo = so_bond_topology(c, CELL)
+    geom = so_bond.slot_geometry(topo, fx.spatial_shape)
+    if not (isinstance(geom, so_bond.BondSlotGeometry)
+            and np.array_equal(geom.delta_r, topo.delta_r)):
+        raise ValueError("c1a_sigma_prod: the transport needs the slot geometry of the topology")
+    plan = plan_so_bond(nmat=nmat, nvol=fx.nvol, B=len(topo.delta_r), nd=fx.nd,
+                        consumers=("chi_dynamic",), caps=NOCAP, layout="dense")
+    gamma_b = so_bond_vertex(c, topo, fx.spatial_shape, plan=plan)
+    with flex_bond.BondBlockStore(nmat, fx.nvol, plan.ND, fx.nd ** 2, ("chibar",)) as st:
+        so_bond.so_bond_bubble(green[None].copy(), None, fx.beta, topo, fx.spatial_shape,
+                               plan=plan, freq="all", sink=st)
+        chibar = st.detach("chibar")
+    assert chibar.shape == (nmat, fx.nvol, plan.ND, plan.ND), chibar.shape
+    g = gamma_b[None]
+    if ring_order == 2:
+        t1 = g @ chibar
+        M = t1 @ g
+        del t1
+        M *= ring_factor
+    else:
+        t1 = g @ (chibar if ring_order == 3 else np.swapaxes(chibar, -2, -1))
+        t2 = t1 @ g
+        del t1
+        t3 = t2 @ chibar
+        del t2
+        M = t3 @ g
+        del t3
+    del chibar
+    W = READINGS[reading](M, geom, fx.nd)
+    del M
+    return flex_bond.calc_self_energy_bond(eb.ArrayBlockSource({"W": W}, fx.nd ** 2),
+                                           green[None].copy(), fx.beta, geom, fx.spatial_shape,
+                                           fx.nd, 1)[0]

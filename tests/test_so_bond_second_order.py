@@ -40,6 +40,15 @@ hold; the vertex filed at ``+q`` or without the crossed part misses. Its
 complex PairHop and spin-flip rows also pin the pair orientation of the
 second vertex in the Wick contraction, which the real on-site control
 cannot.
+
+``TestMapping`` (C1a-P) runs the production chain ``Gamma_B chibar_B
+Gamma_B`` (the bond bubble, ``1/2`` the staged ring) ``-> so_bond.p_b ->
+flex_bond.calc_self_energy_bond`` on the slot geometry
+(``tests.so_bond_fixtures.c1a_sigma_prod``) and compares it with
+``Sigma_F``: the accepted pair reading ``p_b`` reproduces it, every rejected
+reading of ``READINGS`` misses, and the transport refuses (or, fed a
+permuted label geometry, misses with) a geometry that is not the slot
+geometry of the topology.
 """
 import ast
 import functools
@@ -49,9 +58,12 @@ from unittest import mock
 
 import numpy as np
 
-from hwave.solver import matsubara
-from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_ONSITE_GEOM, C1A_ONSITE_TABLES,
-                                    c1a_gamma_label, c1a_green, c1a_onsite_flex_sigma, rel, win)
+from hwave.solver import flex_bond, matsubara
+from hwave.solver import eliashberg_bond as eb
+from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_ONSITE_GEOM, C1A_ONSITE_TABLES, READINGS,
+                                    c1a_gamma_label, c1a_green, c1a_onsite_flex_sigma,
+                                    c1a_sigma_prod, chain_setup, rel, win)
+from tests.so_bond_oracles import OracleGeometry
 from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, antisym_tensor, band_k, build_h1,
                                    build_terms, delta23_monomials, ed_mode,
                                    equal_time_density, equal_time_sample, expand_tables,
@@ -541,6 +553,93 @@ class TestFormula(unittest.TestCase):
         numbers = {"max": smax, "k_dependent": off_k / smax, "spin_01": spin / smax}
         self.assertGreaterEqual(off_k, 0.1 * smax, numbers)
         self.assertGreaterEqual(spin, 0.1 * smax, numbers)
+
+
+def _sigma_f(fx, G):
+    """``Sigma_F = -ring2_gradient/8`` of ``fx``'s tables on its label geometry."""
+    geom = geom_of(fx)
+    gamma = c1a_gamma_label(fx, fx.tables_dict, geom)
+    return -ring2_gradient(G, fx.beta, gamma, geom) / 8.0
+
+
+def metric_p(fx, kind, nmat, reading):
+    """The C1a-P deviation on ``fx``: the production chain
+    ``c1a_sigma_prod(fx, fx.tables_dict, G, reading=reading)`` against
+    ``Sigma_F``, max-norm relative. Asserts nothing."""
+    G = c1a_green(fx, kind, nmat)
+    return rel(c1a_sigma_prod(fx, fx.tables_dict, G, reading=reading), _sigma_f(fx, G))
+
+
+#: C1a-P: the accepted reading's tolerance and the rejected readings' floor
+P_TOL = 1e-12
+P_MISS = 1e-3
+_GEOM_REFUSAL = "c1a_sigma_prod: the transport needs the slot geometry of the topology"
+
+
+class TestMapping(unittest.TestCase):
+    """C1a-P: the production chain reproduces ``Sigma_F`` through ``p_b``
+    only, on the slot geometry only."""
+
+    def test_chain_fast(self):
+        devs = {(fx.L, kind, reading): metric_p(fx, kind, C1A_NMAT_FAST, reading)
+                for fx in (FIXTURE_I, FIXTURE_II) for kind in ("band", "rand")
+                for reading in READINGS}
+        table = "\n".join("  L %d  %-4s  %-18s %.3e" % (k + (v,)) for k, v in devs.items())
+        print("\nC1a-P (Nmat %d):\n%s" % (C1A_NMAT_FAST, table))
+        self.assertEqual(sorted(READINGS), sorted(
+            ["p_b", "reversed", "reversed_plus", "reversed_minus", "no_swap",
+             "channel0_identity"]))
+        for key, dev in devs.items():
+            with self.subTest(fixture=key[0], kind=key[1], reading=key[2]):
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                if key[2] == "p_b":
+                    self.assertLessEqual(dev, P_TOL, "\n" + table)
+                else:
+                    self.assertGreaterEqual(dev, P_MISS, "\n" + table)
+
+    def test_label_geometry_is_refused_or_misses(self):
+        for fx in (FIXTURE_I, FIXTURE_II):
+            with self.subTest(fixture=fx.L):
+                _, _, slot = chain_setup(fx)
+                label = geom_of(fx)
+                # the coincidence that makes the explicit guard necessary
+                self.assertTrue(np.array_equal(label.delta_r, slot.delta_r))
+                G = c1a_green(fx, "rand", C1A_NMAT_FAST)
+                with mock.patch("hwave.solver.so_bond.slot_geometry",
+                                return_value=label) as spy:
+                    with self.assertRaisesRegex(ValueError, "^" + _GEOM_REFUSAL + "$"):
+                        c1a_sigma_prod(fx, fx.tables_dict, G)
+                self.assertEqual(spy.call_count, 1)
+        # non-vacuity: the p_b chain's W, transported on FIXTURE_I's label
+        # geometry with channels 1 and 2 swapped, misses Sigma_F
+        fx = FIXTURE_I
+        G = c1a_green(fx, "rand", C1A_NMAT_FAST)
+        transport = flex_bond.calc_self_energy_bond
+        with mock.patch.object(flex_bond, "calc_self_energy_bond",
+                               wraps=transport) as spy:
+            sigma_pb = c1a_sigma_prod(fx, fx.tables_dict, G)
+        self.assertEqual(spy.call_count, 1)
+        source = spy.call_args[0][0]
+        self.assertIsInstance(source, eb.ArrayBlockSource)
+        label = geom_of(fx)
+        perm = np.array([0, 2, 1, 3, 4])
+        inv = np.argsort(perm)
+        rev = np.asarray(label.reverse)
+        swapped = OracleGeometry(np.asarray(label.delta_r)[perm], inv[rev[perm]],
+                                 fx.spatial_shape)
+        self.assertFalse(np.array_equal(swapped.delta_r, label.delta_r))
+        for m in range(swapped.B):
+            self.assertTrue(np.array_equal(swapped.delta_r[swapped.reverse[m]],
+                                           -swapped.delta_r[m]))
+        sigma_f = _sigma_f(fx, G)
+        dev_slot = rel(sigma_pb, sigma_f)
+        dev = rel(transport(source, G[None].copy(), fx.beta, swapped, fx.spatial_shape, fx.nd,
+                            1)[0], sigma_f)
+        print("\nC1a-P label geometry, channels 1 and 2 swapped: %.3e (slot %.3e)"
+              % (dev, dev_slot))
+        self.assertTrue(np.isfinite(dev) and np.isfinite(dev_slot), "non-finite metric")
+        self.assertLessEqual(dev_slot, P_TOL)
+        self.assertGreaterEqual(dev, P_MISS)
 
 
 if __name__ == "__main__":
