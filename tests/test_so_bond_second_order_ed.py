@@ -24,16 +24,22 @@ with the stencils of ``tests.test_flex_second_order_ed_onsite``
 ``_refine``: ``2 c(x/2) - c(x)``) on the inner eighth of the frequency
 grid and compare it with the production chain ``p_b(1/2 Gamma_B chibar_B
 Gamma_B) -> calc_self_energy_bond`` at the free Green function
-(``tests.so_bond_fixtures.c1a_sigma_prod``). The ``"all"`` row is the gate;
-the rows of the single interaction types are reported.
+(``tests.so_bond_fixtures.c1a_sigma_prod``). The ``"all"`` row is the gate
+(plus content floors); each single interaction type is asserted to the same
+deviation and extraction bounds (``test_each_type``, opt-in). The harness
+(``_ed_*``, ``metric_ed``) is hard-wired to FIXTURE_I (five sites, one
+physical orbital).
 
 The ED side truncates nothing but the comparison does: the production chain
 sums a finite frequency grid. The residual ``dev`` of the ``"all"`` row
-therefore falls as ``1/Nmat`` (2.60e-3 at Nmat 512, 3.29e-4 at 4096, a
-ratio of 7.9 for the expected 8; the smoke point's doubled coupling
-adds an extraction error of 1.8e-4 only); ``TestSecondOrderED.test_all_types``
-asserts this ratio (window 6 to 10), so the gate's residual is the
-truncated frequency sum and not a defect of the formula.
+falls roughly as ``1/Nmat``: 2.60e-3 at Nmat 512 and 3.29e-4 at 4096, a
+ratio of 7.9 (the two points differ in frequency window and coupling as
+well); on the same frequencies the production chain at Nmat 8192 gives
+1.34e-4, and its extrapolation to infinite Nmat (``2 a(8192) - a(4096)``)
+misses the ED coefficient by 8.4e-5, the size of the extraction error
+(4.4e-5). The gate's residual is the truncated frequency sum, not a defect
+of the formula. ``TestSecondOrderED.test_all_types`` asserts the 512/4096
+ratio in a window of 6 to 10 (set after the ratio was measured).
 
 ``TestSecondOrderED`` is opt-in (``HWAVE_FULL_TESTS=1``): on numpy 1.26
 (the CI numpy) the gate alone takes 8 s on macOS (4.5 s on numpy 2), over
@@ -53,7 +59,7 @@ from tests.so_bond_fixtures import c1a_green, c1a_sigma_prod, rel, win
 from tests.so_bond_oracles import (FIXTURE_I, JWED, build_terms, free_density, hf_onebody,
                                    k_of_modes, wick_hf_sigma_k)
 
-#: the C1a-ED working point (the gate passed here without refinement rounds)
+#: the C1a-ED working point
 NMAT_GATE = 4096
 X_GATE = 6.25e-3
 #: the smoke point
@@ -276,7 +282,8 @@ class TestSecondOrderEDSmoke(unittest.TestCase):
 
 class TestSecondOrderED(unittest.TestCase):
     """C1a-ED at the working point (Nmat 4096, x = 6.25e-3): the ``"all"``
-    row is the gate, the single-type rows are reported."""
+    row is the gate, the single-type rows are held to the same deviation and
+    extraction bounds."""
 
     @heavy
     def test_all_types(self):
@@ -298,13 +305,19 @@ class TestSecondOrderED(unittest.TestCase):
 
     @heavy
     def test_each_type(self):
-        rows = [metric_ed(t, 4096, 6.25e-3) for t in TYPES]
+        rows = [metric_ed(t, NMAT_GATE, X_GATE) for t in TYPES]
         for m in rows:
             print("C1a-ED {:>12s}: dev {:.3e} extraction {:.3e} scale {:.3e}".format(
                 m["row"], m["dev"], m["extraction"], m["scale"]))
         for m in rows:
-            self.assertTrue(m["finite"], "non-finite metric: {}".format(m))
-            self.assertGreater(m["scale"], 1e-6, m)
+            with self.subTest(row=m["row"]):
+                self.assertTrue(m["finite"], "non-finite metric: {}".format(m))
+                self.assertTrue(np.isfinite(m["dev"]) and np.isfinite(m["extraction"]),
+                                "non-finite metric: {}".format(m))
+                self.assertGreater(m["scale"], 1e-6, m)
+                # the gate's bounds, per type
+                self.assertLessEqual(m["dev"], 2e-3, m)
+                self.assertLessEqual(m["extraction"], 5e-4, m)
 
 
 if __name__ == "__main__":

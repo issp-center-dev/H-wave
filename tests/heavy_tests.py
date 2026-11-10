@@ -412,8 +412,8 @@ HEAVY_TESTS = (
     ("test_so_bond_second_order_ed", "TestSecondOrderED", "test_all_types",
      "the C1a-ED gate: the second-order coefficient of the exact self-energy of "
      "FIXTURE_I's five-site ring with every interaction type (four ED couplings, "
-     "Nmat 4096, x = 6.25e-3) against the production chain, plus the 1/Nmat "
-     "scaling of its residual against the smoke point, 8.0 s measured on macOS "
+     "Nmat 4096, x = 6.25e-3) against the production chain, plus the roughly "
+     "1/Nmat fall of its residual from the smoke point, 8.0 s measured on macOS "
      "with numpy 1.26 (10.5 s with one BLAS thread; 4.5 s with numpy 2), about "
      "22 s on Linux (x2.7 projection of the numpy 1.26 time); over the 5 s rule "
      "on the CI numpy; smoke: TestSecondOrderEDSmoke.test_all_types_smoke (the "
@@ -422,8 +422,8 @@ HEAVY_TESTS = (
      "the second-order coefficient of the exact self-energy of FIXTURE_I's "
      "five-site ring for each of the seven interaction types alone (four ED "
      "couplings per type, production chain at the gate's working point Nmat 4096, "
-     "x = 6.25e-3, reached without refinement rounds; reported, "
-     "anti-vacuity floor only), 34.0 s measured on macOS with numpy 1.26 (55 s "
+     "x = 6.25e-3), each held to the gate's bounds (dev <= 2e-3, extraction "
+     "<= 5e-4) and an anti-vacuity floor, 34.0 s measured on macOS with numpy 1.26 (55 s "
      "with one BLAS thread; 20.5 s with numpy 2), about 92 s on Linux (x2.7 "
      "projection of the numpy 1.26 time); smoke: "
      "TestSecondOrderEDSmoke.test_all_types_smoke"),
