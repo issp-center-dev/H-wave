@@ -993,10 +993,13 @@ def c1a_sigma_prod(fx, tables, green, *, reading="p_b", ring_factor=0.5, ring_or
 
 
 def c1a_hf_param_ham(tables, spatial_shape):
-    """The production ``param_ham`` of ``tables`` for ``build_flex_hf_tables``:
+    """A ``param_ham`` of ``tables`` for ``build_flex_hf_tables``:
     ``{type: {((Rx mod Nx, Ry mod Ny, Rz mod Nz), (a, b)): complex}}`` with
-    0-based orbitals and the values of keys that coincide on the mesh summed
-    (the structure ``QLMSkInput`` hands the solver)."""
+    0-based orbitals and the values of keys that coincide on the mesh summed.
+    This is the structure ``QLMSkInput`` hands the solver except that the
+    reader keeps the raw (possibly negative) displacements ``R`` while this
+    helper reduces them modulo the mesh; ``build_flex_hf_tables`` accepts
+    either and gives the same Hartree-Fock map."""
     shape = tuple(int(n) for n in spatial_shape)
     out = {}
     for itype, tbl in tables.items():

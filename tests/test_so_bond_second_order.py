@@ -1,5 +1,9 @@
 """The second-order self-energy of the spin-orbital bond FLEX.
 
+This module and ``tests.test_so_bond_second_order_ed`` form the validation
+suite "C1a" of the spin-orbital (SO) bond FLEX second-order self-energy; its
+gates are labelled C1a-T, C1a-C1, ... (legend below).
+
 The production chain ``Gamma_B chibar_B Gamma_B -> so_bond.p_b ->
 flex_bond.calc_self_energy_bond`` is compared, at second order in the
 interaction, with an explicit Wick contraction of the documented operators
@@ -32,14 +36,17 @@ direction below a non-vacuity floor redrawn; see :func:`directional_rows`).
 ``TestOnsiteControl`` (C1a-C2) checks, for the on-site CoulombIntra control
 on FIXTURE_I's ring, that the explicit Wick second-order self-energy is the
 gradient of ``Psi = sum_{q,l} Tr[(chibar Gamma(-q))**2]`` with the one
-scalar ``-T/8``, and reports the production second order of one
-spin-orbital FLEX map (``chi := chibar``) against the same Wick contraction.
+scalar ``-T/8``. It also asserts (at 1e-12; not part of the formula
+controls) that the production second order of one spin-orbital FLEX map
+(``chi := chibar``) equals the same Wick contraction.
 
 ``TestFormula`` (C1a-F) checks, on FIXTURE_I and FIXTURE_II with every
 interaction type, that ``Sigma_F = beta dPhi_2/dG`` equals the explicit Wick
 second order to 1e-12, once the controls hold (``controls_pass``: the
-discretization, first-order, on-site second-order and adjoint checks; a
-failed control voids the verdict instead of passing or failing it); the vertex filed at ``+q`` or without the crossed part misses. Its
+discretization, first-order, on-site second-order and adjoint checks; when
+one fails, ``metric_f`` returns None and the test fails with a "verdict
+void" message naming the control); the vertex filed at ``+q`` or without
+the crossed part misses. Its
 complex PairHop and spin-flip rows also pin the pair orientation of the
 second vertex in the Wick contraction, which the real on-site control
 cannot.
@@ -53,7 +60,8 @@ reading of ``READINGS`` misses, and the transport refuses (or, fed a
 permuted label geometry, misses with) a geometry that is not the slot
 geometry of the topology.
 
-``TestThirdOrder`` (reported, not part of the second-order verdict) checks
+``TestThirdOrder`` (asserted at 1e-12, but not part of the second-order
+verdict: the next PR's formula is second order) checks
 the same chain at third order. ``c1a_sigma_prod(..., ring_order=3)`` is the
 POSITIVE chain ``Gamma_B chibar_B Gamma_B chibar_B Gamma_B`` through
 ``p_b`` and the transport; the test pins it to ``beta d/dG`` of
@@ -68,6 +76,13 @@ part ``-P[Gamma chibar Gamma chibar Gamma]``: the physical third-order
 self-energy is the negative of the tested chain. The chain with the first
 ``chibar_B`` transposed (``"3T"``) misses.
 
+``TestHartreeFockMap`` (C1a-HF) checks ``flex_hf.hf_map_spin_orbital``
+with off-site rows of every type against the Wick Hartree-Fock self-energy
+on FIXTURE_I and FIXTURE_II (one and two physical orbitals) at three
+densities, given the density convention ``rho_r[r, X, Y] = <c+_X(r)
+c_Y(0)>`` (``c1a_rho_r``); four wrong readings of the density (cells
+swapped, X/Y swapped, conjugated, ``r -> -r``) miss.
+
 Gate labels in the messages: C1a-T the discretization control, C1a-C1 the
 first-order control, C1a-C2 the on-site second-order control, C1a-F the
 formula, C1a-P the production chain, C1a-HF the Hartree-Fock map with
@@ -77,6 +92,17 @@ exact-diagonalization check).
 ``TestMutationTable`` applies one mutation per gate (a hook argument, or a
 module attribute looked up at call time), asserts that it was applied and
 that the gate it targets then fails; it never calls ``controls_pass``.
+
+Scope and hand-off. What these tests fix for the implementation of the SO
+bond FLEX self-energy: ``W = p_b(Gamma_B (chi_B - chibar_B/2) Gamma_B)``
+transported by ``flex_bond.calc_self_energy_bond`` on
+``so_bond.slot_geometry``; its second-order part (``chi := chibar``) must
+equal ``c1a_sigma_prod(..., reading="p_b")`` (the other ``READINGS`` are
+negative controls); its third-order part is ``-c1a_sigma_prod(...,
+ring_order=3)``, the negative of the tested chain; and the static
+Hartree-Fock part goes through ``build_flex_hf_tables`` /
+``hf_map_spin_orbital`` with a density in the ``rho_r`` convention above.
+Orders four and higher are not pinned here.
 """
 import ast
 import functools
@@ -100,7 +126,7 @@ from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, antisym_tensor, band_k
                                    equal_time_density, equal_time_sample, expand_tables,
                                    free_density,
                                    geom_of, green_tau, k_of_modes, mesh_grid, mesh_momenta,
-                                   minus_tau, modes_of_k, phi1_gradient, phi2_gradient,
+                                   mesh_negate, minus_tau, modes_of_k, phi1_gradient, phi2_gradient,
                                    random_green, ring2_gradient, ring2_value, ring3_value,
                                    tau_to_matsubara, wick_hf_sigma_k, wick_sigma2)
 from tests.heavy_tests import heavy
@@ -516,7 +542,7 @@ class TestOnsiteControl(unittest.TestCase):
                 self.assertLessEqual(abs(s + T / 8.0), 1e-12 * T / 8.0)
 
     def test_production_onsite_second_order(self):
-        # reported: not part of the control verdict of controls_pass
+        # asserted, but not part of the control verdict of controls_pass
         for kind in ("band", "rand"):
             with self.subTest(kind=kind):
                 spy = mock.MagicMock(side_effect=lambda c: c)
@@ -823,7 +849,8 @@ def metric_o3(fx, kind, nmat, ring_order):
 
 
 class TestThirdOrder(unittest.TestCase):
-    """The third-order ring through ``p_b`` (reported, not deciding)."""
+    """The third-order ring through ``p_b`` (asserted; not part of the
+    second-order verdict)."""
 
     def test_ring3_through_p_b(self):
         devs = {(fx.L, kind, order): metric_o3(fx, kind, C1A_NMAT_FAST, order)
@@ -847,12 +874,10 @@ HF_CONTENT = 0.1
 HF_DENSITIES = ("band", "herm", "free")
 
 
-def _hf_density(density, nmat):
-    """The density ``rho[p, q] = <c+_p c_q>`` (interleaved modes) on
-    FIXTURE_I: ``"free"`` = ``free_density(h1, mu, beta)``; ``"band"`` and
-    ``"herm"`` = ``equal_time_density`` of ``c1a_green(FIXTURE_I, density,
-    nmat)``."""
-    fx = FIXTURE_I
+def _hf_density(density, nmat, fx=FIXTURE_I):
+    """The density ``rho[p, q] = <c+_p c_q>`` (interleaved modes) on ``fx``:
+    ``"free"`` = ``free_density(h1, mu, beta)``; ``"band"`` and ``"herm"`` =
+    ``equal_time_density`` of ``c1a_green(fx, density, nmat)``."""
     if density == "free":
         return free_density(fx.h1, fx.mu, fx.beta)
     if density not in ("band", "herm"):
@@ -861,34 +886,56 @@ def _hf_density(density, nmat):
                               fx.norb_phys)
 
 
-def _hf_wick(rho):
-    """The Wick Hartree-Fock self-energy in k of FIXTURE_I's tables at ``rho``."""
-    fx = FIXTURE_I
+def _hf_wick(rho, fx=FIXTURE_I):
+    """The Wick Hartree-Fock self-energy in k of ``fx``'s tables at ``rho``."""
     return wick_hf_sigma_k(build_terms(fx.tables_dict, fx.L, fx.norb_phys), rho,
                            fx.spatial_shape, fx.norb_phys)
 
 
-def metric_hf(density, nmat=C1A_NMAT_FAST):
-    """The C1a-HF deviation on FIXTURE_I: ``hf_map_spin_orbital`` of
-    ``c1a_rho_r(rho)`` with the tables ``build_flex_hf_tables(
+def _rho_r_transposed_cells(rho, shape, norb):
+    """Wrong reading ``rho[(0, X), (r, Y)]`` (the cell on the second index)."""
+    nvol = int(np.prod(shape))
+    X = np.arange(2 * int(norb))
+    rows = ed_mode(0, X, norb)[None, :, None]
+    cols = ed_mode(np.arange(nvol)[:, None], X[None, :], norb)[:, None, :]
+    return np.ascontiguousarray(rho[rows, cols], dtype=np.complex128)
+
+
+#: the readings ``(rho, shape, norb) -> rho_r`` of the density handed to
+#: ``hf_map_spin_orbital``: ``"rho_r"`` is the documented convention
+#: ``rho_r[r, X, Y] = <c+_X(r) c_Y(0)>`` (``c1a_rho_r``), the others are wrong
+#: readings that must miss
+RHO_READINGS = {
+    "rho_r": c1a_rho_r,
+    "cells_swapped": _rho_r_transposed_cells,
+    "xy_swapped": lambda rho, shape, norb: np.ascontiguousarray(
+        np.swapaxes(c1a_rho_r(rho, shape, norb), -1, -2)),
+    "conjugate": lambda rho, shape, norb: c1a_rho_r(rho, shape, norb).conj(),
+    "r_negated": lambda rho, shape, norb: np.ascontiguousarray(
+        c1a_rho_r(rho, shape, norb)[mesh_negate(shape)]),
+}
+
+
+def metric_hf(density, nmat=C1A_NMAT_FAST, fx=FIXTURE_I, reading="rho_r"):
+    """The C1a-HF deviation on ``fx``: ``hf_map_spin_orbital`` of
+    ``RHO_READINGS[reading](rho)`` with the tables ``build_flex_hf_tables(
     c1a_hf_param_ham(tables))`` against the Wick Hartree-Fock self-energy of
     the documented operators at the same density, max-norm relative.
     Asserts nothing."""
-    fx = FIXTURE_I
     shape, norb = fx.spatial_shape, fx.norb_phys
-    rho = _hf_density(density, nmat)
+    rho = _hf_density(density, nmat, fx)
     hf_tables = build_flex_hf_tables(c1a_hf_param_ham(fx.tables_dict, shape), norb, shape)
-    sigma = hf_map_spin_orbital(c1a_rho_r(rho, shape, norb), hf_tables, shape, norb)
-    return rel(sigma, _hf_wick(rho))
+    sigma = hf_map_spin_orbital(RHO_READINGS[reading](rho, shape, norb), hf_tables, shape, norb)
+    return rel(sigma, _hf_wick(rho, fx))
 
 
-def hf_content(density="free", nmat=C1A_NMAT_FAST):
+def hf_content(density="free", nmat=C1A_NMAT_FAST, fx=FIXTURE_I):
     """``(off_site, spin_off_diagonal)``: the max-norm of the off-site part
     (``Sigma(k)`` minus its k-average, the on-site block) and of the
-    spin-off-diagonal blocks of the Wick Hartree-Fock self-energy on
-    FIXTURE_I, each relative to its max. Asserts nothing."""
-    sigma = _hf_wick(_hf_density(density, nmat))
-    norb = FIXTURE_I.norb_phys
+    spin-off-diagonal blocks of the Wick Hartree-Fock self-energy on ``fx``,
+    each relative to its max. Asserts nothing."""
+    sigma = _hf_wick(_hf_density(density, nmat, fx), fx)
+    norb = fx.norb_phys
     scale = float(np.abs(sigma).max())
     off_site = float(np.abs(sigma - sigma.mean(axis=0)[None]).max()) / scale
     spin_off = float(max(np.abs(sigma[:, :norb, norb:]).max(),
@@ -897,21 +944,40 @@ def hf_content(density="free", nmat=C1A_NMAT_FAST):
 
 
 class TestHartreeFockMap(unittest.TestCase):
-    """C1a-HF: the spin-orbital Hartree-Fock map with off-site rows."""
+    """C1a-HF: the spin-orbital Hartree-Fock map with off-site rows, on one
+    (FIXTURE_I) and two (FIXTURE_II, orbital-asymmetric bonds) physical
+    orbitals."""
 
     def test_matches_wick_oracle(self):
-        devs = {d: metric_hf(d) for d in HF_DENSITIES}
-        off_site, spin_off = hf_content("free")
-        report = "  ".join("%s %.3e" % kv for kv in devs.items())
-        print("\nC1a-HF (Nmat %d): %s; content off-site %.3f, spin-off-diagonal %.3f"
-              % (C1A_NMAT_FAST, report, off_site, spin_off))
-        for d, dev in devs.items():
-            with self.subTest(density=d):
+        for fx in (FIXTURE_I, FIXTURE_II):
+            with self.subTest(fixture=fx.L):
+                devs = {d: metric_hf(d, fx=fx) for d in HF_DENSITIES}
+                off_site, spin_off = hf_content("free", fx=fx)
+                report = "  ".join("%s %.3e" % kv for kv in devs.items())
+                print("\nC1a-HF (L %d, Nmat %d): %s; content off-site %.3f, "
+                      "spin-off-diagonal %.3f"
+                      % (fx.L, C1A_NMAT_FAST, report, off_site, spin_off))
+                for d, dev in devs.items():
+                    self.assertTrue(np.isfinite(dev), "non-finite metric")
+                    self.assertLessEqual(dev, HF_TOL, report)
+                self.assertTrue(np.isfinite(off_site) and np.isfinite(spin_off),
+                                "non-finite metric")
+                self.assertGreaterEqual(off_site, HF_CONTENT)
+                self.assertGreaterEqual(spin_off, HF_CONTENT)
+
+    def test_wrong_density_conventions_miss(self):
+        # two-sided: the rho_r convention is decided, not one of several that pass
+        self.assertEqual(sorted(RHO_READINGS), sorted(
+            ["rho_r", "cells_swapped", "xy_swapped", "conjugate", "r_negated"]))
+        devs = {(fx.L, reading, d): metric_hf(d, fx=fx, reading=reading)
+                for fx in (FIXTURE_I, FIXTURE_II) for reading in RHO_READINGS
+                if reading != "rho_r" for d in HF_DENSITIES}
+        table = "\n".join("  L %d  %-14s %-5s %.3e" % (k + (v,)) for k, v in devs.items())
+        print("\nC1a-HF wrong density readings (Nmat %d):\n%s" % (C1A_NMAT_FAST, table))
+        for key, dev in devs.items():
+            with self.subTest(fixture=key[0], reading=key[1], density=key[2]):
                 self.assertTrue(np.isfinite(dev), "non-finite metric")
-                self.assertLessEqual(dev, HF_TOL, report)
-        self.assertTrue(np.isfinite(off_site) and np.isfinite(spin_off), "non-finite metric")
-        self.assertGreaterEqual(off_site, HF_CONTENT)
-        self.assertGreaterEqual(spin_off, HF_CONTENT)
+                self.assertGreaterEqual(dev, P_MISS, "\n" + table)
 
 
 def _minus_tau_sgn0_minus(g_tau):
