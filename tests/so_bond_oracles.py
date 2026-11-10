@@ -2267,3 +2267,23 @@ def wick_sigma2(green, beta, terms, spatial_shape, norb_phys):
     A3 = (A2.reshape(nmat, M * M, M * M) @ U.reshape(M * M, M * M)).reshape(nmat, M, M, M, M)
     sigma_tau = -0.5 * np.einsum("jacbh,jhc->jab", A3, gt)
     return k_of_modes(tau_to_matsubara(sigma_tau, beta), shape, norb_phys)
+
+
+def ring3_value(green, beta, gamma_label, geom, *, chunk=32):
+    """``Psi_3 = sum_{q, l} Tr[(chibar(q, l) Gamma(-q))**3]`` of the label
+    bubble (:func:`_lindhard_batch`, every bosonic slice, wrapped second leg)
+    and ``Gamma(-q)`` read at :func:`mesh_negate`; ``Phi_3 = -(T/6) Psi_3``.
+
+    ``green`` is ``(nmat, nvol, nd, nd)`` (returns a complex) or a stack
+    ``(S, nmat, nvol, nd, nd)`` (returns ``(S,)``), at most ``chunk`` Green
+    functions per :func:`_lindhard_batch` call. Two-operand stages."""
+    green, gmq, _ = _ring_inputs(green, gamma_label, geom, "ring3_value")
+    single = green.ndim == 4
+    stack = green[None] if single else green
+    out = np.empty(stack.shape[0], dtype=np.complex128)
+    chunk = max(1, int(chunk))
+    for s0 in range(0, stack.shape[0], chunk):
+        A = _lindhard_batch(stack[s0:s0 + chunk], beta, geom) @ gmq[None, None]
+        A2 = A @ A
+        out[s0:s0 + chunk] = np.einsum("slqij,slqji->s", A2, A)
+    return complex(out[0]) if single else out

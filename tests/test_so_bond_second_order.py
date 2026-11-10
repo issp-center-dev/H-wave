@@ -49,6 +49,12 @@ flex_bond.calc_self_energy_bond`` on the slot geometry
 reading of ``READINGS`` misses, and the transport refuses (or, fed a
 permuted label geometry, misses with) a geometry that is not the slot
 geometry of the topology.
+
+``TestThirdOrder`` (reported, not part of the second-order verdict) checks
+the same chain at third order: ``c1a_sigma_prod(..., ring_order=3)``
+(``p_b`` of ``Gamma_B chibar_B Gamma_B chibar_B Gamma_B``) against the
+directional derivative of ``Phi_3 = -(T/6) sum_{q,l} Tr[(chibar Gamma(-q))**3]``
+of the oracle; the inner ``chibar_B`` transposed (``"3T"``) misses.
 """
 import ast
 import functools
@@ -69,7 +75,7 @@ from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, antisym_tensor, band_k
                                    equal_time_density, equal_time_sample, expand_tables,
                                    geom_of, green_tau, k_of_modes, mesh_grid, mesh_momenta,
                                    minus_tau, modes_of_k, phi1_gradient, phi2_gradient,
-                                   random_green, ring2_gradient, ring2_value,
+                                   random_green, ring2_gradient, ring2_value, ring3_value,
                                    tau_to_matsubara, wick_hf_sigma_k, wick_sigma2)
 from tests.test_so_bond_oracles import _imported_modules
 
@@ -640,6 +646,83 @@ class TestMapping(unittest.TestCase):
         self.assertTrue(np.isfinite(dev) and np.isfinite(dev_slot), "non-finite metric")
         self.assertLessEqual(dev_slot, P_TOL)
         self.assertGreaterEqual(dev, P_MISS)
+
+
+#: the third-order check: directions, draws, stencil radius
+O3_NDIR = 4
+O3_MAX_DRAWS = 16
+O3_RADIUS = 0.25
+
+
+def metric_o3(fx, kind, nmat, ring_order):
+    """The third-order directional check on ``fx``: ``Sigma =
+    c1a_sigma_prod(fx, fx.tables_dict, G, ring_order=ring_order)`` against
+    ``c3 a`` with ``c3 = -T/6`` and ``a = beta dPsi_3/deps`` along ``dG``
+    (``ring3_value`` of the label vertex on the label geometry, the
+    ``R7_NODES``-point circle stencil at ``s = 1/4``; exact for the degree-6
+    ``Psi_3``), ``b = sum Sigma[n, k, A, B] dG[n, k, B, A]``.
+
+    Returns the worst ``|b - c3 a| / max(|c3 a|, max|Sigma| max|dG|)`` over
+    ``O3_NDIR`` accepted directions (R7 seeds and redraw: a direction with
+    ``|c3 a| < R7_FLOOR max|Sigma| max|dG|`` is redrawn from the next unused
+    seed, at most ``O3_MAX_DRAWS`` draws; a shortfall counts as 1), or NaN if
+    any of ``Sigma``, ``a``, ``b`` is non-finite. Asserts nothing."""
+    beta = fx.beta
+    c3 = -(1.0 / beta) / 6.0
+    G = c1a_green(fx, kind, nmat)
+    sigma = c1a_sigma_prod(fx, fx.tables_dict, G, ring_order=ring_order)
+    if not np.all(np.isfinite(sigma)):
+        return float("nan")
+    geom = geom_of(fx)
+    gamma = c1a_gamma_label(fx, fx.tables_dict, geom)
+    M = R7_NODES
+    w = np.exp(2j * np.pi * np.arange(M) / M)
+    smax = float(np.abs(sigma).max())
+    gmax = float(np.abs(G).max())
+    seeds = list(range(R7_SEED0, R7_SEED0 + O3_NDIR))
+    spare = R7_SEED0 + O3_NDIR
+    worst, accepted, draws = 0.0, 0, 0
+    while seeds and draws < O3_MAX_DRAWS and accepted < O3_NDIR:
+        seed = seeds.pop(0)
+        draws += 1
+        rng = np.random.default_rng(seed)
+        dg = rng.normal(size=G.shape) + 1j * rng.normal(size=G.shape)
+        dg *= gmax / float(np.abs(dg).max())
+        vals = ring3_value(G[None] + (O3_RADIUS * w)[:, None, None, None, None] * dg[None],
+                           beta, gamma, geom)
+        a = complex(beta * np.sum(vals * w.conj()) / (M * O3_RADIUS))
+        b = complex(np.sum(sigma * np.swapaxes(dg, -1, -2)))
+        if not (np.isfinite(a) and np.isfinite(b)):
+            return float("nan")
+        scale = smax * float(np.abs(dg).max())
+        if abs(c3 * a) < R7_FLOOR * scale:
+            seeds.append(spare)
+            spare += 1
+            continue
+        accepted += 1
+        worst = max(worst, abs(b - c3 * a) / max(abs(c3 * a), scale))
+    if accepted < O3_NDIR:
+        worst = max(worst, 1.0)
+    return float(worst)
+
+
+class TestThirdOrder(unittest.TestCase):
+    """The third-order ring through ``p_b`` (reported, not deciding)."""
+
+    def test_ring3_through_p_b(self):
+        devs = {(fx.L, kind, order): metric_o3(fx, kind, C1A_NMAT_FAST, order)
+                for fx in (FIXTURE_I, FIXTURE_II) for kind in ("band", "rand")
+                for order in (3, "3T")}
+        table = "\n".join("  L %d  %-4s  %-2s  %.3e" % (k[0], k[1], k[2], v)
+                          for k, v in devs.items())
+        print("\nthird order (Nmat %d):\n%s" % (C1A_NMAT_FAST, table))
+        for key, dev in devs.items():
+            with self.subTest(fixture=key[0], kind=key[1], ring_order=key[2]):
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                if key[2] == 3:
+                    self.assertLessEqual(dev, P_TOL, "\n" + table)
+                else:
+                    self.assertGreaterEqual(dev, P_MISS, "\n" + table)
 
 
 if __name__ == "__main__":
