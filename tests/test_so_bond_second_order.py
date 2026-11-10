@@ -21,6 +21,11 @@ interaction, with an explicit Wick contraction of the documented operators
 ``Phi_1 = (N/2) sum_IJ Gamma_IJ(0) n_I n_J`` of the label vertex (direct
 plus crossed filing) has the Wick Hartree-Fock self-energy as its gradient,
 ``Sigma_AB = beta dPhi_1/dG_BA``, with the one scalar ``beta``.
+
+``TestAdjoint`` checks the adjoint gradient of the second-order functional
+``Phi_2 = -(T/8) sum_{q,l} Tr[(chibar(q, l) Gamma(-q))**2]``: against the
+exhaustive circle stencil of every entry at Nmat 4, and by circle stencils
+along random directions (Ruling R7) at Nmat 8.
 """
 import ast
 import os
@@ -35,8 +40,8 @@ from tests.so_bond_oracles import (FIXTURE_I, FIXTURE_II, band_k, build_h1, buil
                                    delta23_monomials, ed_mode, equal_time_density,
                                    equal_time_sample, expand_tables, geom_of, green_tau,
                                    k_of_modes, mesh_grid, mesh_momenta, minus_tau,
-                                   modes_of_k, phi1_gradient, tau_to_matsubara,
-                                   wick_hf_sigma_k)
+                                   modes_of_k, phi1_gradient, phi2_gradient, ring2_gradient,
+                                   ring2_value, tau_to_matsubara, wick_hf_sigma_k)
 from tests.test_so_bond_oracles import _imported_modules
 
 _ORACLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "so_bond_oracles.py")
@@ -87,6 +92,96 @@ def metric_c1(kind, nmat, **filing):
     geom = geom_of(fx)
     g = phi1_gradient(G, beta, c1a_gamma_label(fx, tables, geom, **filing), geom)
     return fit_scalar(g, sigma)
+
+
+#: R7: stencil nodes, radii, seed of the first direction and the tolerance
+R7_NODES = 8
+R7_RADII = (1.0, 0.25)
+R7_SEED0 = 2710
+R7_TOL = 1e-12
+#: R7 non-vacuity floor: a direction with ``|a| < R7_FLOOR max|Sigma|`` is redrawn
+R7_FLOOR = 1e-6
+
+
+def directional_rows(value_fn, sigma, green, beta, n_dir, seed0=R7_SEED0):
+    """The R7 directional rows of a gradient ``sigma[n, k, A, B] = beta
+    dPhi/dG_BA(k, n)`` of the functional ``value_fn`` (a stack ``(S, nmat,
+    nvol, nd, nd)`` of Green functions -> ``(S,)`` values of ``Phi``).
+
+    Direction ``i`` is ``dG = rng.normal + i rng.normal`` of
+    ``np.random.default_rng(seed)``, scaled to ``max|dG| = max|G|``; the
+    first ``n_dir`` seeds are ``seed0 + i``. For each direction ``a(s) =
+    beta (1/(M s)) sum_j Phi(G + s w^j dG) w^{-j}`` (``w = e^{2 pi i/M}``,
+    ``M = R7_NODES``) at the radii ``s = 1`` and ``s = 1/4``, ``a = a(1)``,
+    and ``b = sum sigma[n, k, A, B] dG[n, k, B, A]`` (bilinear). A direction
+    with ``|a| < R7_FLOOR max|sigma|`` is not accepted and is replaced by the
+    next unused seed ``seed0 + n_dir + j`` (``j = 0, 1, ...``), with at most
+    ``4 n_dir`` draws in all.
+
+    Each row records ``seed``, ``accepted``, ``a``, ``a_quarter``, ``b``,
+    ``r_ab = |a - b| / max(max|sigma|, |a|)``, ``r_s = |a(1) - a(1/4)| /
+    max(|a(1)|, max|sigma|)``, and the failure report of R7: ``phi`` =
+    ``|Phi(G)|``, ``max_g``, ``max_dg``, ``s`` = the radii and ``fourier`` =
+    the ``M`` coefficients ``(1/M) sum_j Phi(G + s w^j dG) w^{-jp}`` of each
+    radius. Asserts nothing."""
+    green = np.asarray(green, dtype=np.complex128)
+    sigma = np.asarray(sigma, dtype=np.complex128)
+    M = R7_NODES
+    w = np.exp(2j * np.pi * np.arange(M) / M)
+    smax = float(np.abs(sigma).max())
+    gmax = float(np.abs(green).max())
+    phi0 = abs(complex(np.asarray(value_fn(green[None])).reshape(-1)[0]))
+    radii = np.array(R7_RADII)
+    nodes = (radii[:, None] * w[None, :]).reshape(-1)                   # (len(radii) M,)
+    rows, accepted = [], 0
+    seeds = list(range(seed0, seed0 + n_dir))
+    spare = seed0 + n_dir
+    while seeds and len(rows) < 4 * n_dir:
+        seed = seeds.pop(0)
+        rng = np.random.default_rng(seed)
+        dg = rng.normal(size=green.shape) + 1j * rng.normal(size=green.shape)
+        dg *= gmax / float(np.abs(dg).max())
+        vals = np.asarray(value_fn(green[None] + nodes[:, None, None, None, None] * dg[None]))
+        vals = vals.reshape(len(radii), M)
+        fourier = np.array([[np.sum(v * w ** (-p)) / M for p in range(M)] for v in vals])
+        a_s = beta * fourier[:, 1] / radii
+        a = complex(a_s[0])
+        b = complex(np.sum(sigma * np.swapaxes(dg, -1, -2)))
+        ok = abs(a) >= R7_FLOOR * smax
+        rows.append({"seed": seed, "accepted": bool(ok), "a": a, "a_quarter": complex(a_s[1]),
+                     "b": b, "r_ab": abs(a - b) / max(smax, abs(a)),
+                     "r_s": abs(a_s[0] - a_s[1]) / max(abs(a_s[0]), smax),
+                     "phi": phi0, "max_g": gmax, "max_dg": float(np.abs(dg).max()),
+                     "s": tuple(R7_RADII), "fourier": fourier})
+        if ok:
+            accepted += 1
+        else:
+            seeds.append(spare)
+            spare += 1
+    return rows
+
+
+def metric_adjoint(fx, kind, nmat, n_dir):
+    """The R7 check of ``Sigma_F = -ring2_gradient/8`` (``beta dPhi_2/dG``)
+    against ``Phi_2 = -(T/8) ring2_value`` on ``fx`` (its tables on its label
+    geometry, the Green function ``c1a_green(fx, kind, nmat)``).
+
+    Returns ``(worst, rows)``: ``rows`` from :func:`directional_rows` and
+    ``worst`` the largest ``r_ab`` / ``r_s`` of the accepted rows; when fewer
+    than ``n_dir`` directions are accepted the shortfall counts as a relative
+    miss of 1. R7 passes iff ``worst <= R7_TOL``. Asserts nothing."""
+    beta = fx.beta
+    geom = geom_of(fx)
+    gamma = c1a_gamma_label(fx, fx.tables_dict, geom)
+    G = c1a_green(fx, kind, nmat)
+    sigma = -ring2_gradient(G, beta, gamma, geom) / 8.0
+    rows = directional_rows(lambda st: -(1.0 / beta) / 8.0 * ring2_value(st, beta, gamma, geom),
+                            sigma, G, beta, n_dir)
+    good = [r for r in rows if r["accepted"]]
+    worst = max([max(r["r_ab"], r["r_s"]) for r in good], default=0.0)
+    if len(good) < n_dir:
+        worst = max(worst, 1.0)
+    return float(worst), rows
 
 
 class TestConventions(unittest.TestCase):
@@ -194,6 +289,31 @@ class TestFirstOrderControl(unittest.TestCase):
                 residual, s = metric_c1(kind, C1A_NMAT_FAST, crossed=False)
                 self.assertTrue(np.isfinite(residual) and np.isfinite(s), "non-finite metric")
                 self.assertGreaterEqual(residual, 1e-3)
+
+
+
+class TestAdjoint(unittest.TestCase):
+    def test_exhaustive_stencil_nmat4(self):
+        for fx in (FIXTURE_I, FIXTURE_II):
+            with self.subTest(fixture=fx.L):
+                geom = geom_of(fx)
+                gamma = c1a_gamma_label(fx, fx.tables_dict, geom)
+                G = c1a_green(fx, "rand", 4)
+                adj = -ring2_gradient(G, fx.beta, gamma, geom) / 8.0
+                ref = phi2_gradient(G, fx.beta, gamma, geom)
+                self.assertEqual(adj.shape, G.shape)
+                dev = rel(adj, ref)
+                self.assertTrue(np.isfinite(dev), "non-finite metric")
+                self.assertLessEqual(dev, 1e-12)
+
+    def test_directional_fast(self):
+        for fx in (FIXTURE_I, FIXTURE_II):
+            for kind in ("band", "rand"):
+                with self.subTest(fixture=fx.L, kind=kind):
+                    worst, rows = metric_adjoint(fx, kind, C1A_NMAT_FAST, 8)
+                    self.assertTrue(np.isfinite(worst), "non-finite metric")
+                    self.assertEqual(sum(r["accepted"] for r in rows), 8)
+                    self.assertLessEqual(worst, R7_TOL, rows)
 
 
 if __name__ == "__main__":

@@ -2115,3 +2115,105 @@ def phi1_gradient(green, beta, gamma_label, geom):
     v = (ghat @ n).reshape(-1, nd, nd)                                  # (a, A, B)
     grad = np.einsum("ka,aij->kij", pk, v) / beta
     return np.repeat(grad[None], nmat, axis=0)
+
+
+# ---------------------------------------------------------------------------
+# Second order (PR C1a): the ring value Psi and its adjoint gradient
+# ---------------------------------------------------------------------------
+
+def _ring_inputs(green, gamma_label, geom, where):
+    """Shape checks shared by the ring functionals; returns ``(green, gamma(-q),
+    NL)`` with ``green`` complex128 of shape ``(..., nmat, nvol, nd, nd)``."""
+    green = np.asarray(green, dtype=np.complex128)
+    nvol, nd = green.shape[-3], green.shape[-1]
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    gamma = np.asarray(gamma_label, dtype=np.complex128)
+    NL = np.asarray(geom.delta_r).reshape(-1, 3).shape[0] * nd * nd
+    if green.ndim not in (4, 5) or int(np.prod(shape)) != nvol \
+            or gamma.shape != (nvol, NL, NL):
+        raise ValueError("{}: green {} and Gamma {} do not share the labels and the mesh {}"
+                         .format(where, green.shape, gamma.shape, shape))
+    return green, gamma[mesh_negate(shape)], NL
+
+
+def ring2_value(green, beta, gamma_label, geom, *, chunk=32):
+    """``Psi = sum_{q, l} Tr[(chibar(q, l) Gamma(-q))**2]`` of the label
+    bubble :func:`lindhard_discrete` (every bosonic slice, wrapped second
+    leg) and ``Gamma(-q)`` read at :func:`mesh_negate`; ``Phi_2 = -(T/8) Psi``.
+
+    ``green`` is ``(nmat, nvol, nd, nd)`` (returns a complex) or a stack
+    ``(S, nmat, nvol, nd, nd)`` (returns ``(S,)``), evaluated by
+    :func:`_lindhard_batch` on at most ``chunk`` Green functions per call."""
+    green, gmq, _ = _ring_inputs(green, gamma_label, geom, "ring2_value")
+    single = green.ndim == 4
+    stack = green[None] if single else green
+    out = np.empty(stack.shape[0], dtype=np.complex128)
+    chunk = max(1, int(chunk))
+    for s0 in range(0, stack.shape[0], chunk):
+        A = _lindhard_batch(stack[s0:s0 + chunk], beta, geom) @ gmq[None, None]
+        out[s0:s0 + chunk] = np.einsum("slqij,slqji->s", A, A)
+    return complex(out[0]) if single else out
+
+
+def _ring2_first_leg(green, lam, beta, geom):
+    """``F1[n, k, Y, Z] = -(T/N) sum_{q, l, a, b, X, W} Lambda_IJ(q, l) p_a(k)
+    p_b(k+q) G_WX(k+q, n_l(n))``, ``I = (a; X, Y)``, ``J = (b; Z, W)``,
+    ``p_a(k) = e^{+ik.d_a}``, ``n_l(n) = (n - l + nmat/2) mod nmat``: the
+    derivative of ``Psi`` through the first leg ``G_YZ(k, n)`` of the bubble.
+    ``lam`` is ``(nmat, nvol, NL, NL)``. One ``l`` at a time, two-operand
+    stages."""
+    nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    D = np.asarray(geom.delta_r, dtype=np.int64).reshape(-1, 3)
+    B = D.shape[0]
+    pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))        # (k, a)
+    add = mesh_add(shape)                                              # (q, k) -> k + q
+    pkq = pk[add]                                                      # (q, k, b)
+    out = np.zeros((nmat, nvol, nd, nd), dtype=np.complex128)
+    for l in range(nmat):
+        lam_l = lam[l].reshape(nvol, B, nd, nd, B, nd, nd)             # (q, a, X, Y, b, Z, W)
+        shifted = green[(np.arange(nmat) - l + nmat // 2) % nmat][:, add]   # (n, q, k, W, X)
+        E = pkq[None, :, :, :, None, None] * shifted[:, :, :, None, :, :]   # (n, q, k, b, W, X)
+        t = np.einsum("qaxybzw,nqkbwx->nkqayz", lam_l, E)
+        out += np.einsum("nkqayz,ka->nkyz", t, pk)
+    return (-(1.0 / beta) / nvol) * out
+
+
+def _ring2_second_leg(green, lam, beta, geom):
+    """``F2[m, k', W, X] = -(T/N) sum_{q, l, a, b, Y, Z} Lambda_IJ(q, l)
+    p_a(k'-q) p_b(k') G_YZ(k'-q, (m + l - nmat/2) mod nmat)``: the derivative
+    of ``Psi`` through the second leg ``G_WX(k', m)`` of the bubble
+    (``k' = k + q``, ``m = n_l(n)``). One ``l`` at a time, two-operand
+    stages."""
+    nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    D = np.asarray(geom.delta_r, dtype=np.int64).reshape(-1, 3)
+    B = D.shape[0]
+    pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))        # (k, a)
+    sub = mesh_add(shape)[mesh_negate(shape)]                          # (q, k') -> k' - q
+    pkmq = pk[sub]                                                     # (q, k', a)
+    out = np.zeros((nmat, nvol, nd, nd), dtype=np.complex128)
+    for l in range(nmat):
+        lam_l = lam[l].reshape(nvol, B, nd, nd, B, nd, nd)             # (q, a, X, Y, b, Z, W)
+        shifted = green[(np.arange(nmat) + l - nmat // 2) % nmat][:, sub]   # (m, q, k', Y, Z)
+        E = pkmq[None, :, :, :, None, None] * shifted[:, :, :, None, :, :]  # (m, q, k', a, Y, Z)
+        t = np.einsum("qaxybzw,mqkayz->mkqbwx", lam_l, E)
+        out += np.einsum("mkqbwx,kb->mkwx", t, pk)
+    return (-(1.0 / beta) / nvol) * out
+
+
+def ring2_gradient(green, beta, gamma_label, geom):
+    """``out[n, k, A, B] = dPsi/dG_BA(k, i w_n)`` ``(nmat, nvol, nd, nd)`` of
+    :func:`ring2_value`, by the adjoint: ``dPsi = sum Lambda_IJ dchibar_IJ``
+    with ``Lambda(q, l) = 2 [Gamma(-q) chibar(q, l) Gamma(-q)]^T``, pulled
+    back through both legs of :func:`lindhard_discrete`
+    (:func:`_ring2_first_leg`, :func:`_ring2_second_leg`, looked up at call
+    time). ``Sigma_F = beta (-T/8) out = -out/8``."""
+    green, gmq, _ = _ring_inputs(green, gamma_label, geom, "ring2_gradient")
+    if green.ndim != 4:
+        raise ValueError("ring2_gradient: green {} is not (nmat, nvol, nd, nd)".format(
+            green.shape))
+    chi = lindhard_discrete(green, beta, geom)                         # (l, q, NL, NL)
+    lam = 2.0 * np.swapaxes((gmq[None] @ chi) @ gmq[None], -1, -2)
+    F = _ring2_first_leg(green, lam, beta, geom) + _ring2_second_leg(green, lam, beta, geom)
+    return np.ascontiguousarray(np.swapaxes(F, -1, -2))
