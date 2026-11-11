@@ -764,3 +764,266 @@ def sector_op_of(p, basis, M, *, adjoint=True, matmat=True):
         KH = np.ascontiguousarray(K.conj().T)
         kw["rmatvec"] = lambda y: KH @ np.asarray(y).ravel()
     return sc.SectorOp(p, LinearOperator((n, n), dtype=complex, **kw), basis, adjoint)
+
+
+# ---------------------------------------------------------------------------
+# Second order: grids, the on-site control and the Green functions
+# ---------------------------------------------------------------------------
+
+from tests.so_bond_oracles import FIXTURES, fixture_name, free_green, rel  # noqa: E402,F401
+
+#: Matsubara grids of the fast and the full-grid gates
+C1A_NMAT_FAST = 8
+C1A_NMAT_FULL = 64
+#: seed of the random (non-factorized) Green function ``"rand"``
+C1A_SEED = 2701
+#: the on-site control: FIXTURE_I's band with CoulombIntra only, on the
+#: single-channel (B = 1) label geometry
+C1A_ONSITE_TABLES = {"CoulombIntra": {((0, 0, 0), (0, 0)): 0.83}}
+C1A_ONSITE_GEOM = OracleGeometry([(0, 0, 0)], [0], (5, 1, 1))
+
+_C1A_KINDS = ("band", "rand", "herm")
+
+
+@functools.lru_cache(maxsize=None)
+def _c1a_green_cached(name, kind, nmat):
+    fx = FIXTURES[name]
+    if kind == "band":
+        h1_k, mu, beta = fx.band
+        g = free_green(h1_k, mu, beta, nmat)
+    else:
+        g = random_green(C1A_SEED, nmat, fx.nvol, fx.nd)
+        if kind == "herm":
+            g = 0.5 * (g + np.conj(np.swapaxes(g[::-1], -1, -2)))
+    g = np.ascontiguousarray(g, dtype=np.complex128)
+    g.flags.writeable = False
+    return g
+
+
+def c1a_green(fx, kind, nmat):
+    """The Green function ``(nmat, nvol, nd, nd)`` of a pinned fixture (no
+    tail): ``"band"`` = the free Green function of ``fx.band``, ``"rand"`` =
+    ``random_green(C1A_SEED, ...)``, ``"herm"`` = ``1/2 [G_r(k, n) +
+    G_r(k, nmat - 1 - n)^dagger]``. Each call returns a fresh copy."""
+    name = fixture_name(fx)
+    if name is None:
+        raise ValueError("c1a_green: the fixture is not a pinned (named) fixture")
+    if kind not in _C1A_KINDS:
+        raise ValueError("c1a_green: unknown kind {!r} (expected one of {})".format(
+            kind, _C1A_KINDS))
+    return _c1a_green_cached(name, kind, int(nmat)).copy()
+
+
+def win(nmat):
+    """The inner eighth of a frequency grid of ``nmat`` points."""
+    return slice(nmat // 2 - nmat // 16, nmat // 2 + nmat // 16)
+
+
+import tests.so_bond_oracles as so_bond_oracles  # noqa: E402
+
+
+def c1a_gamma_label(fx, tables, geom, **filing):
+    """The label vertex ``Gamma(q)`` of ``tables`` on the labels of ``geom``
+    (``file_gamma_label`` of the documented operators; ``filing`` selects a
+    wrong filing). Looked up through the module attribute
+    ``so_bond_oracles.file_gamma_label`` at call time."""
+    return so_bond_oracles.file_gamma_label(
+        so_bond_oracles.expand_tables(tables, fx.norb_phys), geom, fx.nd, **filing)
+
+
+def c1a_onsite_flex_sigma(green, *, rpa_return):
+    """The production second order ``(nmat, nvol, nd, nd)`` of one
+    spin-orbital FLEX map (``calc_scheme = "general"``, ``flex_hartree_fock
+    = true``) with the on-site control tables on FIXTURE_I's ring, at the
+    Green function ``green`` ``(nmat, 5, 2, 2)``.
+
+    The inputs (identity cell, FIXTURE_I's Transfer rows in 1-based
+    interleaved indices, ``C1A_ONSITE_TABLES`` with norb 1) are written to a
+    temporary directory that is removed before returning. The bubble is
+    ``_calc_chi0q(G[None], 0, beta)``; ``_flex_compute_veff_spinful`` runs
+    with ``_solve_rpa`` replaced by ``rpa_return(chi0q)`` (with the identity,
+    ``chi := chibar`` and ``V = P[1/2 Gamma chibar Gamma]`` exactly, the
+    second order); the result is ``_calc_self_energy_general(G[None], V,
+    beta)[0]``. ``rpa_return`` is a required callable ``chi0q -> chi``."""
+    import hwave.solver.flex as flex_mod
+    from unittest import mock
+    from tests.test_second_order_factors import _write_wan
+    from tests.so_bond_oracles import FIXTURE_I
+    fx = FIXTURE_I
+    beta = fx.beta
+    green = np.asarray(green, dtype=np.complex128)
+    nmat = green.shape[0]
+    d = tempfile.mkdtemp(prefix="c1a_onsite_")
+    try:
+        with open(os.path.join(d, "geom.dat"), "w") as f:
+            f.write("1 0 0\n0 1 0\n0 0 1\n2\n" + "0 0 0\n" * 2)
+        rows = [(R[0], R[1], R[2], A + 1, B + 1, complex(v).real, complex(v).imag)
+                for (R, (A, B)), v in sorted(fx.transfer_dict.items())]
+        _write_wan(os.path.join(d, "transfer.dat"), "Transfer", 2, rows)
+        idict = {"path_to_input": d, "Geometry": "geom.dat", "Transfer": "transfer.dat"}
+        for t, tbl in C1A_ONSITE_TABLES.items():
+            crows = [(R[0], R[1], R[2], a + 1, b + 1, complex(v).real, complex(v).imag)
+                     for (R, (a, b)), v in sorted(tbl.items())]
+            _write_wan(os.path.join(d, t + ".dat"), t, 1, crows)
+            idict[t] = t + ".dat"
+        r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
+        par = {"T": 1.0 / beta, "mu": fx.mu, "CellShape": list(fx.spatial_shape),
+               "SubShape": [1, 1, 1], "Nmat": nmat, "IterationMax": 1, "Mix": 1.0, "EPS": 1,
+               "flex_hartree_fock": True}
+        with quiet():
+            s = flex_mod.FLEX(r.get_param("ham"), {}, {
+                "mode": "FLEX", "param": par, "enable_spin_orbital": True,
+                "calc_scheme": "general"})
+            s._calc_epsilon_k({})
+            Gk = green[None]
+            chi0 = s._calc_chi0q(Gk, np.zeros_like(Gk), beta)[0]
+            with mock.patch.object(s, "_solve_rpa",
+                                   side_effect=lambda chi0q, ham: rpa_return(chi0q)):
+                _, v, _ = s._flex_compute_veff_spinful(chi0)
+            return s._calc_self_energy_general(Gk, v, beta)[0]
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# The production chain of the second-order (and third-order) ring (gate C1a-P)
+# ---------------------------------------------------------------------------
+
+def _pair_fields(geom, nd):
+    """``(I, m, x, y)`` of the flat slot ``I = m nd**2 + x nd + y``."""
+    npair = nd * nd
+    I = np.arange(len(geom.delta_r) * npair)
+    return I, I // npair, (I % npair) // nd, I % nd
+
+
+def _read(M, f):
+    """``W[..., I, J] = M[..., f(I), f(J)]``."""
+    return M[..., f[:, None], f]
+
+
+def _reading_reversed(M, geom, nd):
+    _, m, x, y = _pair_fields(geom, nd)
+    return _read(M, np.asarray(geom.reverse)[m] * nd * nd + y * nd + x)
+
+
+def _reading_reversed_phased(sign):
+    def reading(M, geom, nd):
+        _, m, _, _ = _pair_fields(geom, nd)
+        ph = np.asarray(geom.phase)[:, m]                       # (nvol, ND)
+        p = ph if sign > 0 else 1.0 / ph
+        return _reading_reversed(M, geom, nd) * (p[:, :, None] * np.conj(p)[:, None, :])
+    return reading
+
+
+def _reading_channel0_identity(M, geom, nd):
+    I, m, x, y = _pair_fields(geom, nd)
+    return _read(M, np.where(m == 0, I, m * nd * nd + y * nd + x))
+
+
+#: the pair readings ``(M, geom, nd) -> W`` of the ring ``M``
+#: ``(nmat, nvol, ND, ND)`` on the slot geometry; ``"p_b"`` is accepted (the
+#: module attribute ``so_bond.p_b`` is looked up at call time), the others
+#: are rejected readings ``W[..., I, J] = M[..., f(I), f(J)]`` (the phased
+#: ones times ``e^{+-iq.(dr_m(I) - dr_m(J))}``)
+READINGS = {
+    "p_b": lambda M, geom, nd: so_bond.p_b(M, nd),
+    "reversed": _reading_reversed,
+    "reversed_plus": _reading_reversed_phased(+1),
+    "reversed_minus": _reading_reversed_phased(-1),
+    "no_swap": lambda M, geom, nd: M,
+    "channel0_identity": _reading_channel0_identity,
+}
+
+
+def c1a_sigma_prod(fx, tables, green, *, reading="p_b", ring_factor=0.5, ring_order=2):
+    """The production self-energy ``(nmat, nvol, nd, nd)`` of the ring of
+    ``tables`` on ``fx``'s mesh at the Green function ``green`` ``(nmat,
+    nvol, nd, nd)`` (dense layout, no caps).
+
+    ``Gamma_B`` (``so_bond_vertex``) and ``chibar_B`` (``so_bond_bubble``
+    into a store, detached) give the ring ``M = ring_factor Gamma_B chibar_B
+    Gamma_B`` (``ring_order = 2``), ``Gamma_B chibar_B Gamma_B chibar_B
+    Gamma_B`` (``3``; coefficient +1, the NEGATIVE of the third-order part
+    ``-Gamma chibar Gamma chibar Gamma`` of the solver's ``Gamma (chi -
+    chibar/2) Gamma``) or its negative control with the first ``chibar_B``
+    transposed (``"3T"``); ``W = READINGS[reading](M, geom,
+    nd)`` on the slot geometry ``so_bond.slot_geometry(topo, shape)``
+    (looked up at call time), and ``flex_bond.calc_self_energy_bond`` of
+    ``W``. A geometry that is not a ``BondSlotGeometry`` with the channels
+    of the topology is refused before the transport."""
+    if ring_order not in (2, 3, "3T"):
+        raise ValueError("c1a_sigma_prod: unknown ring_order {!r}".format(ring_order))
+    if ring_order != 2 and ring_factor != 0.5:
+        raise ValueError("c1a_sigma_prod: ring_factor applies to ring_order=2 only")
+    nmat = green.shape[0]
+    c = compile_interaction(tables, fx.norb_phys)
+    topo = so_bond_topology(c, CELL)
+    geom = so_bond.slot_geometry(topo, fx.spatial_shape)
+    if not (isinstance(geom, so_bond.BondSlotGeometry)
+            and np.array_equal(geom.delta_r, topo.delta_r)):
+        raise ValueError("c1a_sigma_prod: the transport needs the slot geometry of the topology")
+    plan = plan_so_bond(nmat=nmat, nvol=fx.nvol, B=len(topo.delta_r), nd=fx.nd,
+                        consumers=("chi_dynamic",), caps=NOCAP, layout="dense")
+    gamma_b = so_bond_vertex(c, topo, fx.spatial_shape, plan=plan)
+    with flex_bond.BondBlockStore(nmat, fx.nvol, plan.ND, fx.nd ** 2, ("chibar",)) as st:
+        so_bond.so_bond_bubble(green[None].copy(), None, fx.beta, topo, fx.spatial_shape,
+                               plan=plan, freq="all", sink=st)
+        chibar = st.detach("chibar")
+    assert chibar.shape == (nmat, fx.nvol, plan.ND, plan.ND), chibar.shape
+    g = gamma_b[None]
+    if ring_order == 2:
+        t1 = g @ chibar
+        M = t1 @ g
+        del t1
+        M *= ring_factor
+    else:
+        t1 = g @ (chibar if ring_order == 3 else np.swapaxes(chibar, -2, -1))
+        t2 = t1 @ g
+        del t1
+        t3 = t2 @ chibar
+        del t2
+        M = t3 @ g
+        del t3
+    del chibar
+    W = READINGS[reading](M, geom, fx.nd)
+    del M
+    return flex_bond.calc_self_energy_bond(eb.ArrayBlockSource({"W": W}, fx.nd ** 2),
+                                           green[None].copy(), fx.beta, geom, fx.spatial_shape,
+                                           fx.nd, 1)[0]
+
+
+def c1a_hf_param_ham(tables, spatial_shape):
+    """A ``param_ham`` of ``tables`` for ``build_flex_hf_tables``:
+    ``{type: {((Rx mod Nx, Ry mod Ny, Rz mod Nz), (a, b)): complex}}`` with
+    0-based orbitals and the values of keys that coincide on the mesh summed.
+    This is the structure ``QLMSkInput`` hands the solver except that the
+    reader keeps the raw (possibly negative) displacements ``R`` while this
+    helper reduces them modulo the mesh; ``build_flex_hf_tables`` accepts
+    either and gives the same Hartree-Fock map."""
+    shape = tuple(int(n) for n in spatial_shape)
+    out = {}
+    for itype, tbl in tables.items():
+        rows = {}
+        for (R, (a, b)), v in tbl.items():
+            R = (int(R), 0, 0) if isinstance(R, (int, np.integer)) else tuple(int(x) for x in R)
+            key = (tuple(r % n for r, n in zip(R, shape)), (int(a), int(b)))
+            rows[key] = rows.get(key, 0.0) + complex(v)
+        out[itype] = rows
+    return out
+
+
+def c1a_rho_r(rho_modes, spatial_shape, norb_phys):
+    """The real-space spin-block density ``(nvol, nd, nd)`` of the
+    interleaved-mode density ``rho_modes[p, q] = <c+_p c_q>``:
+    ``rho_r[r, X, Y] = rho[ed_mode(r, X), ed_mode(0, Y)] = <c+_X(r) c_Y(0)>``,
+    the convention of ``hartree_fock.accumulate_hf`` (``r`` the C-order cell
+    index)."""
+    rho = np.asarray(rho_modes)
+    nvol = int(np.prod(spatial_shape))
+    nd = 2 * int(norb_phys)
+    X = np.arange(nd)
+    rows = so_bond_oracles.ed_mode(np.arange(nvol)[:, None], X[None, :], norb_phys)  # [r, X]
+    cols = so_bond_oracles.ed_mode(0, X, norb_phys)                                   # [Y]
+    if rho.shape != (nvol * nd, nvol * nd):
+        raise ValueError("c1a_rho_r: density {0} is not ({1}, {1})".format(rho.shape, nvol * nd))
+    return np.ascontiguousarray(rho[rows[:, :, None], cols[None, None, :]], dtype=np.complex128)
