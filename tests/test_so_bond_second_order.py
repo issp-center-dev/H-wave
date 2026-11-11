@@ -60,8 +60,8 @@ reading of ``READINGS`` misses, and the transport refuses (or, fed a
 permuted label geometry, misses with) a geometry that is not the slot
 geometry of the topology.
 
-``TestThirdOrder`` (asserted at 1e-12, but not part of the second-order
-verdict: the next PR's formula is second order) checks
+``TestThirdOrder`` (asserted at 1e-12, but not part of ``controls_pass`` or
+the second-order gates) checks
 the same chain at third order. ``c1a_sigma_prod(..., ring_order=3)`` is the
 POSITIVE chain ``Gamma_B chibar_B Gamma_B chibar_B Gamma_B`` through
 ``p_b`` and the transport; the test pins it to ``beta d/dG`` of
@@ -80,8 +80,10 @@ self-energy is the negative of the tested chain. The chain with the first
 with off-site rows of every type against the Wick Hartree-Fock self-energy
 on FIXTURE_I and FIXTURE_II (one and two physical orbitals) at three
 densities, given the density convention ``rho_r[r, X, Y] = <c+_X(r)
-c_Y(0)>`` (``c1a_rho_r``); four wrong readings of the density (cells
-swapped, X/Y swapped, conjugated, ``r -> -r``) miss.
+c_Y(0)>`` (``c1a_rho_r``); the wrong readings of the density (cells
+swapped, X/Y swapped, conjugated, ``r -> -r``) miss. For the
+translation-invariant densities used here "cells swapped" and ``r -> -r``
+give the same array, so these are three distinct wrong readings.
 
 Gate labels in the messages: C1a-T the discretization control, C1a-C1 the
 first-order control, C1a-C2 the on-site second-order control, C1a-F the
@@ -89,8 +91,10 @@ formula, C1a-P the production chain, C1a-HF the Hartree-Fock map with
 off-site rows (C1a-ED, in ``tests.test_so_bond_second_order_ed``, is the
 exact-diagonalization check).
 
-``TestMutationTable`` applies one mutation per gate (a hook argument, or a
-module attribute looked up at call time), asserts that it was applied and
+``TestMutationTable`` applies nine targeted mutations, across the controls,
+the production chain, the Hartree-Fock map, the on-site FLEX check and the
+third-order ring (each a hook argument, or a module attribute looked up at
+call time), asserts that it was applied and
 that the gate it targets then fails; it never calls ``controls_pass``.
 
 Scope and hand-off. What these tests fix for the implementation of the SO
