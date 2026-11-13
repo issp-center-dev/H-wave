@@ -974,6 +974,11 @@ class UHFk(solver_base):
         return green
 
     def _initial_green_uhf(self, info, geom):
+        if self.has_sublattice:
+            logger.error("initial_uhf requires SubShape = [1, 1, 1]; give a sublattice-ordered initial state through "
+                         "initial (green.npz) instead")
+            exit(1)
+
         lx,ly,lz = self.cellshape
         lvol     = self.cellvol
         norb     = self.norb
@@ -981,7 +986,7 @@ class UHFk(solver_base):
         ns       = self.ns
 
         def _pack_site(ix,iy,iz):
-            return ix + lx * (iy + ly * iz)
+            return iz + lz * (iy + ly * ix)
 
         tbl = {}
         for idx, (ix,iy,iz,a) in geom["site2vec"].items():
@@ -991,13 +996,17 @@ class UHFk(solver_base):
         green_uhf = np.zeros((lvol,lvol,ns,norb,ns,norb),dtype=np.complex128)
         for (i,s,j,t),v in info.items():
             isite, a = tbl[i]
-            jsite, b = tbl[j]
+            _, b = tbl[j]
+            ix,iy,iz,_ = geom["site2vec"][i]
+            jx,jy,jz,_ = geom["site2vec"][j]
+            # G(d) = <c^dag(R+d)c(R)>, with the same sign as _save_greenone.
+            jsite = _pack_site((ix-jx) % lx, (iy-jy) % ly, (iz-jz) % lz)
             green_uhf[isite,jsite,s,a,t,b] = v
 
-        if self.has_sublattice:
-            return self._reshape_green(green_uhf[0])
-        else:
-            return green_uhf[0]
+        # Primitive-cell translation invariance makes the origin row sufficient
+        # for this initial guess. Sublattice-ordered states need green_sublattice
+        # input instead: a single origin row cannot preserve their site dependence.
+        return green_uhf[0]
 
     @do_profile
     def _make_ham_trans(self):
@@ -1954,10 +1963,7 @@ class UHFk(solver_base):
                 "supported in spin-orbital mode")
             return None
 
-        if self.has_sublattice:
-            gr = self._deflate_green(self.Green)
-        else:
-            gr = self.Green
+        gr = self.Green
 
         geom = green_info["geometry_uhf"]
         greenone = green_info["onebodyg_uhf"]
@@ -1971,18 +1977,33 @@ class UHFk(solver_base):
         tbl = geom["site2vec"]
 
         def _pack_site(ix,iy,iz):
-            return ix + lx * (iy + ly * iz)
+            return iz + lz * (iy + ly * ix)
 
         with open(file_name, "w") as fw:
-            # G(i,a,s; j,b,t) := G(a,s;b,t;j-i)
+            # Output <c^dag(i,a,s) c(j,b,t)> for each requested pair.
             for (i,s,j,t) in greenone:
                 (ix,iy,iz,a) = tbl[i]
                 (jx,jy,jz,b) = tbl[j]
 
-                kx = (jx - ix + lx) % lx
-                ky = (jy - iy + ly) % ly
-                kz = (jz - iz + lz) % lz
-                idx = _pack_site(kx,ky,kz)
+                if self.has_sublattice:
+                    bx,by,bz = self.subshape
+                    nx,ny,nz = self.shape
+                    a += self.norb_orig * (ix % bx + bx * (iy % by + by * (iz % bz)))
+                    b += self.norb_orig * (jx % bx + bx * (jy % by + by * (jz % bz)))
+
+                    # _green uses exp(-ik.r), so the creation site supplies
+                    # the positive displacement: G(r) = <c^dag(R+r)c(R)>.
+                    kx = (ix // bx - jx // bx) % nx
+                    ky = (iy // by - jy // by) % ny
+                    kz = (iz // bz - jz // bz) % nz
+                    # Match _green's (nx, ny, nz, ...) C-order reshape.
+                    idx = kz + nz * (ky + ny * kx)
+                else:
+                    # As in the folded branch, d = R_i - R_j.
+                    kx = (ix - jx) % lx
+                    ky = (iy - jy) % ly
+                    kz = (iz - jz) % lz
+                    idx = _pack_site(kx,ky,kz)
 
                 v = gr[idx,s,a,t,b]
 
