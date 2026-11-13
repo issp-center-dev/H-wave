@@ -722,6 +722,11 @@ class Interaction:
         # mode options
         self.enable_spin_orbital = spin_orbital.resolve_flag(info_mode)
 
+        # a spin-resolved (9-column) Transfer is read but not yet consumed
+        # by RPA / FLEX (issue #323)
+        spin_orbital.reject_spin_resolved_transfer(
+            param_ham, "RPA/FLEX", self.enable_spin_orbital)
+
         # issue #88: in spin-orbital mode the Extern file is written in
         # PHYSICAL orbital indices 1..norb_phys; _make_ham_trans would drop
         # an out-of-range row without a word, so refuse it here, on the
