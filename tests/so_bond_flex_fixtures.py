@@ -10,7 +10,10 @@ and Extern indices, a 4x4x1 mesh with one physical orbital):
 * :data:`SOC_ALL_TYPES_CPH` -- :data:`SOC_ALL_TYPES` with a complex off-site
   PairHop: the dense layout;
 * :data:`ZEEMAN_EXTERN_ONSITE` -- ``ZEEMAN_EXTERN`` with its on-site rows only
-  (``B = 1``).
+  (``B = 1``);
+* :data:`SU2_MIXED` -- an array-level interaction table (two physical
+  orbitals, the bonds 0 and +-1 of a chain): spin-rotation invariant on
+  mixed bonds.
 
 :func:`write_flex_case` writes the files of a fixture and returns the
 ``input_dict`` of a FLEX run at a fixed chemical potential;
@@ -31,8 +34,9 @@ import numpy as np
 
 from tests import so_bond_entry_fixtures as F
 from tests.so_bond_entry_fixtures import _nn, _override
+from tests.so_bond_oracles import closed_row
 
-__all__ = ["V_CPH", "ZEEMAN_SZ_ALL", "SOC_ALL_TYPES_CPH", "ZEEMAN_EXTERN_ONSITE",
+__all__ = ["V_CPH", "ZEEMAN_SZ_ALL", "SOC_ALL_TYPES_CPH", "ZEEMAN_EXTERN_ONSITE", "SU2_MIXED",
            "FLEX_NMAT", "FLEX_T", "onsite_rows", "interaction_tables", "fixture_mu",
            "write_flex_case", "build_solver", "RunResult", "run_input", "run_flex",
            "one_map", "converge",
@@ -77,6 +81,20 @@ def onsite_rows(fixture, name):
 
 #: the band and field of ZEEMAN_EXTERN with its on-site interaction rows only
 ZEEMAN_EXTERN_ONSITE = onsite_rows(F.ZEEMAN_EXTERN, "ZEEMAN_EXTERN_ONSITE")
+
+
+#: a spin-rotation invariant interaction on mixed bonds (norb_phys = 2; the
+#: compiler's table form, 0-based orbitals): inter-orbital CoulombInter
+#: different at +R and -R, Hund + Ising + Exchange with J_Exchange = J_Hund -
+#: 2 J_Ising, real PairHop, on-site CoulombIntra
+SU2_MIXED = {
+    "CoulombIntra": {((0, 0, 0), (0, 0)): 0.83, ((0, 0, 0), (1, 1)): 0.83},
+    "CoulombInter": {**closed_row(1, 0, 1, 0.37), **closed_row(-1, 0, 1, 0.22)},
+    "Hund": closed_row(1, 0, 1, 0.53),
+    "Ising": closed_row(1, 0, 1, 0.11),
+    "Exchange": closed_row(1, 0, 1, 0.53 - 2 * 0.11),
+    "PairHop": closed_row(1, 0, 1, 0.43),
+}
 
 
 def interaction_tables(fixture):
