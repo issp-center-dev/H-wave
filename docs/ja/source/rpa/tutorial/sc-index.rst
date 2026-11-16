@@ -2022,9 +2022,12 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
      - 偏極した一体ハミルトニアンでは general は例外
    * - ``enable_spin_orbital``
      - 拒否
-     - ``flex_hartree_fock = true``\ で受け付ける（オンサイトおよびセル内の相互作用のみ）
-     - 静的な\ ``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこの出力を読みます。
-       :ref:`sc_spin_orbital`\ を参照
+     - ``flex_hartree_fock = true``\ で受け付ける（オンサイトおよびセル内の相互作用。
+       オフサイトの行は\ ``longitudinal_bond_channels = true``\ で受け付ける）
+     - 静的な\ ``hwave_sc``\ とオンサイトの動的な\ ``hwave_sc``\ は
+       ``longitudinal_bond_channels``\ を使わない計算の出力を\ ``chi0q_mode = "flex"``\ で
+       読みます（\ :ref:`sc_spin_orbital`\ と\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
+       ボンドチャネル付きの計算の出力はまだ読めません（\ :ref:`flex_so_bond_tutorial`\ を参照）
    * - 保存される感受率
      - 密度‐密度成分のみ\ ``chi_{(a,a),(b,b)}``
      - orbital-pair 全体
@@ -2111,8 +2114,9 @@ Eliashberg 頂点に入る相互作用
      - RPA と同じ
      - RPA と同じ
 
-スピン軌道の FLEX は、このバージョンではボンド分解チャネル
-（\ ``longitudinal_bond_channels``\ ）を拒否します。スピン軌道の\ ``hwave_sc``\ は
+スピン軌道の FLEX はボンド分解チャネル（\ ``longitudinal_bond_channels = true``\ 、
+:ref:`flex_so_bond_tutorial`\ ）を受け付けますが、\ ``hwave_sc``\ はその計算の出力を
+まだ読みません。スピン軌道の\ ``hwave_sc``\ は
 ``frequency = "static"``\ では\ ``bond_channels = true``\ を受け付け
 （\ :ref:`sc_so_bond_static`\ ）、\ ``frequency = "dynamic"``\ では拒否します。
 
@@ -2224,8 +2228,8 @@ pairing vertex と、reduced スキームが保存していない横成分感受
 - ``chi0q_mode = "calc"``\ （スピンフルな\ :math:`\chi_0`\ を内部計算）、
   ``"load"``\ （スピン軌道 RPA が出力した一般の4添字 chi0q。**静的のみ**）、または
   ``"flex"``\ （スピン軌道 FLEX の出力。FLEX は\ ``calc_scheme = "general"``\ かつ
-  ``[mode.param] flex_hartree_fock = true``\ で実行したものに限ります。
-  :ref:`flex_spin_orbital`\ を参照）。動的ソルバーでは\ ``chi0q_mode``\ を
+  ``[mode.param] flex_hartree_fock = true``\ で、\ ``longitudinal_bond_channels``\ なしで
+  実行したものに限ります。\ :ref:`flex_spin_orbital`\ を参照）。動的ソルバーでは\ ``chi0q_mode``\ を
   ``"flex"``\ または\ ``"calc"``\ に明示的に指定する必要があり、\ ``"load"``\ と
   指定なし（既定値が\ ``"load"``\ ）は拒否されます;
 - ``solver_mode = "iteration"``\ 、\ ``"eigenvalue"``\ 、\ ``"both"``\ と
@@ -2360,7 +2364,9 @@ Pauli 射影
 
 ``chi0q_mode = "flex"``\ では、\ ``enable_spin_orbital = true``\ 、
 ``calc_scheme = "general"``\ 、\ ``[mode.param] flex_hartree_fock = true``\ で実行した
-FLEX の4つのアーカイブを\ ``[file.input] path_to_flex_output``\ （なければ
+FLEX の4つのアーカイブ（\ ``longitudinal_bond_channels = true``\ の計算は拒否されます。その
+アーカイブは\ ``producer_stage = "flex_so_bond"``\ を持ち、この版では読まないためです。
+:ref:`flex_so_bond_tutorial`\ を参照）を\ ``[file.input] path_to_flex_output``\ （なければ
 ``[file.output] path_to_output``\ ）から読みます。
 
 - ``[eliashberg] flex_chiq``\ （既定値\ ``"chiq.npz"``\ ）: スピンフル感受率

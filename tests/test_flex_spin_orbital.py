@@ -159,11 +159,13 @@ class TestConstructionGates(_TmpDir):
                                     r"\[mode\.param\] flex_hartree_fock = true"):
             _build(self.d, files, flex_hartree_fock=False)
 
-    def test_refuses_longitudinal_bond_channels(self):
+    def test_gate_accepted(self):
+        """The bond channels are admitted at construction (#270; the
+        admission itself runs in the preflight: test_flex_so_bond_config)."""
         files = _write_model(self.d, True)
-        with self.assertRaisesRegex(ValueError, r"enable_spin_orbital = true \(FLEX\) does not "
-                                    r"support longitudinal_bond_channels"):
-            _build(self.d, files, longitudinal_bond_channels=True)
+        s, _ = _build(self.d, files, longitudinal_bond_channels=True)
+        self.assertIs(s._so_bond, True)
+        self.assertTrue(s._so_spinful)
 
     def test_requires_spinful_vertex_exchange(self):
         files = _write_model(self.d, True)
@@ -179,8 +181,11 @@ class TestConstructionGates(_TmpDir):
     def test_refuses_offsite_interactions(self):
         files = _write_model(self.d, True, offsite=True)
         s, gi = _build(self.d, files)
-        with self.assertRaisesRegex(ValueError, r"supports on-site and in-cell interactions only .*"
-                                    r"off-site 'CoulombInter' declaration"):
+        with self.assertRaisesRegex(ValueError, r"supports on-site and in-cell interactions only "
+                                    r"without the bond channels .*off-site 'CoulombInter' "
+                                    r"declaration at irvec=\(1, 0, 0\), orbvec=\(0, 0\) is "
+                                    r"refused; set \[mode\.param\] longitudinal_bond_channels = "
+                                    r"true to resolve their exchange exactly\.$"):
             with _quiet():
                 s.solve(gi, self.d)
 

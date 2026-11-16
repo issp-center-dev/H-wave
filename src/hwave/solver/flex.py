@@ -298,6 +298,25 @@ class FLEX(RPA):
     _so_spinful = False
     _keep_spinful = False
     _so_vertex = None
+    #: the spin-orbital bond-resolved FLEX (#270); set by _init_spin_orbital
+    _so_bond = False
+    #: the admission of the spin-orbital bond FLEX (flex_so_bond.SOBondFlexAdmission);
+    #: set by _phase_b_preflight
+    _so_admission = None
+    #: the Green-function digest and the state point (mu, density) of the
+    #: last spin-orbital bond map (the provenance of its chi0q / chiq, which
+    #: are built from that map's Green function, not the final state's) and
+    #: the SCF position named by the per-sector Dyson step's
+    #: internal-consistency refusal
+    _so_fp_green_map = None
+    _so_state_map = None
+    _so_dyson_where = None
+    #: the subject of every refusal / notice of the spin-orbital bond FLEX
+    _SO_BOND_HEAD = ("[mode] enable_spin_orbital = true with [mode.param] "
+                     "longitudinal_bond_channels = true (FLEX)")
+    _SO_BOND_LAYOUT_IGNORED = (
+        "[mode.param] so_bond_layout is used only with enable_spin_orbital = true and "
+        "longitudinal_bond_channels = true; ignored.")
     _PHASE_B_SWITCHES = ("flex_hartree_fock", "longitudinal_bond_channels")
     _PHASE_B_BOND_KEYS = ("longitudinal_bond_output_full",
                           "longitudinal_bond_output_layout",
@@ -463,6 +482,14 @@ class FLEX(RPA):
             raise ValueError(
                 "[mode.param] longitudinal_bond_pairing needs the bond gate "
                 "(longitudinal_bond_channels = true)")
+        # the spin-orbital bond FLEX (#270): so_bond_layout is read on every
+        # path (a stale key is warned about once); its value is validated
+        # below, after the other bond keys, on the spin-orbital gate only
+        so_gate = gate_on and FLEX._so_flag(info_mode)
+        out["so_bond_gate"] = so_gate
+        out["so_bond_layout"] = None
+        if "so_bond_layout" in param and not so_gate:
+            logger.warning(FLEX._SO_BOND_LAYOUT_IGNORED)
         if not active:
             if stale:
                 logger.warning(
@@ -540,6 +567,17 @@ class FLEX(RPA):
         if not isinstance(v, (bool, np.bool_)):
             raise ValueError("[mode.param] longitudinal_bond_output_full must be a boolean, got {!r}".format(v))
         out["longitudinal_bond_output_full"] = bool(v)
+        H = FLEX._SO_BOND_HEAD
+        if so_gate and out["longitudinal_bond_output_full"]:
+            raise ValueError(
+                H + " does not write the bond archive in this version (the spin-orbital bond "
+                "archive arrives in a later version); remove longitudinal_bond_output_full or "
+                "set it to false.")
+        if so_gate and "longitudinal_bond_output_layout" in param:
+            # a presence sentinel, read before the value check of the layout
+            raise ValueError(
+                H + " does not write the bond archive in this version (the spin-orbital bond "
+                "archive arrives in a later version); remove longitudinal_bond_output_layout.")
         # the on-disk layout of the bond archive (issue #205)
         layout = param.get("longitudinal_bond_output_layout", "npz")
         if not isinstance(layout, str) or layout.strip().lower() not in FLEX._BOND_OUTPUT_LAYOUTS:
@@ -570,10 +608,17 @@ class FLEX(RPA):
                 raise ValueError("[mode.param] longitudinal_bond_max_shells must be an integer >= 1, got {!r}".format(ms))
             ms = int(ms)
         out["longitudinal_bond_max_shells"] = ms
-        cap = param.get("longitudinal_bond_memory_cap_gb", 8.0)
-        if isinstance(cap, bool) or not isinstance(cap, numbers.Real) or not np.isfinite(cap) or cap <= 0:
-            raise ValueError("[mode.param] longitudinal_bond_memory_cap_gb must be a finite number > 0 (binary GiB), got {!r}".format(cap))
-        out["longitudinal_bond_memory_cap_gb"] = float(cap)
+        if so_gate:
+            # spin-orbital: None (unset) is 0.8 x the available memory and 0
+            # disables the check; the raw value is validated by the
+            # preflight (so_bond.resolve_host_cap)
+            out["longitudinal_bond_memory_cap_gb"] = param.get(
+                "longitudinal_bond_memory_cap_gb", None)
+        else:
+            cap = param.get("longitudinal_bond_memory_cap_gb", 8.0)
+            if isinstance(cap, bool) or not isinstance(cap, numbers.Real) or not np.isfinite(cap) or cap <= 0:
+                raise ValueError("[mode.param] longitudinal_bond_memory_cap_gb must be a finite number > 0 (binary GiB), got {!r}".format(cap))
+            out["longitudinal_bond_memory_cap_gb"] = float(cap)
         gf = param.get("longitudinal_bond_guard_freqs", "all")
         if not isinstance(gf, str) or gf.strip().lower() not in ("all", "static"):
             raise ValueError(
@@ -618,7 +663,10 @@ class FLEX(RPA):
                 "memory) or \"device\" (always in device memory; refused when it does not fit "
                 "or when the GPU backend is not active), got {!r}".format(bs))
         out["longitudinal_bond_store"] = bs.strip().lower()
-        if out["longitudinal_bond_store"] == "device" and not _bk.as_bool(param.get("gpu", False)):
+        # the spin-orbital bond FLEX refuses the device store itself (host
+        # only), so its refusal is the one shown, not "needs gpu = true"
+        if (out["longitudinal_bond_store"] == "device" and not so_gate
+                and not _bk.as_bool(param.get("gpu", False))):
             raise ValueError(
                 "[mode.param] longitudinal_bond_store = \"device\" needs gpu = true (the bond "
                 "block store can only be kept in device memory on the GPU backend); use "
@@ -633,7 +681,63 @@ class FLEX(RPA):
                 "sigma_min/max(1, sigma_max); default {:.1e}), got {!r}".format(
                     FLEX._GUARD_BOND_COND_TOL, ct))
         out["longitudinal_bond_cond_tol"] = float(ct)
+        if so_gate:
+            FLEX._parse_so_bond_keys(param, out)
         return out
+
+    def _bond_memory_cap_parsed_elsewhere(self):
+        """The spin-orbital bond FLEX keeps the raw memory cap (validated by
+        its admission, :func:`hwave.solver.so_bond.resolve_host_cap`); the
+        RPA base parser does not check it then."""
+        return bool(self._phase_b_raw.get("so_bond_gate", False))
+
+    def _offsite_pairhop_in_bond_vertex(self):
+        """The spin-orbital bond vertex Gamma_B includes every off-site
+        PairHop row, so RPA's discard WARNING is not logged under that gate."""
+        return bool(self._phase_b_raw.get("so_bond_gate", False))
+
+    @staticmethod
+    def _so_flag(info_mode):
+        """``[mode] enable_spin_orbital`` for the pre-parser, without its
+        notices (the solver resolves and reports the flag itself; a value it
+        refuses reads as false here)."""
+        value = CaseInsensitiveDict(info_mode or {}).get("enable_spin_orbital", False)
+        try:
+            return _bk.strict_bool(value, "[mode] enable_spin_orbital")
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _parse_so_bond_keys(param, out):
+        """The bond keys of the spin-orbital bond FLEX (#270), after the
+        value checks of every bond key: the options it does not provide in
+        this version are refused (in this order), and ``so_bond_layout`` is
+        validated (``None`` when unset, meaning ``"auto"``)."""
+        from hwave.solver import so_bond
+        H = FLEX._SO_BOND_HEAD
+        if out["longitudinal_bond_pairing"] != "none":
+            raise ValueError(
+                H + " does not run the in-process pairing in this version (it arrives in a "
+                "later version); remove longitudinal_bond_pairing.")
+        if out["longitudinal_bond_store"] == "device":
+            raise ValueError(
+                H + " runs on the host only in this version (the device store arrives in a "
+                "later version); set longitudinal_bond_store = \"host\" or \"auto\", or "
+                "remove it.")
+        if out["longitudinal_bond_guard_freqs"] == "static":
+            raise ValueError(
+                H + " guards every bosonic frequency (the spin-orbital dressing decomposes "
+                "every block exactly); remove longitudinal_bond_guard_freqs or set it to "
+                "\"all\".")
+        if "longitudinal_bond_guard_exact" in param:
+            logger.info(H + ": longitudinal_bond_guard_exact has no effect (the spin-orbital "
+                        "dressing decomposes every block exactly).")
+        if "so_bond_layout" in param:
+            v = param["so_bond_layout"]
+            if isinstance(v, str) and v.strip().lower() in so_bond.LAYOUT_KEY_VALUES:
+                v = v.strip()
+            out["so_bond_layout"] = so_bond.parse_layout_key(
+                v, key="[mode.param] so_bond_layout")
 
     def _install_phase_b_keys(self):
         raw = self._phase_b_raw
@@ -651,6 +755,8 @@ class FLEX(RPA):
         self.longitudinal_bond_pairing = raw["longitudinal_bond_pairing"]
         self.longitudinal_bond_half_grid = raw["longitudinal_bond_half_grid"]
         self.longitudinal_bond_store = raw["longitudinal_bond_store"]
+        #: the so_bond_layout request of the spin-orbital bond FLEX (None: "auto")
+        self.so_bond_layout = raw["so_bond_layout"]
         # the guard surface of issue #199
         self.flex_hf_density_tol = raw["flex_hf_density_tol"]
         self.longitudinal_bond_cond_tol = raw["longitudinal_bond_cond_tol"]
@@ -824,9 +930,13 @@ class FLEX(RPA):
         vertex (see :meth:`_flex_compute_veff_spinful`). This version takes
         the Hartree-Fock FLEX route only (``flex_hartree_fock = true``,
         whose first order is the self-consistent Hartree-Fock of every
-        term), without the bond channels, with the exact second order
-        (``flex_second_order = "local"``) and on-site interactions only
-        (checked in :meth:`_validate_phase_b_interactions`)."""
+        term), with the exact second order (``flex_second_order =
+        "local"``). Without the bond channels it takes on-site interactions
+        only (checked in :meth:`_validate_phase_b_interactions`); with
+        ``longitudinal_bond_channels = true`` it is the spin-orbital
+        bond-resolved FLEX of #270 (``self._so_bond``, host only: a GPU
+        request is ignored with a WARNING, ``gpu_required`` refused),
+        admitted by :meth:`_phase_b_preflight`."""
         g = "[mode] enable_spin_orbital = true (FLEX)"
         raw = self._phase_b_raw     # installed as attributes only after this init
         if not raw["flex_hartree_fock"]:
@@ -834,14 +944,27 @@ class FLEX(RPA):
                 g + " requires [mode.param] flex_hartree_fock = true: the spin-orbital "
                 "FLEX takes its first order from the self-consistent Hartree-Fock of "
                 "every interaction term.")
-        if raw["longitudinal_bond_channels"]:
-            raise ValueError(
-                g + " does not support longitudinal_bond_channels (the bond channels "
-                "are spin/charge resolved).")
         if not self.spinful_vertex_exchange:
             raise ValueError(
                 g + " requires spinful_vertex_exchange = true (the antisymmetrized "
                 "vertex is what makes the second order exact).")
+        if raw["longitudinal_bond_channels"]:
+            # the spin-orbital bond FLEX (#270): host only in this version
+            H = FLEX._SO_BOND_HEAD
+            if self.gpu_required:
+                raise ValueError(
+                    H + " runs on the host only in this version (the device path arrives in "
+                    "a later version); remove gpu_required or set it to false.")
+            if self.use_gpu:
+                logger.warning(H + " runs on the host only in this version; gpu = true is "
+                               "ignored for this run.")
+                self.use_gpu = False
+            if raw["flex_guard_policy"] == "warn":
+                logger.warning(
+                    H + ": flex_guard_policy = \"warn\" relaxes the density guard only; the "
+                    "bond dressing guard refuses a near-singular block (lower "
+                    "longitudinal_bond_cond_tol to admit it).")
+            self._so_bond = True
         self._so_spinful = True
         self._keep_spinful = True
 
@@ -1839,6 +1962,12 @@ class FLEX(RPA):
                      "_bond_pole", "_bond_pole_final", "_phase_b_seed", "_hf_tables"):
             if hasattr(self, attr):
                 delattr(self, attr)
+        # the spin-orbital bond admission and its per-solve state (class
+        # defaults None)
+        self._so_admission = None
+        self._so_fp_green_map = None
+        self._so_state_map = None
+        self._so_dyson_where = None
         self.scf_converged = False
         self.scf_iterations = 0
         self.scf_sigma_residual = float("nan")
@@ -1948,7 +2077,9 @@ class FLEX(RPA):
             self._phase_b_seed = self._assemble_static_seed(green_info, expected)
         split = self._validate_phase_b_interactions()
         self._hf_tables = flex_hf.build_flex_hf_tables(self.ham_info.param_ham, norb, shape)
-        if self.longitudinal_bond_channels:
+        if self._so_bond:
+            self._so_admission = self._so_bond_preflight(split)
+        elif self.longitudinal_bond_channels:
             self._bond_topo, self._bond_split = self._validate_bond_gate_prereqs(split)
             self._bond_view = bond_channels.BondSetView(self._bond_topo)
             # issue #181: with an off-site Exchange the second order of every
@@ -1972,6 +2103,33 @@ class FLEX(RPA):
                     tuple(int(x) for x in self.lattice.shape), entries=self._bond_w2_entries)
             self._bond_nb = int(self._bond_est["nb"])
 
+    def _so_bond_preflight(self, split):
+        """The admission of the spin-orbital bond FLEX (#270): its notices
+        and :func:`hwave.solver.flex_so_bond.admit_so_bond_flex` (the one
+        memory authority of the run; the non-spin-orbital estimate is not
+        made). Returns the :class:`~hwave.solver.flex_so_bond.SOBondFlexAdmission`."""
+        from hwave.solver import flex_so_bond
+        logger.info("longitudinal_bond_channels with enable_spin_orbital: bond channels of "
+                    "the single spinful channel; 'longitudinal' is historical")
+        if any(complex(v) != 0 for v in
+               (split.offsite_prefold_tbl.get("PairLift", {}) or {}).values()):
+            logger.info("off-site PairLift is included in the spin-orbital bond vertex (the "
+                        "non-spin-orbital bond paths omit it: it has no spin/charge content)")
+        transfer, extern = self._so_band_tables()[:2]
+        n_types = sum(1 for t in (getattr(self._hf_tables, "inter_table", {}) or {}).values()
+                      if t is not None)
+        adm = flex_so_bond.admit_so_bond_flex(
+            compiled=self.ham_info.so_context.compiled, transfer=transfer, extern=extern,
+            cell=np.asarray(self.ham_info.param_ham["Geometry"]["rvec"]),
+            shape=tuple(int(x) for x in self.lattice.shape), nmat=self.nmat,
+            max_shells=self.longitudinal_bond_max_shells, layout_request=self.so_bond_layout,
+            cap_raw=self.longitudinal_bond_memory_cap_gb,
+            freq_batch=self.longitudinal_bond_freq_batch, depth=self.anderson_depth,
+            mixing=self.mixing_scheme, n_types=n_types, log=logger)
+        logger.info("bond store: W is written over chibar in place (no later reader of "
+                    "chibar; chibar_w archive: none)")
+        return adm
+
     def _validate_phase_b_interactions(self):
         """Interaction admissibility shared by flex_hartree_fock and the
         bond gate (spec 2.2 / 4.1 step 6): off-site Exchange and PairHop are
@@ -1984,14 +2142,21 @@ class FLEX(RPA):
         if getattr(self.ham_info, "enable_spin_orbital", False) and not self._so_spinful:
             raise ValueError(g + " does not support enable_spin_orbital.")
         split = split_locality(self.ham_info, self.lattice)
+        if self._so_bond:
+            # the spin-orbital bond FLEX (#270): every off-site row is in the
+            # bond vertex, and the complex contract is the SO entry context's
+            # (enforced at construction); the notices are the preflight's
+            return split
         if self._so_spinful and split.offsite_types:
             itype = sorted(split.offsite_types)[0]
             (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
             raise ValueError(
                 "[mode] enable_spin_orbital = true (FLEX) supports on-site and in-cell "
-                "interactions only in this version (the antisymmetrized spinful vertex carries the "
-                "on-site exchange crossing only); the off-site '{}' declaration at "
-                "irvec={}, orbvec={} is refused.".format(itype, tuple(irvec), tuple(orbvec)))
+                "interactions only without the bond channels (the antisymmetrized spinful "
+                "vertex carries the on-site exchange crossing only); the off-site '{}' "
+                "declaration at irvec={}, orbvec={} is refused; set [mode.param] "
+                "longitudinal_bond_channels = true to resolve their exchange exactly."
+                .format(itype, tuple(irvec), tuple(orbvec)))
         refused = () if self.longitudinal_bond_channels else ("PairHop", "Exchange")
         for itype in refused:
             if itype in split.offsite_types:
@@ -2466,13 +2631,21 @@ class FLEX(RPA):
         mixer = (StackedAndersonMixer(self.mix, self.anderson_depth)
                  if self.mixing_scheme == "anderson" else None)
         gate = bool(self.longitudinal_bond_channels)
+        # the spin-orbital bond FLEX (#270): the host map of flex_so_bond
+        so_gate = gate and self._so_bond
         if self.mixing_scheme == "linear" and gate:
             logger.warning("longitudinal_bond_channels with mixing_scheme='linear': "
                            "linear mixing is known to mis-converge near the charge "
                            "instability; consider mixing_scheme='anderson'.")
         counter = PassCounter(self.eps, needed=3)
         self._scf_monitor = _diag.ScfMonitor(logger)   # log-only (issue #282)
-        if gate:
+        if so_gate:
+            # every spin-orbital bond map reports its static RPA pole
+            # indicator; the final map's is checked after the loop
+            self._scf_monitor.stoner_label = (
+                "RPA pole indicator max_q eig[-chibar_B Gamma_B] (spinful) (q, i nu = 0)")
+            self._scf_monitor.context_label = "RPA pole indicator (final map)"
+        elif gate:
             # the bond path reports the final map's static RPA pole indicators
             # (issue #345) on this line, labelled as in its WARNING
             self._scf_monitor.stoner_label = (
@@ -2491,7 +2664,7 @@ class FLEX(RPA):
         # indicators of the final map, then the report (or None) made of them
         self._bond_pole_final = {}
         self._bond_pole = None
-        if gate:
+        if gate and not so_gate:
             # Device admission at its true baseline (spec 4.6): the backend is
             # resolved and the general path's device arrays are resident, while
             # the block store and the vertex context below are not yet
@@ -2499,7 +2672,22 @@ class FLEX(RPA):
             self._bond_device_admission(xp)
         with contextlib.ExitStack() as stack:
             store = dev = None
-            if gate:
+            gamma_b = chi_bufs = None
+            if so_gate:
+                # the store of the admitting plan (released with this scope),
+                # the vertex Gamma_B (a local of this method, not an
+                # attribute: dropped when the method returns) and the two
+                # resident channel-0 buffers of chi0q / chiq (the plan's
+                # "collapses" row), allocated once
+                from hwave.solver import so_bond
+                adm = self._so_admission
+                store = stack.enter_context(so_bond.open_store(adm.plan, adm.sector_map))
+                gamma_b = so_bond.so_bond_vertex(self.ham_info.so_context.compiled, adm.topo,
+                                                 shape, plan=adm.plan)
+                P = adm.plan.nd * adm.plan.nd
+                chi_bufs = (np.empty((nmat, nvol, P, P), dtype=np.complex128),
+                            np.empty((nmat, nvol, P, P), dtype=np.complex128))
+            elif gate:
                 store = stack.enter_context(self._bond_allocate_store(xp))
                 self._phase_b_prepare_vertices()
                 # The immutable bond inputs are transferred once per solve,
@@ -2535,6 +2723,8 @@ class FLEX(RPA):
                 chi0q_out = chi_s = chi_c = None
                 self._bond_last = None
                 self._stoner_last = None
+                if so_gate:
+                    self._so_dyson_where = "iteration {}".format(iteration + 1)
                 with self._traced("green_mu"):
                     sigma = xp.asarray(state.total())
                     if self.calc_mu:
@@ -2556,9 +2746,16 @@ class FLEX(RPA):
                     # kept for the per-iteration guard line below (the arrays
                     # of the density result are released with it)
                     dens_hermitian = float(dens.hermitian_deviation)
+                    # the map's density (the state point of its chi0q / chiq)
+                    map_density = float(dens.n_per_spin)
                     del dens
                 green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
-                if gate:
+                if so_gate:
+                    chi0q_out, chi_s, sigma_fluct = self._phase_b_so_bond_map(
+                        store, gamma_b, green_kw, green_scf, beta,
+                        chi0_out=chi_bufs[0], chi_out=chi_bufs[1])
+                    chi_c = None
+                elif gate:
                     chi0q_out, chi_s, chi_c, sigma_fluct = self._phase_b_bond_map(
                         store, dev, green_kw, green_scf, beta, iteration + 1,
                         guard_exact=self._bond_guard_exact_for_map(
@@ -2591,6 +2788,17 @@ class FLEX(RPA):
                     res_sigma, res_g, res_comp = residuals(state, new_state, _bk.to_host(green_kw),
                                                            _bk.to_host(g_new))
                     del g_new
+                    if so_gate:
+                        # chi0q / chiq of this map carry the digest of the
+                        # Green function the map was built from, and the
+                        # state point (mu, density) of that Green function
+                        self._so_fp_green_map = fingerprint.green_digest(
+                            _bk.to_host(green_kw), fingerprint.GREEN_LAYOUT)
+                        _nv = self.lattice.cellvol    # ORIGINAL cells
+                        self._so_state_map = fingerprint.so_state(
+                            beta=beta, nmat=self.nmat, mu=mu,
+                            density=map_density / _nv, calc_mu=self.calc_mu,
+                            target=(self.Ncond / _nv if self.calc_mu else mu))
                 del green_kw
                 self.map_iteration = iteration + 1
                 n_iter_done = iteration + 1
@@ -2600,7 +2808,11 @@ class FLEX(RPA):
                 logger.info("  residuals: sigma {:.3e}  green {:.3e}  component {:.3e}  [pass {}/3]"
                             .format(res_sigma, res_g, res_comp, count))
                 last = done or iteration + 1 == self.max_iter
-                if gate and last:
+                if so_gate and last:
+                    # the final map's static RPA pole indicator (checked
+                    # after the loop; _stoner_last is set on every map)
+                    self._bond_pole_final = dict(self._stoner_last)
+                elif gate and last:
                     # the final map's static RPA pole indicators (issue #345):
                     # its Stoner line, then the check after the loop
                     indicators = self._bond_pole_indicators()
@@ -2613,7 +2825,14 @@ class FLEX(RPA):
                 # an approach to an instability is visible before it refuses
                 guards = "  guards: density hermitian {:.3e} (tol {:.1e})".format(
                     dens_hermitian, self.flex_hf_density_tol)
-                if gate:
+                if so_gate:
+                    res = self._bond_last
+                    guards += "  bond cond_min spinful {:.3e} (tol {:.1e})".format(
+                        res.cond_min, self.longitudinal_bond_cond_tol)
+                    if self._so_admission.layout == "sz_packed":
+                        guards += " (S_z sector of sigma_min: {}; of sigma_max: {})".format(
+                            res.sigma_min_sector, res.sigma_max_sector)
+                elif gate:
                     guards += "  bond cond_min spin {} charge {} (tol {:.1e})".format(
                         self._format_bond_cond(self._bond_last.cond_min_s,
                                                self._bond_last.cond_bracket_s),
@@ -2630,7 +2849,7 @@ class FLEX(RPA):
                         chiq_s=np.array(_bk.to_host(chi_s), copy=True),
                         chiq_c=(None if chi_c is None
                                 else np.array(_bk.to_host(chi_c), copy=True)))
-                    if gate:
+                    if gate and not so_gate:
                         payload["bond_static_s"] = np.array(self._bond_last.static_s, copy=True)
                         payload["bond_static_c"] = np.array(self._bond_last.static_c, copy=True)
                     self._iteration_hook(payload)
@@ -2667,6 +2886,8 @@ class FLEX(RPA):
             self.scf_iterations = n_iter_done
             with self._traced("post_scf"):
                 # final state: mu, G, density, physics from the (post-mix) state
+                if so_gate:
+                    self._so_dyson_where = "the final state"
                 sigma = xp.asarray(state.total())
                 if self.calc_mu:
                     mu = self._find_mu_dressed(sigma, beta, Ncond_target, ew_ref=heff[0][None])
@@ -2681,7 +2902,12 @@ class FLEX(RPA):
                 # the self-consistency, not a result that violates the symmetry
                 dens = _hf.equal_time_density(_bk.to_host(green_kw), heff, mu, beta, shape,
                                               sym_tol=self.flex_hf_density_tol)
-                if gate:
+                if so_gate:
+                    # the spin-orbital dressing guard refused inside the map
+                    self._check_final_bond_pole(
+                        where="FLEX longitudinal_bond_channels (spin-orbital, final map)",
+                        consequence=FLEX._SO_BOND_POLE_CONSEQUENCE)
+                elif gate:
                     self._refuse_final_bond_guard()
                     self._check_final_bond_pole()
                 if self.calc_mu:
@@ -2820,21 +3046,29 @@ class FLEX(RPA):
             return {}
         return dict(res.pole)
 
-    def _check_final_bond_pole(self):
+    #: what a final spin-orbital bond map past the static RPA pole means (#270)
+    _SO_BOND_POLE_CONSEQUENCE = (
+        "The final FLEX state (its effective interaction W and self-energy) is built on that "
+        "susceptibility; it describes no physical state and is still reported.")
+
+    def _check_final_bond_pole(self, where=None, consequence=None):
         """WARN when the final bond map is past its static RPA pole (issue
         #345) and keep the report for the outputs (``_bond_pole``, always
         an :class:`~hwave.solver.bond_channels.RpaPoleReport` or ``None``;
         the raw indicators of the final map are ``_bond_pole_final``). The
         indicators were logged on the final iteration's Stoner line. Never
-        refuses."""
+        refuses. ``where`` / ``consequence`` name the run and the meaning of
+        the WARNING (``None``: the non-spin-orbital bond FLEX's texts)."""
         from hwave.solver import bond_channels as _bc
         indicators = getattr(self, "_bond_pole_final", None)
         if not indicators:
             self._bond_pole = None
             return
         self._bond_pole = _bc.check_rpa_pole(
-            indicators, where="FLEX longitudinal_bond_channels (final map)",
-            consequence=self._BOND_POLE_CONSEQUENCE, log=logger, info=False)
+            indicators,
+            where="FLEX longitudinal_bond_channels (final map)" if where is None else where,
+            consequence=self._BOND_POLE_CONSEQUENCE if consequence is None else consequence,
+            log=logger, info=False)
 
     def _refuse_final_bond_guard(self):
         """Refuse a FINAL state that sits inside the instability region of
@@ -3032,6 +3266,42 @@ class FLEX(RPA):
         r6 = (nmat, nvol, norb, norb, norb, norb)
         return (res.collapse0.reshape(r6), res.collapse_s.reshape(r6),
                 res.collapse_c.reshape(r6), sigma_fluct)
+
+    #: appended to a refusal of the spin-orbital bond dressing guard
+    _SO_BOND_COND_REMEDY = (
+        " (remedy: lower [mode.param] longitudinal_bond_cond_tol, a finite number in (0, 1), "
+        "default 1.0e-3; the dressing guard is not relaxed by flex_guard_policy)")
+
+    def _phase_b_so_bond_map(self, store, gamma_b, green_kw, green_scf, beta, *,
+                             chi0_out=None, chi_out=None):
+        """One spin-orbital bond map (#270):
+        :func:`hwave.solver.flex_so_bond.so_bond_flex_map` on the admitting
+        plan. Returns ``(chi0q, chiq, sigma_fluct)``: the channel-0 blocks of
+        ``chibar_B`` and ``chi_B`` as rank-6 VIEWS ``[l, q, a, c, b, d] =
+        chi4[l, q, a nd + c, b nd + d]`` of the map's ``chi0_c0`` /
+        ``chi_c0`` (the caller's resident buffers ``chi0_out`` / ``chi_out``)
+        and the fluctuation self-energy.
+
+        The map's static RPA pole indicator is this map's Stoner entry
+        (``_stoner_last``); the map itself is ``_bond_last``. A refusal of
+        the dressing guard keeps its type and attributes and gains the
+        ``longitudinal_bond_cond_tol`` remedy."""
+        from hwave.solver import bond_channels, flex_so_bond
+        adm = self._so_admission
+        nd = adm.plan.nd
+        try:
+            res = flex_so_bond.so_bond_flex_map(
+                store, gamma_b, green_kw, green_scf, self.green0_tail, beta, adm.geom,
+                plan=adm.plan, cond_tol=self.longitudinal_bond_cond_tol,
+                workers=getattr(self, "fft_workers", 1), trace=self._traced,
+                chi0_out=chi0_out, chi_out=chi_out)
+        except bond_channels.BondConditioningError as exc:
+            exc.args = (str(exc) + FLEX._SO_BOND_COND_REMEDY,) + exc.args[1:]
+            raise
+        self._bond_last = res
+        self._stoner_last = {"spinful": res.pole[0]}
+        r6 = (self.nmat, self.lattice.nvol, nd, nd, nd, nd)
+        return res.chi0_c0.reshape(r6), res.chi_c0.reshape(r6), res.sigma_fluct
 
     def _phase_b_publish_bond(self, green_info, store, xp):
         """The sixteen static ``longitudinal_bond_*`` keys of the LAST map
@@ -3523,9 +3793,33 @@ class FLEX(RPA):
         green_inv = (iw + mu) * eye - H0_exp - sigma
 
         # G(k, iwn) = [G^{-1}]^{-1}
-        green = xp.linalg.inv(green_inv)
+        adm = self._so_admission
+        if adm is not None and adm.sector_dyson:
+            # the spin-orbital bond FLEX on an S_z-conserving input (#270):
+            # the two S_z sectors are inverted separately, so G has exact
+            # zeros between them (the S_z-packed store refuses anything else)
+            green = self._so_sector_inverse(green_inv)
+        else:
+            green = xp.linalg.inv(green_inv)
 
         return green
+
+    def _so_sector_inverse(self, green_inv):
+        """:func:`hwave.solver.so_bond.inverse_per_sector` of ``green_inv``
+        (spin-block modes, ``norb`` physical orbitals). An S_z-off-sector
+        entry is an internal inconsistency on an admitted S_z-conserving run
+        (``ValueError`` naming ``_so_dyson_where`` and the leak)."""
+        from hwave.solver import so_bond
+        n = self.norb
+        A = np.asarray(green_inv)
+        off = max(float(np.max(np.abs(A[..., :n, n:]))), float(np.max(np.abs(A[..., n:, :n]))))
+        if off != 0.0:
+            raise ValueError(
+                "spin-orbital bond FLEX: the Green function inverse has an S_z-off-sector entry "
+                "at {} (leak {:.3e}) although the input conserves S_z; this is an internal "
+                "inconsistency, please report it".format(
+                    self._so_dyson_where, off / float(np.max(np.abs(A)))))
+        return so_bond.inverse_per_sector(A, n)
 
     @do_profile
     def _calc_number_dressed(self, sigma, mu, beta):
@@ -5355,12 +5649,36 @@ class FLEX(RPA):
         # ONCE and merged into chiq, green, sigma and chi0q; the Green digest
         # is that of the array written to green.npz
         so_prov = {}
+        # the chi0q / chiq provenance: the same dict, except on the
+        # spin-orbital bond FLEX, whose chi0q / chiq carry the digest and the
+        # state point (mu, density) of the last map's Green function
+        so_prov_map = so_prov
+        so_adm = getattr(self, "_so_admission", None) if getattr(self, "_so_bond", False) \
+            else None
         if (getattr(self, "_so_spinful", False)
                 and getattr(self, "_so_state", None) is not None
                 and green_info.get("green") is not None):
             self._so_fp_green = fingerprint.green_digest(
                 green_info["green"], fingerprint.GREEN_LAYOUT)
-            so_prov = self._so_provenance("flex_so_onsite", "hwave FLEX (spin-orbital)")
+            if so_adm is not None:
+                label = "hwave FLEX (spin-orbital, bond channels)"
+                so_prov = self._so_provenance("flex_so_bond", label, bond=so_adm.bond_inputs)
+                # no last-map digest only when no map ran (IterationMax = 0),
+                # and then chi0q / chiq are not written
+                assert self._so_fp_green_map is not None or self.max_iter == 0
+                so_prov_map = (self._so_provenance("flex_so_bond", label,
+                                                   bond=so_adm.bond_inputs,
+                                                   fp_green=self._so_fp_green_map,
+                                                   state=self._so_state_map)
+                               if self._so_fp_green_map is not None else {})
+            else:
+                so_prov = self._so_provenance("flex_so_onsite", "hwave FLEX (spin-orbital)")
+                so_prov_map = so_prov
+        if (so_adm is not None and self.max_iter > 0
+                and ("chi0q" in info_outputfile or "chiq" in info_outputfile)):
+            logger.info("spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of "
+                        "chibar_B and chi_B of the last map; the bond-resolved arrays are not "
+                        "written in this version.")
         _pb = getattr(self, "_phase_b_active", False)
         _bond_static = {}
         _last_map_omitted = False
@@ -5475,7 +5793,7 @@ class FLEX(RPA):
                      # flex mode -- index_convention alone is on every file
                      **({"spin_orbital": True}
                         if getattr(self, "_so_spinful", False) else {}),
-                     **so_prov)
+                     **so_prov_map)
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
         # Save susceptibilities (spin and charge channels separately for
@@ -5563,7 +5881,7 @@ class FLEX(RPA):
             if self._so_spinful:
                 # #83: written ONLY by a spin-orbital run (see chi0q above)
                 save_dict["spin_orbital"] = True
-                save_dict.update(so_prov)
+                save_dict.update(so_prov_map)
             np.savez(file_name, **save_dict)
             logger.info("save_results: save chiq in file {}".format(file_name))
 

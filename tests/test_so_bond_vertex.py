@@ -538,9 +538,9 @@ class TestMeshAndPlan(unittest.TestCase):
         for kw, msg in (
                 (dict(consumers=("vertex", "flex")),
                  "plan_so_bond: unknown consumer 'flex'; the consumers are vertex, chi_static, "
-                 "chi_dynamic, pairing_static"),
+                 "chi_dynamic, pairing_static, flex_scf"),
                 (dict(consumers=()), "plan_so_bond: consumers must name at least one of vertex, "
-                                     "chi_static, chi_dynamic, pairing_static"),
+                                     "chi_static, chi_dynamic, pairing_static, flex_scf"),
                 (dict(half_grid=True), "plan_so_bond: the half bosonic grid is not available on "
                                        "the spin-orbital bond path"),
                 (dict(placement_request="device"),

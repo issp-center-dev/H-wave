@@ -30,6 +30,7 @@ from hwave.sc import (_SO_BOND_CHI0Q_UNUSED, _SO_BOND_DIAGNOSTICS_REFUSAL,
                       _SO_BOND_GREEN_REFUSAL, _SO_BOND_LAYOUT_IGNORED,
                       _SO_BOND_PRECONDITION_REFUSAL)
 from tests import so_bond_entry_fixtures as F
+from tests import so_bond_flex_fixtures as _flex_fixtures
 from tests import so_zero_field as Z
 from tests.so_bond_oracles import CELL, closed_row, rel
 
@@ -3016,21 +3017,9 @@ def _su2_mixed_fixture():
     the spin-rotation invariant interaction on mixed bonds of the
     spin-orbital pairing-vertex SU(2) reduction (inter-orbital CoulombInter
     different at +R and -R; Hund, Ising and Exchange = Hund - 2 Ising; real
-    PairHop; on-site CoulombIntra)."""
-    from tests import test_sc_bond_pairing_oracle as nonso_oracle
-    from tests import test_so_bond_pairing_oracle as so_oracle
-    hopping, transfer = [], []
-    for (r, a, b), t in sorted(nonso_oracle.TRANSFER[2].items()):
-        R = (r, 0, 0)
-        if (a, b) == (0, 0):
-            hopping.append((R, t))
-        else:
-            transfer.extend((R, (2 * a + s, 2 * b + s), t) for s in (0, 1))
-    interactions = tuple(
-        (typ, tuple(sorted((tuple(R), tuple(ab), v) for (R, ab), v in table.items())))
-        for typ, table in so_oracle.SU2_MIXED.items())
-    return F.EntryFixture("SU2_MIXED_6", (6, 1, 1), 2, tuple(hopping), tuple(transfer), (),
-                          0.0, interactions, 0.4)
+    PairHop; on-site CoulombIntra): ``SU2_MIXED_6`` of
+    tests/so_bond_flex_fixtures.py."""
+    return _flex_fixtures.SU2_MIXED_6
 
 
 #: the S_z-packed and the forced dense layout of an S_z-conserving input
@@ -3122,7 +3111,8 @@ def _onsite_rows(fixture, name):
 
 
 #: the band and field of ZEEMAN_EXTERN with its on-site interaction rows only
-ZEEMAN_EXTERN_ONSITE = _onsite_rows(F.ZEEMAN_EXTERN, "ZEEMAN_EXTERN_ONSITE")
+#: (moved to tests.so_bond_flex_fixtures, shared with the FLEX bond tests)
+ZEEMAN_EXTERN_ONSITE = _flex_fixtures.ZEEMAN_EXTERN_ONSITE
 #: num_eigenvalues >= dim - 1 = 27 of the 4x4 antisymmetric space: both
 #: paths diagonalize densely (and so does every pair-S_z sector)
 _B1_NEV = 27
