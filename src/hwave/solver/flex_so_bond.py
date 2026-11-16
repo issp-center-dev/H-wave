@@ -360,8 +360,7 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
     common = dict(nmat=nmat, nvol=nvol, B=B, nd=nd, consumers=("flex_scf",), layout=layout,
                   layout_reason=reason, cap_key=CAP_KEY,
                   shell_rows=so_bond.shell_rows(compiled, topo, cell),
-                  max_shells_key=MAX_SHELLS_KEY, envelope=so_bond.envelope_text(layout),
-                  resident_rows=resident, extra_rows=extra)
+                  max_shells_key=MAX_SHELLS_KEY, resident_rows=resident, extra_rows=extra)
     if freq_batch is None:
         candidates = [n for n in FREQ_BATCH_CANDIDATES if n <= nmat]
         nb = candidates[-1]

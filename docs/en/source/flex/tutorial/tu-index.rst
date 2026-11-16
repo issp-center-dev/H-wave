@@ -778,8 +778,11 @@ self-energy of every interaction term to the FLEX loop, and
 fluctuation part on the bond-resolved pair basis so that the exchange
 crossing of an off-site ``CoulombInter`` / ``Hund`` / ``Ising`` enters
 self-consistently (see :ref:`flex_bond_hf` for the equations and the domain).
-Both are ``calc_scheme = "general"``, spin-free, uniform-grid options, and
-both run on the GPU (``gpu = true``, via CuPy) as well as on the CPU: on
+Both are ``calc_scheme = "general"``, spin-free, uniform-grid options (with
+``enable_spin_orbital = true`` the same keys select the spin-orbital FLEX of
+:ref:`flex_spin_orbital` and, with the bond channels, the CPU-only path of
+:ref:`flex_so_bond_tutorial`; the rest of this section is about the
+spin-free runs), and both run on the GPU (``gpu = true``, via CuPy) as well as on the CPU: on
 its own, ``flex_hartree_fock = true`` uses the ordinary FLEX GPU path (see
 the ``gpu`` option below); with ``longitudinal_bond_channels = true``
 (which requires ``flex_hartree_fock = true``) the bond bubble, the
@@ -1238,8 +1241,10 @@ built; an admitted run is not refused later. The estimate is
 whole run plus those of one phase). The largest array is the store slot
 :math:`\bar\chi_B` (:math:`W` is written over it in place):
 ``16 Nmat nvol ND^2`` bytes dense, :math:`6/16` of that packed. The other
-rows are the dressing batch (``7 x 16 nb nvol ND^2``, the same layout
-factor), the W conversion (``4 x 16 nb nvol ND^2``), the per-shift bubble
+rows are the dressing batch (``7 x 16 nb nvol ND^2``) with the static
+slice copy for the pole indicator (``pole_slice = 2 x 16 nvol ND^2``), the
+W conversion (``4 x 16 nb nvol ND^2``) -- these three take the same
+:math:`6/16` factor when packed --, the per-shift bubble
 workspace (``16 nvol (3 Nmat P^2 + 3 Nmat P + 8 P)`` with ``P = (2N)^2``,
 the same in both layouts), the self-energy transport, the Green function
 and the Anderson history.
@@ -1374,8 +1379,6 @@ is built::
    spin-orbital bond FLEX needs an estimated peak of <peak> GiB in phase <phase> (B = <B> channels, ND = B·(2·norb_phys)² = <ND>, nvol = <nvol>, Nmat = <nmat>; one store slot = <slot formula> = <slot> GiB) but the cap is <cap> GiB ([mode.param] longitudinal_bond_memory_cap_gb). <how the batch was chosen> Memory grows as Nmat · nvol · B² · norb_phys⁴. Reduce Nmat or the k grid, or raise [mode.param] longitudinal_bond_memory_cap_gb (0 disables the check); pruning bond shells helps only for shells the per-shell table below shows with negligible coupling.
    rows (phase  name  bytes):
      ...
-   admitted cases (machine | path | admitted):
-     ...
    shells (shell  |dr|  max|v|):
      ...
 
@@ -1387,9 +1390,11 @@ is built::
   it so that the run chooses, lowers the dressing rows.``
 - ``longitudinal_bond_freq_batch = 1 is set (the smallest batch).``
 
-The table of admitted cases is that of the ``hwave_sc`` static bond path
-(:ref:`sc_so_bond_memory`); the per-shell table and the
-``longitudinal_bond_max_shells`` clause are as there.
+The row table lists every row of the estimate. The per-shell table gives,
+for every off-site shell, its bond length and the largest coupling of its
+rows; when the outer shells carry only zero couplings it ends with the
+clause naming the ``longitudinal_bond_max_shells`` value that removes
+them.
 
 The iteration log
 """""""""""""""""
@@ -1415,8 +1420,10 @@ Outputs
   :math:`\bar\chi_B` and :math:`\chi_B` of the **last map**, in the shape and
   conventions of the on-site spin-orbital outputs (``(nmat, nvol, nd, nd,
   nd, nd)``, ``chi_convention = "spin_orbital"``); at :math:`B = 1` they
-  equal the on-site arrays. No ``longitudinal_bond_*`` member and no bond
-  archive is written in this version; the run says so at INFO level::
+  equal the on-site arrays. They are written only when requested in
+  ``[file.output]``, and not at all with ``IterationMax = 0`` (no map ran).
+  No ``longitudinal_bond_*`` member and no bond archive is written in this
+  version; when chi0q or chiq is written the run says so at INFO level::
 
      spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last map; the bond-resolved arrays are not written in this version.
 

@@ -438,10 +438,14 @@ class TestAdmission(_Case):
         msg = str(cm.exception)
         self.assertTrue(msg.startswith(T_OVERCAP_HEAD), msg)
         self.assertIn("(" + CAP_KEY + "). " + T_REMEDY_AUTO + " ", msg)
-        for part in ("rows (phase  name  bytes):", "admitted cases (machine | path | admitted):",
+        for part in ("rows (phase  name  bytes):",
                      "shells (shell  |dr|  max|v|):", "raise " + CAP_KEY,
                      "  resident  collapses  "):
             self.assertIn(part, msg)
+        # the admitted-cases table is that of the hwave_sc static path; the
+        # FLEX refusal does not append it
+        self.assertNotIn("admitted cases", msg)
+        self.assertNotIn("hwave_sc static", msg)
         self.assertIsNone(s._so_admission)
 
     def test_over_cap_set_batch(self):

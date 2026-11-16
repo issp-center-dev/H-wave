@@ -849,6 +849,9 @@ class TestSOBondRefusal(unittest.TestCase):
                 self.assertTrue(msg.startswith(_SO_OVERCAP_HEAD), msg)
                 self.assertIn("(" + _SO_CAP_KEY + "). " + _SO_REMEDY_AUTO + " ", msg)
                 self.assertIn("raise " + _SO_CAP_KEY, msg)
+                self.assertIn("shells (shell  |dr|  max|v|):", msg)
+                self.assertNotIn("admitted cases", msg)
+                self.assertNotIn("hwave_sc static", msg)
                 # refused in the preflight, before the store and the vertex
                 self.assertEqual(res["calls"], {"preflight": 1, "open_store": 0,
                                                 "so_bond_vertex": 0})

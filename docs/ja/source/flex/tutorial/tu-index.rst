@@ -709,7 +709,10 @@ Hartree-Fock 繰り込みとボンド分解チャネル（実験的機能）
 はゆらぎ部分をボンド分解した対基底の上で構築して、オフサイト
 ``CoulombInter`` / ``Hund`` / ``Ising``\ の交換交差を自己無撞着に取り込みます
 （式と適用範囲は\ :ref:`flex_bond_hf`\ を参照）。いずれも\ ``calc_scheme = "general"``\ ・
-スピンフリー・一様格子のオプションで、いずれも CPU に加えて
+スピンフリー・一様格子のオプションで（\ ``enable_spin_orbital = true``\ では同じキーが
+:ref:`flex_spin_orbital`\ のスピン軌道 FLEX を選び、ボンドチャネルと併用すると
+:ref:`flex_so_bond_tutorial`\ の CPU 専用の経路になります。この節の以下はスピンフリーの
+計算についての説明です）、いずれも CPU に加えて
 GPU（``gpu = true``\ 、CuPy 経由）でも実行できます。\ ``flex_hartree_fock = true``\
 を単独で指定した場合は通常の FLEX の GPU 経路が使われます（下記\ ``gpu``\ の
 項を参照）。\ ``longitudinal_bond_channels = true``\ （\ ``flex_hartree_fock = true``\
@@ -1135,8 +1138,9 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
 常駐する配列と、1つのフェーズの配列の和）の\ :math:`1.25`\ 倍です。最大の配列は
 ストアのスロット\ :math:`\bar\chi_B`\ （\ :math:`W`\ はその上にそのまま書き込まれます）で、
 密なレイアウトで\ ``16 Nmat nvol ND^2``\ バイト、パックでその\ :math:`6/16`\ です。その他の
-行は、ドレッシングのバッチ（\ ``7 x 16 nb nvol ND^2``\ 、同じレイアウト係数）、W への
-変換（\ ``4 x 16 nb nvol ND^2``\ ）、シフトごとのバブルの作業領域
+行は、ドレッシングのバッチ（\ ``7 x 16 nb nvol ND^2``\ ）と極の指標のための静的スライスの
+コピー（\ ``pole_slice = 2 x 16 nvol ND^2``\ ）、W への変換（\ ``4 x 16 nb nvol ND^2``\ 。
+この3つはパックで同じ\ :math:`6/16`\ 倍になります）、シフトごとのバブルの作業領域
 （\ ``16 nvol (3 Nmat P^2 + 3 Nmat P + 8 P)``\ 、\ ``P = (2N)^2``\ 。両レイアウトで同じ）、
 自己エネルギーの輸送、Green 関数、Anderson の履歴です。
 
@@ -1265,8 +1269,6 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
    spin-orbital bond FLEX needs an estimated peak of <peak> GiB in phase <phase> (B = <B> channels, ND = B·(2·norb_phys)² = <ND>, nvol = <nvol>, Nmat = <nmat>; one store slot = <slot formula> = <slot> GiB) but the cap is <cap> GiB ([mode.param] longitudinal_bond_memory_cap_gb). <how the batch was chosen> Memory grows as Nmat · nvol · B² · norb_phys⁴. Reduce Nmat or the k grid, or raise [mode.param] longitudinal_bond_memory_cap_gb (0 disables the check); pruning bond shells helps only for shells the per-shell table below shows with negligible coupling.
    rows (phase  name  bytes):
      ...
-   admitted cases (machine | path | admitted):
-     ...
    shells (shell  |dr|  max|v|):
      ...
 
@@ -1278,8 +1280,9 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
   it so that the run chooses, lowers the dressing rows.``
 - ``longitudinal_bond_freq_batch = 1 is set (the smallest batch).``
 
-受け入れ例の表は\ ``hwave_sc``\ の静的なボンド経路のもの（\ :ref:`sc_so_bond_memory`\ ）
-です。シェルごとの表と\ ``longitudinal_bond_max_shells``\ の節もそこと同じです。
+行の表は見積もりのすべての行を示します。シェルごとの表は、各オフサイトシェルのボンド長と
+その行の最大の結合を示し、外側のシェルが結合ゼロだけを持つときは、それらを取り除く
+``longitudinal_bond_max_shells``\ の値を示す節で終わります。
 
 反復のログ
 """"""""""
@@ -1302,9 +1305,11 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
 - ``chi0q.npz``\ と\ ``chiq.npz``\ は、\ **最後の写像**\ の\ :math:`\bar\chi_B`\ と
   :math:`\chi_B`\ のチャネル 0 ブロックを、オンサイトのスピン軌道の出力と同じ形状と
   規約（\ ``(nmat, nvol, nd, nd, nd, nd)``\ 、\ ``chi_convention = "spin_orbital"``\ ）で
-  持ちます。\ :math:`B = 1`\ ではオンサイトの配列に一致します。この版では
-  ``longitudinal_bond_*``\ のメンバーもボンドアーカイブも書き出されず、計算は INFO
-  レベルでそのことを記録します::
+  持ちます。\ :math:`B = 1`\ ではオンサイトの配列に一致します。これらは
+  ``[file.output]``\ で指定したときだけ書き出され、\ ``IterationMax = 0``\ （写像を1回も
+  行わない）では書き出されません。この版では\ ``longitudinal_bond_*``\ のメンバーも
+  ボンドアーカイブも書き出されず、chi0q か chiq を書き出すとき、計算は INFO レベルで
+  そのことを記録します::
 
      spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last map; the bond-resolved arrays are not written in this version.
 
