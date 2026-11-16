@@ -32,7 +32,12 @@ trees):
   ``tests/test_flex_spin_orbital.py`` with a spin-mixing on-site block and
   every on-site interaction type;
 * ``rpa_onsite`` -- spin-orbital RPA (``calc_scheme = "general"``) of the
-  Rashba-like square lattice of ``tests/test_sc_spin_orbital.py``;
+  Rashba-like square lattice of ``tests/test_sc_spin_orbital.py``, and
+  ``rpa_onsite_reduced`` -- the same with ``calc_scheme = "reduced"`` on the
+  density-diagonal types of that model (CoulombIntra, CoulombInter, Hund,
+  Ising; reduced refuses Exchange and PairHop). The ``rpa.py`` changes after
+  the reference revision (the ``Interaction`` constructor flag and the
+  ``_so_provenance`` signature) sit on the path both schemes share;
 * ``sc_static_onsite`` -- hwave_sc, ``frequency = "static"``,
   ``chi0q_mode = "calc"``, on that model;
 * ``sc_bond_soc_all_types`` and ``sc_bond_zeeman_extern`` -- hwave_sc static
@@ -40,6 +45,11 @@ trees):
   ``ZEEMAN_EXTERN`` fixtures of ``tests/so_bond_entry_fixtures.py`` (the
   static pole indicator and the bond-run assembly of that path were
   refactored after the reference revision).
+
+Each subprocess reports the ``hwave`` package it imported; the test
+asserts it lies under that tree's ``src`` and that the reference side's
+``producer_version`` names the reference commit while this tree's does not,
+so no equality row can pass by running one tree twice.
 
 Non-vacuity rows: the ``flex_onsite`` input plus the gate-only key
 ``longitudinal_bond_max_shells = 2`` with the gate off is inert on both trees
@@ -99,7 +109,10 @@ EXCLUDED_LINE_PREFIXES = tuple("# {} = ".format(m).encode() for m in sorted(EXCL
 BOND_MEMORY_CAP_GB = 8.0
 
 _RUN = r'''
-import json, sys
+import json, os, sys
+import hwave
+sys.stderr.write("HWAVE_PACKAGE=" + os.path.realpath(os.path.dirname(hwave.__file__)) + "\n")
+sys.stderr.flush()
 kind, path = sys.argv[1:3]
 with open(path) as fh:
     inp = json.load(fh)
@@ -138,10 +151,15 @@ def _sc_model(d):
     return S, S._write_model(d, so=True, soc=0.3)
 
 
-def _rpa_input(d, out):
-    S, files = _sc_model(d)
+def _rpa_input(d, out, scheme="general"):
+    if scheme == "reduced":
+        from tests import test_sc_spin_orbital as S
+        files = S._write_model(d, so=True, soc=0.3,
+                               types=("CoulombIntra", "CoulombInter", "Hund", "Ising"))
+    else:
+        S, files = _sc_model(d)
     inp = S._input(d, files, True, {})
-    inp["mode"]["calc_scheme"] = "general"
+    inp["mode"]["calc_scheme"] = scheme
     del inp["eliashberg"]
     inp["log"] = {"print_level": 1}
     inp["file"]["output"] = {"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq"}
@@ -170,6 +188,7 @@ def _sc_bond_input(fixture_name):
 CASES = {
     "flex_onsite": ("hwave", _flex_input),
     "rpa_onsite": ("hwave", _rpa_input),
+    "rpa_onsite_reduced": ("hwave", lambda d, out: _rpa_input(d, out, scheme="reduced")),
     "sc_static_onsite": ("sc", _sc_onsite_input),
     "sc_bond_soc_all_types": ("sc", _sc_bond_input("SOC_ALL_TYPES")),
     "sc_bond_zeeman_extern": ("sc", _sc_bond_input("ZEEMAN_EXTERN")),
@@ -393,6 +412,7 @@ class TestSpinOrbitalOnsiteReference(unittest.TestCase):
         expected = {
             "flex_onsite": {"chi0q.npz", "chiq.npz", "sigma.npz", "green.npz", "energy.dat"},
             "rpa_onsite": {"chi0q.npz", "chiq.npz"},
+            "rpa_onsite_reduced": {"chi0q.npz", "chiq.npz"},
             "sc_static_onsite": {"eigenvalue.dat", "gap.dat", "gap.npz"},
             "sc_bond_soc_all_types": {"eigenvalue.dat", "gap.dat", "gap.npz"},
             "sc_bond_zeeman_extern": {"eigenvalue.dat", "gap.dat", "gap.npz"},
@@ -415,6 +435,30 @@ class TestSpinOrbitalOnsiteReference(unittest.TestCase):
                     np.load(os.path.join(new_out, fn)) as db:
                 if "producer_version" in da.files:
                     self.assertIn("producer_version", db.files, (name, fn))
+
+    def test_each_side_ran_its_own_tree(self):
+        """The imported ``hwave`` lies under the side's own ``src``, and the
+        recorded ``producer_version`` names the reference commit on the
+        reference side only."""
+        marker = SO_REFERENCE_COMMIT[:7]
+        trees = {"reference": self.ref, "mine": self.mine}
+        for (name, side), (out, err) in sorted(self.runs.items()):
+            with self.subTest(case=name, side=side):
+                pkgs = re.findall(r"^HWAVE_PACKAGE=(.*)$", err, flags=re.M)
+                self.assertEqual(pkgs, [os.path.realpath(
+                    os.path.join(trees[side], "src", "hwave"))])
+                versions = []
+                for fn in _files(out):
+                    if fn.endswith(".npz"):
+                        with np.load(os.path.join(out, fn)) as z:
+                            if "producer_version" in z.files:
+                                versions.append(str(z["producer_version"]))
+                self.assertTrue(versions, (name, side))
+                for v in versions:
+                    if side == "reference":
+                        self.assertIn(marker, v)
+                    else:
+                        self.assertNotIn(marker, v)
 
     def test_inert_gate_only_key(self):
         """``longitudinal_bond_max_shells = 2`` with the gate off: the same
