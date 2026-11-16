@@ -2074,6 +2074,12 @@ class RPA:
         self._reject_offsite_pairhop_under_transverse_bond_gate()
 
 
+    def _bond_memory_cap_parsed_elsewhere(self):
+        """Whether ``longitudinal_bond_memory_cap_gb`` is parsed by the
+        subclass rather than by :meth:`_init_longitudinal_bond_config`
+        (``False`` here; the spin-orbital bond FLEX overrides it)."""
+        return False
+
     def _init_longitudinal_bond_config(self):
         """Parse ``[mode.param] longitudinal_bond_channels`` and its
         companion options (the experimental bond-resolved LONGITUDINAL
@@ -2165,6 +2171,12 @@ class RPA:
                     "got {}".format(_max_shells))
         self.longitudinal_bond_max_shells = _max_shells
 
+        if self._bond_memory_cap_parsed_elsewhere():
+            # the spin-orbital bond FLEX (#270) keeps the raw value: its
+            # cap has the spin-orbital meaning (unset = 0.8 x available,
+            # 0 disables the check) and is validated by its admission
+            self.longitudinal_bond_memory_cap_gb = None
+            return
         _cap_gb = self.param_mod.get("longitudinal_bond_memory_cap_gb",
                                       LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT)
         if (isinstance(_cap_gb, (bool, np.bool_))

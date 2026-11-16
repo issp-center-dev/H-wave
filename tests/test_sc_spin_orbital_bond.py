@@ -30,6 +30,7 @@ from hwave.sc import (_SO_BOND_CHI0Q_UNUSED, _SO_BOND_DIAGNOSTICS_REFUSAL,
                       _SO_BOND_GREEN_REFUSAL, _SO_BOND_LAYOUT_IGNORED,
                       _SO_BOND_PRECONDITION_REFUSAL)
 from tests import so_bond_entry_fixtures as F
+from tests import so_bond_flex_fixtures as _flex_fixtures
 from tests import so_zero_field as Z
 from tests.so_bond_oracles import CELL, closed_row, rel
 
@@ -3122,7 +3123,8 @@ def _onsite_rows(fixture, name):
 
 
 #: the band and field of ZEEMAN_EXTERN with its on-site interaction rows only
-ZEEMAN_EXTERN_ONSITE = _onsite_rows(F.ZEEMAN_EXTERN, "ZEEMAN_EXTERN_ONSITE")
+#: (moved to tests.so_bond_flex_fixtures, shared with the FLEX bond tests)
+ZEEMAN_EXTERN_ONSITE = _flex_fixtures.ZEEMAN_EXTERN_ONSITE
 #: num_eigenvalues >= dim - 1 = 27 of the 4x4 antisymmetric space: both
 #: paths diagonalize densely (and so does every pair-S_z sector)
 _B1_NEV = 27
