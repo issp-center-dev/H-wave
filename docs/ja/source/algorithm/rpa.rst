@@ -683,7 +683,9 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 区切ったリストです。\ ``PairHop``\ はこのリストには挙がりません。この行は FLEX
 （スピン軌道モードでは、\ ``longitudinal_bond_channels``\ なしではオフサイトの行を拒否し、
 ありではその交換を厳密に扱います。\ :ref:`flex_spin_orbital`\ を参照）と、\ ``hwave_sc``\ が
-内部で実行する RPA では記録されません。
+内部で実行する RPA では記録されません。\ ``hwave_sc``\ はボンドチャネル付きのスピン軌道
+FLEX の出力をまだ読みません。その静的なボンド経路は自分で裸のボンドバブルを作ります
+（\ :ref:`sc_so_bond_static`\ を参照）。
 
 
 .. _flex_second_order_kernel:
@@ -1161,6 +1163,7 @@ reduced スキームはスピン軌道入力を拒否します。Eliashberg ソ�
 チャネルに射影されます）。計算、キー、メモリ、出力は\ :ref:`flex_so_bond_tutorial`\ に
 まとめています。この版では CPU で動作し、\ ``chi0q``\ /\ ``chiq``\ を最後の写像のチャネル 0
 ブロックとして書き出し、ボンドアーカイブは書き出しません。\ ``hwave_sc``\ はその出力を
-まだ読めません。
+まだ読めません。FLEX のみの\ ``hwave_tsweep``\ は、上と同じく\ ``warm_start = false``\ で
+これを実行します。
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

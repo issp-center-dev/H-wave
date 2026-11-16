@@ -941,7 +941,10 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
 入力
 """"
 
-計算には次の5つのフラグがすべて必要です。入力ファイルはスピン軌道の規約に従います
+計算には次の5つのフラグがすべて必要です。\ ``[mode]``\ の\ ``mode = "FLEX"``\ 、
+``enable_spin_orbital = true``\ 、\ ``calc_scheme = "general"``\ と、
+``[mode.param]``\ の\ ``flex_hartree_fock = true``\ 、
+``longitudinal_bond_channels = true``\ です。入力ファイルはスピン軌道の規約に従います
 （Geometry の\ ``norb``\ は\ :math:`2N`\ 、Transfer はインターリーブしたスピン軌道
 インデックス、相互作用ファイルと Extern は物理軌道インデックス。\ :ref:`Ch:Config_rpa`\ を
 参照）。正方格子上の物理軌道1つ、オンサイトの\ ``U``\ 、最近接の\ ``V``
@@ -965,11 +968,11 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
      EPS = 8
      flex_hartree_fock = true
      longitudinal_bond_channels = true
-     # so_bond_layout = "auto"                 # the default; "dense" forces the dense layout
-     # longitudinal_bond_memory_cap_gb = 32.0  # GiB; unset: 0.8 x the available memory
-     # longitudinal_bond_freq_batch = 8        # unset: the largest of 16, 8, 4, 2, 1 that fits
-     # longitudinal_bond_cond_tol = 1.0e-3     # the conditioning floor of the dressing (default)
-     # coeff_extern = 1.0                      # with the Extern file below
+     # so_bond_layout = "auto"                 # デフォルト。"dense" で密なレイアウトを強制
+     # longitudinal_bond_memory_cap_gb = 32.0  # GiB。未指定: 利用可能メモリの 0.8 倍
+     # longitudinal_bond_freq_batch = 8        # 未指定: 16, 8, 4, 2, 1 のうち収まる最大の値
+     # longitudinal_bond_cond_tol = 1.0e-3     # ドレッシングの条件スコアの下限（デフォルト）
+     # coeff_extern = 1.0                      # 下の Extern ファイルと併用
    [file.input]
      path_to_input = "."
    [file.input.interaction]
@@ -1026,10 +1029,11 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
   スピン回転不変性がない場合、横チャネルはオンサイトのスピン軌道 FLEX と同じく
   それ自身の頂点で総和されます。
 
-実装は次のように検証されています。Hartree-Fock 項を独立な Wick 縮約の評価と、1回の
-写像を独立に組み立てた結果と比較（一致\ :math:`\le 10^{-12}`\ ）。\ :math:`B = 1`\ で
-オンサイトのスピン軌道 FLEX と比較。SU(2) 極限で非スピン軌道のボンド FLEX と比較
-（1軌道と2軌道、収束解まで）。2つのレイアウトの間で比較。
+実装の独立な参照は、Hartree-Fock 項の独立な Wick 縮約の評価、\ :math:`B = 1`\ での
+オンサイトのスピン軌道 FLEX、SU(2) 極限での非スピン軌道のボンド FLEX（1軌道と2軌道、
+収束解まで）です。これに加えて、1回の写像が、検証済みのバブル・\ :math:`P_B`\ ・
+自己エネルギーの輸送とドレッシングの明示的な線形方程式の解法からテスト側で組み立てた
+結果と一致し（\ :math:`\le 10^{-12}`\ ）、2つのレイアウトが互いに一致します。
 
 キー
 """"
@@ -1049,13 +1053,20 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
      - ``"auto"``\ （デフォルト）または\ ``"dense"``\ 。下の「レイアウト」を参照
    * - ``longitudinal_bond_memory_cap_gb``
      - 受け入れ判定のホストメモリ上限。スピン軌道での意味を持ちます（下の
-       「メモリ」を参照）。未指定は利用可能メモリの\ ``0.8``\ 倍
+       「メモリ」を参照）。未指定は利用可能メモリの\ ``0.8``\ 倍（非スピン軌道 FLEX の
+       ``8.0``\ GiB ではありません）
    * - ``longitudinal_bond_freq_batch``
-     - ドレッシングの振動数バッチ。未指定なら自動で選ばれます
+     - ドレッシングの振動数バッチ（\ ``[1, Nmat]``\ の整数）。未指定なら 16、8、4、2、1
+       のうち上限に収まる最大の値
    * - ``longitudinal_bond_max_shells``
-     - 先頭のシェルだけを残します。落とせるのは結合ゼロで宣言されたシェルだけです
+     - 先頭のシェルだけを残します。ゼロでない結合をもつシェルを落とすカットオフは
+       拒否されるので、取り除けるのは結合ゼロで宣言されたシェルだけです。小さいが
+       ゼロでない結合のシェルを外すには、相互作用ファイルでその行を省く（またはゼロに
+       する）必要があります
    * - ``longitudinal_bond_cond_tol``
-     - ドレッシングの条件数の下限（デフォルト\ ``1.0e-3``\ ）
+     - ドレッシングの条件スコア（逆条件数）の下限。すべての\ :math:`(q, i\nu)`\ での
+       :math:`\hat I + \bar\chi_B\Gamma_B`\ の\ :math:`\sigma_{\min}/\sigma_{\max}`\ です
+       （デフォルト\ ``1.0e-3``\ ）
    * - ``longitudinal_bond_store``
      - ``"auto"``\ または\ ``"host"``\ （ストアはホストメモリに置かれます）
    * - ``longitudinal_bond_guard_freqs``
@@ -1065,7 +1076,7 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
    * - ``longitudinal_bond_pairing``
      - ``"none"``\ のみ（デフォルト）
    * - ``longitudinal_bond_output_full``\ 、\ ``longitudinal_bond_output_layout``
-     - 拒否（\ ``output_full = false``\ は受け付けます）
+     - 拒否（\ ``longitudinal_bond_output_full = false``\ は受け付けます）
    * - ``longitudinal_bond_half_grid``
      - すべてのスピン軌道計算と同じく拒否
 
@@ -1124,9 +1135,12 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
 
 選択は厳密です。\ ``1e-14``\ のスピン反転の Transfer 成分でも密なレイアウトが選ばれます。
 結果はそのような成分について連続ですが、メモリの見積もり（とコスト）は、成分が
-ちょうどゼロのときとゼロでないときの間で約\ :math:`16/6`\ 倍跳びます。Extern 場
-（\ :math:`\sigma^z`\ ）は\ :math:`S_z`\ を保存するので、Zeeman 場だけの模型は
-パックされます。2つのレイアウトは丸め誤差の範囲で同じ結果を与えます。入力が
+ちょうどゼロのときとゼロでないときの間で約\ :math:`16/6`\ 倍跳びます。Wannier 計算から
+作った Transfer ファイルには\ ``1e-15``\ 程度の数値的なスピン反転成分が含まれることが
+多く、それらは密なレイアウトを選びます。ログのレイアウトの行を確認し、\ :math:`S_z`\ が
+物理的に保存されるときはそれらの成分をゼロにしてください。Extern 場
+（\ :math:`\sigma^z`\ ）は\ :math:`S_z`\ を保存するので、スピン依存性が（Extern による）
+縦の Zeeman 場だけの模型はパックされます。2つのレイアウトは丸め誤差の範囲で同じ結果を与えます。入力が
 :math:`S_z`\ を保存するときは（どちらのレイアウトでも）、Green 関数の逆行列も
 セクターごとに求めます。
 
@@ -1134,8 +1148,10 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
 """"""
 
 計算の受け入れ判定は、Green 関数やボンドの配列を作る前に1回だけ行われ、受け入れた
-計算が後で拒否されることはありません。見積もりは最大のフェーズ合計（計算全体で
-常駐する配列と、1つのフェーズの配列の和）の\ :math:`1.25`\ 倍です。最大の配列は
+計算が後でメモリを理由に拒否されることはありません（ドレッシングのガードが止めることは
+あります）。見積もりは最大のフェーズ合計（計算全体で常駐する配列と、1つのフェーズの
+配列の和）の\ :math:`1.25`\ 倍です。以下の大きさの単位はバイトで、16 は complex128 の
+1成分のバイト数です。最大の配列は
 ストアのスロット\ :math:`\bar\chi_B`\ （\ :math:`W`\ はその上にそのまま書き込まれます）で、
 密なレイアウトで\ ``16 Nmat nvol ND^2``\ バイト、パックでその\ :math:`6/16`\ です。その他の
 行は、ドレッシングのバッチ（\ ``7 x 16 nb nvol ND^2``\ ）と極の指標のための静的スライスの
@@ -1257,12 +1273,14 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
   mode (0 disables the check), got <value>``\ ）。
 
 ジョブの cgroup として見えないバッチシステムのメモリ制限は見積もりから見えません。
-上限をジョブの制限値に設定してください。
+バッチシステムでは\ ``longitudinal_bond_memory_cap_gb``\ をジョブのメモリ制限値に
+明示的に設定してください。
 
 **振動数バッチ。** ``longitudinal_bond_freq_batch``\ が未指定なら、バッチ\ ``nb``\ は
 16、8、4、2、1 のうち（\ ``Nmat``\ を超えない範囲で）見積もりが上限に収まる最大の値で、
 ``spin-orbital bond FLEX: frequency batch nb = <nb> (the largest of 16, 8, 4, 2,
-1 not above Nmat that fits the cap)``\ と記録されます。指定した値はそのまま使われます。
+1 not above Nmat that fits the cap)``\ と記録されます。指定した値（\ ``[1, Nmat]``\ の
+整数。それ以外は拒否されます）はそのまま使われ、この行は出ません。
 
 **拒否。** 見積もりが上限を超えると、ボンドの配列を作る前に拒否されます::
 
@@ -1287,10 +1305,12 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
 反復のログ
 """"""""""
 
-各写像は\ :math:`\nu = 0`\ でのスピンフルなボンドチャネルの RPA 極の指標
+:math:`\nu = 0`\ でのスピンフルなボンドチャネルの RPA 極の指標
 （ラベル\ ``RPA pole indicator max_q eig[-chibar_B Gamma_B] (spinful) (q, i nu =
-0)``\ ）と、ドレッシングの最小の条件数スコア（\ ``bond cond_min spinful``\ 。パックの
-レイアウトでは最小・最大の特異値の\ :math:`S_z`\ セクターも）を記録します。最後の
+0)``\ ）は、最初と最後の写像、および反復が初めて発散的に見えた写像では INFO レベルで、
+それ以外では DEBUG レベルで記録されます。各写像は INFO レベルで、ドレッシングの最小の
+条件スコア（\ ``bond cond_min spinful``\ 。パックのレイアウトでは最小・最大の特異値の
+:math:`S_z`\ セクターも）を記録します。最後の
 写像の後に極をもう一度検査し、指標が 1 以上なら\ ``The final FLEX state (its
 effective interaction W and self-energy) is built on that susceptibility; it
 describes no physical state and is still reported.``\ で終わる WARNING が出ます
@@ -1303,7 +1323,9 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
 - ``green.npz``\ と\ ``sigma.npz``\ はオンサイトのスピン軌道 FLEX と同じもの
   （\ :ref:`flex_so_output_files`\ を参照）で、最終状態のものです。
 - ``chi0q.npz``\ と\ ``chiq.npz``\ は、\ **最後の写像**\ の\ :math:`\bar\chi_B`\ と
-  :math:`\chi_B`\ のチャネル 0 ブロックを、オンサイトのスピン軌道の出力と同じ形状と
+  :math:`\chi_B`\ のチャネル 0 ブロックです。これはオンサイトの対（\ :math:`n_d = 2N`\ ）
+  の感受率で、\ :math:`\chi_B`\ のチャネル 0 ブロックはすでに\ :math:`B`\ 個すべての
+  ボンドチャネルでドレスされています。オンサイトのスピン軌道の出力と同じ形状と
   規約（\ ``(nmat, nvol, nd, nd, nd, nd)``\ 、\ ``chi_convention = "spin_orbital"``\ ）で
   持ちます。\ :math:`B = 1`\ ではオンサイトの配列に一致します。これらは
   ``[file.output]``\ で指定したときだけ書き出され、\ ``IterationMax = 0``\ （写像を1回も
@@ -1319,6 +1341,8 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
   ``"last_map"``\ 、green/sigma では\ ``"final_state"``\ で、各ファイルの\ ``fp_green``\ は
   そのファイルを作った Green 関数のダイジェストです。chi0q/chiq では最後の写像の Green
   関数、green/sigma では最終（混合後）の Green 関数です。一般に両者は異なります。
+  ``state_*``\ のメンバーも同じ規則に従い、chi0q/chiq は最後の写像の状態点（その
+  ``mu``\ と密度）を、green/sigma は最終状態の状態点を記録します。
 
 .. important::
 
@@ -1326,13 +1350,18 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
    スピン軌道の\ ``hwave_sc``\ は、この経路が書いた\ ``chi0q_mode = "flex"``\ の
    アーカイブを拒否します（\ ``... was written by producer_stage 'flex_so_bond',
    which this version does not read yet ...``\ ）。オフサイトのある模型のペアリングには、
-   自分でボンドバブルを作る\ :ref:`sc_so_bond_static`\ の静的なボンド経路を使ってください。
+   :ref:`sc_so_bond_static`\ の静的なボンド経路を使ってください。この経路はバンド
+   （Transfer と Extern）から自分で裸のボンドバブルを作り、この経路の\ ``green.npz``\ は
+   読みません（スピン軌道モードでは\ ``bond_green``\ は拒否されます）。
 
 この版で使えないもの: ボンドアーカイブ、プロセス内のペアリング、GPU、半分のボソン
 格子、初期値（\ ``sigma_init``\ 、\ ``trans_mod``\ 、\ ``green_init``\ 。オンサイトの
 スピン軌道 FLEX と同じ）。\ ``flex_hartree_fock``\ のその他の条件（一様松原格子、
 副格子なし、偶数の\ ``Nmat``\ ）も適用されます。Extern 場は受け付けます
-（\ :ref:`flex_spin_orbital`\ を参照）。
+（\ :ref:`flex_spin_orbital`\ を参照）。\ ``hwave_tsweep``\ はこの経路を、FLEX のみの掃引
+（\ ``[continuation] run_eliashberg = false``\ ）で\ ``warm_start = false``\ のときだけ
+実行します。各段は裸の Hartree-Fock 状態から始まります。\ ``warm_start = true``\ と
+``run_eliashberg = true``\ は、すべてのスピン軌道計算と同じく拒否されます。
 
 
 .. _flex_bond_pairing_tutorial:
@@ -1959,7 +1988,9 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 
 ``enable_spin_orbital = true``\ の計算（:ref:`flex_spin_orbital`\ を参照）は、
 次元\ :math:`n_d = 2 n_{\rm orb}`\ のスピン軌道インデックス（スピンブロック順
-``s * norb + a``\ ）でアーカイブを書き出します。
+``s * norb + a``\ ）でアーカイブを書き出します。\ ``longitudinal_bond_channels = true``\ の
+計算は同じファイルを\ ``producer_stage = "flex_so_bond"``\ 付きで書き出します。その来歴と
+chi0q/chiq のチャネル 0 の内容は\ :ref:`flex_so_bond_tutorial`\ （「出力」）にあります。
 
 - ``sigma.npz``\ ・\ ``green.npz``\ ・\ ``chi0q.npz``\ は
   ``index_convention = "spin_block"``\ を持ちます。\ ``sigma``\ と\ ``green``\ の
@@ -2186,6 +2217,13 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
 
 その他のパラメータ (``T``, ``CellShape``, ``Nmat``, ``filling``\ 等)
 はRPAソルバーと共通です。詳細は\ :ref:`Ch:Config_rpa`\ を参照してください。
+ボンドのキー（\ ``longitudinal_bond_channels``\ とその関連キー）と、ボンドチャネル付きの
+スピン軌道 FLEX のレイアウトを選ぶ\ ``so_bond_layout``\ もそこにあります。スピン軌道モード
+（\ ``enable_spin_orbital = true``\ ）での\ ``longitudinal_bond_channels``\ 、
+``so_bond_layout``\ 、\ ``longitudinal_bond_memory_cap_gb``\ （未指定は利用可能メモリの
+``0.8``\ 倍で、\ ``8.0``\ ではありません）、\ ``longitudinal_bond_freq_batch``\ （未指定は
+16、8、4、2、1 のうち上限に収まる最大の値）については\ :ref:`flex_so_bond_tutorial`\ を
+参照してください。
 
 .. note::
 
@@ -2249,7 +2287,8 @@ FLEXソルバーは\ ``[mode.param]``\ セクションで以下のパラメー�
    ``longitudinal_bond_channels = true``\ で受け付けます。\ :ref:`flex_so_bond_tutorial`\ を
    参照）になります。\ ``flex_hartree_fock``\ が
    なければ一般スキームは\ ``enable_spin_orbital``\ を拒否し、reduced スキームは常に
-   拒否します。オフサイト項は
+   拒否します。スピンフリーの一般パス（\ ``enable_spin_orbital``\ なし）でボンド
+   チャネルを使わない場合、オフサイト項は
    ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ について受理されます
    （同一軌道・軌道間のいずれも、副格子折り畳みの有無を問わず）。いずれも
    **ring の頂点には** Hartree（密度）部分 :math:`V(q)`\ としてのみ入り、

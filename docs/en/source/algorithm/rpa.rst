@@ -722,7 +722,9 @@ have a nonzero off-site row. ``PairHop`` is not named in this list. The line
 is not logged by FLEX (which, in spin-orbital mode, refuses off-site rows
 without ``longitudinal_bond_channels`` and resolves their exchange exactly
 with it; see :ref:`flex_spin_orbital`) or by the RPA that ``hwave_sc`` runs
-internally.
+internally. ``hwave_sc`` does not read the outputs of the spin-orbital FLEX
+with bond channels yet; its static bond path builds its own bare bond
+bubble (see :ref:`sc_so_bond_static`).
 
 
 .. _flex_second_order_kernel:
@@ -1260,6 +1262,7 @@ longitudinal and transverse spin channels). The run, its keys, its memory
 and its outputs are described in :ref:`flex_so_bond_tutorial`; in this
 version it runs on the CPU, writes ``chi0q``/``chiq`` as the channel-0
 blocks of the last map and no bond archive, and ``hwave_sc`` does not read
-its outputs yet.
+its outputs yet. A FLEX-only ``hwave_tsweep`` runs it with ``warm_start =
+false``, as above.
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

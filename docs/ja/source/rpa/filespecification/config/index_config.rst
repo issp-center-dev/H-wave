@@ -313,10 +313,10 @@ TOML形式
   ``Exchange``\ や\ ``PairHop``\ もそこで受け付けられ、2次は厳密に組み立てられます。ボンドの
   スピン部分が SU(2) 対称でない場合は警告が出力されます。
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
-  スピンフリー系・一様松原格子・副格子なし・偶数の\ ``Nmat``
-  が必要。:ref:`flex_bond_hf`\ を参照。\ ``enable_spin_orbital = true``\ では
+  スピンフリー系（または\ ``enable_spin_orbital = true``\ では
   :ref:`flex_so_bond_tutorial`\ のボンドチャネル付きスピン軌道 FLEX を選び、そこでは
-  以下の GPU・アーカイブ・ペアリングのオプションは使えません）。\ ``longitudinal_bond_channels = true``\
+  以下の GPU・アーカイブ・ペアリングのオプションは使えません）・一様松原格子・
+  副格子なし・偶数の\ ``Nmat``\ が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\
   （\ ``flex_hartree_fock = true``\ が前提）かつ\ ``gpu = true``\ の場合、
   ドレッシング・有効相互作用・自己エネルギーの転送が GPU（CuPy）上で
   実行されます。ボンド配列はホストメモリに置かれ、振動数バッチを1つずつ
@@ -344,7 +344,8 @@ TOML形式
 
 - ``longitudinal_bond_memory_cap_gb``
 
-  **形式 :** float型 (デフォルトは\ ``8.0``)
+  **形式 :** float型 (デフォルトは\ ``8.0``\ 。\ ``enable_spin_orbital = true``\ の
+  FLEX では、未指定は利用可能なホストメモリの\ ``0.8``\ 倍)
 
   **説明 :**
   ボンド分解した解法の **推定** ピークホスト（CPU）メモリの上限（2進 GiB。
@@ -385,7 +386,10 @@ TOML形式
   通過し得ます）、出力にも記録されます
   （``longitudinal_bond_guard_freqs``\ メンバー）。デフォルト値は
   ``gpu``\ に依存しません。\ ``longitudinal_bond_channels = true``
-  でない場合は警告付きで無視されます。
+  でない場合は警告付きで無視されます。\ ``enable_spin_orbital = true``\ の FLEX では
+  ``"all"``\ だけを受け付けます（スピン軌道のドレッシングはすべてのブロックを厳密に
+  分解するため、\ ``"static"``\ は拒否されます）。\ :ref:`flex_so_bond_tutorial`\ を
+  参照してください。
 
 - ``longitudinal_bond_guard_exact``
 
@@ -721,7 +725,8 @@ TOML形式
 
 - ``longitudinal_bond_freq_batch``
 
-  **形式 :** int型 (デフォルトは自動選択。FLEXモードのみ)
+  **形式 :** int型 (デフォルトは自動選択。\ ``enable_spin_orbital = true``\ では
+  16、8、4、2、1 のうち上限に収まる最大の値。FLEXモードのみ)
 
   **説明 :**
   ボンド分解 FLEX が一度にドレスするボソン振動数の数（``[1, Nmat]``\ ）

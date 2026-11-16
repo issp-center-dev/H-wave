@@ -1033,7 +1033,10 @@ level::
 Input
 """""
 
-The run needs all five flags below; the input files follow the
+The run needs all five flags below: ``mode = "FLEX"``,
+``enable_spin_orbital = true`` and ``calc_scheme = "general"`` in
+``[mode]``, ``flex_hartree_fock = true`` and
+``longitudinal_bond_channels = true`` in ``[mode.param]``. The input files follow the
 spin-orbital conventions (Geometry ``norb`` = :math:`2N`, Transfer in the
 interleaved spin-orbital indices, the interaction files and Extern in the
 physical orbital indices; see :ref:`Ch:Config_rpa`). A complete input for
@@ -1125,11 +1128,13 @@ What is exact
   invariance the transverse channel is resummed with its own vertex, as in
   the on-site spin-orbital FLEX.
 
-The implementation is checked against an independent Wick-contraction
-evaluation of the Hartree-Fock term and an independent composition of one
-map (agreement :math:`\le 10^{-12}`), against the on-site spin-orbital
-FLEX at :math:`B = 1`, against the non-spin-orbital bond FLEX in the SU(2)
-limit (one and two orbitals, converged), and between the two layouts.
+The independent references of the implementation are an
+independent Wick-contraction evaluation of the Hartree-Fock term, the
+on-site spin-orbital FLEX at :math:`B = 1`, and the non-spin-orbital bond
+FLEX in the SU(2) limit (one and two orbitals, converged). In addition,
+one map agrees (:math:`\le 10^{-12}`) with a test-side composition of the
+validated bubble, :math:`P_B` and self-energy transport with an explicit
+linear solve for the dressing, and the two layouts agree with each other.
 
 Keys
 """"
@@ -1149,14 +1154,21 @@ The bond keys of the non-spin-orbital FLEX apply where they make sense:
      - ``"auto"`` (default) or ``"dense"``; see *Layout* below
    * - ``longitudinal_bond_memory_cap_gb``
      - the host cap of the admission, with the spin-orbital meaning (see
-       *Memory* below): unset = ``0.8`` times the available memory
+       *Memory* below): unset = ``0.8`` times the available memory (not the
+       ``8.0`` GiB of the non-spin-orbital FLEX)
    * - ``longitudinal_bond_freq_batch``
-     - the frequency batch of the dressing; unset: chosen automatically
+     - the frequency batch of the dressing, an integer in ``[1, Nmat]``;
+       unset: the largest of 16, 8, 4, 2, 1 that fits the cap
    * - ``longitudinal_bond_max_shells``
-     - keeps the first shells; may drop only shells declared with zero
-       coupling
+     - keeps the first shells; a cutoff that would drop a shell with a
+       nonzero coupling is refused, so it removes only shells declared with
+       zero coupling. To leave out a shell of small but nonzero couplings,
+       omit its rows (or set them to zero) in the interaction files
    * - ``longitudinal_bond_cond_tol``
-     - the conditioning floor of the dressing (default ``1.0e-3``)
+     - the floor of the conditioning score of the dressing, the inverse
+       condition number :math:`\sigma_{\min}/\sigma_{\max}` of
+       :math:`\hat I + \bar\chi_B\Gamma_B` at every :math:`(q, i\nu)`
+       (default ``1.0e-3``)
    * - ``longitudinal_bond_store``
      - ``"auto"`` or ``"host"`` (the store is in host memory)
    * - ``longitudinal_bond_guard_freqs``
@@ -1166,7 +1178,7 @@ The bond keys of the non-spin-orbital FLEX apply where they make sense:
    * - ``longitudinal_bond_pairing``
      - ``"none"`` only (the default)
    * - ``longitudinal_bond_output_full``, ``longitudinal_bond_output_layout``
-     - refused (``output_full = false`` is accepted)
+     - refused (``longitudinal_bond_output_full = false`` is accepted)
    * - ``longitudinal_bond_half_grid``
      - refused, as in every spin-orbital run
 
@@ -1226,8 +1238,12 @@ of::
 The selection is exact: a spin-flip Transfer entry of ``1e-14`` selects the
 dense layout. The results are continuous in such an entry, but the memory
 estimate (and the cost) jumps by a factor of about :math:`16/6` between an
-entry of exactly zero and any nonzero value. An Extern field
-(:math:`\sigma^z`) conserves :math:`S_z`, so a Zeeman-only model is packed.
+entry of exactly zero and any nonzero value. A Transfer file from a
+Wannier calculation often carries numerical spin-flip entries of order
+``1e-15``; they select the dense layout. Check the layout line of the log,
+and when :math:`S_z` is conserved physically, set those entries to zero.
+An Extern field (:math:`\sigma^z`) conserves :math:`S_z`, so a model whose
+only spin dependence is a longitudinal Zeeman field (via Extern) is packed.
 Both layouts give the same results to round-off. When the input conserves
 :math:`S_z` (in either layout), the Green function is also inverted sector
 by sector.
@@ -1236,9 +1252,11 @@ Memory
 """"""
 
 The run is admitted once, before the Green function and any bond array are
-built; an admitted run is not refused later. The estimate is
+built; an admitted run is not refused later for memory (the dressing
+guard can still stop it). The estimate is
 :math:`1.25\times` the largest phase total (the arrays resident for the
-whole run plus those of one phase). The largest array is the store slot
+whole run plus those of one phase). The sizes below are in bytes, 16
+bytes per complex128 entry. The largest array is the store slot
 :math:`\bar\chi_B` (:math:`W` is written over it in place):
 ``16 Nmat nvol ND^2`` bytes dense, :math:`6/16` of that packed. The other
 rows are the dressing batch (``7 x 16 nb nvol ND^2``) with the static
@@ -1365,13 +1383,15 @@ non-spin-orbital FLEX default of 8 GiB does not apply here):
   spin-orbital mode (0 disables the check), got <value>``).
 
 A batch-system memory limit that is not visible as a cgroup of the job is
-invisible to the estimate: set the cap to the job's limit.
+invisible to the estimate. On a batch system, set
+``longitudinal_bond_memory_cap_gb`` explicitly to the job's memory limit.
 
 **The frequency batch.** With ``longitudinal_bond_freq_batch`` unset, the
 batch ``nb`` is the largest of 16, 8, 4, 2, 1 (not above ``Nmat``) whose
 estimate fits the cap, logged as ``spin-orbital bond FLEX: frequency batch
 nb = <nb> (the largest of 16, 8, 4, 2, 1 not above Nmat that fits the
-cap)``. A set value is used as is.
+cap)``. A set value (an integer in ``[1, Nmat]``; any other value is
+refused) is used as is, without this line.
 
 **The refusal.** An estimate above the cap is refused before any bond array
 is built::
@@ -1399,11 +1419,12 @@ them.
 The iteration log
 """""""""""""""""
 
-Every map logs the RPA pole indicator of the spinful bond channel at
-:math:`\nu = 0` (label ``RPA pole indicator max_q eig[-chibar_B Gamma_B]
-(spinful) (q, i nu = 0)``) and the smallest conditioning score of the
-dressing (``bond cond_min spinful``; in the packed layout with the
-:math:`S_z` sectors of the smallest and largest singular value). After the
+The RPA pole indicator of the spinful bond channel at :math:`\nu = 0`
+(label ``RPA pole indicator max_q eig[-chibar_B Gamma_B] (spinful) (q, i nu
+= 0)``) is logged at INFO level on the first and the last map, and on the
+map where the iteration first looks divergent (at DEBUG level otherwise). Every map logs at INFO level the smallest conditioning
+score of the dressing (``bond cond_min spinful``; in the packed layout with
+the :math:`S_z` sectors of the smallest and largest singular value). After the
 last map the pole is checked once more; an indicator at or above 1 gives a
 WARNING ending with ``The final FLEX state (its effective interaction W and
 self-energy) is built on that susceptibility; it describes no physical
@@ -1417,7 +1438,10 @@ Outputs
 - ``green.npz`` and ``sigma.npz`` are those of the on-site spin-orbital
   FLEX (see :ref:`flex_so_output_files`), for the final state.
 - ``chi0q.npz`` and ``chiq.npz`` hold the channel-0 blocks of
-  :math:`\bar\chi_B` and :math:`\chi_B` of the **last map**, in the shape and
+  :math:`\bar\chi_B` and :math:`\chi_B` of the **last map**: the
+  susceptibility of the on-site pairs (:math:`n_d = 2N`), in which the
+  channel-0 block of :math:`\chi_B` is already dressed by all :math:`B`
+  bond channels. They have the shape and
   conventions of the on-site spin-orbital outputs (``(nmat, nvol, nd, nd,
   nd, nd)``, ``chi_convention = "spin_orbital"``); at :math:`B = 1` they
   equal the on-site arrays. They are written only when requested in
@@ -1433,7 +1457,9 @@ Outputs
   in chi0q/chiq and ``"final_state"`` in green/sigma, and each file's
   ``fp_green`` is the digest of the Green function it was built from:
   the last map's Green function for chi0q/chiq, the final (mixed) one for
-  green/sigma. The two differ in general.
+  green/sigma. The two differ in general. The ``state_*`` members follow
+  the same rule: chi0q/chiq record the state point of the last map (its
+  ``mu`` and density), green/sigma that of the final state.
 
 .. important::
 
@@ -1442,13 +1468,19 @@ Outputs
    archive written by this path (``... was written by producer_stage
    'flex_so_bond', which this version does not read yet ...``). For the
    pairing of an off-site model use the static bond path of
-   :ref:`sc_so_bond_static`, which builds its own bond bubble.
+   :ref:`sc_so_bond_static`. It builds its own bare bond bubble from the
+   band (Transfer and Extern) and does not read the ``green.npz`` of this
+   path (``bond_green`` is refused in spin-orbital mode).
 
 Not available in this version: the bond archive, the in-process pairing,
 the GPU, the half bosonic grid, and seeds (``sigma_init``, ``trans_mod``,
 ``green_init``), as in the on-site spin-orbital FLEX. The other conditions
 of ``flex_hartree_fock`` apply (uniform Matsubara grid, no sublattice, even
 ``Nmat``); an Extern field is accepted (see :ref:`flex_spin_orbital`).
+``hwave_tsweep`` runs this path only as a FLEX-only sweep
+(``[continuation] run_eliashberg = false``) with ``warm_start = false``:
+every rung starts from the bare Hartree-Fock state. ``warm_start = true``
+and ``run_eliashberg = true`` are refused, as for every spin-orbital run.
 
 
 .. _flex_bond_pairing_tutorial:
@@ -2067,7 +2099,11 @@ Spin-orbital runs
 
 A run with ``enable_spin_orbital = true`` (see :ref:`flex_spin_orbital`)
 writes its archives on the spin-orbital index of dimension
-:math:`n_d = 2 n_{\rm orb}`, in spin-block order ``s * norb + a``:
+:math:`n_d = 2 n_{\rm orb}`, in spin-block order ``s * norb + a``. A run with
+``longitudinal_bond_channels = true`` writes the same files with
+``producer_stage = "flex_so_bond"``; its provenance and the channel-0
+contents of its chi0q/chiq are described in :ref:`flex_so_bond_tutorial`
+(*Outputs*).
 
 - ``sigma.npz``, ``green.npz`` and ``chi0q.npz`` carry ``index_convention =
   "spin_block"``. ``sigma`` and ``green`` have shape ``(1, nmat, nvol, nd,
@@ -2315,7 +2351,14 @@ The FLEX solver accepts the following parameters in the
        calculations concurrently.
 
 All other parameters (``T``, ``CellShape``, ``Nmat``, ``filling``, etc.)
-are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
+are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details. This
+includes the bond keys (``longitudinal_bond_channels`` and its companions)
+and ``so_bond_layout``, the layout of the spin-orbital FLEX with bond
+channels. In spin-orbital mode (``enable_spin_orbital = true``), see
+:ref:`flex_so_bond_tutorial` for ``longitudinal_bond_channels``,
+``so_bond_layout``, ``longitudinal_bond_memory_cap_gb`` (unset: ``0.8``
+times the available memory, not ``8.0``) and ``longitudinal_bond_freq_batch``
+(unset: the largest of 16, 8, 4, 2, 1 that fits the cap).
 
 .. note::
 
@@ -2389,7 +2432,9 @@ are shared with the RPA solver. See :ref:`Ch:Config_rpa` for details.
    rows with ``longitudinal_bond_channels = true``, see
    :ref:`flex_so_bond_tutorial`); without
    ``flex_hartree_fock`` the general scheme refuses ``enable_spin_orbital``,
-   and the reduced scheme always does. Off-site input is accepted for
+   and the reduced scheme always does. On the spin-free general path
+   (without ``enable_spin_orbital``) and without the bond channels,
+   off-site input is accepted for
    ``CoulombInter``, ``Hund`` and ``Ising`` (same-orbital or inter-orbital,
    with or without sublattice folding): each enters the RING vertex as its
    Hartree (density) part :math:`V(q)` only — the exchange crossing of an

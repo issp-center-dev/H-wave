@@ -373,11 +373,11 @@ that has no effect under the current settings.
   FLEX (experimental; an off-site ``Exchange`` or ``PairHop`` is accepted there too, with
   its second order built exactly and a warning when a bond's spin part is
   not SU(2) symmetric; requires ``flex_hartree_fock = true``,
-  ``calc_scheme = "general"``, a spin-free system, the uniform Matsubara
-  grid, no sublattice and an even ``Nmat``; see
-  :ref:`flex_bond_hf`; with ``enable_spin_orbital = true`` it selects the
-  spin-orbital FLEX with bond channels of :ref:`flex_so_bond_tutorial`,
-  where the GPU, the archive and pairing options below are not available).
+  ``calc_scheme = "general"``, a spin-free system (or, with
+  ``enable_spin_orbital = true``, the spin-orbital FLEX with bond channels
+  of :ref:`flex_so_bond_tutorial`, where the GPU, the archive and pairing
+  options below are not available), the uniform Matsubara grid, no
+  sublattice and an even ``Nmat``; see :ref:`flex_bond_hf`).
   With ``longitudinal_bond_channels = true``
   (which requires ``flex_hartree_fock = true``) and ``gpu = true``,
   the dressing, the effective interaction and the self-energy
@@ -410,7 +410,8 @@ that has no effect under the current settings.
 - ``longitudinal_bond_memory_cap_gb``
 
   **Type :**
-  Float (default value is ``8.0``)
+  Float (default value is ``8.0``; with ``enable_spin_orbital = true``
+  (FLEX), unset means ``0.8`` times the available host memory)
 
   **Description :**
   Cap on the ESTIMATED peak host (CPU) memory of the bond-resolved solve,
@@ -454,7 +455,10 @@ that has no effect under the current settings.
   is a reduced diagnostic that removes the dominant CPU cost of the
   guard and is recorded in the outputs (``longitudinal_bond_guard_freqs``
   member). The default does not depend on ``gpu``. Ignored with a
-  warning unless ``longitudinal_bond_channels = true``.
+  warning unless ``longitudinal_bond_channels = true``. With
+  ``enable_spin_orbital = true`` (FLEX) only ``"all"`` is accepted
+  (``"static"`` is refused: the spin-orbital dressing decomposes every block
+  exactly); see :ref:`flex_so_bond_tutorial`.
 
 - ``longitudinal_bond_guard_exact``
 
@@ -810,7 +814,8 @@ that has no effect under the current settings.
 - ``longitudinal_bond_freq_batch``
 
   **Type :**
-  Integer (default: chosen automatically; FLEX mode only)
+  Integer (default: chosen automatically, with ``enable_spin_orbital =
+  true`` the largest of 16, 8, 4, 2, 1 that fits the cap; FLEX mode only)
 
   **Description :**
   Number of bosonic frequencies dressed at once by the bond-resolved
