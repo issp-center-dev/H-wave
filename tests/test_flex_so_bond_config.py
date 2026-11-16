@@ -238,6 +238,8 @@ class TestRefusals(_Case):
             (T_PAIRING, {"longitudinal_bond_pairing": "singlet"}),
             (T_PAIRING, {"longitudinal_bond_pairing": "both"}),
             (T_STORE, {"gpu": True, "longitudinal_bond_store": "device"}),
+            (T_STORE, {"longitudinal_bond_store": "device"}),
+            (T_STORE, {"gpu": False, "longitudinal_bond_store": "device"}),
             (T_GUARD_FREQS, {"longitudinal_bond_guard_freqs": "static"}),
             (T_GPU_REQUIRED, {"gpu_required": True}),
             (T_LAYOUT_VALUE.format("bogus"), {"so_bond_layout": "bogus"}),
@@ -447,6 +449,63 @@ class TestAdmission(_Case):
         self.assertNotIn("admitted cases", msg)
         self.assertNotIn("hwave_sc static", msg)
         self.assertIsNone(s._so_admission)
+
+    def _spy_plans(self):
+        """Patch ``so_bond.plan_so_bond`` with a wrapper that records every
+        call (its ``nb``, ``caps``, ``log_summary`` and the plan) and emits
+        an unrelated ``so_bond`` record before each call."""
+        from hwave.solver import so_bond
+        real = so_bond.plan_so_bond
+        calls = []
+
+        def spy(**kw):
+            so_bond.logger.info("unrelated so_bond record %d", len(calls))
+            call = dict(nb=kw.get("nb"), caps=kw.get("caps"),
+                        log_summary=kw.get("log_summary", True), plan=None)
+            calls.append(call)
+            call["plan"] = real(**kw)
+            return call["plan"]
+        return mock.patch.object(so_bond, "plan_so_bond", side_effect=spy), calls
+
+    def test_over_cap_tries_nb_1(self):
+        """The capped plan of an auto-batch over-cap run is the one at the
+        smallest batch, nb = 1 (as its remedy sentence says)."""
+        patch, calls = self._spy_plans()
+        s, gi = self.build(param={"longitudinal_bond_memory_cap_gb": 1e-6})
+        with patch as m, self.assertRaises(ValueError) as cm:
+            self.preflight(s, gi)
+        self.assertTrue(m.called)
+        self.assertIn(T_REMEDY_AUTO, str(cm.exception))
+        # the trial plans at 16, 8, 4, 2, 1 (unlimited), then the capped one
+        self.assertEqual([c["nb"] for c in calls], [16, 8, 4, 2, 1, 1])
+        self.assertIsNone(calls[-1]["plan"])            # the capped call refused
+        self.assertIsNotNone(calls[-1]["caps"].host_bytes)
+        self.assertTrue(all(c["caps"].host_bytes is None for c in calls[:-1]))
+
+    def test_trial_plans_quiet_call_local(self):
+        """The trial plans of the batch selection are not logged, the
+        admitting plan is (once), and a record another caller emits on the
+        ``so_bond`` logger in the meantime is kept: the suppression is a
+        per-call option, not a filter on the shared logger."""
+        from hwave.solver import so_bond
+        s, _ = self.build(param={"longitudinal_bond_memory_cap_gb": 0})
+        p8, p4 = self._peaks(s)
+        cap = 0.5 * (p8 + p4) / 2 ** 30
+        patch, calls = self._spy_plans()
+        with patch as m:
+            s, msgs = self.run_logs(param={"longitudinal_bond_memory_cap_gb": cap})
+        self.assertTrue(m.called)
+        self.assertEqual([c["nb"] for c in calls], [16, 8, 4, 4])
+        self.assertEqual([c["log_summary"] for c in calls], [False, False, False, True])
+        for i in range(len(calls)):
+            self.assertOnce(msgs, "INFO", "unrelated so_bond record %d" % i)
+        final = calls[-1]["plan"]
+        self.assertIs(s._so_admission.plan, final)
+        self.assertOnce(msgs, "INFO", final.reason)
+        for c in calls[:-1]:
+            if c["plan"].reason != final.reason:
+                self.assertNotIn(("INFO", c["plan"].reason), msgs)
+        self.assertEqual(so_bond.logger.filters, [])
 
     def test_over_cap_set_batch(self):
         for nb, note in ((4, T_REMEDY_SET), (1, T_REMEDY_SET_1)):

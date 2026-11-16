@@ -303,10 +303,13 @@ class FLEX(RPA):
     #: the admission of the spin-orbital bond FLEX (flex_so_bond.SOBondFlexAdmission);
     #: set by _phase_b_preflight
     _so_admission = None
-    #: the Green-function digest of the last spin-orbital bond map (R16; the
-    #: provenance of its chi0q / chiq) and the SCF position named by the
-    #: per-sector Dyson step's internal-consistency refusal
+    #: the Green-function digest and the state point (mu, density) of the
+    #: last spin-orbital bond map (the provenance of its chi0q / chiq, which
+    #: are built from that map's Green function, not the final state's) and
+    #: the SCF position named by the per-sector Dyson step's
+    #: internal-consistency refusal
     _so_fp_green_map = None
+    _so_state_map = None
     _so_dyson_where = None
     #: the subject of every refusal / notice of the spin-orbital bond FLEX
     _SO_BOND_HEAD = ("[mode] enable_spin_orbital = true with [mode.param] "
@@ -660,7 +663,10 @@ class FLEX(RPA):
                 "memory) or \"device\" (always in device memory; refused when it does not fit "
                 "or when the GPU backend is not active), got {!r}".format(bs))
         out["longitudinal_bond_store"] = bs.strip().lower()
-        if out["longitudinal_bond_store"] == "device" and not _bk.as_bool(param.get("gpu", False)):
+        # the spin-orbital bond FLEX refuses the device store itself (host
+        # only), so its refusal is the one shown, not "needs gpu = true"
+        if (out["longitudinal_bond_store"] == "device" and not so_gate
+                and not _bk.as_bool(param.get("gpu", False))):
             raise ValueError(
                 "[mode.param] longitudinal_bond_store = \"device\" needs gpu = true (the bond "
                 "block store can only be kept in device memory on the GPU backend); use "
@@ -1960,6 +1966,7 @@ class FLEX(RPA):
         # defaults None)
         self._so_admission = None
         self._so_fp_green_map = None
+        self._so_state_map = None
         self._so_dyson_where = None
         self.scf_converged = False
         self.scf_iterations = 0
@@ -2739,6 +2746,8 @@ class FLEX(RPA):
                     # kept for the per-iteration guard line below (the arrays
                     # of the density result are released with it)
                     dens_hermitian = float(dens.hermitian_deviation)
+                    # the map's density (the state point of its chi0q / chiq)
+                    map_density = float(dens.n_per_spin)
                     del dens
                 green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
                 if so_gate:
@@ -2780,10 +2789,16 @@ class FLEX(RPA):
                                                            _bk.to_host(g_new))
                     del g_new
                     if so_gate:
-                        # R16: chi0q / chiq of this map carry the digest of
-                        # the Green function the map was built from
+                        # chi0q / chiq of this map carry the digest of the
+                        # Green function the map was built from, and the
+                        # state point (mu, density) of that Green function
                         self._so_fp_green_map = fingerprint.green_digest(
                             _bk.to_host(green_kw), fingerprint.GREEN_LAYOUT)
+                        _nv = self.lattice.cellvol    # ORIGINAL cells
+                        self._so_state_map = fingerprint.so_state(
+                            beta=beta, nmat=self.nmat, mu=mu,
+                            density=map_density / _nv, calc_mu=self.calc_mu,
+                            target=(self.Ncond / _nv if self.calc_mu else mu))
                 del green_kw
                 self.map_iteration = iteration + 1
                 n_iter_done = iteration + 1
@@ -5635,8 +5650,8 @@ class FLEX(RPA):
         # is that of the array written to green.npz
         so_prov = {}
         # the chi0q / chiq provenance: the same dict, except on the
-        # spin-orbital bond FLEX, whose chi0q / chiq carry the digest of the
-        # last map's Green function (R16)
+        # spin-orbital bond FLEX, whose chi0q / chiq carry the digest and the
+        # state point (mu, density) of the last map's Green function
         so_prov_map = so_prov
         so_adm = getattr(self, "_so_admission", None) if getattr(self, "_so_bond", False) \
             else None
@@ -5653,12 +5668,14 @@ class FLEX(RPA):
                 assert self._so_fp_green_map is not None or self.max_iter == 0
                 so_prov_map = (self._so_provenance("flex_so_bond", label,
                                                    bond=so_adm.bond_inputs,
-                                                   fp_green=self._so_fp_green_map)
+                                                   fp_green=self._so_fp_green_map,
+                                                   state=self._so_state_map)
                                if self._so_fp_green_map is not None else {})
             else:
                 so_prov = self._so_provenance("flex_so_onsite", "hwave FLEX (spin-orbital)")
                 so_prov_map = so_prov
-        if so_adm is not None and ("chi0q" in info_outputfile or "chiq" in info_outputfile):
+        if (so_adm is not None and self.max_iter > 0
+                and ("chi0q" in info_outputfile or "chiq" in info_outputfile)):
             logger.info("spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of "
                         "chibar_B and chi_B of the last map; the bond-resolved arrays are not "
                         "written in this version.")

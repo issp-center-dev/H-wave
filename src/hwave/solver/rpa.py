@@ -4183,7 +4183,8 @@ class RPA:
             sub_shape=tuple(int(x) for x in self.lattice.subshape))
         return transfer, extern, meta
 
-    def _so_provenance(self, producer_stage, producer_label, *, bond=None, fp_green=None):
+    def _so_provenance(self, producer_stage, producer_label, *, bond=None, fp_green=None,
+                       state=None):
         """The fingerprint/state members of this spin-orbital run, built
         once per call (merged into every archive of the run), or ``{}``
         when this solve established no state (e.g. a supplied chi0q).
@@ -4193,8 +4194,10 @@ class RPA:
 
         ``bond`` is the :class:`~hwave.solver.fingerprint.BondInputs` of a
         bond-resolved stage (``None`` otherwise); ``fp_green`` the Green
-        digest the archive records (``None``: ``self._so_fp_green``)."""
-        state = getattr(self, "_so_state", None)
+        digest the archive records (``None``: ``self._so_fp_green``) and
+        ``state`` its state point (``None``: ``self._so_state``)."""
+        if state is None:
+            state = getattr(self, "_so_state", None)
         if fp_green is None:
             fp_green = getattr(self, "_so_fp_green", None)
         if state is None or fp_green is None:

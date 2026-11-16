@@ -24,7 +24,7 @@ Every chemical potential is the fixture's fixed ``mu``
 stated. Mutations patch module attributes looked up at call time; every
 reference is computed before its patch is entered.
 """
-import inspect
+import contextlib
 import logging
 import os
 import tempfile
@@ -463,21 +463,41 @@ class TestOutputs(unittest.TestCase):
     """The archives of a spin-orbital bond FLEX run (ZEEMAN_SZ_ALL,
     IterationMax 3, Mix 0.5) and the hwave_sc readers that refuse them."""
 
+    @staticmethod
+    def _spy_maps():
+        """Patch the map and its density step: every call records a copy
+        of the map's Green function, and the mu and the density of the
+        map's density step."""
+        from hwave.solver.flex import FLEX
+        maps, dens = [], []
+        real_map = FLEX._phase_b_so_bond_map
+        real_dens = FLEX._phase_b_density_and_hf
+
+        def so_map(self, store, gamma_b, green_kw, *args, **kwargs):
+            maps.append(np.array(green_kw, dtype=np.complex128, copy=True))
+            return real_map(self, store, gamma_b, green_kw, *args, **kwargs)
+
+        def density(self, green_kw, static, mu, *args, **kwargs):
+            out = real_dens(self, green_kw, static, mu, *args, **kwargs)
+            dens.append((float(mu), float(out[0].n_per_spin)))
+            return out
+        patches = contextlib.ExitStack()
+        patches.enter_context(mock.patch.object(FLEX, "_phase_b_so_bond_map", so_map))
+        patches.enter_context(mock.patch.object(FLEX, "_phase_b_density_and_hf", density))
+        return patches, maps, dens
+
     def test_files_and_stage(self):
         from hwave.solver import fingerprint, so_bond
         fx = X.ZEEMAN_SZ_ALL
-        loop_digests = []
-        orig = fingerprint.green_digest
-
-        def spy(*args, **kwargs):
-            value = orig(*args, **kwargs)
-            if inspect.stack()[1].function == "_solve_phase_b":
-                loop_digests.append(value)
-            return value
+        patches, maps, _ = self._spy_maps()
         with tempfile.TemporaryDirectory() as d:
-            with mock.patch.object(fingerprint, "green_digest", spy):
+            with patches:
                 solver, out, records = _write_run(d, fx, {"IterationMax": 3, "Mix": 0.5})
-            self.assertEqual(len(loop_digests), 3)
+            self.assertEqual(len(maps), 3)
+            # the digests of the Green functions the maps were built from,
+            # computed here from copies of the map's argument
+            orig = fingerprint.green_digest
+            loop_digests = [orig(g, fingerprint.GREEN_LAYOUT) for g in maps]
             self.assertFalse(solver.scf_converged)
             files = {n: _load(out, n) for n in ("green", "sigma", "chi0q", "chiq")}
             compiled = solver.ham_info.so_context.compiled
@@ -518,6 +538,65 @@ class TestOutputs(unittest.TestCase):
                         self.assertTrue(str(cm.exception).startswith(SO_BOND_GREEN_PREFIX))
                     else:
                         self.assertEqual(str(cm.exception), text)
+
+    def test_no_map_no_output_info(self):
+        """IterationMax = 0 with chi0q / chiq requested: no map ran, only
+        green / sigma are written, and the channel-0 notice is not logged."""
+        fx = X.ZEEMAN_SZ_ALL
+        with tempfile.TemporaryDirectory() as d:
+            _, out, records = _write_run(d, fx, {"IterationMax": 0})
+            written = sorted(n for n in ("green", "sigma", "chi0q", "chiq")
+                             if os.path.exists(os.path.join(out, n + ".npz")))
+        self.assertEqual(written, ["green", "sigma"])
+        self.assertNotIn(OUTPUT_INFO, _messages(records))
+
+    def test_last_map_state_point(self):
+        """chi0q / chiq carry the state point (mu, density) of the last
+        map's Green function, like its digest; green / sigma carry the
+        final state's. A chemical-potential search (filling), three maps,
+        Mix 0.5: the last map's mu is not the final state's (both densities
+        meet the filling target)."""
+        from hwave.solver import fingerprint
+        fx = X.ZEEMAN_SZ_ALL
+        patches, maps, dens = self._spy_maps()
+        with tempfile.TemporaryDirectory() as d:
+            inp_param = {"IterationMax": 3, "Mix": 0.5}
+            inp = X.write_flex_case(d, fx, param=inp_param)
+            par = inp["mode"]["param"]
+            del par["mu"]
+            par["filling"] = fx.filling
+            info = inp["file"]["output"]
+            info.update({"green": "green", "sigma": "sigma", "chi0q": "chi0q", "chiq": "chiq"})
+            out = info["path_to_output"]
+            os.makedirs(out, exist_ok=True)
+            with patches:
+                solver, green_info = X.build_solver(inp)
+                solver.validate_output_paths(info, out)
+                solver.solve(green_info, out)
+                solver.save_results(info, green_info)
+            self.assertTrue(solver.calc_mu)
+            self.assertEqual((len(maps), len(dens)), (3, 3))
+            files = {n: _load(out, n) for n in ("green", "sigma", "chi0q", "chiq")}
+        cellvol = solver.lattice.cellvol
+        mu_map, n_map = dens[-1]
+        target = solver.Ncond / cellvol
+        final = files["green"]
+        self.assertEqual(float(final["state_mu"]), float(solver.mu))
+        self.assertNotEqual(mu_map, float(final["state_mu"]))
+        for name in ("chi0q", "chiq"):
+            with self.subTest(archive=name):
+                z = files[name]
+                self.assertEqual(str(z["payload_kind"]), "last_map")
+                self.assertEqual(str(z["fp_green"]),
+                                 fingerprint.green_digest(maps[-1], fingerprint.GREEN_LAYOUT))
+                self.assertEqual(float(z["state_mu"]), mu_map)
+                self.assertEqual(float(z["state_density"]), n_map / cellvol)
+                self.assertEqual(float(z["state_target"]), target)
+                self.assertEqual(float(z["state_mu_tol"]), abs(n_map / cellvol - target))
+                self.assertTrue(bool(z["state_calc_mu"]))
+                for k in ("state_beta", "state_nmat"):
+                    self.assertEqual(z[k], final[k])
+        self.assertEqual(float(files["sigma"]["state_mu"]), float(final["state_mu"]))
 
     def test_onsite_hwave_sc_deferred(self):
         """SO on-site hwave_sc with chi0q_mode = "flex" on the outputs of a

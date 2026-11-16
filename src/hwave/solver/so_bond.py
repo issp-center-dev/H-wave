@@ -1882,7 +1882,7 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
                  placement_request="host", nb=None, keep_chi=False, write_chibar=False,
                  layout="dense", layout_reason=None, vertex_batch=False, cap_key=None,
                  shell_rows=(), max_shells_key=None, envelope="", extra_rows=(),
-                 w_in_place=None, resident_rows=(), remedy_note=None):
+                 w_in_place=None, resident_rows=(), remedy_note=None, log_summary=True):
     """The admission plan of the spin-orbital bond helpers (host placement).
 
     Parameters
@@ -1951,6 +1951,10 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         A sentence inserted after the head sentence of the over-cap refusal
         (e.g. how the frequency batch was chosen); ``None`` leaves every
         text unchanged.
+    log_summary : bool
+        Log the plan's summary line (INFO) on success (default); ``False``
+        leaves it out for this call only (e.g. the trial plans of a batch
+        selection), without touching the module logger.
 
     Rows (16 bytes per complex entry): ``gamma_b = 16 nvol ND^2``
     (resident); the per-shift ``bubble_pair_block = 16 nvol (3 nmat P^2 +
@@ -2114,7 +2118,8 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
             "shells.\n{}".format(
                 solver, peak / _GIB, phase, B, ND, nvol, nmat, detail, cap / _GIB, note,
                 scaling, _row_table(rows)))
-    logger.info(reason)
+    if log_summary:
+        logger.info(reason)
     return SOBondPlan(
         nmat=nmat, nslices=nmat, nvol=nvol, B=B, nd=nd, ND=ND, nb=nb,
         dress_capacity=dress_capacity, consumers=closed, placement="host", layout=layout,

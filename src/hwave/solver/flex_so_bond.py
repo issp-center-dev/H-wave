@@ -276,18 +276,6 @@ _REMEDY_SET = ("longitudinal_bond_freq_batch = {nb} is set; a smaller value, or 
 _REMEDY_SET_1 = "longitudinal_bond_freq_batch = 1 is set (the smallest batch)."
 
 
-@contextlib.contextmanager
-def _quiet_plan():
-    """The candidate plans of the batch selection are not logged (their
-    reason line would name an unlimited cap); the admitting plan is."""
-    drop = lambda record: False     # noqa: E731
-    so_bond.logger.addFilter(drop)
-    try:
-        yield
-    finally:
-        so_bond.logger.removeFilter(drop)
-
-
 class SOBondFlexAdmission(NamedTuple):
     """The admission of a spin-orbital bond FLEX run
     (:func:`admit_so_bond_flex`), decided before any bond array exists.
@@ -370,8 +358,9 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
         nb = candidates[-1]
         unlimited = so_bond.SOBondCaps(None, None, None)
         for n in candidates:
-            with _quiet_plan():
-                trial = so_bond.plan_so_bond(caps=unlimited, nb=n, **common)
+            # the trial plans are not logged (their summary would name an
+            # unlimited cap); the admitting plan below is
+            trial = so_bond.plan_so_bond(caps=unlimited, nb=n, log_summary=False, **common)
             if caps.host_bytes is None or trial.peak_host <= caps.host_bytes:
                 nb = n
                 break
