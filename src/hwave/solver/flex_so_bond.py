@@ -18,6 +18,10 @@ __all__ = ["SOBondFlexMap", "so_bond_flex_map", "flex_so_bond_rows", "SOBondFlex
 _ENTRY = 16                     # bytes per complex128 entry
 #: the per-map Green-function digest hashes at most this many bytes per copy
 _DIGEST_COPY_CAP = 64 * 2 ** 20
+#: the resident row of the solve's small objects (flex_so_bond_rows)
+_SOLVER_BOOKKEEPING = 64 * 2 ** 10
+#: numpy's default iterator buffer size in entries (``np.getbufsize()``)
+_EINSUM_BUFSIZE = 8192
 
 
 def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=False):
@@ -38,7 +42,27 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
       ``mixing``; each row named by its phase), ``("convergence",
       "green_digest", 2 min(G, 64 MiB))`` (the per-map Green-function
       digest), ``("transport", "transport", 4 G + 4 C)`` and
-      ``("post_scf", "post_scf", G + C)``.
+      ``("post_scf", "post_scf", G + C)``;
+    * ``solver_bookkeeping = 64 KiB`` (resident): the small objects alive
+      for the whole solve that no array row counts (the admission and slot
+      geometry, the solver's attribute tables, the H0 / eigenpair copies,
+      array headers); measured about 41 KB in about 390 blocks, the same
+      at Nmat 8 and 32 (2026-11-16, numpy 2.4.6 and 1.26.4);
+    * the iterator buffers of the two many-index ``einsum`` contractions,
+      for numpy builds that evaluate them through a buffered ``nditer``
+      (numpy 1.26: one buffer of ``min(n_iter, b)`` complex entries per
+      buffered operand, ``n_iter`` the product of every index extent of the
+      contraction and ``b = 8192`` numpy's default buffer size; numpy 2
+      allocates none of it). The density's reference Green function
+      ``einsum('kaj,wkj,kbj->wkab')`` (``n_iter = nmat nvol nd^3``, four
+      buffered operands): ``density_einsum_workspace = 4 * 16 min(nmat
+      nvol nd^3, 8192)`` in ``density_hf`` and in ``post_scf`` (the final
+      state evaluates the same density); the transport contraction
+      ``einsum('frcadb,frcd->frab')`` (``n_iter = nmat nvol nd^4``, two
+      buffered operands): ``transport_einsum_workspace = 2 * 16 min(nmat
+      nvol nd^4, 8192)`` in ``transport``. The buffer counts are measured
+      (numpy 1.26.4: the peak above the output is these bytes, plus under
+      2 KB, over nmat 2..128, nvol 16..256, nd 2 and 4).
 
     ``split_seed`` is False on the spin-orbital path (its seeds are
     refused), so ``seed_envelope`` is 0 by default. Every byte count is an
@@ -49,11 +73,17 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
                                                 split_seed=split_seed)
     G = _ENTRY * nmat * nvol * nd * nd
     C = _ENTRY * nmat * nvol * nd ** 4
-    resident = tuple((k, int(v)) for k, v in persistent.items()) + (("collapses", int(2 * C)),)
+    density_ws = _ENTRY * 4 * min(nmat * nvol * nd ** 3, _EINSUM_BUFSIZE)
+    transport_ws = _ENTRY * 2 * min(nmat * nvol * nd ** 4, _EINSUM_BUFSIZE)
+    resident = tuple((k, int(v)) for k, v in persistent.items()) + (
+        ("collapses", int(2 * C)), ("solver_bookkeeping", _SOLVER_BOOKKEEPING))
     extra = tuple((k, k, int(v)) for k, v in phase.items()) + (
+        ("density_hf", "density_einsum_workspace", int(density_ws)),
         ("convergence", "green_digest", int(2 * min(G, _DIGEST_COPY_CAP))),
         ("transport", "transport", int(4 * G + 4 * C)),
-        ("post_scf", "post_scf", int(G + C)))
+        ("transport", "transport_einsum_workspace", int(transport_ws)),
+        ("post_scf", "post_scf", int(G + C)),
+        ("post_scf", "density_einsum_workspace", int(density_ws)))
     return resident, extra
 
 

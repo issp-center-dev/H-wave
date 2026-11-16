@@ -414,11 +414,15 @@ _FLEX_ROWS = {
 #: flex_so_bond_rows(nmat=8, nvol=9, nd=4, depth=2, mixing="anderson", n_types=3)
 _SO_RESIDENT = (("state", 20736), ("seed_envelope", 0), ("anderson_history", 147456),
                 ("anderson_work", 73728), ("eigenpairs_hf", 11520), ("flex_arrays", 92160),
-                ("hf_tables", 6912), ("collapses", 589824))
+                ("hf_tables", 6912), ("collapses", 589824),
+                ("solver_bookkeeping", 65536))
 _SO_EXTRA = (("green_mu", "green_mu", 112896), ("density_hf", "density_hf", 117504),
              ("convergence", "convergence", 131328), ("mixing", "mixing", 73728),
+             ("density_hf", "density_einsum_workspace", 294912),
              ("convergence", "green_digest", 36864), ("transport", "transport", 1253376),
-             ("post_scf", "post_scf", 313344))
+             ("transport", "transport_einsum_workspace", 262144),
+             ("post_scf", "post_scf", 313344),
+             ("post_scf", "density_einsum_workspace", 294912))
 
 
 def _phase_totals(rows, phases):
@@ -562,7 +566,7 @@ class TestRows(unittest.TestCase):
         # the SCF rows are flex_scf_rows' with nmodes = nd
         per, phase = flex_bond.flex_scf_rows(nmat=8, nvol=9, nmodes=4, depth=2,
                                              mixing="anderson", n_types=3, split_seed=False)
-        self.assertEqual(tuple(per.items()), res[:-1])
+        self.assertEqual(tuple(per.items()), res[:-2])
         self.assertEqual(tuple((k, k, v) for k, v in phase.items()), ext[:4])
         # the green digest's copy is capped at 64 MiB per copy
         _, big = rows(nmat=2048, nvol=4096, nd=4, depth=0, mixing="linear", n_types=1)

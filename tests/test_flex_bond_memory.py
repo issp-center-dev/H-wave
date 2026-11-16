@@ -153,6 +153,29 @@ def _coverage_paused():
             cov.start()
 
 
+class _TracerScope:
+    """One traced phase of :class:`_Tracer` (a module-level class: a class
+    created per call would be a reference cycle that only the garbage
+    collector frees, so every traced scope would leave a type object behind
+    inside the measurement -- about 13 KB over two spin-orbital bond
+    maps)."""
+
+    __slots__ = ("tracer", "name")
+
+    def __init__(self, tracer, name):
+        self.tracer, self.name = tracer, name
+
+    def __enter__(self):
+        tracemalloc.reset_peak()
+        return self
+
+    def __exit__(self, *exc):
+        tracer = self.tracer
+        peak = tracemalloc.get_traced_memory()[1]
+        tracer.peaks[self.name] = max(tracer.peaks.get(self.name, 0), peak - tracer.base)
+        return False
+
+
 class _Tracer:
     """``solver._phase_tracer``: per-phase tracemalloc peaks measured from
     the traced memory at SOLVE entry (``base``), so every buffer the solve
@@ -166,19 +189,7 @@ class _Tracer:
         self.base = base
 
     def __call__(self, name):
-        tracer = self
-
-        class _Ctx:
-            def __enter__(self_):
-                tracemalloc.reset_peak()
-                self_.start = tracemalloc.get_traced_memory()[0]
-                return self_
-
-            def __exit__(self_, *exc):
-                peak = tracemalloc.get_traced_memory()[1]
-                tracer.peaks[name] = max(tracer.peaks.get(name, 0), peak - tracer.base)
-                return False
-        return _Ctx()
+        return _TracerScope(self, name)
 
 
 class TestSolverPreflight(unittest.TestCase):
@@ -644,6 +655,205 @@ class TestDeviceBubbleRow(unittest.TestCase):
         need1 = 1.25 * (r["persistent"] + r["bubble"])
         est = estimate_bond_memory(device_available=int(need1 * 1.5 / 0.9), **self._KW)
         self.assertIn("bubble", est["device_table"])
+
+
+
+# ---------------------------------------------------------------------------
+# The spin-orbital bond FLEX (issue #270): the plan rows against the traced
+# memory of the solve, and the over-cap refusal
+# ---------------------------------------------------------------------------
+
+#: the traced phases of the spin-orbital bond solve (one per ``_traced``
+#: scope), each a phase of the admitted plan
+_SO_PHASES = ("green_mu", "density_hf", "bubble", "dressing", "w_conversion", "transport",
+              "convergence", "mixing", "post_scf")
+#: the resident rows allocated before ``green_mu`` of the first map: the
+#: vertex, the store slot, the two chi0q / chiq buffers, the solver's small
+#: objects and the SCF persistent rows
+_SO_RESIDENT = ("gamma_b", "chibar", "collapses", "solver_bookkeeping", "state",
+                "seed_envelope", "anderson_history", "anderson_work", "eigenpairs_hf",
+                "flex_arrays", "hf_tables")
+#: the fixtures of the gate and the layout each admits
+_SO_CASES = (("SOC_ALL_TYPES", "dense"), ("ZEEMAN_SZ_ALL", "sz_packed"))
+_SO_CAP_KEY = "[mode.param] longitudinal_bond_memory_cap_gb"
+_SO_OVERCAP_HEAD = "spin-orbital bond FLEX needs an estimated peak of"
+_SO_REMEDY_AUTO = ("The frequency batch was selected automatically; the smallest batch "
+                   "(nb = 1) was tried.")
+
+
+def _so_fixture(name):
+    from tests import so_bond_entry_fixtures as F
+    from tests import so_bond_flex_fixtures as X
+    return getattr(X, name, None) or getattr(F, name)
+
+
+def _so_traced_solve(fixture, nmat, drop=None):
+    """The traced spin-orbital bond FLEX solve behind
+    :class:`TestSOBondPlanRows` (4 x 4 mesh, ``Nmat = nmat``, two maps);
+    runs in a fresh process (:func:`tests.isolated_trace.run_isolated`,
+    issue #266). ``drop`` names an extra row that
+    ``flex_so_bond.flex_so_bond_rows`` leaves out (a mutation of the
+    admission's rows; a traced phase without a row is bounded by the
+    resident rows alone)."""
+    from unittest import mock
+    from hwave.solver import flex_so_bond
+    from tests import so_bond_flex_fixtures as X
+    fx = _so_fixture(fixture)
+    param = {"Nmat": int(nmat), "IterationMax": 2}
+    rows = flex_so_bond.flex_so_bond_rows
+
+    def _rows(**kw):
+        resident, extra = rows(**kw)
+        return resident, tuple(r for r in extra if r[1] != drop)
+
+    patch = (mock.patch.object(flex_so_bond, "flex_so_bond_rows", _rows) if drop is not None
+             else contextlib.nullcontext())
+    _preimport()
+    from hwave.solver import so_bond, fingerprint  # noqa: F401
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as out, \
+            _coverage_paused(), patch:
+        # an identical untraced solve first (see _traced_solve)
+        w, gw = X.build_solver(X.write_flex_case(d, fx, param=param))
+        w.solve(gw, out)
+        del w, gw
+        s, gi = X.build_solver(X.write_flex_case(d, fx, param=param))
+        tracer = _Tracer()
+        s._phase_tracer = tracer
+        tracemalloc.start()
+        try:
+            tracer.base = tracemalloc.get_traced_memory()[0]
+            s.solve(gi, out)
+        finally:
+            tracemalloc.stop()
+    plan = s._so_admission.plan
+    phases = {ph for ph, _, _ in plan.rows if ph != "resident"}
+    resident = sum(b for ph, _, b in plan.rows if ph == "resident")
+    out = {}
+    for ph, peak in tracer.peaks.items():
+        bound = plan.phase_total(ph) if ph in phases else resident
+        out[ph] = {"peak": peak, "bound": bound,
+                   "rows": sum(b for q, _, b in plan.rows if q == ph)}
+    return {"phases": out, "resident_total": resident, "layout": plan.layout, "nb": plan.nb,
+            "resident_rows": [nm for ph, nm, _ in plan.rows if ph == "resident"],
+            "row_names": [nm for ph, nm, _ in plan.rows if ph != "resident"],
+            "maps": int(s.map_iteration)}
+
+
+def _so_bound_failures(res):
+    """The traced phases whose peak since solve entry exceeds the plan's
+    phase total (R26: no lower bound)."""
+    return sorted(ph for ph, v in res["phases"].items() if v["peak"] > v["bound"])
+
+
+def _so_ratio_report(label, res):
+    """The per-phase ratio ``(peak - resident_total) / rows(phase)``,
+    logged (reported, not asserted, R26)."""
+    lines = []
+    for ph in _SO_PHASES:
+        v = res["phases"][ph]
+        ratio = (v["peak"] - res["resident_total"]) / v["rows"] if v["rows"] else float("nan")
+        lines.append("  {:<13s} peak {:>10d}  bound {:>10d}  ratio {:.3f}".format(
+            ph, v["peak"], v["bound"], ratio))
+    logging.getLogger("qlms").info("%s (%s, nb = %d, resident %d):\n%s", label, res["layout"],
+                                   res["nb"], res["resident_total"], "\n".join(lines))
+
+
+class TestSOBondPlanRows(unittest.TestCase):
+    """C1b-Mem (host): every traced phase of the spin-orbital bond FLEX
+    solve stays within the admitted plan's phase total (resident rows plus
+    the phase's rows), both layouts."""
+
+    def _check(self, nmat):
+        for fixture, layout in _SO_CASES:
+            with self.subTest(fixture=fixture, nmat=nmat):
+                res = run_isolated(_THIS, "_so_traced_solve", fixture, nmat)
+                self.assertEqual(res["layout"], layout)
+                self.assertEqual(res["maps"], 2)
+                self.assertEqual(sorted(res["resident_rows"]), sorted(_SO_RESIDENT))
+                self.assertEqual(sorted(res["phases"]), sorted(_SO_PHASES))
+                _so_ratio_report("{} Nmat {}".format(fixture, nmat), res)
+                for ph in _SO_PHASES:
+                    v = res["phases"][ph]
+                    self.assertLessEqual(v["peak"], v["bound"],
+                                         "{} Nmat {}: phase {} peak since solve entry {} > plan "
+                                         "phase total {}".format(fixture, nmat, ph, v["peak"],
+                                                                 v["bound"]))
+
+    def test_rows_bound_traced_smoke(self):
+        self._check(8)
+
+    def test_rows_bound_traced(self):
+        # measured 1.4 s (numpy 2.4.6) / 1.6 s (numpy 1.26.4) on macOS, the
+        # process start included: below the heavy threshold
+        self._check(32)
+
+    def test_dropping_a_row_fails(self):
+        fixture = _SO_CASES[0][0]
+        res = run_isolated(_THIS, "_so_traced_solve", fixture, 8, "transport")
+        # the mutation applied: the admitted plan has no transport row
+        self.assertNotIn("transport", res["row_names"])
+        self.assertIn("transport", _so_bound_failures(res))
+
+
+def _so_overcap_solve(fixture):
+    """The over-cap spin-orbital bond FLEX run behind
+    :class:`TestSOBondRefusal`, through ``solve`` in a fresh process: the
+    refusal text, the traced peak of the refused solve above its entry and
+    the calls of the preflight and of the store/vertex allocation."""
+    from unittest import mock
+    import hwave.solver.flex as flex_mod
+    from hwave.solver import so_bond
+    from tests import so_bond_flex_fixtures as X
+    calls = {"preflight": 0, "open_store": 0, "so_bond_vertex": 0}
+
+    def _spy(name, fn):
+        def wrapped(*a, **kw):
+            calls[name] += 1
+            return fn(*a, **kw)
+        return wrapped
+
+    _preimport()
+    with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as out, \
+            _coverage_paused(), \
+            mock.patch.object(flex_mod.FLEX, "_phase_b_preflight",
+                              _spy("preflight", flex_mod.FLEX._phase_b_preflight)), \
+            mock.patch.object(so_bond, "open_store", _spy("open_store", so_bond.open_store)), \
+            mock.patch.object(so_bond, "so_bond_vertex",
+                              _spy("so_bond_vertex", so_bond.so_bond_vertex)):
+        s, gi = X.build_solver(X.write_flex_case(
+            d, _so_fixture(fixture), param={"Nmat": 32, _SO_CAP_KEY.split()[-1]: 1e-6}))
+        msg = None
+        tracemalloc.start()
+        try:
+            base = tracemalloc.get_traced_memory()[0]
+            tracemalloc.reset_peak()
+            try:
+                s.solve(gi, out)
+            except ValueError as exc:
+                msg = str(exc)
+            peak = tracemalloc.get_traced_memory()[1] - base
+        finally:
+            tracemalloc.stop()
+    return {"message": msg, "peak": peak, "calls": calls,
+            "admission": s._so_admission is not None}
+
+
+class TestSOBondRefusal(unittest.TestCase):
+
+    def test_message_and_no_allocation(self):
+        for fixture, _layout in _SO_CASES:
+            with self.subTest(fixture=fixture):
+                res = run_isolated(_THIS, "_so_overcap_solve", fixture)
+                msg = res["message"]
+                self.assertIsNotNone(msg, "the over-cap run was not refused")
+                self.assertTrue(msg.startswith(_SO_OVERCAP_HEAD), msg)
+                self.assertIn("(" + _SO_CAP_KEY + "). " + _SO_REMEDY_AUTO + " ", msg)
+                self.assertIn("raise " + _SO_CAP_KEY, msg)
+                # refused in the preflight, before the store and the vertex
+                self.assertEqual(res["calls"], {"preflight": 1, "open_store": 0,
+                                                "so_bond_vertex": 0})
+                self.assertFalse(res["admission"])
+                self.assertLessEqual(res["peak"], 2 ** 20)
 
 
 if __name__ == "__main__":
