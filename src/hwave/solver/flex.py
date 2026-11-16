@@ -5663,6 +5663,9 @@ class FLEX(RPA):
             if so_adm is not None:
                 label = "hwave FLEX (spin-orbital, bond channels)"
                 so_prov = self._so_provenance("flex_so_bond", label, bond=so_adm.bond_inputs)
+                # the bond block layout of the run ("dense" or "sz_packed");
+                # the S_z sector map itself is not written on these outputs
+                so_prov["block_layout"] = np.asarray(so_adm.layout, dtype="<U16")
                 # no last-map digest only when no map ran (IterationMax = 0),
                 # and then chi0q / chiq are not written
                 assert self._so_fp_green_map is not None or self.max_iter == 0
@@ -5671,6 +5674,8 @@ class FLEX(RPA):
                                                    fp_green=self._so_fp_green_map,
                                                    state=self._so_state_map)
                                if self._so_fp_green_map is not None else {})
+                if so_prov_map:
+                    so_prov_map["block_layout"] = so_prov["block_layout"]
             else:
                 so_prov = self._so_provenance("flex_so_onsite", "hwave FLEX (spin-orbital)")
                 so_prov_map = so_prov

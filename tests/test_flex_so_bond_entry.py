@@ -422,11 +422,11 @@ class TestCrossPathB1(unittest.TestCase):
 # Outputs and provenance
 # --------------------------------------------------------------------------
 
-def _write_run(d, fixture, param):
+def _write_run(d, fixture, param, gate=True):
     """Solve and save the FLEX run of ``fixture`` into ``<d>/out`` (green,
     sigma, chi0q, chiq), as ``hwave.qlms.run`` does; returns ``(solver,
     out, records)``."""
-    inp = X.write_flex_case(d, fixture, param=param)
+    inp = X.write_flex_case(d, fixture, param=param, gate=gate)
     info = inp["file"]["output"]
     info.update({"green": "green", "sigma": "sigma", "chi0q": "chi0q", "chiq": "chiq"})
     out = info["path_to_output"]
@@ -538,6 +538,36 @@ class TestOutputs(unittest.TestCase):
                         self.assertTrue(str(cm.exception).startswith(SO_BOND_GREEN_PREFIX))
                     else:
                         self.assertEqual(str(cm.exception), text)
+
+    def test_block_layout_member(self):
+        """Every spin-orbital bond FLEX output records the bond block layout
+        of the run as a 0-d '<U16' member and nothing else of the layout
+        (no sz_sector_* member); IterationMax = 0 writes it on green and
+        sigma too."""
+        names = ("green", "sigma", "chi0q", "chiq")
+        for fx, layout in ((X.ZEEMAN_SZ_ALL, "sz_packed"), (F.SOC_ALL_TYPES, "dense")):
+            for it, written in ((3, names), (0, names[:2])):
+                with self.subTest(layout=layout, iteration_max=it):
+                    with tempfile.TemporaryDirectory() as d:
+                        _, out, _ = _write_run(d, fx, {"IterationMax": it, "Mix": 0.5})
+                        files = {n: _load(out, n) for n in written}
+                        for n in names[len(written):]:
+                            self.assertFalse(os.path.exists(os.path.join(out, n + ".npz")))
+                    for n, z in files.items():
+                        self.assertEqual(str(z["block_layout"]), layout)
+                        self.assertEqual(z["block_layout"].shape, ())
+                        self.assertEqual(z["block_layout"].dtype, np.dtype("<U16"))
+                        self.assertFalse([k for k in z if k.startswith("sz_sector_")])
+                        self.assertEqual(len(z), {"green": 67, "sigma": 69,
+                                                  "chi0q": 70, "chiq": 71}[n])
+
+    def test_block_layout_absent_on_onsite(self):
+        """The spin-orbital on-site outputs do not carry block_layout."""
+        with tempfile.TemporaryDirectory() as d:
+            solver, out, _ = _write_run(d, X.ZEEMAN_EXTERN_ONSITE, {"IterationMax": 1}, gate=False)
+            self.assertFalse(getattr(solver, "_so_bond", False))
+            for n in ("green", "sigma", "chi0q", "chiq"):
+                self.assertNotIn("block_layout", _load(out, n))
 
     def test_no_map_no_output_info(self):
         """IterationMax = 0 with chi0q / chiq requested: no map ran, only
