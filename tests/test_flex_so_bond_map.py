@@ -1,5 +1,5 @@
 """One map of the spin-orbital bond FLEX (``flex_so_bond.so_bond_flex_map``,
-gate C1b-M parts (a) and (b)).
+the truncated and the full map).
 
 The map is the bubble of the (tail-subtracted) Green function into the store
 slot ``chibar``, per frequency batch the dressing, ``W = P_B[Gamma (chi -
@@ -202,7 +202,7 @@ def _finite(tc, *values):
 
 
 class TestTruncations(unittest.TestCase):
-    """C1b-M (a): the map with the dressing truncated at second and third
+    """The truncated map: the map with the dressing truncated at second and third
     order equals the C1a production chain."""
 
     def test_second_order(self):
@@ -223,7 +223,7 @@ class TestTruncations(unittest.TestCase):
                     rows.append((label, kind, dev))
                     _finite(self, dev)
                     self.assertLessEqual(dev, TOL_SIGMA)
-        print("\nC1b-M (a) second order:\n" + "\n".join(
+        print("\ntruncated map second order:\n" + "\n".join(
             "  %-12s %-4s %.3e" % r for r in rows))
 
     def test_third_order(self):
@@ -249,7 +249,7 @@ class TestTruncations(unittest.TestCase):
                     _finite(self, dev, size3)
                     self.assertGreaterEqual(size3, MISS)        # non-vacuity
                     self.assertLessEqual(dev, TOL_SIGMA)
-        print("\nC1b-M (a) third order (dev, max|c1a(3)|/max|c1a(2)|):\n" + "\n".join(
+        print("\ntruncated map third order (dev, max|c1a(3)|/max|c1a(2)|):\n" + "\n".join(
             "  %-12s %-4s %.3e  %.3e" % r for r in rows))
 
     def test_wrong_readings_miss(self):
@@ -278,12 +278,12 @@ class TestTruncations(unittest.TestCase):
                 rows.append((name, dev))
                 _finite(self, dev)
                 self.assertGreaterEqual(dev, MISS)
-        print("\nC1b-M (a) rejected readings (FIXTURE_I rand):\n" + "\n".join(
+        print("\ntruncated map rejected readings (FIXTURE_I rand):\n" + "\n".join(
             "  %-18s %.3e" % r for r in rows))
 
 
 class TestFullMap(unittest.TestCase):
-    """C1b-M (b): the unpatched map ("band" Green function)."""
+    """The full map: the unpatched map ("band" Green function)."""
 
     def test_matches_composition(self):
         rows = []
@@ -301,7 +301,7 @@ class TestFullMap(unittest.TestCase):
                 self.assertLessEqual(d[2], TOL_CHI)
                 # the dressing is not the identity here
                 self.assertGreaterEqual(rel(c, c0), MISS)
-        print("\nC1b-M (b) full map (sigma, chi0_c0, chi_c0, cond_min):\n" + "\n".join(
+        print("\nfull map full map (sigma, chi0_c0, chi_c0, cond_min):\n" + "\n".join(
             "  %-12s %.3e  %.3e  %.3e  %.3e" % r for r in rows))
 
     def test_tail(self):
@@ -324,7 +324,7 @@ class TestFullMap(unittest.TestCase):
         # the tail matters: the bubble of G without the tail differs
         no_tail = _composition(case, Gs, None, G)[0]
         tail_effect = rel(no_tail, sigma)
-        print("\nC1b-M (b) tail (sigma, chi0_c0, chi_c0; swapped miss; tail effect): "
+        print("\nfull map tail (sigma, chi0_c0, chi_c0; swapped miss; tail effect): "
               "%.3e %.3e %.3e; %.3e; %.3e" % (d + (miss, tail_effect)))
         _finite(self, *d, miss, tail_effect)
         self.assertLessEqual(d[0], TOL_SIGMA)
@@ -386,7 +386,7 @@ class TestFullMap(unittest.TestCase):
             bad = _map(case, G, cond_tol=COND_TOL)
         self.assertEqual(spy2.call_count, 1)
         miss = rel(bad.sigma_fluct, ref)
-        print("\nC1b-M (b) transport: workers 2 vs 1 %.3e; label geometry miss %.3e"
+        print("\nfull map transport: workers 2 vs 1 %.3e; label geometry miss %.3e"
               % (rel(res.sigma_fluct, ref), miss))
         _finite(self, miss)
         self.assertGreaterEqual(miss, MISS)
@@ -451,7 +451,7 @@ class TestFullMap(unittest.TestCase):
             res = _map(case, G, cond_tol=COND_TOL)
         self.assertEqual(spy.call_count, 2 * math.ceil(NMAT / NB))
         m = (rel(res.chi_c0, c), rel(res.chi0_c0, c0))
-        print("\nC1b-M (b) channel-0 swap miss (chi_c0, chi0_c0): %.3e %.3e" % m)
+        print("\nfull map channel-0 swap miss (chi_c0, chi0_c0): %.3e %.3e" % m)
         _finite(self, *m)
         self.assertGreaterEqual(m[0], MISS)
         self.assertGreaterEqual(m[1], MISS)
@@ -485,7 +485,7 @@ class TestFullMap(unittest.TestCase):
             return after - before, out
         with_out, _ = retained(chi0_out=chi0_out, chi_out=chi_out)
         without, _ = retained()
-        print("\nC1b-M (b) retained bytes of a map: with buffers %d, without %d "
+        print("\nfull map retained bytes of a map: with buffers %d, without %d "
               "(sigma %d, one channel-0 block C = %d)" % (with_out, without, S, C))
         # with the buffers only sigma (and small objects) survives the map:
         # no channel-0 block of its own

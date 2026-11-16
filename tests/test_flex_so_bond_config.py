@@ -1,5 +1,5 @@
 """Configuration and admission of the spin-orbital bond-resolved FLEX
-(issue #270, gate C1b-R): ``[mode] enable_spin_orbital = true`` with
+(issue #270): ``[mode] enable_spin_orbital = true`` with
 ``[mode.param] longitudinal_bond_channels = true``.
 
 * :class:`TestFixtures` -- the complex-PairHop fixtures compile and select

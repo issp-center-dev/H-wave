@@ -2,14 +2,14 @@
 ``[mode] enable_spin_orbital = true`` with ``[mode.param]
 longitudinal_bond_channels = true``, one map and the converged state.
 
-* :class:`TestEntryOneMap` -- gate C1b-M (c): the first map at a fixed
+* :class:`TestEntryOneMap` -- the first map at a fixed
   chemical potential from a zero seed. Its Hartree-Fock self-energy is the
   Wick oracle of the documented operators at the exact free density; its
   fluctuation self-energy is :func:`hwave.solver.flex_so_bond.so_bond_flex_map`
   on an independent free Green function.
 * :class:`TestDyson` -- the per-sector Dyson step of an S_z-conserving run
   (both layouts) and its internal-consistency refusal.
-* :class:`TestCrossPathB1` -- gate C1b-B1: with on-site interactions only
+* :class:`TestCrossPathB1` -- B = 1: with on-site interactions only
   (B = 1) the bond machinery equals the on-site spin-orbital FLEX.
 * :class:`TestOutputs` -- the written archives and their provenance
   (``producer_stage = "flex_so_bond"``; chi0q / chiq carry the last map's
@@ -37,7 +37,7 @@ from tests import so_bond_entry_fixtures as F
 from tests import so_bond_flex_fixtures as X
 from tests.so_bond_oracles import build_h1, build_terms, free_density, rel, wick_hf_sigma_k
 
-#: the array tolerance of the one-map gates (C1b-M (c), C1b-B1)
+#: the array tolerance of the one-map checks (the entry's first map, B = 1)
 TOL = 1e-12
 #: the miss floor of a deliberate break (and of the non-vacuity checks)
 MISS = 1e-3
@@ -77,10 +77,10 @@ SO_BOND_GREEN_PREFIX = (
 PAIRHOP_NOTICE = "PairHop declares 4 off-site term(s)"
 STONER_LABEL = "RPA pole indicator max_q eig[-chibar_B Gamma_B] (spinful) (q, i nu = 0)"
 
-#: the C1b-M (c) fixtures and their layouts
+#: the fixtures of the entry's first-map checks and their layouts
 ENTRY_FIXTURES = ((F.SOC_ALL_TYPES, "dense"), (X.SOC_ALL_TYPES_CPH, "dense"),
                   (X.ZEEMAN_SZ_ALL, "sz_packed"))
-#: the C1b-B1 fixtures (B = 1) and their layouts
+#: the B = 1 fixtures and their layouts
 B1_FIXTURES = ((F.SOC_ONSITE, "dense"), (X.ZEEMAN_EXTERN_ONSITE, "sz_packed"))
 
 
@@ -192,11 +192,11 @@ def _messages(records, level=None):
 
 
 # --------------------------------------------------------------------------
-# C1b-M (c)
+# The entry's first map
 # --------------------------------------------------------------------------
 
 class TestEntryOneMap(unittest.TestCase):
-    """Gate C1b-M (c): the entry's first map against independent references
+    """The entry's first map against independent references
     (dense SOC_ALL_TYPES and SOC_ALL_TYPES_CPH, packed ZEEMAN_SZ_ALL)."""
 
     def test_hf_matches_wick(self):
@@ -213,11 +213,11 @@ class TestEntryOneMap(unittest.TestCase):
                 got = payload["static_new"][0, 0]
                 self.assertTrue(np.all(np.isfinite(got)))
                 dev = rel(got, ref)
-                print("C1b-M (c) HF %-18s %.3e" % (fx.name, dev))
+                print("entry first map HF %-18s %.3e" % (fx.name, dev))
                 self.assertLessEqual(dev, TOL)
                 static[fx.name] = got
         off_site, spin_off = hf_content(static["SOC_ALL_TYPES"], 1)
-        print("C1b-M (c) HF content: off-site %.3e spin-off-diagonal %.3e" % (off_site, spin_off))
+        print("entry first map HF content: off-site %.3e spin-off-diagonal %.3e" % (off_site, spin_off))
         self.assertGreaterEqual(off_site, CONTENT)
         # spin-off-diagonal content: floor SPIN_OFF_CONTENT (see there), and
         # the two blocks are also compared on their own scale
@@ -226,10 +226,10 @@ class TestEntryOneMap(unittest.TestCase):
         got = static["SOC_ALL_TYPES"]
         for blk in ((slice(0, 1), slice(1, 2)), (slice(1, 2), slice(0, 1))):
             dev = rel(got[(Ellipsis,) + blk], ref[(Ellipsis,) + blk])
-            print("C1b-M (c) HF SOC_ALL_TYPES spin-off-diagonal block %.3e" % dev)
+            print("entry first map HF SOC_ALL_TYPES spin-off-diagonal block %.3e" % dev)
             self.assertLessEqual(dev, TOL)
         cph = rel(static["SOC_ALL_TYPES_CPH"], static["SOC_ALL_TYPES"])
-        print("C1b-M (c) HF complex PairHop effect %.3e" % cph)
+        print("entry first map HF complex PairHop effect %.3e" % cph)
         self.assertGreaterEqual(cph, MISS)
 
     def test_fluct_matches_array_map(self):
@@ -243,7 +243,7 @@ class TestEntryOneMap(unittest.TestCase):
                 self.assertEqual(got.shape, ref.shape)
                 self.assertTrue(np.all(np.isfinite(got)))
                 dev = rel(got, ref)
-                print("C1b-M (c) fluct %-18s %.3e" % (fx.name, dev))
+                print("entry first map fluct %-18s %.3e" % (fx.name, dev))
                 self.assertLessEqual(dev, TOL)
 
     def test_mutations(self):
@@ -257,7 +257,7 @@ class TestEntryOneMap(unittest.TestCase):
             payload, _ = X.one_map(fx)
         self.assertGreater(spy.call_count, 0)
         miss = rel(payload["static_new"][0, 0], ref_hf)
-        print("C1b-M (c) mutation Fock-less HF miss %.3e" % miss)
+        print("entry first map mutation Fock-less HF miss %.3e" % miss)
         self.assertTrue(np.isfinite(miss))
         self.assertGreaterEqual(miss, MISS)
         # P_B = identity: the array map of the unpatched code first
@@ -270,7 +270,7 @@ class TestEntryOneMap(unittest.TestCase):
             payload, _ = X.one_map(fx)
         self.assertGreater(spy.call_count, 0)
         miss = rel(payload["fluct_new"], ref)
-        print("C1b-M (c) mutation P_B identity miss %.3e" % miss)
+        print("entry first map mutation P_B identity miss %.3e" % miss)
         self.assertTrue(np.isfinite(miss))
         self.assertGreaterEqual(miss, MISS)
 
@@ -284,7 +284,7 @@ def _off_sector(A, n):
 
 
 class TestDyson(unittest.TestCase):
-    """The per-sector Dyson step (R9): only on an S_z-conserving spin-orbital
+    """The per-sector Dyson step: only on an S_z-conserving spin-orbital
     bond run (both layouts), with exact off-sector zeros."""
 
     def _spied(self, fx, **kw):
@@ -339,7 +339,7 @@ class TestDyson(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# C1b-B1
+# B = 1 against the on-site path
 # --------------------------------------------------------------------------
 
 def _b1_rows(on, off):
@@ -350,7 +350,7 @@ def _b1_rows(on, off):
 
 
 class TestCrossPathB1(unittest.TestCase):
-    """Gate C1b-B1 (E127): B = 1, the bond machinery (gate on) against the
+    """B = 1: the bond machinery (gate on) against the
     on-site spin-orbital FLEX (gate off)."""
 
     def _pair(self, fx, param=None):
@@ -366,7 +366,7 @@ class TestCrossPathB1(unittest.TestCase):
             self.assertEqual(on[k].shape, off[k].shape, k)
             self.assertTrue(np.all(np.isfinite(on[k])), k)
         rows = _b1_rows(on, off)
-        print("C1b-B1 %s%-22s " % (label, fx.name)
+        print("B = 1 %s%-22s " % (label, fx.name)
               + "  ".join("%s %.3e" % kv for kv in rows.items()))
         for k, v in rows.items():
             self.assertLessEqual(v, TOL, k)
@@ -383,7 +383,7 @@ class TestCrossPathB1(unittest.TestCase):
                 _, off1 = self._check(fx, layout, {"coeff_tail": 1.0}, "tail ")
                 off0, _ = X.one_map(fx, gate=False)
                 effect = rel(off1["chi0q"], off0["chi0q"])
-                print("C1b-B1 tail effect %-18s %.3e" % (fx.name, effect))
+                print("B = 1 tail effect %-18s %.3e" % (fx.name, effect))
                 self.assertGreaterEqual(effect, MISS)
 
     def test_mutation(self):
@@ -396,7 +396,7 @@ class TestCrossPathB1(unittest.TestCase):
                     on, _ = X.one_map(fx, gate=True)
                 self.assertGreater(spy.call_count, 0)
                 miss = rel(on["fluct_new"], off["fluct_new"])
-                print("C1b-B1 mutation P_B identity %-18s %.3e" % (fx.name, miss))
+                print("B = 1 mutation P_B identity %-18s %.3e" % (fx.name, miss))
                 self.assertTrue(np.isfinite(miss))
                 self.assertGreaterEqual(miss, MISS)
 
@@ -410,7 +410,7 @@ class TestCrossPathB1(unittest.TestCase):
                         "G": rel(a["green"], b["green"]),
                         "mu": abs(a["physics"]["mu"] - b["physics"]["mu"]),
                         "NCond": abs(a["physics"]["NCond"] - b["physics"]["NCond"])}
-                print("C1b-B1 converged %-18s (%d / %d iterations) " % (
+                print("B = 1 converged %-18s (%d / %d iterations) " % (
                     fx.name, on.solver.scf_iterations, off.solver.scf_iterations)
                     + "  ".join("%s %.3e" % kv for kv in rows.items()))
                 for k, v in rows.items():
@@ -646,7 +646,7 @@ class TestFilling(unittest.TestCase):
 
 
 class TestPole(unittest.TestCase):
-    """R14 / R24: the static RPA pole indicator of every map, the check of
+    """The static RPA pole indicator of every map, the check of
     the final map."""
 
     def test_final_check_once(self):

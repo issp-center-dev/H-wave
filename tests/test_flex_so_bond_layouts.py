@@ -1,4 +1,4 @@
-"""Gate C1b-PD (issue #270): the spin-orbital bond FLEX in the S_z-packed
+"""Layouts (issue #270): the spin-orbital bond FLEX in the S_z-packed
 layout against the dense layout (``[mode.param] so_bond_layout = "dense"``)
 on the S_z-conserving ``ZEEMAN_SZ_ALL`` (a Zeeman field, every interaction
 type on- and off-site, a complex off-site PairHop).
@@ -84,7 +84,7 @@ def _zero_minus_sector(orig):
 
 
 class TestOneMap(unittest.TestCase):
-    """C1b-PD, one map: packed and dense layouts of ``ZEEMAN_SZ_ALL``."""
+    """One map: packed and dense layouts of ``ZEEMAN_SZ_ALL``."""
 
     @classmethod
     def setUpClass(cls):
@@ -106,7 +106,7 @@ class TestOneMap(unittest.TestCase):
                 self.assertTrue(np.all(np.isfinite(d[key])))
                 self.assertGreater(float(np.abs(d[key]).max()), 0.0)
                 dev = rel(p[key], d[key])
-                print("C1b-PD one map %-11s %.3e" % (label, dev))
+                print("packed vs dense one map %-11s %.3e" % (label, dev))
                 self.assertLessEqual(dev, TOL)
         # the two runs really differ in layout: reason lines and store types
         pm, dm = _messages(self.packed.records), _messages(self.dense.records)
@@ -124,12 +124,12 @@ class TestOneMap(unittest.TestCase):
         fluct = d["fluct_new"]
         off_site = float(np.abs(fluct - fluct.mean(axis=-3, keepdims=True)).max()
                          / np.abs(fluct).max())
-        print("C1b-PD off-site share of Sigma_fluct %.3e" % off_site)
+        print("packed vs dense off-site share of Sigma_fluct %.3e" % off_site)
         self.assertGreaterEqual(off_site, CONTENT)
         for label, key in (("Sigma_HF", "static_new"), ("Sigma_fluct", "fluct_new")):
             a = d[key]
             pol = float(np.abs(a[..., :n, :n] - a[..., n:, n:]).max() / np.abs(a).max())
-            print("C1b-PD spin polarization of %s %.3e" % (label, pol))
+            print("packed vs dense spin polarization of %s %.3e" % (label, pol))
             self.assertGreaterEqual(pol, SPIN_POL, label)
 
     def test_mutation(self):
@@ -144,13 +144,13 @@ class TestOneMap(unittest.TestCase):
         self.assertGreater(spy.call_count, 0)
         self.assertGreater(wrapper.applied, 0)           # the break was applied
         miss = rel(res.payloads[0]["fluct_new"], ref["fluct_new"])
-        print("C1b-PD mutation Y@-1 = 0 miss %.3e" % miss)
+        print("packed vs dense mutation Y@-1 = 0 miss %.3e" % miss)
         self.assertTrue(np.isfinite(miss))
         self.assertGreaterEqual(miss, MISS)
 
 
 class TestConverged(unittest.TestCase):
-    """C1b-PD, converged states (fast smoke :class:`TestOneMap`)."""
+    """Converged states (fast smoke :class:`TestOneMap`)."""
 
     def test_layouts_agree(self):
         p = X.converge(FX)
@@ -162,7 +162,7 @@ class TestConverged(unittest.TestCase):
                 "G": rel(a["green"], b["green"]),
                 "mu": abs(a["physics"]["mu"] - b["physics"]["mu"]),
                 "NCond": abs(a["physics"]["NCond"] - b["physics"]["NCond"])}
-        print("C1b-PD converged (%d / %d iterations) " % (
+        print("packed vs dense converged (%d / %d iterations) " % (
             p.solver.scf_iterations, d.solver.scf_iterations)
             + "  ".join("%s %.3e" % kv for kv in rows.items()))
         for k, v in rows.items():

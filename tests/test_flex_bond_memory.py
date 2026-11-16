@@ -741,13 +741,13 @@ def _so_traced_solve(fixture, nmat, drop=None):
 
 def _so_bound_failures(res):
     """The traced phases whose peak since solve entry exceeds the plan's
-    phase total (R26: no lower bound)."""
+    phase total (no lower bound is asserted)."""
     return sorted(ph for ph, v in res["phases"].items() if v["peak"] > v["bound"])
 
 
 def _so_ratio_report(label, res):
     """The per-phase ratio ``(peak - resident_total) / rows(phase)``,
-    logged (reported, not asserted, R26)."""
+    logged (reported, not asserted)."""
     lines = []
     for ph in _SO_PHASES:
         v = res["phases"][ph]
@@ -759,7 +759,7 @@ def _so_ratio_report(label, res):
 
 
 class TestSOBondPlanRows(unittest.TestCase):
-    """C1b-Mem (host): every traced phase of the spin-orbital bond FLEX
+    """Host memory: every traced phase of the spin-orbital bond FLEX
     solve stays within the admitted plan's phase total (resident rows plus
     the phase's rows), both layouts."""
 

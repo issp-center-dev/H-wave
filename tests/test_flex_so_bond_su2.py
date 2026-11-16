@@ -1,13 +1,13 @@
-"""Gate C1b-SU2 (issue #270): the spin-orbital bond FLEX in the SU(2) limit
+"""The SU(2) limit (issue #270): the spin-orbital bond FLEX in the SU(2) limit
 against the non-spin-orbital bond FLEX.
 
 With a spin-independent band and a spin-rotation invariant interaction
 (``J_Exchange = J_Hund - 2 J_Ising`` on every bond) the spinful map must
 reduce to the non-spin-orbital one: ``Sigma_SO = Sigma_nonSO (x) 1_2``
 (off-spin blocks exactly zero), and the spinful susceptibility projects onto
-the non-spin-orbital charge and spin susceptibilities. Staged (R13):
+the non-spin-orbital charge and spin susceptibilities. Staged:
 
-* :class:`TestProjection` -- :func:`su2_project` on the code slots (R25),
+* :class:`TestProjection` -- :func:`su2_project` on the code slots (in the stored code-slot order),
   pinned on the bare bubble and on a dressed susceptibility of the on-site
   one-band Hubbard table (charge ``chibar / (1 + U chibar)``, spin
   ``chibar / (1 - U chibar)``); the label-form transverse pairing is
@@ -91,7 +91,7 @@ def _spin_blocks(chi, norb):
         if chi.shape[2:] != (nd,) * 4:
             raise ValueError("su2_project: a rank-6 chi needs the trailing shape {}, got {}"
                              .format((nd,) * 4, chi.shape))
-        # [l, q, a, c, b, d] = chi4[l, q, a nd + c, b nd + d] (R7)
+        # [l, q, a, c, b, d] = chi4[l, q, a nd + c, b nd + d]
         chi = chi.reshape(chi.shape[:2] + (P, P))
     ND = chi.shape[-1]
     if chi.ndim < 2 or chi.shape[-2] != ND or ND % P:
@@ -108,7 +108,7 @@ def _spin_blocks(chi, norb):
 
 
 def su2_project(chi, norb):
-    """The SU(2) projection of a spinful code-slot susceptibility (R25: the
+    """The SU(2) projection of a spinful code-slot susceptibility (in the
     code-slot order as stored), ``sigma_up = +1``, ``sigma_dn = -1``:
 
     * ``charge[(m;a,b),(m';c,d)] = 1/2 sum_{s,s'} chi[(m; s a, s b), (m'; s' c, s' d)]``;
@@ -130,7 +130,7 @@ def su2_project(chi, norb):
 def label_form_blocks(chi, norb):
     """The label-form transverse pairing ``chi[(up a, dn b), (dn c, up d)]``
     and ``chi[(dn a, up b), (up c, dn d)]``: identically zero in the code
-    slots (R25)."""
+    slots."""
     blk = _spin_blocks(chi, norb)
     return blk(0, 1, 1, 0), blk(1, 0, 0, 1)
 
@@ -355,12 +355,12 @@ class TestProjection(unittest.TestCase):
                     for v in swap:
                         self.assertTrue(np.isfinite(v))
                         self.assertGreaterEqual(v, SWAP_MISS)
-                # R25: the label-form pairing is identically zero in code slots
+                # the label-form pairing is identically zero in code slots
                 for blk in label_form_blocks(chi, 1):
                     self.assertFalse(np.any(blk))
                 # the published rank-6 form, written element by element from
                 # its definition [l, q, a, c, b, d] = chi4[l, q, a nd + c, b nd + d]
-                # (R7), gives the same projection
+                # gives the same projection
                 nd = 2
                 six = np.empty((NMAT, NX) + (nd,) * 4, dtype=complex)
                 for a_ in range(nd):
@@ -370,7 +370,7 @@ class TestProjection(unittest.TestCase):
                                 six[:, :, a_, c_, b_, d_] = chi[:, :, a_ * nd + c_, b_ * nd + d_]
                 for a, b in zip(su2_project(six, 1), p):
                     self.assertTrue(np.array_equal(a, b))
-        print("\nC1b-SU2 projection pin:\n" + "\n".join(
+        print("\nSU(2) limit projection pin:\n" + "\n".join(
             "  %-8s " % lab + "  ".join("%s %.2e" % kv for kv in dev.items())
             + ("" if sw is None else "  swap misses %.2e %.2e" % sw)
             for lab, dev, sw in rows))
@@ -387,7 +387,7 @@ class TestProjection(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 class TestArraySU2(unittest.TestCase):
-    """C1b-SU2 (i) and (ii) at array level on ``SU2_MIXED`` (norb 2, B = 3,
+    """SU(2) limit (i) and (ii) at array level on ``SU2_MIXED`` (norb 2, B = 3,
     Nmat 16)."""
 
     NORB = 2
@@ -423,7 +423,7 @@ class TestArraySU2(unittest.TestCase):
                 rows.append((layout, up, dn))
         # non-vacuity: the ring share of the full Sigma_fluct over its second order
         share = float(np.abs(self.nonso.sigma - ref.sigma).max() / np.abs(ref.sigma).max())
-        print("\nC1b-SU2 (i) second order (up-up, dn-dn): " + "  ".join(
+        print("\nSU(2) limit (i) second order (up-up, dn-dn): " + "  ".join(
             "%s %.2e %.2e" % r for r in rows) + "  ring share %.3f" % share)
         self.assertTrue(np.isfinite(share))
         self.assertGreaterEqual(share, RING_SHARE)
@@ -441,7 +441,7 @@ class TestArraySU2(unittest.TestCase):
         # the second-slot map (the projections' source) is the same map
         self.assertLessEqual(rel(self.so_full.res.sigma_fluct, self.so["dense"].res.sigma_fluct),
                              TOL)
-        print("\nC1b-SU2 (ii) full map (up-up, dn-dn): " + "  ".join(
+        print("\nSU(2) limit (ii) full map (up-up, dn-dn): " + "  ".join(
             "%s %.2e %.2e" % r for r in rows))
 
     def test_projections(self):
@@ -465,7 +465,7 @@ class TestArraySU2(unittest.TestCase):
         rows["c0 charge"] = rel(p0.charge, ref.dress.collapse_c)
         rows["c0 spin_z"] = rel(p0.spin_z, ref.dress.collapse_s)
         rows["c0 = chi_B channel 0"] = rel(side.res.chi_c0, chi[..., :P, :P])
-        print("\nC1b-SU2 (ii) projections: " + "  ".join("%s %.2e" % kv for kv in rows.items()))
+        print("\nSU(2) limit (ii) projections: " + "  ".join("%s %.2e" % kv for kv in rows.items()))
         for k, v in rows.items():
             self.assertTrue(np.isfinite(v), k)
             self.assertLessEqual(v, TOL, k)
@@ -490,7 +490,7 @@ class TestArraySU2(unittest.TestCase):
                     side = so_side(self.TABLES, n, layout)
                 self.assertGreater(spy.call_count, 0)           # the break was applied
                 miss = rel(side.res.sigma_fluct[0][..., :n, :n], ref)
-                print("C1b-SU2 array mutation P_B identity (%s) miss %.3e" % (layout, miss))
+                print("SU(2) limit array mutation P_B identity (%s) miss %.3e" % (layout, miss))
                 self.assertTrue(np.isfinite(miss))
                 self.assertGreaterEqual(miss, MISS)
 
@@ -544,7 +544,7 @@ def _nonso_checks(tc, res):
 
 
 def _entry_full_map(tc, nonso, so_runs, norb):
-    """C1b-SU2 (ii) at the entry: each spin-orbital one-map run of
+    """SU(2) limit (ii) at the entry: each spin-orbital one-map run of
     ``so_runs`` (``{layout: RunResult}``) against the non-spin-orbital
     ``nonso``: Sigma_HF, Sigma_fluct and G on both spin blocks (off-spin
     blocks exactly zero), the projections of chi0q and chiq."""
@@ -583,14 +583,14 @@ def _entry_full_map(tc, nonso, so_runs, norb):
             # the charge and spin channels really differ
             tc.assertGreaterEqual(rel(cn["chiq_c"], cn["chiq_s"]), SWAP_MISS)
             rows.append((layout, dev, proj))
-    print("\nC1b-SU2 entry one map (norb_phys %d):" % norb)
+    print("\nSU(2) limit entry one map (norb_phys %d):" % norb)
     for layout, dev, proj in rows:
         print("  %-9s " % layout + "  ".join("%s %.2e/%.2e" % (k, *v) for k, v in dev.items())
               + "\n            " + "  ".join("%s %.2e" % kv for kv in proj.items()))
 
 
 class TestEntrySU2(unittest.TestCase):
-    """C1b-SU2 (i)-(ii) at the FLEX entry: one map of ``SU2_4X4`` at a fixed
+    """SU(2) limit (i)-(ii) at the FLEX entry: one map of ``SU2_4X4`` at a fixed
     chemical potential, spin-orbital (packed and dense) against non-spin-orbital."""
 
     @classmethod
@@ -611,7 +611,7 @@ class TestEntrySU2(unittest.TestCase):
         alt = _one_map(no_ex, so=False).payloads[0]
         effect = rel(alt["fluct_new"], fluct)
         effect_hf = rel(alt["static_new"], q["static_new"])
-        print("\nC1b-SU2 non-vacuity: off-site share of Sigma_fluct %.3e; bond exchange "
+        print("\nSU(2) limit non-vacuity: off-site share of Sigma_fluct %.3e; bond exchange "
               "effect on Sigma_fluct %.3e (Sigma_HF %.3e)" % (off_site, effect, effect_hf))
         for v in (off_site, effect):
             self.assertTrue(np.isfinite(v))
@@ -636,13 +636,13 @@ class TestEntrySU2(unittest.TestCase):
                 self.assertEqual(res.solver._so_admission.layout, layout)
                 self.assertGreater(spy.call_count, 0)           # the break was applied
                 miss = rel(res.payloads[0]["fluct_new"][..., :norb, :norb], ref)
-                print("C1b-SU2 entry mutation chi := chibar (%s) miss %.3e" % (layout, miss))
+                print("SU(2) limit entry mutation chi := chibar (%s) miss %.3e" % (layout, miss))
                 self.assertTrue(np.isfinite(miss))
                 self.assertGreaterEqual(miss, MISS)
 
 
 class TestEntrySU2Norb2(unittest.TestCase):
-    """C1b-SU2 (ii) at the FLEX entry with two physical orbitals:
+    """SU(2) limit (ii) at the FLEX entry with two physical orbitals:
     ``SU2_MIXED_6`` (the 6x1x1 chain, inter-orbital rows, CoulombInter
     different at +R and -R), one map at a fixed chemical potential, both
     layouts. Here ``P_B`` swaps orbitals and a broken one misses."""
@@ -672,14 +672,14 @@ class TestEntrySU2Norb2(unittest.TestCase):
                 self.assertEqual(res.solver._so_admission.layout, layout)
                 self.assertGreater(spy.call_count, 0)           # the break was applied
                 miss = rel(res.payloads[0]["fluct_new"][..., :norb, :norb], ref)
-                print("C1b-SU2 entry mutation P_B identity, norb_phys 2 (%s) miss %.3e"
+                print("SU(2) limit entry mutation P_B identity, norb_phys 2 (%s) miss %.3e"
                       % (layout, miss))
                 self.assertTrue(np.isfinite(miss))
                 self.assertGreaterEqual(miss, MISS)
 
 
 class TestConverged(unittest.TestCase):
-    """C1b-SU2 (iii): the converged fixed points (fast smoke
+    """SU(2) limit (iii): the converged fixed points (fast smoke
     :meth:`TestEntrySU2.test_full_map`)."""
 
     def test_fixed_points(self):
@@ -696,7 +696,7 @@ class TestConverged(unittest.TestCase):
                 grn = _spin_rows(self, a["green"], b["green"], norb, "G", tol=CONV_TOL)
                 mu = abs(a["physics"]["mu"] - b["physics"]["mu"])
                 ncond = abs(a["physics"]["NCond"] - b["physics"]["NCond"])
-                print("C1b-SU2 converged %s (%d / %d iterations; residuals sigma %.1e / %.1e) "
+                print("SU(2) limit converged %s (%d / %d iterations; residuals sigma %.1e / %.1e) "
                       "Sigma %.2e/%.2e  G %.2e/%.2e  mu %.2e  NCond %.2e" % (
                           layout, s.solver.scf_iterations, n.solver.scf_iterations,
                           s.solver.scf_sigma_residual, n.solver.scf_sigma_residual,
