@@ -250,7 +250,9 @@ class ArchiveLayout(NamedTuple):
 
 
 def archive_layout(*, member_bytes, small_array_bytes, request) -> ArchiveLayout:
-    """The output layout of the archive (rule R3).
+    """The output layout of the archive: the single-file npz unless a slot
+    block is larger than the small-array bound, and never against an
+    explicit choice.
 
     ``member_bytes`` maps the slot blocks to their bytes
     (:func:`slot_member_bytes`; ``Gamma_bond`` is always inline and not
@@ -369,7 +371,8 @@ class IndexSidecars(NamedTuple):
     schema-4 index (``bond_archive_schema`` a 0-d integer equal to 4), its
     ``bond_archive_layout`` and ``archive_nonce`` (0-d strings, else
     ``None``), the file names its ``<block>_file`` members carry, and
-    whether one of those members is ``malformed`` (not a 0-d string)."""
+    whether it is ``malformed`` (any ``*_file`` member is not a 0-d
+    string)."""
     index: bool
     layout: Optional[str]
     nonce: Optional[str]
@@ -394,12 +397,14 @@ def index_sidecars(data) -> IndexSidecars:
         return IndexSidecars(False, None, None, frozenset(), False)
     names, malformed = set(), False
     for f in sorted(files):
-        if not (isinstance(f, str) and f.endswith("_file") and _BLOCK_RE.match(f[:-5])):
+        if not (isinstance(f, str) and f.endswith("_file")):
             continue
         v = _zero_d_string(data, f, files)
         if v is None:
+            # any *_file member that is not a 0-d string makes the index
+            # malformed (it keeps every old name)
             malformed = True
-        else:
+        elif _BLOCK_RE.match(f[:-5]):
             names.add(v)
     return IndexSidecars(True, _zero_d_string(data, "bond_archive_layout", files),
                          _zero_d_string(data, "archive_nonce", files), frozenset(names),
@@ -527,6 +532,9 @@ def _check_provenance(provenance, sc):
              ("nmat", sc["nmat"], "state_nmat", np.asarray(provenance["state_nmat"])[()]),
              ("beta", sc["beta"], "state_beta", np.asarray(provenance["state_beta"])[()]))
     for name, v, pname, pv in pairs:
+        if pv is not None and np.ndim(pv) != 0:
+            raise ValueError(_W + "provenance {} must be a 0-d scalar, got shape {}".format(
+                pname, np.shape(pv)))
         if pv is None or v != pv:
             raise ValueError(_W + "scalars disagree with provenance: {} = {!r} but {} = {!r}"
                              .format(name, v, pname, pv.item() if hasattr(pv, "item")

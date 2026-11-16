@@ -252,10 +252,11 @@ class TestNoCopy(_Dir):
 
     def _peak(self, output_layout, inputs, name):
         d = self.sub(name)
-        np.save(os.path.join(d, "warm.npy"), np.zeros(8))
-        np.savez(os.path.join(d, "warm.npz"), a=np.zeros(8))
-        os.remove(os.path.join(d, "warm.npy"))
-        os.remove(os.path.join(d, "warm.npz"))
+        # one small throwaway write first: every lazy import and the zip
+        # and npy paths are warm before the baseline
+        warm = self.sub(name + "-warm")
+        self.write(d=warm, inputs=fx.archive_inputs(), output_layout=output_layout)
+        shutil.rmtree(warm)
         tracemalloc.start()
         try:
             tracemalloc.reset_peak()
@@ -306,7 +307,17 @@ class TestAtomicIndex(_Dir):
         def companion():
             raise exc3
 
+        exc4 = KeyboardInterrupt()
+
+        def interrupted_save(file, arr, *a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise exc4
+            return _REAL_SAVE(file, arr, *a, **kw)
+
         return [("replace", replace()[0], {}, exc),
+                ("interrupt_in_save", mock.patch.object(np, "save", interrupted_save), {},
+                 exc4),
                 ("second_sector_save", mock.patch.object(np, "save", partial_save), {}, exc2),
                 ("companion", contextlib.nullcontext(),
                  {"commit_companion": companion}, exc3)], calls
@@ -494,10 +505,11 @@ class TestOldSidecars(_Dir):
         index keeps the names it carries."""
         inputs = fx.archive_inputs(block_layout="sz_packed")
 
-        def schema(value, file_value=None):
+        def schema(value, file_value=None, extra=None):
             def make(d, old):
                 m = {"bond_archive_schema": value,
                      "chi_w@0_file": np.str_(old[0]) if file_value is None else file_value}
+                m.update(extra or {})
                 np.savez(os.path.join(d, "other.npz"), **m)
                 return "other.npz"
             return make
@@ -517,6 +529,8 @@ class TestOldSidecars(_Dir):
             ("schema_list", schema(np.array([4])), "removed"),
             ("schema_bool", schema(np.bool_(True)), "removed"),
             ("nonstring_file", schema(np.int64(4), np.int64(3)), "all"),
+            ("nonstring_other_file", schema(np.int64(4), extra={"green_file": np.int64(1)}),
+             "all"),
             ("index", schema(np.int64(4)), "one"),
         ]
         for name, make, expect in rows:
@@ -740,6 +754,9 @@ class TestRefusals(_Dir):
              W + "scalars disagree with provenance: nmat = 6 but state_nmat = 4"),
             ("relation beta", dict(scalars=scal(beta=3.0)),
              W + "scalars disagree with provenance: beta = 3.0 but state_beta = 2.0"),
+            ("provenance scalar rank", dict(provenance=provc(
+                state_nmat=np.array([4], np.int64))),
+             W + "provenance state_nmat must be a 0-d scalar, got shape (1,)"),
             ("relation cell", dict(scalars=scal(cell_shape=np.array([2, 2, 1]))),
              W + "scalars disagree with provenance: cell_shape = [2, 2, 1] but "
              "prov_cell_shape = [4, 1, 1]"),
