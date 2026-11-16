@@ -44,6 +44,11 @@ TOL = 1e-12
 MISS = 1e-3
 #: the content floor of the Hartree-Fock non-vacuity check
 CONTENT = 0.1
+#: the floor of the spin-off-diagonal Hartree-Fock content of SOC_ALL_TYPES:
+#: the fixture is fixed and its spin-off-diagonal blocks carry 1.77e-2 of the
+#: max (measured), so 1e-2 keeps a 1.8x margin; CONTENT = 0.1 would need a
+#: fixture with a stronger SOC
+SPIN_OFF_CONTENT = 1e-2
 #: run-to-run reproducibility of two identical solves (the local numpy 1.26
 #: OpenBLAS build is not bitwise reproducible; numpy 2 is)
 REPRO_TOL = 1e-14
@@ -215,12 +220,12 @@ class TestEntryOneMap(unittest.TestCase):
         off_site, spin_off = hf_content(static["SOC_ALL_TYPES"], 1)
         print("C1b-M (c) HF content: off-site %.3e spin-off-diagonal %.3e" % (off_site, spin_off))
         self.assertGreaterEqual(off_site, CONTENT)
-        # the spin-off-diagonal blocks of SOC_ALL_TYPES carry 1.8e-2 of the
-        # max (measured; below CONTENT): they are checked on their own scale
+        # spin-off-diagonal content: floor SPIN_OFF_CONTENT (see there), and
+        # the two blocks are also compared on their own scale
+        self.assertGreaterEqual(spin_off, SPIN_OFF_CONTENT)
         ref = wick_hf(F.SOC_ALL_TYPES, X.fixture_mu(F.SOC_ALL_TYPES))
         got = static["SOC_ALL_TYPES"]
         for blk in ((slice(0, 1), slice(1, 2)), (slice(1, 2), slice(0, 1))):
-            self.assertGreater(float(np.abs(ref[(Ellipsis,) + blk]).max()), 0.0)
             dev = rel(got[(Ellipsis,) + blk], ref[(Ellipsis,) + blk])
             print("C1b-M (c) HF SOC_ALL_TYPES spin-off-diagonal block %.3e" % dev)
             self.assertLessEqual(dev, TOL)
@@ -490,8 +495,11 @@ class TestOutputs(unittest.TestCase):
                     self.assertEqual(str(z["producer_label"]),
                                      "hwave FLEX (spin-orbital, bond channels)")
                     self.assertFalse([k for k in z if k.startswith("longitudinal_bond_")])
-                    want = loop_digests[-1] if name in ("chi0q", "chiq") else green_digest
+                    last_map = name in ("chi0q", "chiq")
+                    want = loop_digests[-1] if last_map else green_digest
                     self.assertEqual(str(z["fp_green"]), want)
+                    self.assertEqual(str(z["payload_kind"]),
+                                     "last_map" if last_map else "final_state")
             # Mix < 1: the final (post-mixing) G is not the last map's G
             self.assertNotEqual(loop_digests[-1], green_digest)
             self.assertEqual(files["chi0q"]["chi0q"].ndim, 6)
@@ -533,6 +541,32 @@ class TestOutputs(unittest.TestCase):
 # --------------------------------------------------------------------------
 # Static pole, layout, buffers, guard, keys, notices
 # --------------------------------------------------------------------------
+
+class TestFilling(unittest.TestCase):
+    """A chemical-potential search on the spin-orbital bond path: the
+    fixed-mu fixtures with ``filling`` instead of ``mu``, three maps."""
+
+    def test_mu_search_smoke(self):
+        for fx in (X.ZEEMAN_SZ_ALL, F.SOC_ALL_TYPES):
+            with self.subTest(fixture=fx.name):
+                with tempfile.TemporaryDirectory() as d:
+                    inp = X.write_flex_case(d, fx, param={"IterationMax": 3})
+                    par = inp["mode"]["param"]
+                    del par["mu"]
+                    par["filling"] = fx.filling
+                    res = X.run_input(inp)
+                s = res.solver
+                self.assertTrue(s.calc_mu)
+                self.assertEqual(len(res.payloads), 3)
+                phys = res.green_info["physics"]
+                target = fx.filling * fx.nd * fx.nvol
+                print("filling smoke %-14s NCond %.12g (target %.12g) mu %.6f" % (
+                    fx.name, phys["NCond"], target, phys["mu"]))
+                self.assertTrue(np.isfinite(phys["mu"]))
+                self.assertLessEqual(abs(phys["NCond"] - target), 1e-8 * target)
+                for p in res.payloads:
+                    self.assertTrue(np.all(np.isfinite(p["fluct_new"])))
+
 
 class TestPole(unittest.TestCase):
     """R14 / R24: the static RPA pole indicator of every map, the check of
@@ -581,7 +615,7 @@ class TestMapWiring(unittest.TestCase):
                                           chi4, chi4 + 1, 0.5, None, None,
                                           ((0.1, (0.0, 0.0, 0.0), 0.1), None, None))
         with mock.patch.object(flex_so_bond, "so_bond_flex_map", return_value=fake) as m:
-            chi0q, chiq, _ = solver._phase_b_so_bond_map(None, None, None, None, BETA, 1)
+            chi0q, chiq, _ = solver._phase_b_so_bond_map(None, None, None, None, BETA)
         self.assertEqual(m.call_count, 1)
         self.assertEqual(chi0q.shape, (nmat, nvol, nd, nd, nd, nd))
         self.assertTrue(np.shares_memory(chi0q, chi4))

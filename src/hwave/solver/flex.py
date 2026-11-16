@@ -2667,8 +2667,9 @@ class FLEX(RPA):
             store = dev = None
             gamma_b = chi_bufs = None
             if so_gate:
-                # the store of the admitting plan, the vertex Gamma_B (a local
-                # of this solve: released with this scope) and the two
+                # the store of the admitting plan (released with this scope),
+                # the vertex Gamma_B (a local of this method, not an
+                # attribute: dropped when the method returns) and the two
                 # resident channel-0 buffers of chi0q / chiq (the plan's
                 # "collapses" row), allocated once
                 from hwave.solver import so_bond
@@ -2742,7 +2743,7 @@ class FLEX(RPA):
                 green_scf = green_kw - green_tail_w if green_tail_w is not None else green_kw
                 if so_gate:
                     chi0q_out, chi_s, sigma_fluct = self._phase_b_so_bond_map(
-                        store, gamma_b, green_kw, green_scf, beta, iteration + 1,
+                        store, gamma_b, green_kw, green_scf, beta,
                         chi0_out=chi_bufs[0], chi_out=chi_bufs[1])
                     chi_c = None
                 elif gate:
@@ -3256,7 +3257,7 @@ class FLEX(RPA):
         " (remedy: lower [mode.param] longitudinal_bond_cond_tol, a finite number in (0, 1), "
         "default 1.0e-3; the dressing guard is not relaxed by flex_guard_policy)")
 
-    def _phase_b_so_bond_map(self, store, gamma_b, green_kw, green_scf, beta, iteration, *,
+    def _phase_b_so_bond_map(self, store, gamma_b, green_kw, green_scf, beta, *,
                              chi0_out=None, chi_out=None):
         """One spin-orbital bond map (#270):
         :func:`hwave.solver.flex_so_bond.so_bond_flex_map` on the admitting
@@ -5647,6 +5648,9 @@ class FLEX(RPA):
             if so_adm is not None:
                 label = "hwave FLEX (spin-orbital, bond channels)"
                 so_prov = self._so_provenance("flex_so_bond", label, bond=so_adm.bond_inputs)
+                # no last-map digest only when no map ran (IterationMax = 0),
+                # and then chi0q / chiq are not written
+                assert self._so_fp_green_map is not None or self.max_iter == 0
                 so_prov_map = (self._so_provenance("flex_so_bond", label,
                                                    bond=so_adm.bond_inputs,
                                                    fp_green=self._so_fp_green_map)
