@@ -491,6 +491,29 @@ class TestRows(unittest.TestCase):
         self.assertEqual((plain.rows, plain.slots, plain.aliases),
                          (same.rows, same.slots, same.aliases))
 
+    def test_flex_scf_with_chi_dynamic_refused(self):
+        for cons in (("flex_scf", "chi_dynamic"), ("chi_dynamic", "flex_scf"),
+                     ("flex_scf", "chi_dynamic", "pairing_static")):
+            with self.subTest(cons=cons):
+                with self.assertRaises(ValueError) as cm:
+                    plan_so_bond(nmat=8, nvol=4, B=1, nd=2, consumers=cons, caps=NOCAP)
+                self.assertEqual(str(cm.exception), "plan_so_bond: the consumer flex_scf "
+                                 "cannot be combined with chi_dynamic (both own the store "
+                                 "slot chibar)")
+
+    def test_flex_scf_with_keep_chi_or_write_chibar_refused(self):
+        for keep, write in ((True, False), (False, True), (True, True)):
+            with self.subTest(keep_chi=keep, write_chibar=write):
+                with self.assertRaises(ValueError) as cm:
+                    _flex_plan(8, 4, 1, 2, keep_chi=keep, write_chibar=write)
+                self.assertEqual(str(cm.exception), (
+                    "plan_so_bond: the consumer flex_scf takes neither keep_chi nor "
+                    "write_chibar (its store keeps no chi slot and writes no chibar archive), "
+                    "got keep_chi = {!r}, write_chibar = {!r}").format(keep, write))
+        # the defaults (and explicit False) are accepted
+        self.assertEqual(_flex_plan(8, 4, 1, 2, keep_chi=False, write_chibar=False).rows,
+                         _flex_plan(8, 4, 1, 2).rows)
+
     def test_resident_rows(self):
         base = _flex_plan(8, 9, 5, 4)
         extra = (("collapses", 1000), ("state", 7))

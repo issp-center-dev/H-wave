@@ -85,6 +85,7 @@ __all__ = ["SlotConvention", "SLOT_CONVENTION", "BondSlotGeometry", "slot_geomet
            "estimate_packed_kernel_workspace_bytes", "PackedBondBlockStore", "open_store",
            "so_bond_vertex", "gamma_p", "so_bond_bubble", "so_bond_dress",
            "so_bond_pairing_vertex_parts", "so_bond_pairing_vertex_batch", "p_b",
+           "so_bond_w_batch", "channel0_block", "inverse_per_sector",
            "PackedBondPairKernel", "sector_map_members", "packed_members",
            "check_sector_map_members", "read_slot_member"]
 
@@ -1914,7 +1915,8 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         non-empty strings, ``phase`` other than ``"resident"``, ``bytes`` an
         integer >= 0.
     w_in_place : bool, optional
-        ``flex_scf`` only: ``None`` or ``True`` writes ``W`` over the store
+        ``flex_scf`` (which is refused together with ``chi_dynamic``,
+        ``keep_chi`` or ``write_chibar``) only: ``None`` or ``True`` writes ``W`` over the store
         slot ``chibar`` (``slots = ("chibar",)``, ``aliases = (("W",
         "chibar"),)``); ``False`` keeps a second slot (``slots = ("chibar",
         "W")``, a resident row ``w_slot``). Without ``flex_scf``, ``None``
@@ -2009,6 +2011,14 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         raise ValueError("plan_so_bond: w_in_place must be None, True or False, got {!r}"
                          .format(w_in_place))
     flex = "flex_scf" in closed
+    if flex and "chi_dynamic" in closed:
+        raise ValueError("plan_so_bond: the consumer flex_scf cannot be combined with "
+                         "chi_dynamic (both own the store slot chibar)")
+    if flex and (bool(keep_chi) or bool(write_chibar)):
+        raise ValueError("plan_so_bond: the consumer flex_scf takes neither keep_chi nor "
+                         "write_chibar (its store keeps no chi slot and writes no chibar "
+                         "archive), got keep_chi = {!r}, write_chibar = {!r}".format(
+                             keep_chi, write_chibar))
     if w_in_place is not None and not flex:
         raise ValueError("plan_so_bond: w_in_place applies to the consumer flex_scf only, "
                          "got {!r}".format(w_in_place))
@@ -3131,6 +3141,182 @@ def _p_b_packed(M, nd, out):
             np.take(src[i], perm, axis=-2, out=work, mode="clip")
             np.take(work, perm, axis=-1, out=dst[i], mode="clip")
         del work                    # one sector's workspace alive at a time
+    return out
+
+
+# ---------------------------------------------------------------------------
+# The FLEX effective interaction of a dressed batch, channel 0, per-sector inverse
+# ---------------------------------------------------------------------------
+
+def _w_kernel(X, Y, gamma_b, half):
+    """``M = Gamma_B (Y - half X) Gamma_B`` per slice and momentum, by two
+    staged ``matmul`` calls (dense arrays, or :class:`PackedArrays` block
+    by block). A new array (packed: new blocks); the inputs are not
+    written. :func:`so_bond_w_batch` calls it with ``half = 0.5``."""
+    if isinstance(X, PackedArrays):
+        return PackedArrays(X.sector_map, tuple(
+            _w_kernel_dense(x, y, g, half)
+            for x, y, g in zip(X.blocks, Y.blocks, gamma_b.blocks)))
+    return _w_kernel_dense(X, Y, gamma_b, half)
+
+
+def _w_kernel_dense(X, Y, gamma_b, half):
+    """:func:`_w_kernel` of dense arrays (one sector block of a packed one)."""
+    t = np.multiply(X, -half)
+    np.add(t, Y, out=t)                                  # Y - half X
+    m = np.matmul(gamma_b[None], t)
+    np.matmul(m, gamma_b[None], out=t)
+    return t
+
+
+def so_bond_w_batch(X, Y, gamma_b, *, plan, out=None):
+    """The FLEX effective interaction of one dressed frequency batch:
+
+    ``W[l](q) = P_B[Gamma_B(q) (Y[l](q) - 1/2 X[l](q)) Gamma_B(q)]``,
+
+    ``X`` the bare bubble batch ``chibar_B``, ``Y`` its dressing ``chi_B``
+    (:func:`so_bond_dress`) and :func:`p_b` the bond map read by
+    ``flex_bond.calc_self_energy_bond``. Beyond second order this is the
+    ring sum ``Gamma (chi - chibar/2) Gamma``; at second order (``Y =
+    X``) it is ``P_B[1/2 Gamma X Gamma]``.
+
+    Dense layout: ``X`` and ``Y`` are complex128 ``(nb, nvol, ND, ND)``,
+    ``gamma_b`` ``(nvol, ND, ND)``. S_z-packed layout (a plan of layout
+    ``"sz_packed"``): all three are :class:`PackedArrays` on one sector
+    map (``X``, ``Y`` of leading shape ``(nb, nvol)``, ``gamma_b`` of
+    ``(nvol,)``); ``M@s = Gamma@s (Y@s - X@s / 2) Gamma@s`` per sector,
+    then ``p_b``, which reads block ``s`` of ``W`` from block ``-s`` of
+    ``M``.
+
+    The boundary is checked against ``plan`` first
+    (:meth:`SOBondPlan.require`: ``nvol``, ``ND``, the layout and the batch
+    length ``nb <= plan.dress_capacity``; the plan needs the consumer
+    ``flex_scf``), then the arguments, then that every input is finite
+    (``hartree_fock.NonFiniteError`` naming it). ``X``, ``Y`` and
+    ``gamma_b`` are never written. ``out`` (optional) receives ``W``: an
+    array of the layout and shape of ``X`` (packed: the same sector map
+    and leading shape) sharing no memory with ``X``, ``Y`` or ``gamma_b``;
+    ``None`` allocates it. Workspace beyond ``out``: two arrays of the
+    size of ``X``. ``M`` is formed by the module attribute ``_w_kernel``
+    and ``W`` by the module attribute ``p_b``, both looked up at call
+    time. Returns ``W``."""
+    name = "so_bond_w_batch"
+    if not isinstance(plan, SOBondPlan):
+        raise ValueError("{}: plan must be a SOBondPlan (plan_so_bond), got {}".format(
+            name, type(plan).__name__))
+    packed = isinstance(X, PackedArrays)
+    if packed:
+        layout, lead, ND = "sz_packed", X.lead_shape, X.sector_map.ND
+        shape = lead + (ND, ND)
+    else:
+        layout, shape = "dense", tuple(np.shape(X))
+    if len(shape) != 4 or shape[2] != shape[3]:
+        raise ValueError("{}: X must be a batch (nb, nvol, ND, ND), got shape {}".format(
+            name, shape))
+    plan.require(name, nvol=shape[1], ND=shape[2], layout=layout, batch=shape[0])
+    if any(isinstance(a, PackedArrays) != packed for a in (Y, gamma_b)) or (
+            out is not None and isinstance(out, PackedArrays) != packed):
+        raise ValueError("{}: X, Y and gamma_b must all be PackedArrays or all dense arrays "
+                         "(and out too)".format(name))
+    if packed:
+        sm = X.sector_map
+        for arg, arr in (("Y", Y), ("gamma_b", gamma_b)):
+            if not _same_sector_map(arr.sector_map, sm):
+                raise ValueError("{}: the sector map of {} is not the sector map of X".format(
+                    name, arg))
+        if Y.lead_shape != lead:
+            raise ValueError("{}: X and Y must both be packed batches of leading shape {}, got "
+                             "Y {}".format(name, lead, Y.lead_shape))
+        if gamma_b.lead_shape != lead[1:]:
+            raise ValueError("{}: the packed gamma_b has leading shape {}; X needs {}".format(
+                name, gamma_b.lead_shape, lead[1:]))
+        if out is not None:
+            if not (_same_sector_map(out.sector_map, sm) and out.lead_shape == lead):
+                raise ValueError("{}: out must be PackedArrays on the sector map of X with "
+                                 "leading shape {}".format(name, lead))
+    else:
+        for arg, arr in (("X", X), ("Y", Y)):
+            if not (isinstance(arr, np.ndarray) and arr.dtype == np.complex128
+                    and arr.shape == shape):
+                raise ValueError("{}: X and Y must both be complex128 (nb, nvol, ND, ND) arrays "
+                                 "of shape {}, got {} {}".format(name, shape, arg,
+                                                                 _describe(arr)))
+        if not (isinstance(gamma_b, np.ndarray) and gamma_b.dtype == np.complex128
+                and gamma_b.shape == shape[1:]):
+            raise ValueError("{}: gamma_b must be a complex128 array of shape {}, got {}".format(
+                name, shape[1:], _describe(gamma_b)))
+        if out is not None and not (isinstance(out, np.ndarray) and out.dtype == np.complex128
+                                    and out.shape == shape):
+            raise ValueError("{}: out must be a complex128 array of shape {}, got {}".format(
+                name, shape, _describe(out)))
+    if out is not None:
+        for arg, arr in (("X", X), ("Y", Y), ("gamma_b", gamma_b)):
+            if _shares(out, arr):
+                raise ValueError("{}: out shares memory with {}".format(name, arg))
+    for arg, arr in (("X", X), ("Y", Y), ("gamma_b", gamma_b)):
+        if not all(np.isfinite(b).all() for b in _blocks(arr)):
+            raise NonFiniteError("{}: {} has non-finite entries".format(name, arg))
+    M = _w_kernel(X, Y, gamma_b, 0.5)
+    return p_b(M, plan.nd, out=out)
+
+
+def channel0_block(X, *, nd=None):
+    """A new dense copy of the pair block of channel 0, ``X[..., :nd**2,
+    :nd**2]`` (the code slots ``(0; x, y)``), of shape ``lead + (nd**2,
+    nd**2)``, complex128, C-contiguous.
+
+    ``X`` is a dense complex128 ``(..., ND, ND)`` code-slot array, which
+    needs ``nd`` (``ND = B nd**2`` does not fix it), or a
+    :class:`PackedArrays`, whose channel-0 entries are scattered from the
+    sector blocks (the off-sector entries are exact zeros); ``nd``, when
+    given, must be the sector map's."""
+    if isinstance(X, PackedArrays):
+        sm = _consumer_map("store_scatter", X.sector_map)
+        if nd is not None and nd != sm.nd:
+            raise ValueError("channel0_block: the sector map of X has nd = {}, the call has nd "
+                             "= {}".format(sm.nd, nd))
+        P = sm.nd * sm.nd
+        out = np.zeros(X.lead_shape + (P, P), dtype=np.complex128)
+        for s, b in enumerate(X.blocks):
+            idx = sm.index[sm.offsets[s]:sm.offsets[s + 1]]
+            k = int(np.count_nonzero(idx < P))          # ascending: channel 0 is a prefix
+            c0 = idx[:k]
+            out[..., c0[:, None], c0] = b[..., :k, :k]
+        return out
+    if nd is None:
+        raise ValueError("channel0_block: a dense X needs nd (= 2*norb_phys); ND = B*nd**2 does "
+                         "not determine it")
+    if not (_is_int(nd) and int(nd) > 0 and int(nd) % 2 == 0):
+        raise ValueError("channel0_block: nd must be a positive even integer (nd = 2*norb_phys), "
+                         "got {!r}".format(nd))
+    P = int(nd) ** 2
+    if not (isinstance(X, np.ndarray) and X.dtype == np.complex128 and X.ndim >= 2
+            and X.shape[-1] == X.shape[-2] and X.shape[-1] > 0 and X.shape[-1] % P == 0):
+        raise ValueError("channel0_block: X must be a complex128 (..., ND, ND) array with ND a "
+                         "positive multiple of nd**2 = {}, got {}".format(P, _describe(X)))
+    return X[..., :P, :P].copy()
+
+
+def inverse_per_sector(A, norb_phys):
+    """The inverse of an S_z block-diagonal stack ``A`` ``(..., 2n, 2n)``
+    (spin-block modes, ``n = norb_phys``): ``A[..., :n, :n]`` and
+    ``A[..., n:, n:]`` are inverted separately and the result has exact
+    zeros between them. Every off-sector entry of ``A`` must be exactly
+    zero (``ValueError`` with the leak ``max|A_off| / max|A|`` otherwise).
+    A new complex128 array; ``A`` is not written."""
+    n = _check_norb_phys("inverse_per_sector", norb_phys)
+    A = np.asarray(A)
+    if A.ndim < 2 or A.shape[-2:] != (2 * n, 2 * n):
+        raise ValueError("inverse_per_sector: A must end in shape (2*norb_phys, 2*norb_phys) = "
+                         "({0}, {0}), got shape {1}".format(2 * n, A.shape))
+    up, dn = _spin_halves(n)
+    off = max(float(np.max(np.abs(A[..., up, dn]))), float(np.max(np.abs(A[..., dn, up]))))
+    if off != 0.0:
+        raise ValueError("inverse_per_sector: off-sector leak max|A_off| / max|A| = %.3e"
+                         % (off / float(np.max(np.abs(A)))))
+    out = np.zeros(A.shape, dtype=np.complex128)
+    out[..., up, up] = np.linalg.inv(A[..., up, up])
+    out[..., dn, dn] = np.linalg.inv(A[..., dn, dn])
     return out
 
 
