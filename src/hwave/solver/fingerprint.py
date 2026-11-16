@@ -62,27 +62,32 @@ STAGE_CAPABILITY = {
     "sc_so_bond_dynamic": "so_bond",
 }
 
-#: the archive kinds and the producer stages this version reads for each
-ARTIFACT_KINDS = ("chi0q", "chiq", "green", "sigma", "gap")
+#: the archive kinds and the producer stages this version reads for each.
+#: ``"bond"`` is the bond-resolved susceptibility archive of the
+#: spin-orbital bond FLEX (its slot payloads: :data:`PRODUCTION_SLOT_RULES`);
+#: the chi0q and chiq of that stage are the channel-0 blocks
+ARTIFACT_KINDS = ("chi0q", "chiq", "green", "sigma", "gap", "bond")
 KIND_STAGES = {
-    "chi0q": ("rpa_so", "flex_so_onsite"),
-    "chiq": ("rpa_so", "flex_so_onsite"),
-    "green": ("flex_so_onsite",),
-    "sigma": ("flex_so_onsite",),
+    "chi0q": ("rpa_so", "flex_so_onsite", "flex_so_bond"),
+    "chiq": ("rpa_so", "flex_so_onsite", "flex_so_bond"),
+    "green": ("flex_so_onsite", "flex_so_bond"),
+    "sigma": ("flex_so_onsite", "flex_so_bond"),
     "gap": ("sc_so_static", "sc_so_dynamic", "sc_so_bond_static"),
+    "bond": ("flex_so_bond",),
 }
 #: stages that are recognised but not read yet, with the path that brings them
 DEFERRED_STAGES = {
     "sc_so_bond_dynamic": "the dynamic spin-orbital bond path",
-    "flex_so_bond": "the spin-orbital bond FLEX",
 }
-#: the payload members each kind must carry
+#: the payload members each kind must carry (the slot payloads of a slot
+#: kind are named by its :class:`SlotRules`, not here)
 PAYLOAD_MEMBERS = {
     "chi0q": ("chi0q",),
     "chiq": ("chiq",),
     "green": ("green", "green_layout"),
     "sigma": ("sigma_static",),
     "gap": ("gap",),
+    "bond": (),
 }
 #: the rank(s) of the complex payload of each (kind, stage), read from the
 #: npy header. A spin-orbital RPA writes its chi0q in every layout of the
@@ -93,9 +98,11 @@ PAYLOAD_MEMBERS = {
 #: frequency axis.
 PAYLOAD_RANKS = {
     ("chi0q", "rpa_so"): (4, 5, 6, 7), ("chi0q", "flex_so_onsite"): (4, 6),
+    ("chi0q", "flex_so_bond"): (6,),
     ("chiq", "rpa_so"): (4, 6), ("chiq", "flex_so_onsite"): (6,),
-    ("green", "flex_so_onsite"): (5,),
-    ("sigma", "flex_so_onsite"): (5,),
+    ("chiq", "flex_so_bond"): (6,),
+    ("green", "flex_so_onsite"): (5,), ("green", "flex_so_bond"): (5,),
+    ("sigma", "flex_so_onsite"): (5,), ("sigma", "flex_so_bond"): (5,),
     ("gap", "sc_so_static"): (5,), ("gap", "sc_so_dynamic"): (6,),
     ("gap", "sc_so_bond_static"): (5,),
 }
@@ -129,9 +136,14 @@ class SlotRules(NamedTuple):
     ranks: dict
 
 
-#: the slot kinds this version reads: none (the bond-resolved slot archives
-#: arrive with the stages of :data:`DEFERRED_STAGES`)
-PRODUCTION_SLOT_RULES = SlotRules(frozenset(), {}, {}, {})
+#: the slot kinds this version reads: the bond archive of the spin-orbital
+#: bond FLEX (``Gamma_bond`` ``(nvol, ND, ND)``, ``chi_w`` and the optional
+#: ``chibar_w`` ``(nmat, nvol, ND, ND)``, each dense or sz-packed)
+PRODUCTION_SLOT_RULES = SlotRules(
+    frozenset({"bond"}),
+    {"bond": ("Gamma_bond", "chi_w")},
+    {"bond": ("chibar_w",)},
+    {("bond", "flex_so_bond"): {"Gamma_bond": (3,), "chi_w": (4,), "chibar_w": (4,)}})
 
 logger = logging.getLogger(__name__)
 
@@ -529,8 +541,11 @@ SO_PROVENANCE_MEMBERS = (
 )
 #: the members a bond-resolved ("so_bond") stage adds
 SO_BOND_MEMBERS = ("delta_r", "reverse", "slot_convention", "max_shells")
-#: optional in every archive: the digest of the Green function a producer
-#: consumed, when it differs from the one it records in fp_green
+#: optional in every archive: ``fp_green_source``, the digest of the Green
+#: function a producer read from a file when what it consumed is derived
+#: from it (a projected borrowed G). ``fp_green`` records the CONSUMED Green
+#: function; ``fp_green_source`` records the file's original. It is never a
+#: compatibility key
 OPTIONAL_MEMBERS = ("fp_green_source",)
 
 #: The provenance schema: member -> (dtype, shape rule).
@@ -1047,11 +1062,12 @@ def _zip_of(data, archive):
 
 
 def _read_header(zf, member, p, malformed):
-    """``(npy header, data offset)`` of the zip member ``member`` (payload
-    ``p`` in the messages); the array is never read."""
+    """``(npy header, data offset)`` of the zip member ``member``, or of the
+    ``.npy`` file at the path ``member`` when ``zf`` is None (payload ``p``
+    in the messages); the array is never read."""
     from . import npy_header
     try:
-        with zf.open(member) as fh:
+        with (zf.open(member) if zf is not None else open(member, "rb")) as fh:
             h = npy_header.read_npy_header(fh)
             return h, fh.tell()
     except (ValueError, OSError, zipfile.BadZipFile,
@@ -1135,7 +1151,9 @@ def check_layout_members(data, names, *, kind, stage, B, nd, malformed, path, la
     * a slot kind of ``rules``: a dense archive carries no reserved name; a
       packed one carries only the three sector-map members under the
       prefix, and they equal the map of ``(B, nd)``
-      (``so_bond.check_sector_map_members``).
+      (``so_bond.check_sector_map_members``);
+    * any other kind of a ``so_bond`` stage (the chi0q, chiq, green and
+      sigma of the bond FLEX) carries no reserved name.
 
     Any other member is accepted (forward compatible)."""
     _check_rules(rules, kind, stage)
@@ -1175,24 +1193,91 @@ def check_layout_members(data, names, *, kind, stage, B, nd, malformed, path, la
             raise
         except ValueError as exc:
             raise SOArchiveError(str(exc)) from None
+        return layout
+    if reserved:
+        malformed("member {} is not written by a {} archive of a bond-resolved stage"
+                  .format(reserved[0], kind), "present", "absent")
     return layout
 
 
+#: the member-name suffixes of a sidecar block: ``<block>_file`` (the base
+#: name of its ``.npy`` file in the sidecar directory) and ``<block>_nbytes``
+#: (that file's size in bytes)
+SIDECAR_SUFFIXES = ("_file", "_nbytes")
+
+
+def _strip_sidecar(name):
+    for suffix in SIDECAR_SUFFIXES:
+        if name.endswith(suffix):
+            return name[:-len(suffix)]
+    return name
+
+
+def _plain_file_name(name):
+    """A base name: not empty, ``.`` or ``..``, without a directory part (no
+    ``/`` or ``\\`` on any platform)."""
+    if name in ("", ".", "..") or "/" in name or "\\" in name:
+        return False
+    return os.path.basename(name) == name
+
+
+def _sidecar_block(data, names, name, sidecar_dir, malformed):
+    """The path of the sidecar file of the block ``name`` (stored as
+    ``<name>_file`` and ``<name>_nbytes``, not inline), after its member
+    checks, and the recorded size."""
+    fm, nm = name + "_file", name + "_nbytes"
+    if fm not in names:
+        malformed("sidecar member {} is missing".format(fm), "absent", "present")
+    if nm not in names:
+        malformed("sidecar member {} is missing".format(nm), "absent", "present")
+    f = np.asarray(data[fm])
+    if f.ndim != 0 or f.dtype.kind != "U":
+        malformed("sidecar member {} is not a 0-d string".format(fm),
+                  "{}/{}d".format(f.dtype, f.ndim), "str/0d")
+    n = np.asarray(data[nm])
+    if n.ndim != 0 or n.dtype.kind not in "iu":
+        malformed("sidecar member {} is not a 0-d integer".format(nm),
+                  "{}/{}d".format(n.dtype, n.ndim), "int64/0d")
+    if sidecar_dir is None:
+        malformed("payload member {} is a sidecar but no sidecar directory was given"
+                  .format(name), "sidecar", "inline")
+    fname = str(f[()])
+    if not _plain_file_name(fname):
+        malformed("sidecar file name of {} is not a plain file name".format(name),
+                  repr(fname), "a file name without a directory part")
+    full = os.path.join(sidecar_dir, fname)
+    if not os.path.isfile(full):
+        malformed("sidecar member {} file '{}' is missing".format(name, fname),
+                  "absent", "present")
+    return full, int(n[()])
+
+
 def check_slot_payloads(data, names, zf, *, kind, stage, layout, B, nd, sector_dims,
-                        malformed, rules) -> None:
+                        malformed, rules, sidecar_dir=None, sources_out=None) -> None:
     """The payload members of a slot archive of ``kind`` (a slot kind of
     ``rules``) in ``layout`` (from :func:`check_layout_members`).
 
-    Names: every required payload ``p``, and every optional one present
-    under any of its names, is stored as exactly ``<p>`` (dense) or exactly
-    ``<p>@0``, ``<p>@+1``, ``<p>@-1`` (packed). Then each block's metadata:
-    complex128 (either byte order), C order, a rank of
-    ``rules.ranks[(kind, stage)]``, the stored size (zip only) and the
-    trailing pair ``(ND, ND)`` (``ND = B nd**2``; dense) or ``(n_s, n_s)``
-    (``n_s = sector_dims[i]`` in sector order ``0, +1, -1``; packed). With
-    a zip ``zf`` the metadata comes from the npy headers and no payload is
-    read; for a plain mapping (``zf is None``) from its arrays, so the shape
-    check is never skipped."""
+    A block is stored inline (the member ``<block>``) or, only with
+    ``sidecar_dir``, as a sidecar: ``<block>_file`` (0-d string, the base
+    name of a ``.npy`` file in ``sidecar_dir``) and ``<block>_nbytes`` (0-d
+    integer, that file's size); never both.
+
+    Names (the sidecar suffixes stripped): every required payload ``p``,
+    and every optional one present under any of its names, is stored as
+    exactly ``<p>`` (dense) or exactly ``<p>@0``, ``<p>@+1``, ``<p>@-1``
+    (packed). Then each block's metadata: complex128 (either byte order), C
+    order, a rank of ``rules.ranks[(kind, stage)]``, the stored size (zip
+    and sidecar: header plus the declared data; a sidecar file's size also
+    equals ``<block>_nbytes``) and the trailing pair ``(ND, ND)``
+    (``ND = B nd**2``; dense) or ``(n_s, n_s)`` (``n_s = sector_dims[i]`` in
+    sector order ``0, +1, -1``; packed). With a zip ``zf`` the metadata of
+    an inline block comes from its npy header and no payload is read; for a
+    plain mapping (``zf is None``) from its arrays, so the shape check is
+    never skipped. A sidecar's metadata always comes from its file's npy
+    header; its data is never read.
+
+    ``sources_out`` (a dict), when given, receives ``block -> ("inline",
+    shape)`` or ``block -> (<sidecar path>, shape)`` for every block."""
     _check_rules(rules, kind, stage)
     if layout not in _SLOT_LAYOUTS:
         raise ValueError("check_slot_payloads: layout must be 'dense' or 'sz_packed', got "
@@ -1209,8 +1294,8 @@ def check_slot_payloads(data, names, zf, *, kind, stage, layout, B, nd, sector_d
     ranks = rules.ranks[(kind, stage)]
 
     def stored_as(p):
-        return sorted(n for n in names
-                      if isinstance(n, str) and (n == p or n.startswith(p + "@")))
+        return sorted({b for b in (_strip_sidecar(n) for n in names if isinstance(n, str))
+                       if b == p or b.startswith(p + "@")})
 
     present_optional = tuple(p for p in rules.optional.get(kind, ()) if stored_as(p))
     blocks = []
@@ -1228,7 +1313,16 @@ def check_slot_payloads(data, names, zf, *, kind, stage, layout, B, nd, sector_d
 
     zip_names = set(zf.namelist()) if zf is not None else None
     for name, p, pair in blocks:
-        if zf is not None:
+        side = any(name + suffix in names for suffix in SIDECAR_SUFFIXES)
+        if side and name in names:
+            malformed("payload member {} is stored both inline and as a sidecar".format(name),
+                      "both", "one of them")
+        if side:
+            full, nbytes = _sidecar_block(data, names, name, sidecar_dir, malformed)
+            h, data_offset = _read_header(None, full, name, malformed)
+            dtype, shape, order_c = np.dtype(h.dtype), tuple(h.shape), not h.fortran_order
+            stored = "Fortran"
+        elif zf is not None:
             member = name + ".npy" if name + ".npy" in zip_names else name
             if member not in zip_names:
                 malformed("payload member {} of a {} archive is missing".format(name, kind),
@@ -1248,7 +1342,14 @@ def check_slot_payloads(data, names, zf, *, kind, stage, layout, B, nd, sector_d
         if len(shape) not in ranks[p]:
             malformed("payload member {} has the wrong rank".format(name), str(len(shape)),
                       " or ".join(str(r) for r in ranks[p]))
-        if zf is not None:
+        if side:
+            size = os.path.getsize(full)
+            want = data_offset + int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
+            if not size == nbytes == want:
+                malformed("sidecar member {} has the wrong size".format(name),
+                          "{} bytes, {} recorded".format(size, nbytes),
+                          "{} bytes".format(want))
+        elif zf is not None:
             size = zf.getinfo(member).file_size
             want = data_offset + int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
             if size != want:
@@ -1257,6 +1358,8 @@ def check_slot_payloads(data, names, zf, *, kind, stage, layout, B, nd, sector_d
         if shape[-2:] != pair:
             malformed("payload member {} has the wrong slot shape".format(name),
                       str(shape[-2:]), str(pair))
+        if sources_out is not None:
+            sources_out[name] = (full if side else "inline", shape)
 
 
 def _first_non_finite(a):
@@ -1282,7 +1385,49 @@ _UNVERSIONED_TEXT = (
     "archive are listed under 'Archive checks' in the hwave_sc documentation).")
 
 
-def _validate(data, path, kind, archive, label, expected_producer):
+#: the operational members that duplicate a recorded state field, in the
+#: order :func:`_validate` checks them
+STATE_RELATIONS = ("beta", "nmat", "norb_phys")
+
+
+def check_state_relations(data, path, label, *, members=STATE_RELATIONS) -> None:
+    """The duplicated operational members of an archive agree with the
+    recorded state: ``beta`` (0-d float or integer) equals ``state_beta``
+    exactly, ``nmat`` (0-d integer) equals ``state_nmat`` and ``norb_phys``
+    (0-d integer) equals ``prov_norb_phys``; an absent operational member is
+    not checked. ``members`` (a subsequence of :data:`STATE_RELATIONS`)
+    selects the relations and their order. The recorded members
+    (``state_beta``, ``state_nmat``, ``prov_norb_phys``) must already be
+    valid 0-d scalars (:func:`validate_structure` checks them first; a
+    caller running this before it checks them itself). Each refusal is the
+    single-line malformed text naming ``label``; no payload is read."""
+    for k in members:
+        if k not in STATE_RELATIONS:
+            raise ValueError("check_state_relations: unknown relation {!r} ({})"
+                             .format(k, ", ".join(STATE_RELATIONS)))
+    names = _members(data)
+    malformed = _malformed_raiser(path, label)
+    for k in members:
+        if k not in names:
+            continue
+        a = np.asarray(data[k])
+        if k == "beta":
+            beta_f = float(_scalar(data, "state_beta"))
+            if a.ndim != 0 or a.dtype.kind not in "fi" or float(a[()]) != beta_f:
+                malformed("beta differs from state_beta", repr(a.tolist()), repr(beta_f))
+        elif k == "nmat":
+            nmat_f = int(_scalar(data, "state_nmat"))
+            if a.ndim != 0 or a.dtype.kind not in "iu" or int(a[()]) != nmat_f:
+                malformed("nmat differs from state_nmat", repr(a.tolist()), nmat_f)
+        else:
+            norb_phys = int(_scalar(data, "prov_norb_phys"))
+            if a.ndim != 0 or a.dtype.kind not in "iu" or int(a[()]) != norb_phys:
+                malformed("norb_phys differs from prov_norb_phys", repr(a.tolist()),
+                          norb_phys)
+
+
+def _validate(data, path, kind, archive, label, expected_producer, sidecar_dir=None,
+              sources_out=None):
     """:func:`validate_structure` with the producer named ``label`` (the
     readable ``producer_label``, else ``expected_producer``)."""
     if kind not in KIND_STAGES:
@@ -1402,20 +1547,8 @@ def _validate(data, path, kind, archive, label, expected_producer):
     _check_mu_tol(_file_state(data), malformed)
 
     # duplicated operational fields agree (a folded cell_shape is not compared)
-    if "beta" in names:
-        b = np.asarray(data["beta"])
-        if b.ndim != 0 or b.dtype.kind not in "fi" or float(b[()]) != beta_f:
-            malformed("beta differs from state_beta", repr(b.tolist()), repr(beta_f))
-    nmat_f = int(m["state_nmat"][()])
-    if "nmat" in names:
-        n = np.asarray(data["nmat"])
-        if n.ndim != 0 or n.dtype.kind not in "iu" or int(n[()]) != nmat_f:
-            malformed("nmat differs from state_nmat", repr(n.tolist()), nmat_f)
+    check_state_relations(data, path, label)
     norb_phys = int(m["prov_norb_phys"][()])
-    if "norb_phys" in names:
-        n = np.asarray(data["norb_phys"])
-        if n.ndim != 0 or n.dtype.kind not in "iu" or int(n[()]) != norb_phys:
-            malformed("norb_phys differs from prov_norb_phys", repr(n.tolist()), norb_phys)
 
     # the layout members: block_layout of a bond-resolved stage, read first;
     # the reserved sz_sector_ names
@@ -1461,7 +1594,8 @@ def _validate(data, path, kind, archive, label, expected_producer):
                     reverse=m["reverse"]), nd).sizes
             check_slot_payloads(data, names, zf, kind=kind, stage=stage, layout=layout,
                                 B=n_bonds, nd=nd, sector_dims=sector_dims,
-                                malformed=malformed, rules=PRODUCTION_SLOT_RULES)
+                                malformed=malformed, rules=PRODUCTION_SLOT_RULES,
+                                sidecar_dir=sidecar_dir, sources_out=sources_out)
         elif zf is not None:
             _check_payload_headers(zf, kind, stage, malformed)
     finally:
@@ -1471,7 +1605,9 @@ def _validate(data, path, kind, archive, label, expected_producer):
 
 
 def validate_structure(data, path: str, *, kind: str, archive=None,
-                       expected_producer: Optional[str] = None):
+                       expected_producer: Optional[str] = None,
+                       sidecar_dir: Optional[str] = None,
+                       sources_out: Optional[dict] = None):
     """Step 1 of the archive check: the structure of a spin-orbital archive,
     before any payload is read. Returns ``(kind, stage, version)``.
 
@@ -1507,11 +1643,17 @@ def validate_structure(data, path: str, *, kind: str, archive=None,
       plain mapping the headers of the on-site kinds are not checked; a slot
       kind (:func:`check_slot_payloads`) is checked from the mapping's
       arrays, so its shapes and dtypes are never skipped.
+
+    ``sidecar_dir`` (the directory of a slot archive's sidecar files) and
+    ``sources_out`` (a dict receiving each slot block's source and shape)
+    are passed to :func:`check_slot_payloads`; without ``sidecar_dir`` a
+    sidecar block is refused.
     """
     label = _readable_label(data, _members(data))
     if label == UNKNOWN_PRODUCER and expected_producer:
         label = expected_producer
-    return _validate(data, path, kind, archive, label, expected_producer)
+    return _validate(data, path, kind, archive, label, expected_producer,
+                     sidecar_dir=sidecar_dir, sources_out=sources_out)
 
 
 def _record_table(types, modes, cells, vals):
@@ -1570,19 +1712,56 @@ def check_so_archive(data, path: str, *, kind: str, run_band: BandInputs,
     recomputed from its own tables; no digest is recomputed from the
     archive's ``prov_*`` members, which only feed the diffs), interaction,
     capability, declared and resolved topology (``need = "so_bond"`` only,
-    against ``run_bond``), state, green.
+    against ``run_bond``), state, green. Step 2 is
+    :func:`check_so_compatibility`.
 
     Every refusal is a single-line ValueError (:class:`SOArchiveError`)."""
-    if nmat_rule not in NMAT_RULES:
-        raise ValueError("nmat_rule must be one of {}, got {!r}".format(NMAT_RULES, nmat_rule))
-    if run_interaction is None:
-        raise ValueError("check_so_archive needs run_interaction")
-    if need not in CAPABILITIES:
-        raise ValueError("need must be one of {}, got {!r}".format(CAPABILITIES, need))
+    _check_caller_arguments("check_so_archive", nmat_rule, run_interaction, need)
     label = _readable_label(data, _members(data))
     if label == UNKNOWN_PRODUCER and expected_producer:
         label = expected_producer
     kind, stage, version = _validate(data, path, kind, None, label, expected_producer)
+    return check_so_compatibility(
+        data, path, validated=(kind, stage, version, label), run_band=run_band,
+        run_state=run_state, nmat_rule=nmat_rule, run_interaction=run_interaction, need=need,
+        expected_producer=expected_producer, run_bond=run_bond, green=green,
+        green_layout=green_layout, green_fp=green_fp)
+
+
+def _check_caller_arguments(who, nmat_rule, run_interaction, need):
+    if nmat_rule not in NMAT_RULES:
+        raise ValueError("nmat_rule must be one of {}, got {!r}".format(NMAT_RULES, nmat_rule))
+    if run_interaction is None:
+        raise ValueError("{} needs run_interaction".format(who))
+    if need not in CAPABILITIES:
+        raise ValueError("need must be one of {}, got {!r}".format(CAPABILITIES, need))
+
+
+def check_so_compatibility(data, path: str, *, validated, run_band: BandInputs,
+                           run_state: SOState, nmat_rule: str,
+                           run_interaction: InteractionInputs, need: str,
+                           expected_producer: Optional[str] = None,
+                           run_bond: Optional[BondInputs] = None, green=None,
+                           green_layout: Optional[str] = None,
+                           green_fp: Optional[str] = None) -> SOArchiveInfo:
+    """Step 2 of :func:`check_so_archive` on an archive whose structure is
+    already validated: ``validated = (kind, stage, version, label)``, the
+    result of :func:`validate_structure` plus the producer label it named
+    (the readable ``producer_label``, else ``expected_producer``; an
+    unknown label is replaced by ``expected_producer`` here as well). The
+    structure is not checked again, so a reader that ran
+    :func:`validate_structure` once (with its sidecar directory) calls this
+    instead of :func:`check_so_archive`. The other arguments, the checks
+    and the texts are those of :func:`check_so_archive`: residual, band,
+    interaction, capability, declared and resolved topology
+    (``need = "so_bond"``), state, green."""
+    _check_caller_arguments("check_so_compatibility", nmat_rule, run_interaction, need)
+    if not (isinstance(validated, tuple) and len(validated) == 4):
+        raise ValueError("check_so_compatibility: validated must be (kind, stage, version, "
+                         "label), got {!r}".format(validated))
+    kind, stage, version, label = validated
+    if label == UNKNOWN_PRODUCER and expected_producer:
+        label = expected_producer
     state = _file_state(data)
     _check_residual(path, label, state)
     point = _point(nmat_rule)

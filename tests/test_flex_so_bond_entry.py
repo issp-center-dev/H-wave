@@ -626,11 +626,22 @@ class TestOutputs(unittest.TestCase):
                     self.assertEqual(z[k], final[k])
         self.assertEqual(float(files["sigma"]["state_mu"]), float(final["state_mu"]))
 
-    def test_bond_stage_is_still_a_deferred_fingerprint_stage(self):
-        """The fingerprint module still lists the bond stage as deferred (its
-        reader arrives with the bond archive)."""
+    def test_bond_stage_is_read_by_the_fingerprint_check(self):
+        """The bond stage is no longer deferred (only the dynamic bond stage
+        is), and every output of a bond FLEX run, in both block layouts,
+        passes the structure check of its kind."""
         from hwave.solver import fingerprint
-        self.assertIn("flex_so_bond", fingerprint.DEFERRED_STAGES)
+        self.assertEqual(set(fingerprint.DEFERRED_STAGES), {"sc_so_bond_dynamic"})
+        for fx in (X.ZEEMAN_SZ_ALL, F.SOC_ALL_TYPES):
+            with tempfile.TemporaryDirectory() as d:
+                _, out, _ = _write_run(d, fx, {"IterationMax": 1})
+                for kind in ("green", "sigma", "chi0q", "chiq"):
+                    with self.subTest(fixture=fx.name, kind=kind):
+                        path = os.path.join(out, kind + ".npz")
+                        with np.load(path, allow_pickle=False) as z:
+                            self.assertEqual(
+                                fingerprint.validate_structure(z, path, kind=kind),
+                                (kind, "flex_so_bond", 2))
 
 
 ONSITE_BOND_TEXT = (
