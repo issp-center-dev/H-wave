@@ -75,6 +75,7 @@ SHARDS = (
         "test_uhfk_orientation",                   # 16
         "test_flex_second_order_ed_onsite",        # 13
         "test_flex_bond_memory",                   # 2
+        "test_flex_so_bond_entry",                 # 2 (x2.7 of 0.79 s, macOS, numpy 1.26)
         "test_sc_spin_orbital_bond_full",          # 10 (CI estimate; 6 s on Linux)
     ),
     (

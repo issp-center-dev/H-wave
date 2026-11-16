@@ -706,10 +706,15 @@ class Interaction:
     # receiving it from an enclosing solver; None / False otherwise
     so_context = None
     so_context_built_here = False
+    #: whether the solver represents an off-site PairHop on its own bond
+    #: vertex (the spin-orbital bond FLEX), so that the discard WARNING of
+    #: _make_ham_inter does not apply
+    offsite_pairhop_represented = False
 
-    def __init__(self, lattice, param_ham, info_mode):
+    def __init__(self, lattice, param_ham, info_mode, *, offsite_pairhop_represented=False):
         logger.debug(">>> Interaction.__init__")
 
+        self.offsite_pairhop_represented = bool(offsite_pairhop_represented)
         self.lattice = lattice
         self.param_ham = param_ham
 
@@ -1128,7 +1133,7 @@ class Interaction:
             offsite = [(irvec, orbvec, v)
                        for (irvec, orbvec), v in orig_tbl.items()
                        if not is_onsite(irvec, orbvec, getattr(self, "orbital_site", None))]
-            if offsite:
+            if offsite and not self.offsite_pairhop_represented:
                 shown = offsite[:8]
                 logger.warning(
                     "PairHop declares %d off-site term(s) (irvec != "
@@ -1569,7 +1574,9 @@ class RPA:
                 "the migration note in the RPA output-file documentation.")
 
         self.lattice = Lattice(self.param_mod)
-        self.ham_info = Interaction(self.lattice, param_ham, info_mode)
+        self.ham_info = Interaction(
+            self.lattice, param_ham, info_mode,
+            offsite_pairhop_represented=self._offsite_pairhop_in_bond_vertex())
         if (self._SO_OFFSITE_INFO and self.ham_info.enable_spin_orbital
                 and self.ham_info.so_context_built_here):
             types = spin_orbital.offsite_types(self.ham_info.so_context.compiled)
@@ -2073,6 +2080,13 @@ class RPA:
         # (syntactic) error first.
         self._reject_offsite_pairhop_under_transverse_bond_gate()
 
+
+    def _offsite_pairhop_in_bond_vertex(self):
+        """Whether an off-site PairHop is represented by the subclass's own
+        bond vertex, so that the discard WARNING of :meth:`_make_ham_inter`
+        does not apply (``False`` here; the spin-orbital bond FLEX
+        overrides it)."""
+        return False
 
     def _bond_memory_cap_parsed_elsewhere(self):
         """Whether ``longitudinal_bond_memory_cap_gb`` is parsed by the
@@ -4168,22 +4182,27 @@ class RPA:
             sub_shape=tuple(int(x) for x in self.lattice.subshape))
         return transfer, extern, meta
 
-    def _so_provenance(self, producer_stage, producer_label):
+    def _so_provenance(self, producer_stage, producer_label, *, bond=None, fp_green=None):
         """The fingerprint/state members of this spin-orbital run, built
         once per call (merged into every archive of the run), or ``{}``
         when this solve established no state (e.g. a supplied chi0q).
         They carry the interaction fingerprints of the run's entry context;
         without them (no state, or the band changed by trans_mod/green_init)
-        a spin-orbital consumer refuses the outputs."""
+        a spin-orbital consumer refuses the outputs.
+
+        ``bond`` is the :class:`~hwave.solver.fingerprint.BondInputs` of a
+        bond-resolved stage (``None`` otherwise); ``fp_green`` the Green
+        digest the archive records (``None``: ``self._so_fp_green``)."""
         state = getattr(self, "_so_state", None)
-        fp_green = getattr(self, "_so_fp_green", None)
+        if fp_green is None:
+            fp_green = getattr(self, "_so_fp_green", None)
         if state is None or fp_green is None:
             return {}
         transfer, extern, meta = self._so_band_tables()
         return fingerprint.so_provenance_members(
             producer_stage=producer_stage, producer_label=producer_label,
             transfer=transfer, extern=extern, meta=meta, fp_green=fp_green,
-            state=state, interaction=self.ham_info.so_context.interaction)
+            state=state, interaction=self.ham_info.so_context.interaction, bond=bond)
 
     @do_profile
     def _find_mu(self, Ncond, T):

@@ -145,7 +145,9 @@ def so_bond_flex_map(store, gamma_b, green_kw, green_scf, green0_tail, beta, geo
     cond_tol : float or None
         The conditioning guard of the dressing (``None`` disables it).
     workers : int
-        FFT workers of the bubble's and the transport's FFTs.
+        FFT workers of the transport (``flex_bond.calc_self_energy_bond``);
+        the bubble (:func:`hwave.solver.so_bond.so_bond_bubble`) takes no
+        workers argument and runs its FFTs on one worker.
     trace : callable, optional
         ``trace(phase)`` returns a context manager entered around each phase
         (e.g. a tracemalloc scope); ``None`` is a null context.

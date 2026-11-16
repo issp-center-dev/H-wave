@@ -15,11 +15,17 @@ and Extern indices, a 4x4x1 mesh with one physical orbital):
 :func:`write_flex_case` writes the files of a fixture and returns the
 ``input_dict`` of a FLEX run at a fixed chemical potential;
 :func:`build_solver` constructs the solver from it as ``hwave.qlms.run``
-does. At module level this module imports numpy, the standard library and
+does. :func:`run_input` / :func:`run_flex` solve it (the iteration-hook
+payloads and the log records collected in a :class:`RunResult`),
+:func:`one_map` runs one map and :func:`converge` the converged state. At module level this module imports numpy, the standard library and
 the test-side fixture module only; a helper that drives production code
 imports ``hwave`` inside its own body.
 """
 import cmath
+import logging
+import os
+import tempfile
+from typing import NamedTuple
 
 import numpy as np
 
@@ -28,7 +34,9 @@ from tests.so_bond_entry_fixtures import _nn, _override
 
 __all__ = ["V_CPH", "ZEEMAN_SZ_ALL", "SOC_ALL_TYPES_CPH", "ZEEMAN_EXTERN_ONSITE",
            "FLEX_NMAT", "FLEX_T", "onsite_rows", "interaction_tables", "fixture_mu",
-           "write_flex_case", "build_solver"]
+           "write_flex_case", "build_solver", "RunResult", "run_input", "run_flex",
+           "one_map", "converge",
+           "CONVERGE_PARAM"]
 
 
 def _nn_c(v):
@@ -139,3 +147,80 @@ def build_solver(input_dict):
     reader = read_input_k.QLMSkInput(input_dict["file"]["input"])
     solver = flex_mod.FLEX(reader.get_param("ham"), {}, info_mode)
     return solver, reader.get_param("green")
+
+
+class _Records(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.INFO)
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+class RunResult(NamedTuple):
+    """One FLEX solve (:func:`run_input`): the solver after ``solve``, the
+    ``green_info`` it filled, the iteration-hook payloads (one per map) and
+    the ``logging.LogRecord`` s of level INFO and above of the solve."""
+    solver: object
+    green_info: dict
+    payloads: tuple
+    records: tuple
+
+
+def run_input(input_dict):
+    """The :class:`RunResult` of one FLEX solve of ``input_dict`` (built by
+    :func:`build_solver`; the iteration hook collects every map's payload,
+    the root logger's INFO records are captured). Nothing is written."""
+    payloads = []
+    root = logging.getLogger()
+    handler = _Records()
+    level = root.level
+    solver, green_info = build_solver(input_dict)
+    solver._iteration_hook = payloads.append
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    try:
+        solver.solve(green_info, input_dict["file"]["output"]["path_to_output"])
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
+    return RunResult(solver, green_info, tuple(payloads), tuple(handler.records))
+
+
+def run_flex(fixture, *, gate=True, param=None):
+    """:func:`run_input` of :func:`write_flex_case` (``gate``, ``param``
+    forwarded) in a temporary directory."""
+    with tempfile.TemporaryDirectory(prefix="so_bond_flex_") as d:
+        return run_input(write_flex_case(d, fixture, gate=gate, param=param))
+
+
+def one_map(fixture, *, gate=True, param=None):
+    """``(payload, solver)``: the iteration-hook payload of ONE map
+    (``IterationMax = 1``, whatever ``param`` says) of the FLEX run of
+    :func:`write_flex_case` (``param`` overrides ``[mode.param]``), and the
+    solver after the solve."""
+    par = dict(param or {})
+    _override(par, {"IterationMax": 1}, "[mode.param]")
+    res = run_flex(fixture, gate=gate, param=par)
+    if len(res.payloads) != 1:
+        raise RuntimeError("one_map: {} payloads".format(len(res.payloads)))
+    return res.payloads[0], res.solver
+
+
+#: the SCF settings of :func:`converge` (``param`` overrides them)
+CONVERGE_PARAM = {"IterationMax": 400, "EPS": 12, "mixing_scheme": "anderson", "Mix": 0.5}
+
+
+def converge(fixture, *, gate=True, param=None):
+    """The :class:`RunResult` of the converged FLEX run of
+    :func:`write_flex_case` with :data:`CONVERGE_PARAM` (``param``
+    overrides both); refuses (``RuntimeError``) a run that did not
+    converge."""
+    par = dict(CONVERGE_PARAM)
+    _override(par, param, "[mode.param]")
+    res = run_flex(fixture, gate=gate, param=par)
+    if not res.solver.scf_converged:
+        raise RuntimeError("converge: {} (gate {}) did not converge in {} iterations".format(
+            fixture.name, gate, res.solver.scf_iterations))
+    return res

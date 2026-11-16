@@ -308,6 +308,14 @@ HEAVY_TESTS = (
      "with and without the Hermitian projection, then the split conversion "
      "and a flex_hartree_fock run on the seed -- 4.3 s measured, at the rule; "
      "the fast gate keeps the deterministic seeded tests of the same module"),
+    # --- tests/test_flex_so_bond_entry.py -- #270 spin-orbital bond FLEX --
+    ("test_flex_so_bond_entry", "TestCrossPathB1", "test_converged",
+     "gate C1b-B1 converged: four converged spin-orbital FLEX solves (bond "
+     "gate on and off, SOC_ONSITE dense and ZEEMAN_EXTERN_ONSITE packed, B = 1) "
+     "agree on Sigma, G, mu and NCond; heavy by design as a multi-iteration "
+     "converged test (0.79 s macOS numpy 1.26.4, 0.45 s numpy 2.4.6, about "
+     "2.1 s projected on Linux at x2.7); the one-map smoke "
+     "TestCrossPathB1.test_one_map stays in the fast gate"),
     # --- tests/test_flex_spin_orbital_ed.py -- #83 spin-orbital FLEX --
     ("test_flex_spin_orbital_ed", "TestSecondOrderWithSOC",
      "test_every_type",
