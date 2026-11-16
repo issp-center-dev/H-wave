@@ -667,13 +667,17 @@ of the transfer momentum <span class="math notranslate nohighlight">\(\mathbf{q}
 enter the ring sum through their direct (Hartree-like) part
 <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span> only, as in the non-spin-orbital RPA. The spin-orbital
 RPA logs this once per run, at INFO level, when the input has off-site rows:</p>
-<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>enable_spin_orbital: the off-site rows of &lt;types&gt; enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static").
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>enable_spin_orbital: the off-site rows of &lt;types&gt; enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static") or FLEX with [mode.param] longitudinal_bond_channels = true.
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">&lt;types&gt;</span></code> is the sorted, comma-separated list of the interaction types that
 have a nonzero off-site row. <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is not named in this list. The line
-is not logged by FLEX (which refuses off-site rows in spin-orbital mode) or
-by the RPA that <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> runs internally.</p>
+is not logged by FLEX (which, in spin-orbital mode, refuses off-site rows
+without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> and resolves their exchange exactly
+with it; see <a class="reference internal" href="#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>) or by the RPA that <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> runs
+internally. <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read the outputs of the spin-orbital FLEX
+with bond channels yet; its static bond path builds its own bare bond
+bubble (see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>).</p>
 <section id="second-order-of-the-general-flex-path">
 <span id="flex-second-order-kernel"></span><h3>Second order of the general FLEX path<a class="headerlink" href="#second-order-of-the-general-flex-path" title="Link to this heading">¶</a></h3>
 <p>In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> the fluctuation
@@ -1106,12 +1110,14 @@ transverse content beyond that; the spin-orbital FLEX carries it.</p>
 <ul class="simple">
 <li><p>the general scheme with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> and the other
 conditions of that switch;</p></li>
-<li><p>on-site and in-cell (<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) interactions only (the
-exchange crossing of an off-site interaction is not a
-<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>-only vertex); an off-site row is refused;</p></li>
+<li><p>without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>: on-site and in-cell
+(<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>) interactions only (the exchange crossing of an
+off-site interaction is not a <span class="math notranslate nohighlight">\(\mathbf{q}\)</span>-only vertex); an
+off-site row is refused. With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+off-site rows are accepted (see <em>Bond channels</em> below);</p></li>
 <li><p>an imaginary part on a <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>
 or <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> coefficient is refused;</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>, and no <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>;</p></li>
 <li><p>no <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code> / <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> / <code class="docutils literal notranslate"><span class="pre">green_init</span></code>: the run starts from
 the bare Hartree-Fock state;</p></li>
 <li><p>an Extern field is accepted: the file uses physical orbital indices and
@@ -1120,13 +1126,46 @@ adds <code class="docutils literal notranslate"><span class="pre">coeff_extern</
 <span class="math notranslate nohighlight">\(H_1\)</span> is on-site (see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-polarized"><span class="std std-ref">Spin-polarized states (Zeeman field)</span></a>).</p></li>
 </ul>
 <p>The reduced scheme refuses spin-orbital input. The Eliashberg solver
-(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) reads the spin-orbital FLEX outputs, with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
-<span class="pre">&quot;static&quot;</span></code> (see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>) and with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>
-(see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>); its dynamic bond path and
-<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still refuse
-<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. A FLEX-only
+(<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) reads the spin-orbital FLEX outputs of a run without bond
+channels, with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> (see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>) and
+with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> (see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>); its
+dynamic bond path and <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still
+refuse <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>. A FLEX-only
 <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code> (the spin-orbital FLEX
 takes no seed).</p>
+<p><strong>Bond channels.</strong> With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> the single
+spinful channel is resummed on the (spin-orbital pair) <span class="math notranslate nohighlight">\(\times\)</span>
+(bond) basis of the spin-orbital Eliashberg bond path
+(<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>): <span class="math notranslate nohighlight">\(B\)</span> bond channels <span class="math notranslate nohighlight">\(m\)</span> (the on-site
+point and every declared off-site displacement, closed under reversal),
+<code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">n_d^2</span></code> slots. The bond vertex <span class="math notranslate nohighlight">\(\Gamma_B\)</span> is the
+antisymmetrized spinful vertex with every row on its own bond: the direct
+part of an off-site row in the on-site channel, as a function of
+<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>, and its exchange crossing in the channel of its
+displacement. With the bond-resolved bubble <span class="math notranslate nohighlight">\(\bar\chi_B(q, i\nu)\)</span> of
+the dressed Green function at every bosonic frequency,</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-30">
+<span class="eqno">(7.41)<a class="headerlink" href="#equation-algorithm-rpa-30" title="Link to this equation">¶</a></span>\[\chi_B = \left[\hat{I} + \bar\chi_B\,\Gamma_B\right]^{-1} \bar\chi_B, \qquad
+W = P_B\left[\Gamma_B\left(\chi_B - \tfrac{1}{2}\bar\chi_B\right)\Gamma_B\right],\]</div>
+<p>and the self-energy is the bond transport of <a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a> (the bond
+form factor on the internal leg at both ends of <span class="math notranslate nohighlight">\(W\)</span>) on the
+spin-orbital index. <span class="math notranslate nohighlight">\(P_B\)</span> is the orbital swap <span class="math notranslate nohighlight">\(P\)</span> of the
+on-site path within each bond channel,
+<span class="math notranslate nohighlight">\(P_B[M]_{(m;\,x y),(m';\,z w)} = M_{(m;\,y x),(m';\,w z)}\)</span> (no
+channel reversal, no phase). What
+is exact: <span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span> of every row (off-site rows and complex
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> included); the second order, direct and exchange, of every row
+(the term <span class="math notranslate nohighlight">\(\tfrac{1}{2}\Gamma_B\bar\chi_B\Gamma_B\)</span>); beyond it the
+ring series of the bond-resolved spinful channel. At <span class="math notranslate nohighlight">\(B = 1\)</span> the
+run is the on-site spin-orbital FLEX; in the SU(2) limit it reproduces the
+non-spin-orbital bond FLEX of <a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a> (self-energy times the
+unit matrix in spin; the susceptibility projects onto its charge,
+longitudinal and transverse spin channels). The run, its keys, its memory
+and its outputs are described in <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>; in this
+version it runs on the CPU, writes <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> as the channel-0
+blocks of the last map and no bond archive, and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read
+its outputs yet. A FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span>
+<span class="pre">false</span></code>, as above.</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id2" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id1">1</a><span class="fn-bracket">]</span></span>

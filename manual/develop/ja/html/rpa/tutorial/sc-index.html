@@ -1989,9 +1989,12 @@ issue #239）と、真に非等価な2軌道の鎖に対する1次の参照構�
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
 <td><p>拒否</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で受け付ける（オンサイトおよびセル内の相互作用のみ）</p></td>
-<td><p>静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>でこの出力を読みます。
-<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で受け付ける（オンサイトおよびセル内の相互作用。
+オフサイトの行は<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>で受け付ける）</p></td>
+<td><p>静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>とオンサイトの動的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>を使わない計算の出力を<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>で
+読みます（<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>と<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。
+ボンドチャネル付きの計算の出力はまだ読めません（<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>を参照）</p></td>
 </tr>
 <tr class="row-odd"><td><p>保存される感受率</p></td>
 <td><p>密度‐密度成分のみ<code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
@@ -2107,8 +2110,9 @@ SU(2) 対称性から横成分と縦成分のスピン感受率は一致し、FL
 </tr>
 </tbody>
 </table>
-<p>スピン軌道の FLEX は、このバージョンではボンド分解チャネル
-（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>）を拒否します。スピン軌道の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
+<p>スピン軌道の FLEX はボンド分解チャネル（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>、
+<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>）を受け付けますが、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はその計算の出力を
+まだ読みません。スピン軌道の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
 <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>では<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>を受け付け
 （<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）、<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>では拒否します。</p>
 </section>
@@ -2208,8 +2212,8 @@ SO RPA、SO FLEX、SO hwave_sc の結果が変わります。そのような行�
 <li><p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>（スピンフルな<span class="math notranslate nohighlight">\(\chi_0\)</span>を内部計算）、
 <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>（スピン軌道 RPA が出力した一般の4添字 chi0q。<strong>静的のみ</strong>）、または
 <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>（スピン軌道 FLEX の出力。FLEX は<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>かつ
-<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で実行したものに限ります。
-<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）。動的ソルバーでは<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>を
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>なしで
+実行したものに限ります。<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）。動的ソルバーでは<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>を
 <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>に明示的に指定する必要があり、<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>と
 指定なし（既定値が<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>）は拒否されます;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code>と
@@ -2342,7 +2346,9 @@ spin-block 順（<code class="docutils literal notranslate"><span class="pre">ga
 <h3>スピン軌道 FLEX の出力の読み込み<a class="headerlink" href="#id39" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>では、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で実行した
-FLEX の4つのアーカイブを<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>（なければ
+FLEX の4つのアーカイブ（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算は拒否されます。その
+アーカイブは<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;flex_so_bond&quot;</span></code>を持ち、この版では読まないためです。
+<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>を参照）を<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>（なければ
 <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>）から読みます。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;chiq.npz&quot;</span></code>）: スピンフル感受率

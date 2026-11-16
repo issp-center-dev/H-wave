@@ -133,20 +133,34 @@ part is resummed in one channel with the antisymmetrized spinful vertex
 (see <a class="reference internal" href="../../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>). Requirements and limitations of this
 version:</p>
 <ul class="simple">
-<li><p>on-site and in-cell (<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>) interactions only (an off-site
-declaration is refused);</p></li>
+<li><p>without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>: on-site and in-cell (<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>)
+interactions only (an off-site declaration is refused);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> is supported: off-site rows of
+every type are accepted (a complex coefficient on <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> only) and
+their exchange is resolved exactly on the bond channels. It runs on the
+CPU (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is ignored with a WARNING; <code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code>
+and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;device&quot;</span></code> are refused), writes no bond
+archive (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code> are refused), takes no in-process
+pairing (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> must be <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>) and guards
+every frequency (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> is
+refused); <code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code> selects the layout and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> has the spin-orbital meaning; see
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span></code> must stay <code class="docutils literal notranslate"><span class="pre">true</span></code> (the default);</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> is not supported;</p></li>
 <li><p>no seed: <code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>, <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code> and <code class="docutils literal notranslate"><span class="pre">green_init</span></code> are refused,
 and the run starts from the bare Hartree-Fock state;</p></li>
 <li><p>the other conditions of <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> apply (uniform Matsubara
-grid, no sublattice, no external field, even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>);</p></li>
+grid, no sublattice, even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>); an Extern field is accepted (in the
+physical orbital indices, scaled by <code class="docutils literal notranslate"><span class="pre">coeff_extern</span></code>);</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;reduced&quot;</span></code> refuses spin-orbital input;</p></li>
-<li><p>the static Eliashberg solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) reads the outputs of such a
-run with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> (write <code class="docutils literal notranslate"><span class="pre">[file.output]</span>
-<span class="pre">chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code>); see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. The
-on-site dynamic solver (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>) reads them too (see
-<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>); the dynamic bond path and
+<li><p>the static Eliashberg solver (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) reads the outputs of a run
+without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;flex&quot;</span></code> (write <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code>); see
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. The on-site dynamic solver (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
+<span class="pre">&quot;dynamic&quot;</span></code>) reads them too (see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>). The
+outputs of a run with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> are not read
+yet (a later version adds the bond archive). The dynamic bond path and
 <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still refuse
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with
 <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>.</p></li>
@@ -384,9 +398,12 @@ enables the self-consistent bond-resolved channel of the Hartree-Fock
 FLEX (experimental; an off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is accepted there too, with
 its second order built exactly and a warning when a bond’s spin part is
 not SU(2) symmetric; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
-<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, a spin-free system, the uniform Matsubara
-grid, no sublattice and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; see
-<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
+<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, a spin-free system (or, with
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, the spin-orbital FLEX with bond channels
+of <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>, where the GPU, the archive and pairing
+options below are not available), the uniform Matsubara grid, no
+sublattice and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; see <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>).
+With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 (which requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>) and <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>,
 the dressing, the effective interaction and the self-energy
 transport run on the GPU (CuPy); the bond arrays stay in host memory
@@ -415,14 +432,20 @@ exact second order and must be kept as well. Ignored with a warning unless
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code></p>
 <p><strong>Type :</strong>
-Float (default value is <code class="docutils literal notranslate"><span class="pre">8.0</span></code>)</p>
+Float (default value is <code class="docutils literal notranslate"><span class="pre">8.0</span></code>; with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>
+(FLEX), unset means <code class="docutils literal notranslate"><span class="pre">0.8</span></code> times the available host memory)</p>
 <p><strong>Description :</strong>
 Cap on the ESTIMATED peak host (CPU) memory of the bond-resolved solve,
 in binary GiB (GPU memory is not covered); the estimate is logged and
 the run is refused before any expensive step when it exceeds the cap.
 The refusal message reports the estimate and the shapes behind it; on
 a machine with enough physical memory, raise the cap to proceed.
-Ignored with a warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+Ignored with a warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.
+With <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> (FLEX) the key has the spin-orbital
+meaning instead: unset is <code class="docutils literal notranslate"><span class="pre">0.8</span></code> times the available host memory, a
+positive value is that many GiB, <code class="docutils literal notranslate"><span class="pre">0</span></code> disables the check (with a
+WARNING), and a negative or non-finite value is refused; see
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code></p>
 <p><strong>Type :</strong>
@@ -451,7 +474,10 @@ frequency and validates the other slices by the solve residual
 is a reduced diagnostic that removes the dominant CPU cost of the
 guard and is recorded in the outputs (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code>
 member). The default does not depend on <code class="docutils literal notranslate"><span class="pre">gpu</span></code>. Ignored with a
-warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+warning unless <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. With
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> (FLEX) only <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code> is accepted
+(<code class="docutils literal notranslate"><span class="pre">&quot;static&quot;</span></code> is refused: the spin-orbital dressing decomposes every block
+exactly); see <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact</span></code></p>
 <p><strong>Type :</strong>
@@ -689,7 +715,7 @@ iteration (see <a class="reference internal" href="../../../algorithm/rpa.html#f
 <span class="pre">true</span></code>, the spin-orbital FLEX described under that key), the uniform
 Matsubara grid
 (<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code> is refused), no sublattice, no external
-field and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is refused on its
+field (accepted in spin-orbital mode) and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. An off-site <code class="docutils literal notranslate"><span class="pre">Exchange</span></code> or <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> is refused on its
 own (it has no Hartree content, so its first order would enter without
 any higher order); it is accepted together with
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is accepted: on its own
@@ -782,7 +808,8 @@ a warning.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code></p>
 <p><strong>Type :</strong>
-Integer (default: chosen automatically; FLEX mode only)</p>
+Integer (default: chosen automatically, with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span>
+<span class="pre">true</span></code> the largest of 16, 8, 4, 2, 1 that fits the cap; FLEX mode only)</p>
 <p><strong>Description :</strong>
 Number of bosonic frequencies dressed at once by the bond-resolved
 FLEX (in <code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">Nmat]</span></code>). By default the largest batch that keeps the
@@ -792,7 +819,22 @@ well); an explicit value is validated against the same cap(s) –
 the host cap always, and the free device memory measured when the
 bond solve starts when <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> – and refused when it exceeds
 either. Ignored with a warning unless
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. With <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span>
+<span class="pre">true</span></code> the automatic batch is the largest of 16, 8, 4, 2, 1 (not above
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>) that fits the cap.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code>; FLEX mode only)</p>
+<p><strong>Description :</strong>
+The layout of the bond objects of the spin-orbital FLEX with bond
+channels (<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>): <code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> stores them in the
+<span class="math notranslate nohighlight">\(S_z\)</span>-packed layout when the input conserves <span class="math notranslate nohighlight">\(S_z\)</span> and dense
+otherwise; <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> forces the dense layout. <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code> cannot be
+forced; any other value is refused. Read case-insensitively. Set without
+both switches, the key is ignored with a WARNING. See
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_second_order</span></code></p>
 <p><strong>Type :</strong>

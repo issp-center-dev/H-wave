@@ -791,8 +791,11 @@ self-energy of every interaction term to the FLEX loop, and
 fluctuation part on the bond-resolved pair basis so that the exchange
 crossing of an off-site <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> / <code class="docutils literal notranslate"><span class="pre">Hund</span></code> / <code class="docutils literal notranslate"><span class="pre">Ising</span></code> enters
 self-consistently (see <a class="reference internal" href="../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a> for the equations and the domain).
-Both are <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, spin-free, uniform-grid options, and
-both run on the GPU (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>, via CuPy) as well as on the CPU: on
+Both are <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, spin-free, uniform-grid options (with
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> the same keys select the spin-orbital FLEX of
+<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a> and, with the bond channels, the CPU-only path of
+<a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>; the rest of this section is about the
+spin-free runs), and both run on the GPU (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>, via CuPy) as well as on the CPU: on
 its own, <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> uses the ordinary FLEX GPU path (see
 the <code class="docutils literal notranslate"><span class="pre">gpu</span></code> option below); with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 (which requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>) the bond bubble, the
@@ -1004,6 +1007,498 @@ shows quasiparticle damping, while the
 Fermi liquid behavior.</span><a class="headerlink" href="#id25" title="Link to this image">¶</a></p>
 </figcaption>
 </figure>
+</section>
+<section id="spin-orbital-flex-with-bond-channels-experimental">
+<span id="flex-so-bond-tutorial"></span><h3>Spin-orbital FLEX with bond channels (experimental)<a class="headerlink" href="#spin-orbital-flex-with-bond-channels-experimental" title="Link to this heading">¶</a></h3>
+<p>The spin-orbital FLEX of <a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a> takes on-site and in-cell
+interactions only. <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> lifts that
+restriction: off-site rows of every interaction type are accepted, and the
+exchange crossing of each row acts on the bond it was declared on. The
+fluctuation part is then resummed on the (spin-orbital pair)
+<span class="math notranslate nohighlight">\(\times\)</span> (bond) basis of the spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond path
+(<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>): <span class="math notranslate nohighlight">\(B\)</span> bond channels (channel 0 is the
+on-site point, then the off-site displacements, closed under reversal)
+give <code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">(2N)^2</span></code> slots for <span class="math notranslate nohighlight">\(N\)</span> physical orbitals. The
+equations are in <a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>.</p>
+<p><em>The name.</em> The key is the one of the non-spin-orbital bond FLEX
+(<a class="reference internal" href="#flex-bond-hf-tutorial"><span class="std std-ref">Hartree-Fock renormalisation and the bond-resolved channel (experimental)</span></a>). In spin-orbital mode there is no
+longitudinal/transverse split: the bond channels belong to the single
+spinful channel, which carries charge, longitudinal and transverse spin
+at once. “longitudinal” is historical; every run says so once at INFO
+level:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>longitudinal_bond_channels with enable_spin_orbital: bond channels of the single spinful channel; 'longitudinal' is historical
+</pre></div>
+</div>
+<section id="input">
+<h4>Input<a class="headerlink" href="#input" title="Link to this heading">¶</a></h4>
+<p>The run needs all five flags below: <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> and <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> in
+<code class="docutils literal notranslate"><span class="pre">[mode]</span></code>, <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> in <code class="docutils literal notranslate"><span class="pre">[mode.param]</span></code>. The input files follow the
+spin-orbital conventions (Geometry <code class="docutils literal notranslate"><span class="pre">norb</span></code> = <span class="math notranslate nohighlight">\(2N\)</span>, Transfer in the
+interleaved spin-orbital indices, the interaction files and Extern in the
+physical orbital indices; see <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">Parameter files</span></a>). A complete input for
+one physical orbital on a square lattice with an on-site <code class="docutils literal notranslate"><span class="pre">U</span></code>, a
+nearest-neighbour <code class="docutils literal notranslate"><span class="pre">V</span></code> (<code class="docutils literal notranslate"><span class="pre">coulombinter.dat</span></code> lists the four bonds
+<code class="docutils literal notranslate"><span class="pre">(+-1,</span> <span class="pre">0,</span> <span class="pre">0)</span></code>, <code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">+-1,</span> <span class="pre">0)</span></code>) and, optionally, a Zeeman field from an
+Extern file:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode]</span>
+<span class="w">  </span><span class="n">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"FLEX"</span>
+<span class="w">  </span><span class="n">enable_spin_orbital</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">calc_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"general"</span>
+<span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">T</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.05</span>
+<span class="w">  </span><span class="n">filling</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.4</span>
+<span class="w">  </span><span class="n">CellShape</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">16</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<span class="w">  </span><span class="n">Nmat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">512</span>
+<span class="w">  </span><span class="n">mixing_scheme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"anderson"</span>
+<span class="w">  </span><span class="n">anderson_depth</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">Mix</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.2</span>
+<span class="w">  </span><span class="n">EPS</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span>
+<span class="w">  </span><span class="n">flex_hartree_fock</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="n">longitudinal_bond_channels</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="c1"># so_bond_layout = "auto"                 # the default; "dense" forces the dense layout</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_memory_cap_gb = 32.0  # GiB; unset: 0.8 x the available memory</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_freq_batch = 8        # unset: the largest of 16, 8, 4, 2, 1 that fits</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_cond_tol = 1.0e-3     # the conditioning floor of the dressing (default)</span>
+<span class="w">  </span><span class="c1"># coeff_extern = 1.0                      # with the Extern file below</span>
+<span class="k">[file.input]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="k">[file.input.interaction]</span>
+<span class="w">  </span><span class="n">path_to_input</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"."</span>
+<span class="w">  </span><span class="n">Geometry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"geom.dat"</span>
+<span class="w">  </span><span class="n">Transfer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"transfer.dat"</span>
+<span class="w">  </span><span class="n">CoulombIntra</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombintra.dat"</span>
+<span class="w">  </span><span class="n">CoulombInter</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"coulombinter.dat"</span>
+<span class="w">  </span><span class="c1"># Extern = "extern.dat"</span>
+<span class="k">[file.output]</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
+<span class="w">  </span><span class="n">sigma</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"sigma"</span>
+<span class="w">  </span><span class="n">green</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"green"</span>
+<span class="w">  </span><span class="n">chi0q</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"chi0q"</span>
+<span class="w">  </span><span class="n">chiq</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"chiq"</span>
+<span class="w">  </span><span class="n">energy</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"energy.dat"</span>
+</pre></div>
+</div>
+<p>Keys and values are read case-insensitively. Accepted interactions:
+<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>, <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>, <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>,
+<code class="docutils literal notranslate"><span class="pre">PairHop</span></code> and <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>, on site and off site. A <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>
+coefficient may be complex: the row at <span class="math notranslate nohighlight">\(+\mathbf{R}\)</span> carries
+<span class="math notranslate nohighlight">\(v\)</span> and the row at <span class="math notranslate nohighlight">\(-\mathbf{R}\)</span> carries <span class="math notranslate nohighlight">\(v^*\)</span>. An
+imaginary part on any other type is refused. An off-site <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> is
+included in the bond vertex, and the run logs at INFO level:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>off-site PairLift is included in the spin-orbital bond vertex (the non-spin-orbital bond paths omit it: it has no spin/charge content)
+</pre></div>
+</div>
+<p>Without any off-site row the run has <span class="math notranslate nohighlight">\(B = 1\)</span>. It is accepted and
+reproduces the on-site spin-orbital FLEX to round-off; it logs:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond FLEX: no off-site row; the bond machinery runs with the on-site channel only (B = 1).
+</pre></div>
+</div>
+<p>Without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> an off-site row is refused,
+and the message points to the key:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (FLEX) supports on-site and in-cell interactions only without the bond channels (the antisymmetrized spinful vertex carries the on-site exchange crossing only); the off-site '&lt;type&gt;' declaration at irvec=&lt;R&gt;, orbvec=&lt;ab&gt; is refused; set [mode.param] longitudinal_bond_channels = true to resolve their exchange exactly.
+</pre></div>
+</div>
+</section>
+<section id="what-is-exact">
+<h4>What is exact<a class="headerlink" href="#what-is-exact" title="Link to this heading">¶</a></h4>
+<ul class="simple">
+<li><p><strong>First order.</strong> <span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span> is the self-consistent
+Hartree-Fock term of every interaction row, on site and off site, Fock
+term included, on the full spin-orbital density (spin-off-diagonal blocks
+included).</p></li>
+<li><p><strong>Second order.</strong> The direct and the exchange second-order diagrams of
+every row, the off-site exchange included: the bond vertex
+<span class="math notranslate nohighlight">\(\Gamma_B\)</span> is antisymmetrized, so the term
+<span class="math notranslate nohighlight">\(\tfrac{1}{2}\Gamma_B\bar\chi_B\Gamma_B\)</span> produces both. No separate
+second-order kernel and no SU(2) assumption are involved.</p></li>
+<li><p><strong>Beyond second order.</strong> The ring series of the bond-resolved spinful
+channel, <span class="math notranslate nohighlight">\(\chi_B = [1 + \bar\chi_B\Gamma_B]^{-1}\bar\chi_B\)</span>, at
+every bosonic frequency; <span class="math notranslate nohighlight">\(W = P_B[\Gamma_B(\chi_B -
+\tfrac{1}{2}\bar\chi_B)\Gamma_B]\)</span>. In the SU(2) limit (spin-independent
+hopping, a spin-rotation invariant interaction on every bond) the run
+reproduces the non-spin-orbital bond FLEX (<a class="reference internal" href="../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>): the
+self-energy is the non-spin-orbital one times the unit matrix in spin,
+and the spin-orbital susceptibility projects onto the non-spin-orbital
+charge, longitudinal and transverse spin channels. Without spin-rotation
+invariance the transverse channel is resummed with its own vertex, as in
+the on-site spin-orbital FLEX.</p></li>
+</ul>
+<p>The independent references of the implementation are an
+independent Wick-contraction evaluation of the Hartree-Fock term, the
+on-site spin-orbital FLEX at <span class="math notranslate nohighlight">\(B = 1\)</span>, and the non-spin-orbital bond
+FLEX in the SU(2) limit (one and two orbitals, converged). In addition,
+one map agrees (<span class="math notranslate nohighlight">\(\le 10^{-12}\)</span>) with a test-side composition of the
+validated bubble, <span class="math notranslate nohighlight">\(P_B\)</span> and self-energy transport with an explicit
+linear solve for the dressing, and the two layouts agree with each other.</p>
+</section>
+<section id="keys">
+<h4>Keys<a class="headerlink" href="#keys" title="Link to this heading">¶</a></h4>
+<p>The bond keys of the non-spin-orbital FLEX apply where they make sense:</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 34.0%" />
+<col style="width: 66.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>key</p></th>
+<th class="head"><p>in spin-orbital mode</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code> selects this path (with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>,
+<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> (default) or <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>; see <em>Layout</em> below</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code></p></td>
+<td><p>the host cap of the admission, with the spin-orbital meaning (see
+<em>Memory</em> below): unset = <code class="docutils literal notranslate"><span class="pre">0.8</span></code> times the available memory (not the
+<code class="docutils literal notranslate"><span class="pre">8.0</span></code> GiB of the non-spin-orbital FLEX)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code></p></td>
+<td><p>the frequency batch of the dressing, an integer in <code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">Nmat]</span></code>;
+unset: the largest of 16, 8, 4, 2, 1 that fits the cap</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code></p></td>
+<td><p>keeps the first shells; a cutoff that would drop a shell with a
+nonzero coupling is refused, so it removes only shells declared with
+zero coupling. To leave out a shell of small but nonzero couplings,
+omit its rows (or set them to zero) in the interaction files</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code></p></td>
+<td><p>the floor of the conditioning score of the dressing, the inverse
+condition number <span class="math notranslate nohighlight">\(\sigma_{\min}/\sigma_{\max}\)</span> of
+<span class="math notranslate nohighlight">\(\hat I + \bar\chi_B\Gamma_B\)</span> at every <span class="math notranslate nohighlight">\((q, i\nu)\)</span>
+(default <code class="docutils literal notranslate"><span class="pre">1.0e-3</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;auto&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;host&quot;</span></code> (the store is in host memory)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code> only (the default)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_exact</span></code></p></td>
+<td><p>no effect (one INFO line)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code> only (the default)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code></p></td>
+<td><p>refused (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span></code> is accepted)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span></code></p></td>
+<td><p>refused, as in every spin-orbital run</p></td>
+</tr>
+</tbody>
+</table>
+<p>The refusals name the setting and the reason. With the head
+<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">with</span> <span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">(FLEX)</span></code>
+(written <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span></code> below):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> and any
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code>: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">write</span> <span class="pre">the</span> <span class="pre">bond</span>
+<span class="pre">archive</span> <span class="pre">in</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">(the</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span>
+<span class="pre">version);</span> <span class="pre">remove</span> <span class="pre">...</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">run</span>
+<span class="pre">the</span> <span class="pre">in-process</span> <span class="pre">pairing</span> <span class="pre">in</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">(it</span> <span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span> <span class="pre">version);</span>
+<span class="pre">remove</span> <span class="pre">longitudinal_bond_pairing.</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;device&quot;</span></code> (with or without <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>): <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span>
+<span class="pre">runs</span> <span class="pre">on</span> <span class="pre">the</span> <span class="pre">host</span> <span class="pre">only</span> <span class="pre">in</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">(the</span> <span class="pre">device</span> <span class="pre">store</span> <span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span>
+<span class="pre">version);</span> <span class="pre">set</span> <span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;host&quot;</span> <span class="pre">or</span> <span class="pre">&quot;auto&quot;,</span> <span class="pre">or</span> <span class="pre">remove</span> <span class="pre">it.</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code>: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span> <span class="pre">runs</span> <span class="pre">on</span> <span class="pre">the</span> <span class="pre">host</span> <span class="pre">only</span> <span class="pre">in</span> <span class="pre">this</span> <span class="pre">version</span>
+<span class="pre">(the</span> <span class="pre">device</span> <span class="pre">path</span> <span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span> <span class="pre">version);</span> <span class="pre">remove</span> <span class="pre">gpu_required</span> <span class="pre">or</span> <span class="pre">set</span>
+<span class="pre">it</span> <span class="pre">to</span> <span class="pre">false.</span></code>;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span> <span class="pre">guards</span> <span class="pre">every</span>
+<span class="pre">bosonic</span> <span class="pre">frequency</span> <span class="pre">(the</span> <span class="pre">spin-orbital</span> <span class="pre">dressing</span> <span class="pre">decomposes</span> <span class="pre">every</span> <span class="pre">block</span>
+<span class="pre">exactly);</span> <span class="pre">remove</span> <span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">or</span> <span class="pre">set</span> <span class="pre">it</span> <span class="pre">to</span> <span class="pre">&quot;all&quot;.</span></code></p></li>
+</ul>
+<p>Two settings are accepted with a WARNING:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span> <span class="pre">runs</span> <span class="pre">on</span> <span class="pre">the</span> <span class="pre">host</span> <span class="pre">only</span> <span class="pre">in</span> <span class="pre">this</span> <span class="pre">version;</span> <span class="pre">gpu</span> <span class="pre">=</span>
+<span class="pre">true</span> <span class="pre">is</span> <span class="pre">ignored</span> <span class="pre">for</span> <span class="pre">this</span> <span class="pre">run.</span></code> The whole run is on the CPU.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;warn&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;:</span> <span class="pre">flex_guard_policy</span> <span class="pre">=</span> <span class="pre">&quot;warn&quot;</span>
+<span class="pre">relaxes</span> <span class="pre">the</span> <span class="pre">density</span> <span class="pre">guard</span> <span class="pre">only;</span> <span class="pre">the</span> <span class="pre">bond</span> <span class="pre">dressing</span> <span class="pre">guard</span> <span class="pre">refuses</span> <span class="pre">a</span>
+<span class="pre">near-singular</span> <span class="pre">block</span> <span class="pre">(lower</span> <span class="pre">longitudinal_bond_cond_tol</span> <span class="pre">to</span> <span class="pre">admit</span> <span class="pre">it).</span></code> A
+dressing denominator below <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code> stops the run;
+its message ends with <code class="docutils literal notranslate"><span class="pre">(remedy:</span> <span class="pre">lower</span> <span class="pre">[mode.param]</span>
+<span class="pre">longitudinal_bond_cond_tol,</span> <span class="pre">a</span> <span class="pre">finite</span> <span class="pre">number</span> <span class="pre">in</span> <span class="pre">(0,</span> <span class="pre">1),</span> <span class="pre">default</span> <span class="pre">1.0e-3;</span>
+<span class="pre">the</span> <span class="pre">dressing</span> <span class="pre">guard</span> <span class="pre">is</span> <span class="pre">not</span> <span class="pre">relaxed</span> <span class="pre">by</span> <span class="pre">flex_guard_policy)</span></code>.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code> set without both <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> is ignored with a WARNING.</p>
+</section>
+<section id="layout">
+<h4>Layout<a class="headerlink" href="#layout" title="Link to this heading">¶</a></h4>
+<p>The bond objects (<span class="math notranslate nohighlight">\(\Gamma_B\)</span>, <span class="math notranslate nohighlight">\(\bar\chi_B\)</span>, <span class="math notranslate nohighlight">\(W\)</span>) are
+stored in one of the two layouts of the <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond path
+(<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>, <em>Layout</em>): <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code> when the input
+conserves <span class="math notranslate nohighlight">\(S_z\)</span> (the pair-<span class="math notranslate nohighlight">\(S_z\)</span> sector blocks only,
+<span class="math notranslate nohighlight">\(6/16\)</span> of the dense entries), <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> otherwise.
+<code class="docutils literal notranslate"><span class="pre">so_bond_layout</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code> chooses; <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> forces the dense layout;
+<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code> cannot be forced. The reason is logged at INFO level, one
+of:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>so bond layout: sz_packed (S_z conserved: no spin-flip transfer, no S_z-changing interaction)
+so bond layout: dense (reason: forced by so_bond_layout = "dense")
+so bond layout: dense (reason: spin-flip transfer entry R=(&lt;Rx&gt;, &lt;Ry&gt;, &lt;Rz&gt;) (&lt;i&gt;, &lt;j&gt;) = &lt;value&gt;)
+so bond layout: dense (reason: PairLift declared)
+</pre></div>
+</div>
+<p>The selection is exact: a spin-flip Transfer entry of <code class="docutils literal notranslate"><span class="pre">1e-14</span></code> selects the
+dense layout. The results are continuous in such an entry, but the memory
+estimate (and the cost) jumps by a factor of about <span class="math notranslate nohighlight">\(16/6\)</span> between an
+entry of exactly zero and any nonzero value. A Transfer file from a
+Wannier calculation often carries numerical spin-flip entries of order
+<code class="docutils literal notranslate"><span class="pre">1e-15</span></code>; they select the dense layout. Check the layout line of the log,
+and when <span class="math notranslate nohighlight">\(S_z\)</span> is conserved physically, set those entries to zero.
+An Extern field (<span class="math notranslate nohighlight">\(\sigma^z\)</span>) conserves <span class="math notranslate nohighlight">\(S_z\)</span>, so a model whose
+only spin dependence is a longitudinal Zeeman field (via Extern) is packed.
+Both layouts give the same results to round-off. When the input conserves
+<span class="math notranslate nohighlight">\(S_z\)</span> (in either layout), the Green function is also inverted sector
+by sector.</p>
+</section>
+<section id="memory">
+<h4>Memory<a class="headerlink" href="#memory" title="Link to this heading">¶</a></h4>
+<p>The run is admitted once, before the Green function and any bond array are
+built; an admitted run is not refused later for memory (the dressing
+guard can still stop it). The estimate is
+<span class="math notranslate nohighlight">\(1.25\times\)</span> the largest phase total (the arrays resident for the
+whole run plus those of one phase). The sizes below are in bytes, 16
+bytes per complex128 entry. The largest array is the store slot
+<span class="math notranslate nohighlight">\(\bar\chi_B\)</span> (<span class="math notranslate nohighlight">\(W\)</span> is written over it in place):
+<code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">Nmat</span> <span class="pre">nvol</span> <span class="pre">ND^2</span></code> bytes dense, <span class="math notranslate nohighlight">\(6/16\)</span> of that packed. The other
+rows are the dressing batch (<code class="docutils literal notranslate"><span class="pre">7</span> <span class="pre">x</span> <span class="pre">16</span> <span class="pre">nb</span> <span class="pre">nvol</span> <span class="pre">ND^2</span></code>) with the static
+slice copy for the pole indicator (<code class="docutils literal notranslate"><span class="pre">pole_slice</span> <span class="pre">=</span> <span class="pre">2</span> <span class="pre">x</span> <span class="pre">16</span> <span class="pre">nvol</span> <span class="pre">ND^2</span></code>), the
+W conversion (<code class="docutils literal notranslate"><span class="pre">4</span> <span class="pre">x</span> <span class="pre">16</span> <span class="pre">nb</span> <span class="pre">nvol</span> <span class="pre">ND^2</span></code>) – these three take the same
+<span class="math notranslate nohighlight">\(6/16\)</span> factor when packed –, the per-shift bubble
+workspace (<code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">nvol</span> <span class="pre">(3</span> <span class="pre">Nmat</span> <span class="pre">P^2</span> <span class="pre">+</span> <span class="pre">3</span> <span class="pre">Nmat</span> <span class="pre">P</span> <span class="pre">+</span> <span class="pre">8</span> <span class="pre">P)</span></code> with <code class="docutils literal notranslate"><span class="pre">P</span> <span class="pre">=</span> <span class="pre">(2N)^2</span></code>,
+the same in both layouts), the self-energy transport, the Green function
+and the Anderson history.</p>
+<p>Estimated peaks (GiB) with <code class="docutils literal notranslate"><span class="pre">nb</span> <span class="pre">=</span> <span class="pre">16</span></code> and <code class="docutils literal notranslate"><span class="pre">anderson_depth</span> <span class="pre">=</span> <span class="pre">8</span></code>:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p><span class="math notranslate nohighlight">\(N\)</span></p></th>
+<th class="head"><p><span class="math notranslate nohighlight">\(B\)</span></p></th>
+<th class="head"><p>k grid</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">Nmat</span></code></p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">ND</span></code></p></th>
+<th class="head"><p>slot, packed</p></th>
+<th class="head"><p>peak, packed</p></th>
+<th class="head"><p>slot, dense</p></th>
+<th class="head"><p>peak, dense</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>1</p></td>
+<td><p>5</p></td>
+<td><p>32 x 32</p></td>
+<td><p>1024</p></td>
+<td><p>20</p></td>
+<td><p>2.3</p></td>
+<td><p>10.3</p></td>
+<td><p>6.2</p></td>
+<td><p>15.2</p></td>
+</tr>
+<tr class="row-odd"><td><p>1</p></td>
+<td><p>9</p></td>
+<td><p>32 x 32</p></td>
+<td><p>1024</p></td>
+<td><p>36</p></td>
+<td><p>7.6</p></td>
+<td><p>16.8</p></td>
+<td><p>20.2</p></td>
+<td><p>33.9</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>5</p></td>
+<td><p>16 x 16</p></td>
+<td><p>512</p></td>
+<td><p>80</p></td>
+<td><p>4.7</p></td>
+<td><p>12.4</p></td>
+<td><p>12.5</p></td>
+<td><p>23.0</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>5</p></td>
+<td><p>32 x 32</p></td>
+<td><p>512</p></td>
+<td><p>80</p></td>
+<td><p>18.8</p></td>
+<td><p>49.4</p></td>
+<td><p>50.0</p></td>
+<td><p>91.9</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>5</p></td>
+<td><p>32 x 32</p></td>
+<td><p>1024</p></td>
+<td><p>80</p></td>
+<td><p>37.5</p></td>
+<td><p>98.8</p></td>
+<td><p>100.0</p></td>
+<td><p>177.0</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>9</p></td>
+<td><p>16 x 16</p></td>
+<td><p>512</p></td>
+<td><p>144</p></td>
+<td><p>15.2</p></td>
+<td><p>27.1</p></td>
+<td><p>40.5</p></td>
+<td><p>65.8</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>9</p></td>
+<td><p>32 x 32</p></td>
+<td><p>512</p></td>
+<td><p>144</p></td>
+<td><p>60.8</p></td>
+<td><p>108.3</p></td>
+<td><p>162.0</p></td>
+<td><p>263.3</p></td>
+</tr>
+<tr class="row-odd"><td><p>2</p></td>
+<td><p>9</p></td>
+<td><p>32 x 32</p></td>
+<td><p>1024</p></td>
+<td><p>144</p></td>
+<td><p>121.5</p></td>
+<td><p>203.9</p></td>
+<td><p>324.0</p></td>
+<td><p>481.1</p></td>
+</tr>
+</tbody>
+</table>
+<p>A non-spin-orbital slot of the same <span class="math notranslate nohighlight">\(B\)</span> and <span class="math notranslate nohighlight">\(N\)</span> is
+<span class="math notranslate nohighlight">\(16\times\)</span> smaller (<code class="docutils literal notranslate"><span class="pre">ND</span></code> is four times larger). On a 256 GiB host
+at the default cap (<code class="docutils literal notranslate"><span class="pre">0.8</span></code> times the available memory, at most about 205
+GiB), the packed layout admits up to <span class="math notranslate nohighlight">\(N = 2\)</span>, <span class="math notranslate nohighlight">\(B = 9\)</span>,
+<span class="math notranslate nohighlight">\(32 \times 32\)</span>, <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code> (at the limit); the dense layout
+admits <span class="math notranslate nohighlight">\(N = 2\)</span>, <span class="math notranslate nohighlight">\(B = 5\)</span>, <span class="math notranslate nohighlight">\(32 \times 32\)</span>, <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">=</span> <span class="pre">1024</span></code>,
+and <span class="math notranslate nohighlight">\(B = 9\)</span> on <span class="math notranslate nohighlight">\(32 \times 32\)</span> needs <code class="docutils literal notranslate"><span class="pre">Nmat</span> <span class="pre">&lt;=</span> <span class="pre">256</span></code> (about 154
+GiB). The dense multi-orbital spin-orbit coupled case is a long host-only
+run in this version.</p>
+<p><strong>The cap.</strong> <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> has the meaning of
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_memory_cap_gb</span></code> of <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-memory"><span class="std std-ref">Memory</span></a> (the
+non-spin-orbital FLEX default of 8 GiB does not apply here):</p>
+<ul class="simple">
+<li><p>unset: <code class="docutils literal notranslate"><span class="pre">0.8</span></code> times the available host memory, logged as
+<code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">memory</span> <span class="pre">cap:</span> <span class="pre">&lt;c&gt;</span> <span class="pre">GiB</span> <span class="pre">=</span> <span class="pre">0.8</span> <span class="pre">x</span> <span class="pre">available</span> <span class="pre">&lt;a&gt;</span> <span class="pre">GiB</span>
+<span class="pre">(source:</span> <span class="pre">&lt;source&gt;)</span></code> (the sources are listed in
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-memory"><span class="std std-ref">Memory</span></a>); when no source gives a value, a WARNING says
+<code class="docutils literal notranslate"><span class="pre">no</span> <span class="pre">memory</span> <span class="pre">limit</span> <span class="pre">could</span> <span class="pre">be</span> <span class="pre">determined;</span> <span class="pre">the</span> <span class="pre">admission</span> <span class="pre">check</span> <span class="pre">is</span> <span class="pre">disabled;</span>
+<span class="pre">set</span> <span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_memory_cap_gb</span> <span class="pre">to</span> <span class="pre">enable</span> <span class="pre">it</span></code>;</p></li>
+<li><p>a positive value: that many GiB;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">0</span></code>: no check, with the WARNING <code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">longitudinal_bond_memory_cap_gb</span> <span class="pre">=</span> <span class="pre">0:</span> <span class="pre">the</span> <span class="pre">memory</span> <span class="pre">admission</span> <span class="pre">check</span> <span class="pre">of</span> <span class="pre">the</span>
+<span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">path</span> <span class="pre">is</span> <span class="pre">disabled</span></code>;</p></li>
+<li><p>a negative or non-finite value: refused (<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">longitudinal_bond_memory_cap_gb</span> <span class="pre">must</span> <span class="pre">be</span> <span class="pre">a</span> <span class="pre">finite</span> <span class="pre">number</span> <span class="pre">&gt;=</span> <span class="pre">0</span> <span class="pre">in</span>
+<span class="pre">spin-orbital</span> <span class="pre">mode</span> <span class="pre">(0</span> <span class="pre">disables</span> <span class="pre">the</span> <span class="pre">check),</span> <span class="pre">got</span> <span class="pre">&lt;value&gt;</span></code>).</p></li>
+</ul>
+<p>A batch-system memory limit that is not visible as a cgroup of the job is
+invisible to the estimate. On a batch system, set
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> explicitly to the job’s memory limit.</p>
+<p><strong>The frequency batch.</strong> With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code> unset, the
+batch <code class="docutils literal notranslate"><span class="pre">nb</span></code> is the largest of 16, 8, 4, 2, 1 (not above <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>) whose
+estimate fits the cap, logged as <code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">FLEX:</span> <span class="pre">frequency</span> <span class="pre">batch</span>
+<span class="pre">nb</span> <span class="pre">=</span> <span class="pre">&lt;nb&gt;</span> <span class="pre">(the</span> <span class="pre">largest</span> <span class="pre">of</span> <span class="pre">16,</span> <span class="pre">8,</span> <span class="pre">4,</span> <span class="pre">2,</span> <span class="pre">1</span> <span class="pre">not</span> <span class="pre">above</span> <span class="pre">Nmat</span> <span class="pre">that</span> <span class="pre">fits</span> <span class="pre">the</span>
+<span class="pre">cap)</span></code>. A set value (an integer in <code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">Nmat]</span></code>; any other value is
+refused) is used as is, without this line.</p>
+<p><strong>The refusal.</strong> An estimate above the cap is refused before any bond array
+is built:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond FLEX needs an estimated peak of &lt;peak&gt; GiB in phase &lt;phase&gt; (B = &lt;B&gt; channels, ND = B·(2·norb_phys)² = &lt;ND&gt;, nvol = &lt;nvol&gt;, Nmat = &lt;nmat&gt;; one store slot = &lt;slot formula&gt; = &lt;slot&gt; GiB) but the cap is &lt;cap&gt; GiB ([mode.param] longitudinal_bond_memory_cap_gb). &lt;how the batch was chosen&gt; Memory grows as Nmat · nvol · B² · norb_phys⁴. Reduce Nmat or the k grid, or raise [mode.param] longitudinal_bond_memory_cap_gb (0 disables the check); pruning bond shells helps only for shells the per-shell table below shows with negligible coupling.
+rows (phase  name  bytes):
+  ...
+shells (shell  |dr|  max|v|):
+  ...
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">&lt;how</span> <span class="pre">the</span> <span class="pre">batch</span> <span class="pre">was</span> <span class="pre">chosen&gt;</span></code> is one of:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">The</span> <span class="pre">frequency</span> <span class="pre">batch</span> <span class="pre">was</span> <span class="pre">selected</span> <span class="pre">automatically;</span> <span class="pre">the</span> <span class="pre">smallest</span> <span class="pre">batch</span> <span class="pre">(nb</span> <span class="pre">=</span>
+<span class="pre">1)</span> <span class="pre">was</span> <span class="pre">tried.</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span> <span class="pre">=</span> <span class="pre">&lt;nb&gt;</span> <span class="pre">is</span> <span class="pre">set;</span> <span class="pre">a</span> <span class="pre">smaller</span> <span class="pre">value,</span> <span class="pre">or</span> <span class="pre">removing</span>
+<span class="pre">it</span> <span class="pre">so</span> <span class="pre">that</span> <span class="pre">the</span> <span class="pre">run</span> <span class="pre">chooses,</span> <span class="pre">lowers</span> <span class="pre">the</span> <span class="pre">dressing</span> <span class="pre">rows.</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span> <span class="pre">=</span> <span class="pre">1</span> <span class="pre">is</span> <span class="pre">set</span> <span class="pre">(the</span> <span class="pre">smallest</span> <span class="pre">batch).</span></code></p></li>
+</ul>
+<p>The row table lists every row of the estimate. The per-shell table gives,
+for every off-site shell, its bond length and the largest coupling of its
+rows; when the outer shells carry only zero couplings it ends with the
+clause naming the <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code> value that removes
+them.</p>
+</section>
+<section id="the-iteration-log">
+<h4>The iteration log<a class="headerlink" href="#the-iteration-log" title="Link to this heading">¶</a></h4>
+<p>The RPA pole indicator of the spinful bond channel at <span class="math notranslate nohighlight">\(\nu = 0\)</span>
+(label <code class="docutils literal notranslate"><span class="pre">RPA</span> <span class="pre">pole</span> <span class="pre">indicator</span> <span class="pre">max_q</span> <span class="pre">eig[-chibar_B</span> <span class="pre">Gamma_B]</span> <span class="pre">(spinful)</span> <span class="pre">(q,</span> <span class="pre">i</span> <span class="pre">nu</span>
+<span class="pre">=</span> <span class="pre">0)</span></code>) is logged at INFO level on the first and the last map, and on the
+map where the iteration first looks divergent (at DEBUG level otherwise). Every map logs at INFO level the smallest conditioning
+score of the dressing (<code class="docutils literal notranslate"><span class="pre">bond</span> <span class="pre">cond_min</span> <span class="pre">spinful</span></code>; in the packed layout with
+the <span class="math notranslate nohighlight">\(S_z\)</span> sectors of the smallest and largest singular value). After the
+last map the pole is checked once more; an indicator at or above 1 gives a
+WARNING ending with <code class="docutils literal notranslate"><span class="pre">The</span> <span class="pre">final</span> <span class="pre">FLEX</span> <span class="pre">state</span> <span class="pre">(its</span> <span class="pre">effective</span> <span class="pre">interaction</span> <span class="pre">W</span> <span class="pre">and</span>
+<span class="pre">self-energy)</span> <span class="pre">is</span> <span class="pre">built</span> <span class="pre">on</span> <span class="pre">that</span> <span class="pre">susceptibility;</span> <span class="pre">it</span> <span class="pre">describes</span> <span class="pre">no</span> <span class="pre">physical</span>
+<span class="pre">state</span> <span class="pre">and</span> <span class="pre">is</span> <span class="pre">still</span> <span class="pre">reported.</span></code> (see <a class="reference internal" href="#bond-rpa-pole"><span class="std std-ref">The static RPA pole of the bond-resolved paths</span></a>). Each run also
+logs <code class="docutils literal notranslate"><span class="pre">bond</span> <span class="pre">store:</span> <span class="pre">W</span> <span class="pre">is</span> <span class="pre">written</span> <span class="pre">over</span> <span class="pre">chibar</span> <span class="pre">in</span> <span class="pre">place</span> <span class="pre">(no</span> <span class="pre">later</span> <span class="pre">reader</span> <span class="pre">of</span>
+<span class="pre">chibar;</span> <span class="pre">chibar_w</span> <span class="pre">archive:</span> <span class="pre">none)</span></code>.</p>
+</section>
+<section id="outputs">
+<h4>Outputs<a class="headerlink" href="#outputs" title="Link to this heading">¶</a></h4>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> are those of the on-site spin-orbital
+FLEX (see <a class="reference internal" href="#flex-so-output-files"><span class="std std-ref">Spin-orbital runs</span></a>), for the final state.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> hold the channel-0 blocks of
+<span class="math notranslate nohighlight">\(\bar\chi_B\)</span> and <span class="math notranslate nohighlight">\(\chi_B\)</span> of the <strong>last map</strong>: the
+susceptibility of the on-site pairs (<span class="math notranslate nohighlight">\(n_d = 2N\)</span>), in which the
+channel-0 block of <span class="math notranslate nohighlight">\(\chi_B\)</span> is already dressed by all <span class="math notranslate nohighlight">\(B\)</span>
+bond channels. They have the shape and
+conventions of the on-site spin-orbital outputs (<code class="docutils literal notranslate"><span class="pre">(nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span> <span class="pre">nd,</span>
+<span class="pre">nd,</span> <span class="pre">nd)</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>); at <span class="math notranslate nohighlight">\(B = 1\)</span> they
+equal the on-site arrays. They are written only when requested in
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>, and not at all with <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> (no map ran).
+No <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code> member and no bond archive is written in this
+version; when chi0q or chiq is written the run says so at INFO level:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last map; the bond-resolved arrays are not written in this version.
+</pre></div>
+</div>
+</li>
+<li><p>Provenance: every file carries <code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;flex_so_bond&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">fp_capability</span> <span class="pre">=</span> <span class="pre">&quot;so_bond&quot;</span></code> and the digest of the resolved bond
+topology (<code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code>). <code class="docutils literal notranslate"><span class="pre">payload_kind</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;last_map&quot;</span></code>
+in chi0q/chiq and <code class="docutils literal notranslate"><span class="pre">&quot;final_state&quot;</span></code> in green/sigma, and each file’s
+<code class="docutils literal notranslate"><span class="pre">fp_green</span></code> is the digest of the Green function it was built from:
+the last map’s Green function for chi0q/chiq, the final (mixed) one for
+green/sigma. The two differ in general. The <code class="docutils literal notranslate"><span class="pre">state_*</span></code> members follow
+the same rule: chi0q/chiq record the state point of the last map (its
+<code class="docutils literal notranslate"><span class="pre">mu</span></code> and density), green/sigma that of the final state.</p></li>
+</ul>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> cannot read these outputs yet; a later version adds the bond
+archive. The spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses a <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>
+archive written by this path (<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">was</span> <span class="pre">written</span> <span class="pre">by</span> <span class="pre">producer_stage</span>
+<span class="pre">'flex_so_bond',</span> <span class="pre">which</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">read</span> <span class="pre">yet</span> <span class="pre">...</span></code>). For the
+pairing of an off-site model use the static bond path of
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>. It builds its own bare bond bubble from the
+band (Transfer and Extern) and does not read the <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of this
+path (<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> is refused in spin-orbital mode).</p>
+</div>
+<p>Not available in this version: the bond archive, the in-process pairing,
+the GPU, the half bosonic grid, and seeds (<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>, <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>,
+<code class="docutils literal notranslate"><span class="pre">green_init</span></code>), as in the on-site spin-orbital FLEX. The other conditions
+of <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> apply (uniform Matsubara grid, no sublattice, even
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>); an Extern field is accepted (see <a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>).
+<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs this path only as a FLEX-only sweep
+(<code class="docutils literal notranslate"><span class="pre">[continuation]</span> <span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">false</span></code>) with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>:
+every rung starts from the bare Hartree-Fock state. <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">true</span></code>
+and <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> are refused, as for every spin-orbital run.</p>
+</section>
 </section>
 <section id="pairing-eigenvalues-with-the-bond-resolved-vertex">
 <span id="flex-bond-pairing-tutorial"></span><h3>Pairing eigenvalues with the bond-resolved vertex<a class="headerlink" href="#pairing-eigenvalues-with-the-bond-resolved-vertex" title="Link to this heading">¶</a></h3>
@@ -1639,7 +2134,7 @@ older <code class="docutils literal notranslate"><span class="pre">green.npz</sp
 </ul>
 </section>
 <section id="spin-orbital-runs">
-<h3>Spin-orbital runs<a class="headerlink" href="#spin-orbital-runs" title="Link to this heading">¶</a></h3>
+<span id="flex-so-output-files"></span><h3>Spin-orbital runs<a class="headerlink" href="#spin-orbital-runs" title="Link to this heading">¶</a></h3>
 <div class="admonition important">
 <p class="admonition-title">Important</p>
 <p><strong>Release and migration note: spin-orbital mode.</strong> In spin-orbital mode:</p>
@@ -1664,7 +2159,11 @@ is present: <code class="docutils literal notranslate"><span class="pre">orbital
 </div>
 <p>A run with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> (see <a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>)
 writes its archives on the spin-orbital index of dimension
-<span class="math notranslate nohighlight">\(n_d = 2 n_{\rm orb}\)</span>, in spin-block order <code class="docutils literal notranslate"><span class="pre">s</span> <span class="pre">*</span> <span class="pre">norb</span> <span class="pre">+</span> <span class="pre">a</span></code>:</p>
+<span class="math notranslate nohighlight">\(n_d = 2 n_{\rm orb}\)</span>, in spin-block order <code class="docutils literal notranslate"><span class="pre">s</span> <span class="pre">*</span> <span class="pre">norb</span> <span class="pre">+</span> <span class="pre">a</span></code>. A run with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> writes the same files with
+<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;flex_so_bond&quot;</span></code>; its provenance and the channel-0
+contents of its chi0q/chiq are described in <a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>
+(<em>Outputs</em>).</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> carry <code class="docutils literal notranslate"><span class="pre">index_convention</span> <span class="pre">=</span>
 <span class="pre">&quot;spin_block&quot;</span></code>. <code class="docutils literal notranslate"><span class="pre">sigma</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code> have shape <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">nmat,</span> <span class="pre">nvol,</span> <span class="pre">nd,</span>
@@ -1698,7 +2197,9 @@ runs, as in UHFk).</p></li>
 <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code> in the FLEX run, which writes each archive only when
 it is requested), both in the static solver (see <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>) and
 in the dynamic one, which uses <span class="math notranslate nohighlight">\(\chi\)</span> at every bosonic frequency (see
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>).</p>
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>). This holds for a run without
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>: <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> cannot read the outputs of the
+spin-orbital FLEX with bond channels yet (see <a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>).</p>
 </section>
 <section id="spin-polarized-flex-zeeman-field">
 <h3>Spin-polarized FLEX (Zeeman field)<a class="headerlink" href="#spin-polarized-flex-zeeman-field" title="Link to this heading">¶</a></h3>
@@ -1926,7 +2427,14 @@ calculations concurrently.</p></td>
 </tbody>
 </table>
 <p>All other parameters (<code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code>, etc.)
-are shared with the RPA solver. See <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">Parameter files</span></a> for details.</p>
+are shared with the RPA solver. See <a class="reference internal" href="../../rpa/filespecification/config/index_config.html#ch-config-rpa"><span class="std std-ref">Parameter files</span></a> for details. This
+includes the bond keys (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> and its companions)
+and <code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code>, the layout of the spin-orbital FLEX with bond
+channels. In spin-orbital mode (<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>), see
+<a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a> for <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>,
+<code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> (unset: <code class="docutils literal notranslate"><span class="pre">0.8</span></code>
+times the available memory, not <code class="docutils literal notranslate"><span class="pre">8.0</span></code>) and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code>
+(unset: the largest of 16, 8, 4, 2, 1 that fits the cap).</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p><strong>Running FLEX on the IR basis.</strong> Install the optional dependency once
@@ -1993,9 +2501,13 @@ full-vertex path: it keeps the full Kanamori vertices (MYO formula, see
 <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> for <code class="docutils literal notranslate"><span class="pre">spin_mode</span> <span class="pre">=</span> <span class="pre">&quot;spin-diag&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;spinful&quot;</span></code>. The
 one exception is <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> together with
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>: the spin-orbital FLEX of
-<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a> (on-site and in-cell interactions only); without
+<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a> (on-site and in-cell interactions; off-site
+rows with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, see
+<a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>); without
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> the general scheme refuses <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>,
-and the reduced scheme always does. Off-site input is accepted for
+and the reduced scheme always does. On the spin-free general path
+(without <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>) and without the bond channels,
+off-site input is accepted for
 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code> and <code class="docutils literal notranslate"><span class="pre">Ising</span></code> (same-orbital or inter-orbital,
 with or without sublattice folding): each enters the RING vertex as its
 Hartree (density) part <span class="math notranslate nohighlight">\(V(q)\)</span> only — the exchange crossing of an

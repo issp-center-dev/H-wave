@@ -2170,9 +2170,13 @@ was checked by running the combination.
      - general raises for a polarized one-body Hamiltonian
    * - ``enable_spin_orbital``
      - rejected
-     - accepted with ``flex_hartree_fock = true`` (on-site and in-cell interactions only)
-     - the static ``hwave_sc`` reads this output with ``chi0q_mode = "flex"``;
-       see :ref:`sc_spin_orbital`
+     - accepted with ``flex_hartree_fock = true`` (on-site and in-cell
+       interactions; off-site rows with ``longitudinal_bond_channels = true``)
+     - the static and the on-site dynamic ``hwave_sc`` read the output of
+       a run without ``longitudinal_bond_channels`` with ``chi0q_mode =
+       "flex"`` (see :ref:`sc_spin_orbital` and
+       :ref:`sc_spin_orbital_dynamic`); the outputs of a run with bond
+       channels are not read yet (see :ref:`flex_so_bond_tutorial`)
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
      - full orbital-pair
@@ -2262,9 +2266,10 @@ Interaction rows in spin-orbital mode (``enable_spin_orbital = true``)
      - as for RPA
      - as for RPA
 
-Spin-orbital FLEX refuses the bond-resolved channels
-(``longitudinal_bond_channels``) in this version. Spin-orbital ``hwave_sc``
-accepts ``bond_channels = true`` with ``frequency = "static"``
+Spin-orbital FLEX accepts the bond-resolved channels
+(``longitudinal_bond_channels = true``, :ref:`flex_so_bond_tutorial`);
+``hwave_sc`` does not read the outputs of that run yet. Spin-orbital
+``hwave_sc`` accepts ``bond_channels = true`` with ``frequency = "static"``
 (:ref:`sc_so_bond_static`) and refuses it with ``frequency = "dynamic"``.
 
 
@@ -2385,8 +2390,8 @@ Scope
   internally), ``"load"`` (the general four-index chi0q written by a
   spin-orbital RPA run; **static only**) or ``"flex"`` (the outputs of a
   spin-orbital FLEX run, which must be a ``calc_scheme = "general"`` run with
-  ``[mode.param] flex_hartree_fock = true``; see
-  :ref:`flex_spin_orbital`). The dynamic solver needs ``chi0q_mode`` set
+  ``[mode.param] flex_hartree_fock = true`` and without
+  ``longitudinal_bond_channels``; see :ref:`flex_spin_orbital`). The dynamic solver needs ``chi0q_mode`` set
   explicitly to ``"flex"`` or ``"calc"``: ``"load"`` and an unset key (whose
   default is ``"load"``) are refused;
 - ``solver_mode = "iteration"``, ``"eigenvalue"`` or ``"both"`` with
@@ -2528,7 +2533,10 @@ Reading the outputs of a spin-orbital FLEX run
 
 With ``chi0q_mode = "flex"`` the solver reads four archives of a FLEX run
 with ``enable_spin_orbital = true``, ``calc_scheme = "general"`` and
-``[mode.param] flex_hartree_fock = true``, from ``[file.input]
+``[mode.param] flex_hartree_fock = true`` (a run with
+``longitudinal_bond_channels = true`` is refused: its archives carry
+``producer_stage = "flex_so_bond"``, which this version does not read; see
+:ref:`flex_so_bond_tutorial`), from ``[file.input]
 path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
 
 - ``[eliashberg] flex_chiq`` (default ``"chiq.npz"``): the spinful

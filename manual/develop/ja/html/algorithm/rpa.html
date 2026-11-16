@@ -626,13 +626,16 @@ SO RPA、SO FLEX、SO hwave_sc の結果が変わります。</p></li>
 オフサイトの行は非スピン軌道の RPA と同じく、直接（Hartree 型）部分
 <span class="math notranslate nohighlight">\(V(\mathbf{q})\)</span>だけでリング和に入ります。入力にオフサイトの行があると、
 スピン軌道 RPA は 1 回の計算につき 1 回、INFO レベルで次の行を記録します:</p>
-<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>enable_spin_orbital: the off-site rows of &lt;types&gt; enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static").
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>enable_spin_orbital: the off-site rows of &lt;types&gt; enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static") or FLEX with [mode.param] longitudinal_bond_channels = true.
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">&lt;types&gt;</span></code>は、オフサイトの行がゼロでない相互作用の種類を、並べ替えてコンマで
 区切ったリストです。<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>はこのリストには挙がりません。この行は FLEX
-（スピン軌道モードではオフサイトの行を拒否します）と、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が内部で実行する
-RPA では記録されません。</p>
+（スピン軌道モードでは、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>なしではオフサイトの行を拒否し、
+ありではその交換を厳密に扱います。<a class="reference internal" href="#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）と、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が
+内部で実行する RPA では記録されません。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はボンドチャネル付きのスピン軌道
+FLEX の出力をまだ読みません。その静的なボンド経路は自分で裸のボンドバブルを作ります
+（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>を参照）。</p>
 <section id="flex-2">
 <span id="flex-second-order-kernel"></span><h3>一般 FLEX 経路の2次<a class="headerlink" href="#flex-2" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>では、ゆらぎ
@@ -1008,12 +1011,14 @@ SU(2) 対称な相互作用の場合だけです。一方<span class="math notra
 <p>この版の適用範囲:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>の一般スキーム（このスイッチのその他の条件も適用）</p></li>
-<li><p>オンサイトおよびセル内（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の相互作用のみ（オフサイト
-相互作用の交換交差は<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>のみの頂点では表せないため。オフサイトの
-行は拒否されます）</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>なしでは、オンサイトおよびセル内
+（<span class="math notranslate nohighlight">\(\mathbf{R} = 0\)</span>）の相互作用のみ（オフサイト相互作用の交換交差は
+<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>のみの頂点では表せないため。オフサイトの行は拒否されます）。
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>ではオフサイトの行を受け付けます（下の
+「ボンドチャネル」を参照）</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>・<code class="docutils literal notranslate"><span class="pre">Hund</span></code>・<code class="docutils literal notranslate"><span class="pre">Ising</span></code>・<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>・<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>の
 係数の虚部は拒否されます</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code>で、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>はなし</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">spinful_vertex_exchange</span> <span class="pre">=</span> <span class="pre">true</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>・<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>・<code class="docutils literal notranslate"><span class="pre">green_init</span></code>はなし（計算は裸の
 Hartree-Fock 状態から始まります）</p></li>
 <li><p>Extern 場を受け付けます。ファイルは物理軌道の添字で書き、バンドに
@@ -1022,11 +1027,38 @@ Hartree-Fock 状態から始まります）</p></li>
 Zeeman 場です（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-polarized"><span class="std std-ref">スピン偏極した状態（Zeeman 磁場）</span></a>を参照）。</p></li>
 </ul>
 <p>reduced スキームはスピン軌道入力を拒否します。Eliashberg ソルバー
-（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）は<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照）でも
-<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）でもスピン軌道
-FLEX の出力を読みます。動的なボンド分解の経路と<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の
+（<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）は、ボンドチャネルを使わない計算のスピン軌道 FLEX の出力を
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照）でも
+<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）でも読みます。動的なボンド分解の経路と<code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の
 <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続き<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は
 <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます（スピン軌道 FLEX は初期値を受け付けないため）。</p>
+<p><strong>ボンドチャネル。</strong> <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>では、1つのスピンフルな
+チャネルをスピン軌道 Eliashberg のボンド経路（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>）と同じ
+（スピン軌道の対）<span class="math notranslate nohighlight">\(\times\)</span>（ボンド）基底の上で総和します。<span class="math notranslate nohighlight">\(B\)</span>個の
+ボンドチャネル<span class="math notranslate nohighlight">\(m\)</span>（オンサイト点と、宣言されたすべてのオフサイトの変位。反転に
+ついて閉じています）で、スロットは<code class="docutils literal notranslate"><span class="pre">ND</span> <span class="pre">=</span> <span class="pre">B</span> <span class="pre">n_d^2</span></code>個です。ボンド頂点<span class="math notranslate nohighlight">\(\Gamma_B\)</span>は、
+各行をそれ自身のボンドに置いた反対称化スピンフル頂点です。オフサイトの行の直接部分は
+<span class="math notranslate nohighlight">\(\mathbf{q}\)</span>の関数としてオンサイトのチャネルに、交換交差はその変位のチャネルに
+入ります。ドレスした Green 関数から作ったボンド分解バブル<span class="math notranslate nohighlight">\(\bar\chi_B(q, i\nu)\)</span>を
+すべてのボソン振動数で用いて、</p>
+<div class="math notranslate nohighlight" id="equation-algorithm-rpa-31">
+<span class="eqno">(7.42)<a class="headerlink" href="#equation-algorithm-rpa-31" title="Link to this equation">¶</a></span>\[\chi_B = \left[\hat{I} + \bar\chi_B\,\Gamma_B\right]^{-1} \bar\chi_B, \qquad
+W = P_B\left[\Gamma_B\left(\chi_B - \tfrac{1}{2}\bar\chi_B\right)\Gamma_B\right]\]</div>
+<p>となり、自己エネルギーはスピン軌道インデックス上での<a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>のボンド輸送
+（<span class="math notranslate nohighlight">\(W\)</span>の両端で内線にボンドの形状因子が付く）です。<span class="math notranslate nohighlight">\(P_B\)</span>はオンサイトの
+経路の軌道の入れ替え<span class="math notranslate nohighlight">\(P\)</span>を各ボンドチャネル内で行うもので、
+<span class="math notranslate nohighlight">\(P_B[M]_{(m;\,x y),(m';\,z w)} = M_{(m;\,y x),(m';\,w z)}\)</span>です（チャネルの反転も
+位相もありません）。厳密な部分は、すべての行（オフサイトの行と複素数の<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>を
+含む）の<span class="math notranslate nohighlight">\(\Sigma_{\rm HF}[G]\)</span>、すべての行の直接・交換の2次
+（<span class="math notranslate nohighlight">\(\tfrac{1}{2}\Gamma_B\bar\chi_B\Gamma_B\)</span>の項）、それより高次ではボンド分解した
+スピンフルチャネルの ring 級数です。<span class="math notranslate nohighlight">\(B = 1\)</span>ではオンサイトのスピン軌道 FLEX に
+なり、SU(2) 極限では<a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>の非スピン軌道のボンド FLEX を再現します
+（自己エネルギーはスピンの単位行列との積になり、感受率はその電荷・縦スピン・横スピンの
+チャネルに射影されます）。計算、キー、メモリ、出力は<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>に
+まとめています。この版では CPU で動作し、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code>を最後の写像のチャネル 0
+ブロックとして書き出し、ボンドアーカイブは書き出しません。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はその出力を
+まだ読めません。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は、上と同じく<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で
+これを実行します。</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id8" role="doc-footnote">
 <span class="label"><span class="fn-bracket">[</span><a role="doc-backlink" href="#id2">1</a><span class="fn-bracket">]</span></span>

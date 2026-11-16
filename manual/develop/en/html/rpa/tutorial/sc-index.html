@@ -2141,9 +2141,13 @@ omitted there (a warning says so)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code></p></td>
 <td><p>rejected</p></td>
-<td><p>accepted with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (on-site and in-cell interactions only)</p></td>
-<td><p>the static <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads this output with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>;
-see <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a></p></td>
+<td><p>accepted with <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (on-site and in-cell
+interactions; off-site rows with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>)</p></td>
+<td><p>the static and the on-site dynamic <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> read the output of
+a run without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;flex&quot;</span></code> (see <a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a> and
+<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>); the outputs of a run with bond
+channels are not read yet (see <a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>)</p></td>
 </tr>
 <tr class="row-odd"><td><p>susceptibility stored</p></td>
 <td><p>density-density only, <code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
@@ -2262,9 +2266,10 @@ or <code class="docutils literal notranslate"><span class="pre">PairLift</span><
 </tr>
 </tbody>
 </table>
-<p>Spin-orbital FLEX refuses the bond-resolved channels
-(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>) in this version. Spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
-accepts <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>
+<p>Spin-orbital FLEX accepts the bond-resolved channels
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, <a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>);
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read the outputs of that run yet. Spin-orbital
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> accepts <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>
 (<a class="reference internal" href="#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>) and refuses it with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>.</p>
 </section>
 <section id="spin-structure">
@@ -2373,8 +2378,8 @@ the off-site rows;</p></li>
 internally), <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> (the general four-index chi0q written by a
 spin-orbital RPA run; <strong>static only</strong>) or <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> (the outputs of a
 spin-orbital FLEX run, which must be a <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> run with
-<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>; see
-<a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>). The dynamic solver needs <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> set
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> and without
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>; see <a class="reference internal" href="../../algorithm/rpa.html#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>). The dynamic solver needs <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> set
 explicitly to <code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;calc&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code> and an unset key (whose
 default is <code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>) are refused;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">solver_mode</span> <span class="pre">=</span> <span class="pre">&quot;iteration&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;eigenvalue&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;both&quot;</span></code> with
@@ -2514,7 +2519,10 @@ the <code class="docutils literal notranslate"><span class="pre">match</span></c
 <h3>Reading the outputs of a spin-orbital FLEX run<a class="headerlink" href="#reading-the-outputs-of-a-spin-orbital-flex-run" title="Link to this heading">¶</a></h3>
 <p>With <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> the solver reads four archives of a FLEX run
 with <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> and
-<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>, from <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code> (a run with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> is refused: its archives carry
+<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;flex_so_bond&quot;</span></code>, which this version does not read; see
+<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>), from <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
 <span class="pre">path_to_flex_output</span></code> (falling back to <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>):</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code> (default <code class="docutils literal notranslate"><span class="pre">&quot;chiq.npz&quot;</span></code>): the spinful
