@@ -1802,6 +1802,14 @@ def _layout_entries(layout, B, nd):
     return n0 * n0 + 2 * n1 * n1
 
 
+def small_array_bound(caps):
+    """The largest member (bytes) a plan lets an output hold as one inline
+    array: 1 GiB, or one eighth of ``caps.host_bytes`` when that is
+    smaller (``caps.host_bytes = None`` is unlimited)."""
+    cap = caps.host_bytes
+    return _GIB if cap is None else min(_GIB, float(cap) / 8.0)
+
+
 def _plan_rows(consumers, *, nmat, nvol, nd, ND, dress_capacity, keep_chi, layout="dense",
                vertex_batch=False, w_in_place=True):
     """The row table: ``(phase, name, bytes)``, one entry per logical
@@ -1857,6 +1865,13 @@ def _plan_rows(consumers, *, nmat, nvol, nd, ND, dress_capacity, keep_chi, layou
                  ("dressing", "dress_batch", dress),
                  ("dressing", "pole_slice", 2 * _ENTRY * nvol * S),
                  ("w_conversion", "w_batch_workspace", 4 * _ENTRY * dress_capacity * nvol * S)]
+        if keep_chi:
+            # the archive's final susceptibility pass: one more bubble and
+            # one more dressing, after the SCF (the live final-state rows
+            # come from flex_so_bond_rows(archive=...))
+            rows += [("archive_bubble", "bubble_pair_block", pair_block),
+                     ("archive_dressing", "dress_batch", dress),
+                     ("archive_dressing", "pole_slice", 2 * _ENTRY * nvol * S)]
     return tuple((ph, name, int(b)) for ph, name, b in rows)
 
 
@@ -1882,7 +1897,8 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
                  placement_request="host", nb=None, keep_chi=False, write_chibar=False,
                  layout="dense", layout_reason=None, vertex_batch=False, cap_key=None,
                  shell_rows=(), max_shells_key=None, envelope="", extra_rows=(),
-                 w_in_place=None, resident_rows=(), remedy_note=None, log_summary=True):
+                 w_in_place=None, resident_rows=(), remedy_note=None, archive_remedy=None,
+                 log_summary=True):
     """The admission plan of the spin-orbital bond helpers (host placement).
 
     Parameters
@@ -1936,7 +1952,8 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         integer >= 0.
     w_in_place : bool, optional
         Applies to ``flex_scf`` only (which is refused together with
-        ``chi_dynamic``, ``keep_chi`` or ``write_chibar``). ``None`` or
+        ``chi_dynamic`` or ``write_chibar``; ``keep_chi`` adds the archive
+        phases). ``None`` or
         ``True`` writes ``W`` over the store slot ``chibar``
         (``slots = ("chibar",)``, ``aliases = (("W", "chibar"),)``); ``False`` keeps a second slot (``slots = ("chibar",
         "W")``, a resident row ``w_slot``). Without ``flex_scf``, ``None``
@@ -1951,6 +1968,10 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         A sentence inserted after the head sentence of the over-cap refusal
         (e.g. how the frequency batch was chosen); ``None`` leaves every
         text unchanged.
+    archive_remedy : str, optional
+        A sentence inserted after ``remedy_note`` in the over-cap refusal,
+        only when the peak phase is an archive phase (its name starts with
+        ``archive_``); ``None`` leaves every text unchanged.
     log_summary : bool
         Log the plan's summary line (INFO) on success (default); ``False``
         leaves it out for this call only (e.g. the trial plans of a batch
@@ -2038,11 +2059,10 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
     if flex and "chi_dynamic" in closed:
         raise ValueError("plan_so_bond: the consumer flex_scf cannot be combined with "
                          "chi_dynamic (both own the store slot chibar)")
-    if flex and (bool(keep_chi) or bool(write_chibar)):
-        raise ValueError("plan_so_bond: the consumer flex_scf takes neither keep_chi nor "
-                         "write_chibar (its store keeps no chi slot and writes no chibar "
-                         "archive), got keep_chi = {!r}, write_chibar = {!r}".format(
-                             keep_chi, write_chibar))
+    if flex and bool(write_chibar):
+        raise ValueError("plan_so_bond: the consumer flex_scf takes no write_chibar (its store "
+                         "writes no chibar archive), got write_chibar = {!r}".format(
+                             write_chibar))
     if w_in_place is not None and not flex:
         raise ValueError("plan_so_bond: w_in_place applies to the consumer flex_scf only, "
                          "got {!r}".format(w_in_place))
@@ -2050,6 +2070,9 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
     if remedy_note is not None and not (isinstance(remedy_note, str) and remedy_note):
         raise ValueError("plan_so_bond: remedy_note must be None or a non-empty string, got "
                          "{!r}".format(remedy_note))
+    if archive_remedy is not None and not (isinstance(archive_remedy, str) and archive_remedy):
+        raise ValueError("plan_so_bond: archive_remedy must be None or a non-empty string, got "
+                         "{!r}".format(archive_remedy))
     vertex_batch = bool(vertex_batch)
     if vertex_batch and "chi_dynamic" not in closed:
         raise ValueError("plan_so_bond: vertex_batch needs the consumer chi_dynamic (the vertex "
@@ -2074,7 +2097,7 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         slots = ("chibar",) if w_in_place else ("chibar", "W")
         aliases = (("W", "chibar"),) if w_in_place else ()
     cap = caps.host_bytes
-    small = _GIB if cap is None else min(_GIB, float(cap) / 8.0)
+    small = small_array_bound(caps)
     reason = ("spin-orbital bond plan: consumers {}; {} layout, host placement; nmat = {}, "
               "nvol = {}, B = {}, nd = {}, ND = {}, nb = {}, dress_capacity = {}; estimated "
               "peak {:.3f} GiB in phase {}; host cap {}".format(
@@ -2084,6 +2107,8 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
     if cap is not None and peak > cap:
         solver = next((w for c, w in _SOLVER_WORD.items() if c in closed), "FLEX")
         note = "" if remedy_note is None else " " + remedy_note
+        if archive_remedy is not None and phase.startswith("archive_"):
+            note += " " + archive_remedy
         # the static path's plan (the consumer pairing_static with the rows
         # of static_so_bond_rows, as _admit_so_bond_static builds it) keeps
         # no store slot: its refusal names the largest row of the peak phase

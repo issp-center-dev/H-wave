@@ -25,7 +25,8 @@ _SOLVER_BOOKKEEPING = 64 * 2 ** 10
 _EINSUM_BUFSIZE = 8192
 
 
-def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=False):
+def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=False,
+                      archive=None):
     """The FLEX SCF rows of a spin-orbital bond plan: ``(resident_rows,
     extra_rows)`` for :func:`hwave.solver.so_bond.plan_so_bond`
     (``resident_rows=`` and ``extra_rows=``).
@@ -69,8 +70,18 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
       2 KB, over nmat 2..128, nvol 16..256, nd 2 and 4).
 
     ``split_seed`` is False on the spin-orbital path (its seeds are
-    refused), so ``seed_envelope`` is 0 by default. Every byte count is an
-    ``int``."""
+    refused), so ``seed_envelope`` is 0 by default.
+
+    ``archive = (output_layout, inline_max_bytes)`` adds the rows of the
+    archive's final susceptibility pass and write, with ``H = 16 nvol
+    nd^2`` (one static field): ``final_state_live = 4 G + 2 H`` in the
+    phases ``archive_bubble`` and ``archive_dressing`` (the Green function
+    of the solve and its copy, the self-energy, the fluctuation
+    self-energy, plus ``sigma_static`` and the density), and in
+    ``archive_write``: ``archive_write = min(inline_max_bytes, 16 MiB) +
+    1 MiB`` (the zip writer's chunk), ``archive_index = 65536`` and
+    ``final_state_live = 3 G + 2 H``. ``inline_max_bytes`` is the largest
+    member the archive stores inline. Every byte count is an ``int``."""
     nmat, nvol, nd = int(nmat), int(nvol), int(nd)
     persistent, phase = flex_bond.flex_scf_rows(nmat=nmat, nvol=nvol, nmodes=nd, depth=depth,
                                                 mixing=mixing, n_types=n_types,
@@ -88,6 +99,22 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
         ("transport", "transport_einsum_workspace", int(transport_ws)),
         ("post_scf", "post_scf", int(G + C)),
         ("post_scf", "density_einsum_workspace", int(density_ws)))
+    if archive is not None:
+        layout, inline_max = archive
+        if layout not in ("npz", "sidecar"):
+            raise ValueError("flex_so_bond_rows: archive[0] must be 'npz' or 'sidecar', got {!r}"
+                             .format(layout))
+        if isinstance(inline_max, bool) or not isinstance(inline_max, (int, np.integer)) \
+                or int(inline_max) < 0:
+            raise ValueError("flex_so_bond_rows: archive[1] must be an integer >= 0, got {!r}"
+                             .format(inline_max))
+        H = _ENTRY * nvol * nd * nd
+        extra += (("archive_bubble", "final_state_live", int(4 * G + 2 * H)),
+                  ("archive_dressing", "final_state_live", int(4 * G + 2 * H)),
+                  ("archive_write", "archive_write",
+                   int(min(int(inline_max), 16 * 2 ** 20) + 2 ** 20)),
+                  ("archive_write", "archive_index", 65536),
+                  ("archive_write", "final_state_live", int(3 * G + 2 * H)))
     return resident, extra
 
 
