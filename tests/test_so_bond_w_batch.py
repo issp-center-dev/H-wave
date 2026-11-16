@@ -17,7 +17,11 @@ two small helpers of the SO bond FLEX loop.
   block-diagonal ``(..., 2n, 2n)`` stack, block by block, with exact zeros
   between the blocks; a wrong shape or a nonzero off-sector entry is
   refused.
+* ``so_bond.static_pole_indicator(X, gamma_b, shape)``: the spinful pole
+  indicator of a static bubble slice, without logging; its entry is the
+  one the ``hwave_sc`` static bond check reports, in either layout.
 """
+import logging
 import unittest
 from unittest import mock
 
@@ -26,7 +30,8 @@ import numpy as np
 from hwave.solver import so_bond
 from hwave.solver.hartree_fock import NonFiniteError
 from hwave.solver.so_bond import PackedArrays, SOBondCaps, plan_so_bond
-from tests.so_bond_fixtures import BUBBLE_NMAT, chain_lists, chain_plan, copy_packed, dressed
+from tests.so_bond_fixtures import (BUBBLE_NMAT, bubble_green, chain_gamma, chain_lists,
+                                    chain_plan, copy_packed, dressed, static_bubble)
 from tests.so_bond_oracles import FIXTURE_LZSZ, rel, restrict
 
 NOCAP = SOBondCaps(None, None, None)
@@ -385,6 +390,37 @@ class TestInversePerSector(unittest.TestCase):
                     so_bond.inverse_per_sector(leak, 2)
                 self.assertEqual(str(cm.exception), "inverse_per_sector: off-sector leak "
                                  "max|A_off| / max|A| = %.3e" % want)
+
+
+
+class TestPoleIndicator(unittest.TestCase):
+
+    def test_matches_sc(self):
+        from hwave import sc
+        fx = FIXTURE_LZSZ
+        g = bubble_green(fx)
+        shape = tuple(fx.spatial_shape)
+        entries = {}
+        for layout in ("dense", "sz_packed"):
+            with self.subTest(layout=layout):
+                X = static_bubble(fx, layout, g)
+                gamma = chain_gamma(fx, layout)
+                with self.assertNoLogs(level=logging.DEBUG):
+                    entry, per, worst = so_bond.static_pole_indicator(X, gamma, shape)
+                report = sc._so_bond_static_pole(X, gamma, shape)
+                self.assertEqual(entry, report.indicators["spinful"])
+                self.assertTrue(np.isfinite(entry[0]))
+                if layout == "dense":
+                    self.assertIsNone(per)
+                    self.assertIsNone(worst)
+                else:
+                    self.assertEqual(set(per) - set(X.sector_map.sector_order), set())
+                    self.assertIn(worst, per)
+                    self.assertEqual(per[worst], entry)
+                    self.assertEqual(entry[0], max(v[0] for v in per.values()))
+                entries[layout] = entry
+        # the sector spectra together are the dense block's
+        self.assertAlmostEqual(entries["sz_packed"][0], entries["dense"][0], delta=1e-10)
 
 
 if __name__ == "__main__":

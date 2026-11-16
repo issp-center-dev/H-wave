@@ -417,6 +417,26 @@ def so_bond_topology(compiled, cell, *, max_shells=None):
     return topo
 
 
+def bond_run(compiled, cell, max_shells):
+    """``(topo, inputs, fp_resolved_topology)``: the bond topology of the
+    compiled interaction ``compiled`` on the lattice ``cell`` (rows are the
+    lattice vectors) with the shell cutoff ``max_shells`` (``None``: every
+    declared shell; :func:`so_bond_topology`, which refuses a cutoff that
+    drops a shell used by a nonzero interaction record), its
+    :class:`hwave.solver.fingerprint.BondInputs` (``delta_r``, ``reverse``,
+    :data:`SLOT_CONVENTION` and ``max_shells``, ``-1`` when no cutoff is set),
+    as the bond archives record it, and the digest of the resolved topology
+    (:func:`hwave.solver.fingerprint.resolved_topology_digest`)."""
+    from . import fingerprint
+    topo = so_bond_topology(compiled, cell, max_shells=max_shells)
+    delta_r = np.asarray(topo.delta_r)
+    reverse = np.asarray(topo.reverse)
+    inputs = fingerprint.BondInputs(delta_r, reverse, SLOT_CONVENTION,
+                                    -1 if max_shells is None else int(max_shells))
+    return topo, inputs, fingerprint.resolved_topology_digest(delta_r, reverse,
+                                                              SLOT_CONVENTION)
+
+
 # ---------------------------------------------------------------------------
 # Layout selection
 # ---------------------------------------------------------------------------
@@ -3318,6 +3338,50 @@ def inverse_per_sector(A, norb_phys):
     out[..., up, up] = np.linalg.inv(A[..., up, up])
     out[..., dn, dn] = np.linalg.inv(A[..., dn, dn])
     return out
+
+
+def static_pole_indicator(X, gamma_b, shape):
+    """``(entry, per_sector, worst)``: the static RPA pole indicator ``max_q
+    eig[-chibar_B Gamma_B](q, 0)`` of the spinful channel, computed and not
+    logged (the caller reports it, e.g. through
+    :func:`hwave.solver.bond_channels.check_rpa_pole`).
+
+    ``X`` is one bosonic-frequency slice of the bond bubble, a dense
+    ``(nvol, ND, ND)`` array or a :class:`PackedArrays` of leading shape
+    ``(nvol,)``, and ``gamma_b`` the vertex in the same layout. Dense:
+    ``(bond_channels.static_pole_indicator(X, gamma_b, "spinful", shape),
+    None, None)``. S_z-packed: the indicator of every nonempty sector
+    (``per_sector``, ``{sector name: entry}``; the spectra of the sectors
+    are together the dense block's); ``entry`` is that of the sector with
+    the largest finite indicator, whose name is ``worst``. A sector whose
+    indicator could not be computed makes the entry
+    :data:`hwave.solver.bond_channels.POLE_UNAVAILABLE` (``worst`` None)
+    unless another sector is already past the pole; with no real eigenvalue
+    in any sector the entry is ``(nan, None, max max_re)`` (``worst`` None),
+    as on the dense path."""
+    if not isinstance(X, PackedArrays):
+        return bond_channels.static_pole_indicator(X, gamma_b, "spinful", shape), None, None
+    per = {}
+    for name, xb, gb in zip(X.sector_map.sector_order, X.blocks, gamma_b.blocks):
+        if xb.shape[-1]:
+            per[name] = bond_channels.static_pole_indicator(xb, gb, "spinful", shape)
+    finite = {k: v for k, v in per.items() if np.isfinite(v[0])}
+    unavailable = [k for k, v in per.items() if v[1] is None and not np.isfinite(v[2])]
+    if unavailable and not any(v[0] >= bond_channels.RPA_POLE_THRESHOLD
+                               for v in finite.values()):
+        # a sector without an indicator: the run cannot be certified
+        # below the pole (check_rpa_pole says so)
+        finite = {}
+    if finite:
+        worst = max(finite, key=lambda k: finite[k][0])
+        entry = finite[worst]
+    elif unavailable or not per:
+        worst, entry = None, bond_channels.POLE_UNAVAILABLE
+    else:
+        # no sector has a real eigenvalue: no indicator, as on the dense path
+        worst = None
+        entry = (float("nan"), None, max(float(v[2]) for v in per.values()))
+    return entry, per, worst
 
 
 # ---------------------------------------------------------------------------

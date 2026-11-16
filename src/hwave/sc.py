@@ -2756,14 +2756,8 @@ def _so_bond_run(context, cell, max_shells):
     ``max_shells`` (``None``: every declared shell). A cutoff that drops a
     shell used by a nonzero interaction record is refused by
     :func:`hwave.solver.so_bond.so_bond_topology`."""
-    from hwave.solver import fingerprint, so_bond
-    topo = so_bond.so_bond_topology(context.compiled, cell, max_shells=max_shells)
-    delta_r = np.asarray(topo.delta_r)
-    reverse = np.asarray(topo.reverse)
-    inputs = fingerprint.BondInputs(delta_r, reverse, so_bond.SLOT_CONVENTION,
-                                    -1 if max_shells is None else int(max_shells))
-    return _SOBondRun(topo, inputs, fingerprint.resolved_topology_digest(
-        delta_r, reverse, so_bond.SLOT_CONVENTION))
+    from hwave.solver import so_bond
+    return _SOBondRun(*so_bond.bond_run(context.compiled, cell, max_shells))
 
 
 def _same_bond_inputs(a, b):
@@ -3551,33 +3545,13 @@ def _so_bond_static_pole(X, gamma_b, shape):
     layout (whose spectra are together the dense block's), logged and
     returned as the :class:`~hwave.solver.bond_channels.RpaPoleReport`."""
     from hwave.solver import so_bond
-    if isinstance(X, so_bond.PackedArrays):
-        per = {}
-        for name, xb, gb in zip(X.sector_map.sector_order, X.blocks, gamma_b.blocks):
-            if xb.shape[-1]:
-                per[name] = bond_channels.static_pole_indicator(xb, gb, "spinful", shape)
-        finite = {k: v for k, v in per.items() if np.isfinite(v[0])}
-        unavailable = [k for k, v in per.items() if v[1] is None and not np.isfinite(v[2])]
-        if unavailable and not any(v[0] >= bond_channels.RPA_POLE_THRESHOLD
-                                   for v in finite.values()):
-            # a sector without an indicator: the run cannot be certified
-            # below the pole (check_rpa_pole says so)
-            finite = {}
-        if finite:
-            worst = max(finite, key=lambda k: finite[k][0])
-            entry = finite[worst]
-        elif unavailable or not per:
-            worst, entry = None, bond_channels.POLE_UNAVAILABLE
-        else:
-            # no sector has a real eigenvalue: no indicator, as on the dense path
-            worst = None
-            entry = (float("nan"), None, max(float(v[2]) for v in per.values()))
+    entry, per, worst = so_bond.static_pole_indicator(X, gamma_b, shape)
+    if per is not None:
         logger.info("spin-orbital bond (static, S_z-packed): the spinful pole indicator "
                     "per S_z sector: %s", "; ".join("{} {:.6f}".format(k, v[0]) for k, v in per.items()))
         where = ("eliashberg bond_channels (spin-orbital, static, S_z-packed{})".format(
             "" if worst is None else "; S_z sector " + worst))
     else:
-        entry = bond_channels.static_pole_indicator(X, gamma_b, "spinful", shape)
         where = "eliashberg bond_channels (spin-orbital, static)"
     return bond_channels.check_rpa_pole({"spinful": entry}, where=where,
                                         consequence=_BOND_POLE_CONSEQUENCE, log=logger)
