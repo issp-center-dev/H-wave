@@ -392,7 +392,6 @@ class TestInversePerSector(unittest.TestCase):
                                  "max|A_off| / max|A| = %.3e" % want)
 
 
-
 class TestPoleIndicator(unittest.TestCase):
 
     def test_matches_sc(self):

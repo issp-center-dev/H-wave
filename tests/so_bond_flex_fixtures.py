@@ -38,8 +38,6 @@ import os
 import tempfile
 from typing import NamedTuple
 
-import numpy as np
-
 from tests import so_bond_entry_fixtures as F
 from tests.so_bond_entry_fixtures import _nn, _override
 from tests.so_bond_oracles import closed_row

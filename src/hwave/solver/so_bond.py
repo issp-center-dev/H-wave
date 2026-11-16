@@ -1935,10 +1935,10 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         non-empty strings, ``phase`` other than ``"resident"``, ``bytes`` an
         integer >= 0.
     w_in_place : bool, optional
-        ``flex_scf`` (which is refused together with ``chi_dynamic``,
-        ``keep_chi`` or ``write_chibar``) only: ``None`` or ``True`` writes ``W`` over the store
-        slot ``chibar`` (``slots = ("chibar",)``, ``aliases = (("W",
-        "chibar"),)``); ``False`` keeps a second slot (``slots = ("chibar",
+        Applies to ``flex_scf`` only (which is refused together with
+        ``chi_dynamic``, ``keep_chi`` or ``write_chibar``). ``None`` or
+        ``True`` writes ``W`` over the store slot ``chibar``
+        (``slots = ("chibar",)``, ``aliases = (("W", "chibar"),)``); ``False`` keeps a second slot (``slots = ("chibar",
         "W")``, a resident row ``w_slot``). Without ``flex_scf``, ``None``
         is ignored and ``True`` / ``False`` are refused.
     resident_rows : iterable of (name, bytes)

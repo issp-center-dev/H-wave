@@ -20,7 +20,8 @@ _ENTRY = 16                     # bytes per complex128 entry
 _DIGEST_COPY_CAP = 64 * 2 ** 20
 #: the resident row of the solve's small objects (flex_so_bond_rows)
 _SOLVER_BOOKKEEPING = 64 * 2 ** 10
-#: numpy's default iterator buffer size in entries (``np.getbufsize()``)
+#: numpy's compile-time iterator buffer size NPY_BUFSIZE in entries (einsum's
+#: buffered iterator uses it; ``np.setbufsize`` does not change it)
 _EINSUM_BUFSIZE = 8192
 
 
@@ -46,13 +47,16 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
     * ``solver_bookkeeping = 64 KiB`` (resident): the small objects alive
       for the whole solve that no array row counts (the admission and slot
       geometry, the solver's attribute tables, the H0 / eigenpair copies,
-      array headers); measured about 41 KB in about 390 blocks, the same
-      at Nmat 8 and 32 (2026-11-16, numpy 2.4.6 and 1.26.4);
+      array headers); measured about 41 KB in about 390 blocks on a 4 x 4 mesh
+      only (nd = 2 and 4), the same at Nmat 8 and 32 (2026-11-16, numpy 2.4.6
+      and 1.26.4); some of these objects scale with nvol, so larger meshes
+      are not covered by this measurement;
     * the iterator buffers of the two many-index ``einsum`` contractions,
       for numpy builds that evaluate them through a buffered ``nditer``
       (numpy 1.26: one buffer of ``min(n_iter, b)`` complex entries per
       buffered operand, ``n_iter`` the product of every index extent of the
-      contraction and ``b = 8192`` numpy's default buffer size; numpy 2
+      contraction and ``b = 8192`` numpy's compile-time
+      buffer size NPY_BUFSIZE, which ``np.setbufsize`` does not change for einsum; numpy 2
       allocates none of it). The density's reference Green function
       ``einsum('kaj,wkj,kbj->wkab')`` (``n_iter = nmat nvol nd^3``, four
       buffered operands): ``density_einsum_workspace = 4 * 16 min(nmat
