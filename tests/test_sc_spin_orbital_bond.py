@@ -3017,21 +3017,9 @@ def _su2_mixed_fixture():
     the spin-rotation invariant interaction on mixed bonds of the
     spin-orbital pairing-vertex SU(2) reduction (inter-orbital CoulombInter
     different at +R and -R; Hund, Ising and Exchange = Hund - 2 Ising; real
-    PairHop; on-site CoulombIntra)."""
-    from tests import test_sc_bond_pairing_oracle as nonso_oracle
-    from tests import test_so_bond_pairing_oracle as so_oracle
-    hopping, transfer = [], []
-    for (r, a, b), t in sorted(nonso_oracle.TRANSFER[2].items()):
-        R = (r, 0, 0)
-        if (a, b) == (0, 0):
-            hopping.append((R, t))
-        else:
-            transfer.extend((R, (2 * a + s, 2 * b + s), t) for s in (0, 1))
-    interactions = tuple(
-        (typ, tuple(sorted((tuple(R), tuple(ab), v) for (R, ab), v in table.items())))
-        for typ, table in so_oracle.SU2_MIXED.items())
-    return F.EntryFixture("SU2_MIXED_6", (6, 1, 1), 2, tuple(hopping), tuple(transfer), (),
-                          0.0, interactions, 0.4)
+    PairHop; on-site CoulombIntra): ``SU2_MIXED_6`` of
+    tests/so_bond_flex_fixtures.py."""
+    return _flex_fixtures.SU2_MIXED_6
 
 
 #: the S_z-packed and the forced dense layout of an S_z-conserving input

@@ -25,7 +25,9 @@ the non-spin-orbital charge and spin susceptibilities. Staged (R13):
   published chi0q / chiq; the content is off-site and carries the bond
   exchange; a truncated spin-orbital dressing misses (a broken ``P_B``
   misses at array level, two orbitals; at one orbital in the SU(2) limit it
-  is invisible).
+  is invisible); the same one map with two physical orbitals
+  (``SU2_MIXED_6``, :class:`TestEntrySU2Norb2`), where a broken ``P_B``
+  misses at the entry.
 * :class:`TestConverged` -- (iii) the converged fixed points (heavy; its
   fast smoke is :meth:`TestEntrySU2.test_full_map`).
 
@@ -142,11 +144,7 @@ NX, BETA, NMAT, MU = 6, 2.0, 16, 0.15
 SHAPE = (NX, 1, 1)
 NB = 4
 #: Transfer rows (r, a, b) of the chain (tests/test_sc_bond_pairing_oracle.TRANSFER)
-CHAIN_TRANSFER = {
-    1: {(1, 0, 0): -1.0, (-1, 0, 0): -1.0, (0, 0, 0): 0.1},
-    2: {(0, 0, 0): -0.4, (0, 1, 1): 0.6, (0, 0, 1): -0.3, (0, 1, 0): -0.3,
-        (1, 0, 1): -1.0, (-1, 1, 0): -1.0, (1, 0, 0): -0.5, (-1, 0, 0): -0.5},
-}
+CHAIN_TRANSFER = X.CHAIN_TRANSFER
 #: the on-site one-band coupling of the projection pin
 U_ONSITE = 0.7
 
@@ -290,6 +288,9 @@ def _dress_batch_identity(cb, V, channel, **kwargs):
 def _spin_rows(tc, sigma_so, ref, norb, label, tol=TOL):
     """Both spin blocks of ``sigma_so`` equal ``ref`` within ``tol``; the
     off-spin blocks are exactly zero. Returns the two deviations."""
+    tc.assertEqual(sigma_so.shape[:-2], ref.shape[:-2], label)
+    tc.assertEqual(sigma_so.shape[-2:], (2 * norb, 2 * norb), label)
+    tc.assertEqual(ref.shape[-2:], (norb, norb), label)
     up = rel(sigma_so[..., :norb, :norb], ref)
     dn = rel(sigma_so[..., norb:, norb:], ref)
     for v in (up, dn):
@@ -358,9 +359,16 @@ class TestProjection(unittest.TestCase):
                 # R25: the label-form pairing is identically zero in code slots
                 for blk in label_form_blocks(chi, 1):
                     self.assertFalse(np.any(blk))
-                # the rank-6 channel-0 form gives the same projection
+                # the published rank-6 form, written element by element from
+                # its definition [l, q, a, c, b, d] = chi4[l, q, a nd + c, b nd + d]
+                # (R7), gives the same projection
                 nd = 2
-                six = np.asarray(chi).reshape(NMAT, NX, nd, nd, nd, nd)
+                six = np.empty((NMAT, NX) + (nd,) * 4, dtype=complex)
+                for a_ in range(nd):
+                    for c_ in range(nd):
+                        for b_ in range(nd):
+                            for d_ in range(nd):
+                                six[:, :, a_, c_, b_, d_] = chi[:, :, a_ * nd + c_, b_ * nd + d_]
                 for a, b in zip(su2_project(six, 1), p):
                     self.assertTrue(np.array_equal(a, b))
         print("\nC1b-SU2 projection pin:\n" + "\n".join(
@@ -536,6 +544,52 @@ def _nonso_checks(tc, res):
     tc.assertEqual(bc.non_su2_bonds(s._bond_topo), [])
 
 
+def _entry_full_map(tc, nonso, so_runs, norb):
+    """C1b-SU2 (ii) at the entry: each spin-orbital one-map run of
+    ``so_runs`` (``{layout: RunResult}``) against the non-spin-orbital
+    ``nonso``: Sigma_HF, Sigma_fluct and G on both spin blocks (off-spin
+    blocks exactly zero), the projections of chi0q and chiq."""
+    _nonso_checks(tc, nonso)
+    q = nonso.payloads[0]
+    g_n = nonso.green_info["green"]
+    rows = []
+    for layout, res in sorted(so_runs.items()):
+        tc.assertEqual(res.solver._so_admission.layout, layout)
+        p = res.payloads[0]
+        tc.assertEqual(p["mu"], q["mu"])
+        with tc.subTest(layout=layout):
+            dev = {}
+            dev["Sigma_HF"] = _spin_rows(tc, p["static_new"], q["static_new"], norb, "Sigma_HF")
+            dev["Sigma_fluct"] = _spin_rows(tc, p["fluct_new"], q["fluct_new"], norb,
+                                            "Sigma_fluct")
+            dev["G"] = _spin_rows(tc, res.green_info["green"], g_n, norb, "G")
+            pairs = norb * norb
+            for k in ("chi0q", "chiq_s", "chiq_c"):
+                tc.assertEqual(q[k].shape, (NMAT_ENTRY, q[k].shape[1]) + (norb,) * 4, k)
+            cn = {k: q[k].reshape(NMAT_ENTRY, -1, pairs, pairs)
+                  for k in ("chi0q", "chiq_s", "chiq_c")}
+            bare = su2_project(p["chi0q"], norb)
+            pr = su2_project(p["chiq_s"], norb)
+            proj = {"chi0q charge": rel(bare.charge, cn["chi0q"]),
+                    "chi0q spin_z": rel(bare.spin_z, cn["chi0q"]),
+                    "chiq charge": rel(pr.charge, cn["chiq_c"]),
+                    "chiq spin_z": rel(pr.spin_z, cn["chiq_s"]),
+                    "chiq transverse_ud": rel(pr.transverse_ud, cn["chiq_s"]),
+                    "chiq transverse_du": rel(pr.transverse_du, cn["chiq_s"])}
+            for k, v in proj.items():
+                tc.assertTrue(np.isfinite(v), k)
+                tc.assertLessEqual(v, TOL, k)
+            for blk in label_form_blocks(p["chiq_s"], norb):
+                tc.assertFalse(np.any(blk))
+            # the charge and spin channels really differ
+            tc.assertGreaterEqual(rel(cn["chiq_c"], cn["chiq_s"]), SWAP_MISS)
+            rows.append((layout, dev, proj))
+    print("\nC1b-SU2 entry one map (norb_phys %d):" % norb)
+    for layout, dev, proj in rows:
+        print("  %-9s " % layout + "  ".join("%s %.2e/%.2e" % (k, *v) for k, v in dev.items())
+              + "\n            " + "  ".join("%s %.2e" % kv for kv in proj.items()))
+
+
 class TestEntrySU2(unittest.TestCase):
     """C1b-SU2 (i)-(ii) at the FLEX entry: one map of ``SU2_4X4`` at a fixed
     chemical potential, spin-orbital (packed and dense) against non-spin-orbital."""
@@ -546,45 +600,7 @@ class TestEntrySU2(unittest.TestCase):
         cls.so = {"sz_packed": _one_map(FX, so=True), "dense": _one_map(FX, so=True, param=DENSE)}
 
     def test_full_map(self):
-        _nonso_checks(self, self.nonso)
-        q = self.nonso.payloads[0]
-        g_n = self.nonso.green_info["green"]
-        norb = FX.norb_phys
-        rows = []
-        for layout, res in sorted(self.so.items()):
-            self.assertEqual(res.solver._so_admission.layout, layout)
-            p = res.payloads[0]
-            self.assertEqual(p["mu"], q["mu"])
-            with self.subTest(layout=layout):
-                dev = {}
-                dev["Sigma_HF"] = _spin_rows(self, p["static_new"], q["static_new"], norb,
-                                             "Sigma_HF")
-                dev["Sigma_fluct"] = _spin_rows(self, p["fluct_new"], q["fluct_new"], norb,
-                                                "Sigma_fluct")
-                dev["G"] = _spin_rows(self, res.green_info["green"], g_n, norb, "G")
-                pairs = q["chiq_s"].shape[2] ** 2
-                cn = {k: q[k].reshape(NMAT_ENTRY, -1, pairs, pairs)
-                      for k in ("chi0q", "chiq_s", "chiq_c")}
-                bare = su2_project(p["chi0q"], norb)
-                pr = su2_project(p["chiq_s"], norb)
-                proj = {"chi0q charge": rel(bare.charge, cn["chi0q"]),
-                        "chi0q spin_z": rel(bare.spin_z, cn["chi0q"]),
-                        "chiq charge": rel(pr.charge, cn["chiq_c"]),
-                        "chiq spin_z": rel(pr.spin_z, cn["chiq_s"]),
-                        "chiq transverse_ud": rel(pr.transverse_ud, cn["chiq_s"]),
-                        "chiq transverse_du": rel(pr.transverse_du, cn["chiq_s"])}
-                for k, v in proj.items():
-                    self.assertTrue(np.isfinite(v), k)
-                    self.assertLessEqual(v, TOL, k)
-                for blk in label_form_blocks(p["chiq_s"], norb):
-                    self.assertFalse(np.any(blk))
-                # the charge and spin channels really differ
-                self.assertGreaterEqual(rel(cn["chiq_c"], cn["chiq_s"]), SWAP_MISS)
-                rows.append((layout, dev, proj))
-        print("\nC1b-SU2 entry one map:")
-        for layout, dev, proj in rows:
-            print("  %-9s " % layout + "  ".join("%s %.2e/%.2e" % (k, *v) for k, v in dev.items())
-                  + "\n            " + "  ".join("%s %.2e" % kv for kv in proj.items()))
+        _entry_full_map(self, self.nonso, self.so, FX.norb_phys)
 
     def test_non_vacuity(self):
         q = self.nonso.payloads[0]
@@ -622,6 +638,43 @@ class TestEntrySU2(unittest.TestCase):
                 self.assertGreater(spy.call_count, 0)           # the break was applied
                 miss = rel(res.payloads[0]["fluct_new"][..., :norb, :norb], ref)
                 print("C1b-SU2 entry mutation chi := chibar (%s) miss %.3e" % (layout, miss))
+                self.assertTrue(np.isfinite(miss))
+                self.assertGreaterEqual(miss, MISS)
+
+
+class TestEntrySU2Norb2(unittest.TestCase):
+    """C1b-SU2 (ii) at the FLEX entry with two physical orbitals:
+    ``SU2_MIXED_6`` (the 6x1x1 chain, inter-orbital rows, CoulombInter
+    different at +R and -R), one map at a fixed chemical potential, both
+    layouts. Here ``P_B`` swaps orbitals and a broken one misses."""
+
+    FX2 = X.SU2_MIXED_6
+
+    @classmethod
+    def setUpClass(cls):
+        cls.nonso = _one_map(cls.FX2, so=False)                # the reference first
+        cls.so = {"sz_packed": _one_map(cls.FX2, so=True),
+                  "dense": _one_map(cls.FX2, so=True, param=DENSE)}
+
+    def test_full_map(self):
+        _entry_full_map(self, self.nonso, self.so, self.FX2.norb_phys)
+
+    def test_mutation(self):
+        from hwave.solver import so_bond
+        from tests.test_flex_so_bond_entry import p_b_identity
+        ref = self.nonso.payloads[0]["fluct_new"]               # the reference (non-SO) first
+        norb = self.FX2.norb_phys
+        for layout, param in (("sz_packed", None), ("dense", DENSE)):
+            with self.subTest(layout=layout):
+                spy = mock.Mock(wraps=p_b_identity)
+                self.assertEqual(spy.call_count, 0)
+                with mock.patch.object(so_bond, "p_b", spy):
+                    res = _one_map(self.FX2, so=True, param=param)
+                self.assertEqual(res.solver._so_admission.layout, layout)
+                self.assertGreater(spy.call_count, 0)           # the break was applied
+                miss = rel(res.payloads[0]["fluct_new"][..., :norb, :norb], ref)
+                print("C1b-SU2 entry mutation P_B identity, norb_phys 2 (%s) miss %.3e"
+                      % (layout, miss))
                 self.assertTrue(np.isfinite(miss))
                 self.assertGreaterEqual(miss, MISS)
 

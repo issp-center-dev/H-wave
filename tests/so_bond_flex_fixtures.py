@@ -1,8 +1,9 @@
 """Public-entry fixtures of the spin-orbital bond-resolved FLEX (issue #270).
 
-The fixture tables extend :mod:`tests.so_bond_entry_fixtures` (whose
+The fixture tables extend :mod:`tests.so_bond_entry_fixtures`, whose
 conventions apply: interleaved Transfer index, physical-orbital interaction
-and Extern indices, a 4x4x1 mesh with one physical orbital):
+and Extern indices. The entry fixtures below live on its 4x4x1 mesh with one
+physical orbital, except :data:`SU2_MIXED_6` (a 6x1x1 chain, two orbitals):
 
 * :data:`ZEEMAN_SZ_ALL` -- the Zeeman band of ``ZEEMAN_EXTERN`` (an Extern
   field) with every S_z-conserving interaction type, a complex off-site
@@ -11,17 +12,24 @@ and Extern indices, a 4x4x1 mesh with one physical orbital):
   PairHop: the dense layout;
 * :data:`ZEEMAN_EXTERN_ONSITE` -- ``ZEEMAN_EXTERN`` with its on-site rows only
   (``B = 1``);
-* :data:`SU2_MIXED` -- an array-level interaction table (two physical
-  orbitals, the bonds 0 and +-1 of a chain): spin-rotation invariant on
-  mixed bonds.
+* :data:`SU2_MIXED` -- an interaction table in the compiler's form (two
+  physical orbitals, the bonds 0 and +-1 of a chain), spin-rotation
+  invariant on mixed bonds; :data:`CHAIN_TRANSFER` -- the chain hopping of
+  ``tests/test_sc_bond_pairing_oracle.py`` (one and two orbitals);
+* :data:`SU2_MIXED_6` -- the entry fixture of both: the two-orbital chain
+  (spin independent) with the :data:`SU2_MIXED` interaction.
 
 :func:`write_flex_case` writes the files of a fixture and returns the
-``input_dict`` of a FLEX run at a fixed chemical potential;
-:func:`build_solver` constructs the solver from it as ``hwave.qlms.run``
-does. :func:`run_input` / :func:`run_flex` solve it (the iteration-hook
-payloads and the log records collected in a :class:`RunResult`),
-:func:`one_map` runs one map and :func:`converge` the converged state. At module level this module imports numpy, the standard library and
-the test-side fixture module only; a helper that drives production code
+``input_dict`` of a FLEX run at a fixed chemical potential (``so = False``
+writes the non-spin-orbital files, a spin-independent multi-orbital band
+included, :func:`nonso_transfer_rows`); :func:`build_solver` constructs the
+solver from it as ``hwave.qlms.run`` does. :func:`run_input` /
+:func:`run_flex` solve it (the iteration-hook payloads and the log records
+collected in a :class:`RunResult`), :func:`one_map` runs one map and
+:func:`converge` the converged state.
+
+At module level this module imports numpy, the standard library and the
+test-side fixture modules only; a helper that drives production code
 imports ``hwave`` inside its own body.
 """
 import cmath
@@ -37,6 +45,7 @@ from tests.so_bond_entry_fixtures import _nn, _override
 from tests.so_bond_oracles import closed_row
 
 __all__ = ["V_CPH", "ZEEMAN_SZ_ALL", "SOC_ALL_TYPES_CPH", "ZEEMAN_EXTERN_ONSITE", "SU2_MIXED",
+           "CHAIN_TRANSFER", "SU2_MIXED_6", "nonso_transfer_rows",
            "FLEX_NMAT", "FLEX_T", "onsite_rows", "interaction_tables", "fixture_mu",
            "write_flex_case", "build_solver", "RunResult", "run_input", "run_flex",
            "one_map", "converge",
@@ -97,6 +106,61 @@ SU2_MIXED = {
 }
 
 
+#: Transfer rows ``(r, a, b): t`` (``t c+_{j,a} c_{j+r,b}``, 0-based orbitals)
+#: of the chain of tests/test_sc_bond_pairing_oracle.py (``TRANSFER``): one
+#: orbital, a plain chain; two orbitals, mirror- and transpose-asymmetric
+CHAIN_TRANSFER = {
+    1: {(1, 0, 0): -1.0, (-1, 0, 0): -1.0, (0, 0, 0): 0.1},
+    2: {(0, 0, 0): -0.4, (0, 1, 1): 0.6, (0, 0, 1): -0.3, (0, 1, 0): -0.3,
+        (1, 0, 1): -1.0, (-1, 1, 0): -1.0, (1, 0, 0): -0.5, (-1, 0, 0): -0.5},
+}
+
+
+def _su2_mixed_6():
+    hopping, transfer = [], []
+    for (r, a, b), t in sorted(CHAIN_TRANSFER[2].items()):
+        R = (r, 0, 0)
+        if (a, b) == (0, 0):
+            hopping.append((R, t))
+        else:
+            transfer.extend((R, (2 * a + s, 2 * b + s), t) for s in (0, 1))
+    interactions = tuple(
+        (typ, tuple(sorted((tuple(R), tuple(ab), v) for (R, ab), v in table.items())))
+        for typ, table in SU2_MIXED.items())
+    return F.EntryFixture("SU2_MIXED_6", (6, 1, 1), 2, tuple(hopping), tuple(transfer), (),
+                          0.0, interactions, 0.4)
+
+
+#: the two-orbital 6x1x1 chain of :data:`CHAIN_TRANSFER` (spin independent;
+#: the inter-orbital and orbital-1 entries as spin-diagonal Transfer rows)
+#: with the :data:`SU2_MIXED` interaction
+SU2_MIXED_6 = _su2_mixed_6()
+
+
+def nonso_transfer_rows(fixture):
+    """The non-spin-orbital Transfer rows ``(R, (a, b), t)`` of a fixture
+    with a spin-independent band: the hopping on orbital 0 and each
+    spin-diagonal Transfer entry ``(2a + s, 2b + s)`` read at ``(a, b)``.
+    Refuses (``ValueError``) a spin-flip entry, an entry without its equal
+    partner on the other spin, or an Extern table."""
+    if fixture.extern:
+        raise ValueError("nonso_transfer_rows: {} has an Extern table".format(fixture.name))
+    rows = {(tuple(R), (0, 0)): complex(t) for R, t in fixture.hopping}
+    spin = {}
+    for R, (A, B), v in fixture.transfer:
+        if A % 2 != B % 2:
+            raise ValueError("nonso_transfer_rows: {} has the spin-flip entry {}".format(
+                fixture.name, (R, (A, B), v)))
+        spin[(tuple(R), (A // 2, B // 2), A % 2)] = complex(v)
+    for (R, ab, s), v in spin.items():
+        if spin.get((R, ab, 1 - s)) != v:
+            raise ValueError("nonso_transfer_rows: {} entry {} is spin dependent".format(
+                fixture.name, (R, ab, s, v)))
+        if s == 0:
+            rows[(R, ab)] = rows.get((R, ab), 0) + v
+    return [(R, ab, v) for (R, ab), v in sorted(rows.items())]
+
+
 def interaction_tables(fixture):
     """The interaction tables of ``fixture`` as the compiler takes them:
     ``{type: {((Rx, Ry, Rz), (a, b)): v}}`` (physical orbitals, 0-based)."""
@@ -122,7 +186,8 @@ def write_flex_case(tmpdir, fixture, *, gate=True, so=True, param=None, mode=Non
 
     The files are those of :func:`tests.so_bond_entry_fixtures.write_case`
     (``so = False`` writes the non-spin-orbital files of the spin-independent
-    hopping). The ``[eliashberg]`` table and ``filling`` are removed and the
+    hopping; with spin-diagonal Transfer entries the Transfer table is
+    :func:`nonso_transfer_rows`). The ``[eliashberg]`` table and ``filling`` are removed and the
     run is set to: ``[mode] mode = "FLEX"``, ``enable_spin_orbital = so``,
     ``calc_scheme = "general"``; ``[mode.param] flex_hartree_fock = true``,
     ``longitudinal_bond_channels = gate``, ``Nmat = FLEX_NMAT``, ``T =
@@ -133,7 +198,16 @@ def write_flex_case(tmpdir, fixture, *, gate=True, so=True, param=None, mode=Non
     case-insensitively; a key already present keeps its spelling)."""
     if mode is not None and any(k.lower() == "param" for k in mode):
         raise ValueError("write_flex_case: pass the [mode.param] overrides as param=")
-    input_dict = F.write_case(tmpdir, fixture, mode={"enable_spin_orbital": bool(so)})
+    if so or not fixture.transfer:
+        input_dict = F.write_case(tmpdir, fixture, mode={"enable_spin_orbital": bool(so)})
+    else:
+        # a spin-independent multi-orbital band: the non-spin-orbital files of
+        # the hopping, then the full non-spin-orbital Transfer table
+        rows = nonso_transfer_rows(fixture)
+        input_dict = F.write_case(tmpdir, fixture._replace(transfer=()),
+                                  mode={"enable_spin_orbital": False})
+        F._write_table(os.path.join(tmpdir, "transfer.dat"), "Transfer", fixture.norb_phys,
+                       rows)
     input_dict.pop("eliashberg", None)
     par = {k: v for k, v in input_dict["mode"]["param"].items() if k.lower() != "filling"}
     _override(par, {"flex_hartree_fock": True, "longitudinal_bond_channels": bool(gate),
