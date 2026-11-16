@@ -9810,6 +9810,35 @@ def _load_flex_so_sigma(eli, flex_dir, nd, nvol, so_run, fp_green, green_path,
     return np.ascontiguousarray(st[0, 0], dtype=np.complex128)
 
 
+#: the refusal of a spin-orbital FLEX output written with bond channels
+#: (producer_stage = "flex_so_bond") by the on-site spin-orbital FLEX loader
+T_ONSITE_BOND = (
+    _SO_WHAT + ": '{path}' was written by the spin-orbital FLEX with bond channels "
+    "([mode.param] longitudinal_bond_channels = true): the chi0q, chiq and green of "
+    "that run describe the bond-resolved run, which [eliashberg] chi0q_mode = "
+    "\"flex\" cannot use. Re-run FLEX with longitudinal_bond_channels = false for "
+    "this mode.")
+
+
+def _refuse_bond_flex_output(path):
+    """Refuse ``path`` when it is an output of the spin-orbital bond FLEX
+    (``producer_stage = "flex_so_bond"``). Only the 0-d stage member is read;
+    a missing or unreadable file, or one without the member, is left to the
+    checks that follow."""
+    import zipfile
+    if not os.path.exists(path):
+        return
+    try:
+        with np.load(path, allow_pickle=False) as z:
+            if "producer_stage" not in z.files:
+                return
+            stage = z["producer_stage"]
+    except (OSError, ValueError, zipfile.BadZipFile):
+        return
+    if stage.ndim == 0 and stage.dtype.kind == "U" and str(stage) == "flex_so_bond":
+        raise ValueError(T_ONSITE_BOND.format(path=path))
+
+
 def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
                   so_run=None):
     """The outputs of a spin-orbital FLEX run (``calc_scheme = "general"``,
@@ -9889,6 +9918,9 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             "check that this run's interaction files reproduce the FLEX run's "
             "vertex needs it. Set [file.output] chi0q in the FLEX run and "
             "[eliashberg] flex_chi0q to that file.".format(chi0_path, hint))
+    # an output of the bond FLEX is refused before any other metadata is read
+    for path in (chi_path, chi0_path, green_path, _so_flex_sigma_path(eli, flex_dir)):
+        _refuse_bond_flex_output(path)
     ir_hint = _SO_DYNAMIC_IR_HINT if full else _STATIC_IR_HINT
     logger.info("Loading spin-orbital FLEX chiq from: {}".format(chi_path))
     with np.load(chi_path) as data:
