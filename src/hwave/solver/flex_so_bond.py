@@ -1,10 +1,18 @@
-"""The spin-orbital bond-resolved FLEX (issue #270): the admission rows of the
-FLEX SCF beyond the bond plan's own (:func:`flex_so_bond_rows`, for
-:func:`hwave.solver.so_bond.plan_so_bond` with the consumer ``flex_scf``).
+"""The spin-orbital bond-resolved FLEX (issue #270): one map of the FLEX
+self-consistency on the bond channels (:func:`so_bond_flex_map`) and the
+admission rows of the FLEX SCF beyond the bond plan's own
+(:func:`flex_so_bond_rows`, for :func:`hwave.solver.so_bond.plan_so_bond`
+with the consumer ``flex_scf``).
 """
-from . import flex_bond
+import contextlib
+import math
+from typing import NamedTuple, Optional
 
-__all__ = ["flex_so_bond_rows"]
+import numpy as np
+
+from . import flex_bond, so_bond
+
+__all__ = ["SOBondFlexMap", "so_bond_flex_map", "flex_so_bond_rows"]
 
 _ENTRY = 16                     # bytes per complex128 entry
 #: the per-map Green-function digest hashes at most this many bytes per copy
@@ -46,3 +54,166 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
         ("transport", "transport", int(4 * G + 4 * C)),
         ("post_scf", "post_scf", int(G + C)))
     return resident, extra
+
+
+# ---------------------------------------------------------------------------
+# One map of the spin-orbital bond FLEX
+# ---------------------------------------------------------------------------
+
+class SOBondFlexMap(NamedTuple):
+    """The result of :func:`so_bond_flex_map`.
+
+    Fields
+    ------
+    sigma_fluct : ndarray (1, nmat, nvol, nd, nd), complex128
+        The fluctuation self-energy of the map.
+    chi0_c0, chi_c0 : ndarray (nmat, nvol, nd**2, nd**2), complex128
+        The channel-0 blocks of the bare bubble ``chibar_B`` and of its
+        dressing ``chi_B`` on every bosonic slice (the caller's ``chi0_out``
+        / ``chi_out`` when given).
+    cond_min : float
+        The smallest conditioning score of the dressing guard over the map;
+        ``nan`` when the guard is off (``cond_tol = None``).
+    sigma_min_sector, sigma_max_sector : str or None
+        S_z-packed layout: the sectors of the smallest and largest singular
+        value at the worst ``(l, q)`` of the map; ``None`` dense or without
+        the guard.
+    pole : tuple
+        :func:`hwave.solver.so_bond.static_pole_indicator` of the ``nu =
+        0`` slice of ``chibar_B``: ``(entry, per_sector, worst)``.
+    """
+
+    sigma_fluct: np.ndarray
+    chi0_c0: np.ndarray
+    chi_c0: np.ndarray
+    cond_min: float
+    sigma_min_sector: Optional[str]
+    sigma_max_sector: Optional[str]
+    pole: tuple
+
+
+def _null_trace(name):
+    return contextlib.nullcontext()
+
+
+def _check_buffer(name, buf, shape):
+    if buf is None:
+        return np.empty(shape, dtype=np.complex128)
+    if not (isinstance(buf, np.ndarray) and buf.dtype == np.complex128 and buf.shape == shape):
+        raise ValueError("so_bond_flex_map: {} must be a complex128 array of shape {}, got {}"
+                         .format(name, shape, so_bond._describe(buf)))
+    return buf
+
+
+def so_bond_flex_map(store, gamma_b, green_kw, green_scf, green0_tail, beta, geom, *,
+                     plan, cond_tol, workers=1, trace=None, chi0_out=None, chi_out=None):
+    """One map of the spin-orbital bond FLEX: the fluctuation self-energy of
+    the Green function ``green_kw``.
+
+    * bubble (phase ``bubble``): ``chibar_B`` of ``green_scf`` with its tail
+      ``green0_tail`` on every bosonic slice into the store slot ``chibar``
+      (:func:`hwave.solver.so_bond.so_bond_bubble`);
+    * per frequency batch ``[l0, l1)`` of ``plan.nb`` slices (phase
+      ``dressing``): the channel-0 block of ``chibar_B`` into ``chi0_c0``,
+      the static pole indicator of the ``nu = 0`` slice (``l = nmat // 2``),
+      the dressing ``chi_B = [1 + chibar_B Gamma_B]^{-1} chibar_B``
+      (:func:`hwave.solver.so_bond.so_bond_dress` with ``cond_tol``) and its
+      channel-0 block into ``chi_c0``; then (phase ``w_conversion``) ``W =
+      P_B[Gamma_B (chi_B - chibar_B / 2) Gamma_B]``
+      (:func:`hwave.solver.so_bond.so_bond_w_batch`) into the store slot
+      ``W``, which may be an alias of ``chibar`` (the batch ``W`` is complete
+      before it overwrites the batch of ``chibar`` it was built from);
+    * transport (phase ``transport``):
+      ``flex_bond.calc_self_energy_bond(store, green_kw, beta, geom,
+      geom.spatial_shape, nd, workers)``.
+
+    Parameters
+    ----------
+    store : the block store of ``plan`` (:func:`hwave.solver.so_bond.open_store`)
+    gamma_b : the vertex ``Gamma_B`` in the plan's layout
+        (:func:`hwave.solver.so_bond.so_bond_vertex`).
+    green_kw, green_scf : ndarray (1, nmat, nvol, nd, nd)
+        The Green function of the transport and the (tail-subtracted) one of
+        the bubble; ``green0_tail`` the tail of ``green_scf`` (same shape) or
+        ``None``.
+    beta : float
+    geom : hwave.solver.so_bond.BondSlotGeometry
+        The slot geometry of the bond channels.
+    plan : SOBondPlan
+        A plan with the consumer ``flex_scf``.
+    cond_tol : float or None
+        The conditioning guard of the dressing (``None`` disables it).
+    workers : int
+        FFT workers of the bubble's and the transport's FFTs.
+    trace : callable, optional
+        ``trace(phase)`` returns a context manager entered around each phase
+        (e.g. a tracemalloc scope); ``None`` is a null context.
+    chi0_out, chi_out : ndarray, optional
+        Caller-owned complex128 ``(nmat, nvol, nd**2, nd**2)`` buffers,
+        overwritten in place and returned as ``chi0_c0`` / ``chi_c0``;
+        ``None`` allocates them.
+
+    Every module function is looked up at call time. Returns
+    :class:`SOBondFlexMap`."""
+    if not isinstance(plan, so_bond.SOBondPlan):
+        raise ValueError("so_bond_flex_map: plan must be a SOBondPlan (plan_so_bond), got {}"
+                         .format(type(plan).__name__))
+    if "flex_scf" not in plan.consumers:
+        raise ValueError("so_bond_flex_map: the plan needs the consumer flex_scf (closed "
+                         "consumers: {})".format(", ".join(plan.consumers)))
+    nmat, nvol, nd, nb = plan.nmat, plan.nvol, plan.nd, plan.nb
+    gshape = (1, nmat, nvol, nd, nd)
+    for name, g in (("green_kw", green_kw), ("green_scf", green_scf),
+                    ("green0_tail", green0_tail)):
+        if g is None and name == "green0_tail":
+            continue
+        if tuple(np.shape(g)) != gshape:
+            raise ValueError("so_bond_flex_map: {} must have shape {}, got {}".format(
+                name, gshape, tuple(np.shape(g))))
+    P = nd * nd
+    cshape = (nmat, nvol, P, P)
+    chi0_c0 = _check_buffer("chi0_out", chi0_out, cshape)
+    chi_c0 = _check_buffer("chi_out", chi_out, cshape)
+    if np.shares_memory(chi0_c0, chi_c0):
+        raise ValueError("so_bond_flex_map: chi0_out and chi_out share memory")
+    traced = _null_trace if trace is None else trace
+    shape = tuple(geom.spatial_shape)
+    dense = plan.layout == "dense"
+
+    with traced("bubble"):
+        so_bond.so_bond_bubble(green_scf, green0_tail, beta, geom, shape, plan=plan, freq="all",
+                               sink=store)
+
+    cond_min, s_min, s_max = math.inf, None, None
+    pole = None
+    l_static = nmat // 2
+    for l0 in range(0, nmat, nb):
+        l1 = min(l0 + nb, nmat)
+        diag = {}
+        with traced("dressing"):
+            X = store.get_freq_batch("chibar", l0, l1)
+            chi0_c0[l0:l1] = so_bond.channel0_block(X, nd=nd)
+            if l0 <= l_static < l1:
+                i = l_static - l0
+                static = X[i] if dense else so_bond.PackedArrays(
+                    X.sector_map, tuple(b[i] for b in X.blocks))
+                pole = so_bond.static_pole_indicator(static, gamma_b, shape)
+                del static
+            Y = so_bond.so_bond_dress(X, gamma_b, plan=plan, l0=l0, spatial_shape=shape,
+                                      cond_tol=cond_tol, diagnostics=diag)
+            chi_c0[l0:l1] = so_bond.channel0_block(Y, nd=nd)
+        with traced("w_conversion"):
+            Wb = so_bond.so_bond_w_batch(X, Y, gamma_b, plan=plan)
+            del Y
+            store.put_freq_batch("W", l0, l1, Wb)
+            del Wb, X
+        c = diag.get("cond_min")
+        if c is not None and c < cond_min:
+            cond_min = float(c)
+            s_min, s_max = diag.get("sigma_min_sector"), diag.get("sigma_max_sector")
+    if cond_tol is None or not math.isfinite(cond_min):
+        cond_min, s_min, s_max = float("nan"), None, None
+
+    with traced("transport"):
+        sigma = flex_bond.calc_self_energy_bond(store, green_kw, beta, geom, shape, nd, workers)
+    return SOBondFlexMap(sigma, chi0_c0, chi_c0, cond_min, s_min, s_max, pole)
