@@ -62,7 +62,8 @@ SO_OFFSITE_INFO = (
     "(crossing) part of these off-site rows is not included in the ring sum. "
     "The on-site and in-cell exchange is included. For an exact treatment of the "
     "off-site exchange use hwave_sc with [eliashberg] bond_channels = true "
-    "(frequency = \"static\").")
+    "(frequency = \"static\") or FLEX with [mode.param] "
+    "longitudinal_bond_channels = true.")
 
 
 def canonical_scheme_name(raw):
