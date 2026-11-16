@@ -2022,9 +2022,11 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
      - 偏極した一体ハミルトニアンでは general は例外
    * - ``enable_spin_orbital``
      - 拒否
-     - ``flex_hartree_fock = true``\ で受け付ける（オンサイトおよびセル内の相互作用のみ）
-     - 静的な\ ``hwave_sc``\ は\ ``chi0q_mode = "flex"``\ でこの出力を読みます。
-       :ref:`sc_spin_orbital`\ を参照
+     - ``flex_hartree_fock = true``\ で受け付ける（オンサイトおよびセル内の相互作用。
+       オフサイトの行は\ ``longitudinal_bond_channels = true``\ で受け付ける）
+     - 静的な\ ``hwave_sc``\ は\ ``longitudinal_bond_channels``\ を使わない計算の出力を
+       ``chi0q_mode = "flex"``\ で読みます（\ :ref:`sc_spin_orbital`\ を参照）。ボンドチャネル
+       付きの計算の出力はまだ読めません（\ :ref:`flex_so_bond_tutorial`\ を参照）
    * - 保存される感受率
      - 密度‐密度成分のみ\ ``chi_{(a,a),(b,b)}``
      - orbital-pair 全体

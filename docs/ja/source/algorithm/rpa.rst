@@ -677,12 +677,13 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 :math:`V(\mathbf{q})`\ だけでリング和に入ります。入力にオフサイトの行があると、
 スピン軌道 RPA は 1 回の計算につき 1 回、INFO レベルで次の行を記録します::
 
-   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static").
+   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static") or FLEX with [mode.param] longitudinal_bond_channels = true.
 
 ``<types>``\ は、オフサイトの行がゼロでない相互作用の種類を、並べ替えてコンマで
 区切ったリストです。\ ``PairHop``\ はこのリストには挙がりません。この行は FLEX
-（スピン軌道モードではオフサイトの行を拒否します）と、\ ``hwave_sc``\ が内部で実行する
-RPA では記録されません。
+（スピン軌道モードでは、\ ``longitudinal_bond_channels``\ なしではオフサイトの行を拒否し、
+ありではその交換を厳密に扱います。\ :ref:`flex_spin_orbital`\ を参照）と、\ ``hwave_sc``\ が
+内部で実行する RPA では記録されません。
 
 
 .. _flex_second_order_kernel:
@@ -1110,12 +1111,14 @@ SU(2) 対称な相互作用の場合だけです。一方\ :math:`\Gamma`\ は�
 この版の適用範囲:
 
 - ``flex_hartree_fock = true``\ の一般スキーム（このスイッチのその他の条件も適用）
-- オンサイトおよびセル内（\ :math:`\mathbf{R} = 0`\ ）の相互作用のみ（オフサイト
-  相互作用の交換交差は\ :math:`\mathbf{q}`\ のみの頂点では表せないため。オフサイトの
-  行は拒否されます）
+- ``longitudinal_bond_channels``\ なしでは、オンサイトおよびセル内
+  （\ :math:`\mathbf{R} = 0`\ ）の相互作用のみ（オフサイト相互作用の交換交差は
+  :math:`\mathbf{q}`\ のみの頂点では表せないため。オフサイトの行は拒否されます）。
+  ``longitudinal_bond_channels = true``\ ではオフサイトの行を受け付けます（下の
+  「ボンドチャネル」を参照）
 - \ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairLift``\ の
   係数の虚部は拒否されます
-- ``spinful_vertex_exchange = true``\ で、\ ``longitudinal_bond_channels``\ はなし
+- ``spinful_vertex_exchange = true``
 - ``sigma_init``\ ・\ ``trans_mod``\ ・\ ``green_init``\ はなし（計算は裸の
   Hartree-Fock 状態から始まります）
 - Extern 場を受け付けます。ファイルは物理軌道の添字で書き、バンドに
@@ -1124,10 +1127,40 @@ SU(2) 対称な相互作用の場合だけです。一方\ :math:`\Gamma`\ は�
   Zeeman 場です（\ :ref:`sc_spin_polarized`\ を参照）。
 
 reduced スキームはスピン軌道入力を拒否します。Eliashberg ソルバー
-（\ ``hwave_sc``\ ）は\ ``frequency = "static"``\ （\ :ref:`sc_spin_orbital`\ を参照）でも
-``frequency = "dynamic"``\ （\ :ref:`sc_spin_orbital_dynamic`\ を参照）でもスピン軌道
-FLEX の出力を読みます。動的なボンド分解の経路と\ ``run_eliashberg = true``\ の
+（\ ``hwave_sc``\ ）は、ボンドチャネルを使わない計算のスピン軌道 FLEX の出力を
+``frequency = "static"``\ （\ :ref:`sc_spin_orbital`\ を参照）でも
+``frequency = "dynamic"``\ （\ :ref:`sc_spin_orbital_dynamic`\ を参照）でも読みます。動的なボンド分解の経路と\ ``run_eliashberg = true``\ の
 ``hwave_tsweep``\ は引き続き\ ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
 ``warm_start = false``\ で実行できます（スピン軌道 FLEX は初期値を受け付けないため）。
+
+**ボンドチャネル。** ``longitudinal_bond_channels = true``\ では、1つのスピンフルな
+チャネルをスピン軌道 Eliashberg のボンド経路（\ :ref:`sc_so_bond_static`\ ）と同じ
+（スピン軌道の対）\ :math:`\times`\ （ボンド）基底の上で総和します。\ :math:`B`\ 個の
+ボンドチャネル\ :math:`m`\ （オンサイト点と、宣言されたすべてのオフサイトの変位。反転に
+ついて閉じています）で、スロットは\ ``ND = B n_d^2``\ 個です。ボンド頂点\ :math:`\Gamma_B`\ は、
+各行をそれ自身のボンドに置いた反対称化スピンフル頂点です。オフサイトの行の直接部分は
+:math:`\mathbf{q}`\ の関数としてオンサイトのチャネルに、交換交差はその変位のチャネルに
+入ります。ドレスした Green 関数から作ったボンド分解バブル\ :math:`\bar\chi_B(q, i\nu)`\ を
+すべてのボソン振動数で用いて、
+
+.. math::
+
+   \chi_B = \left[\hat{I} + \bar\chi_B\,\Gamma_B\right]^{-1} \bar\chi_B, \qquad
+   W = P_B\left[\Gamma_B\left(\chi_B - \tfrac{1}{2}\bar\chi_B\right)\Gamma_B\right]
+
+となり、自己エネルギーはスピン軌道インデックス上での\ :ref:`flex_bond_hf`\ のボンド輸送
+（\ :math:`W`\ の両端で内線にボンドの形状因子が付く）です。\ :math:`P_B`\ はオンサイトの
+経路の軌道の入れ替え\ :math:`P`\ を各ボンドチャネル内で行うもので、
+:math:`P_B[M]_{(m;\,x y),(m';\,z w)} = M_{(m;\,y x),(m';\,w z)}`\ です（チャネルの反転も
+位相もありません）。厳密な部分は、すべての行（オフサイトの行と複素数の\ ``PairHop``\ を
+含む）の\ :math:`\Sigma_{\rm HF}[G]`\ 、すべての行の直接・交換の2次
+（\ :math:`\tfrac{1}{2}\Gamma_B\bar\chi_B\Gamma_B`\ の項）、それより高次ではボンド分解した
+スピンフルチャネルの ring 級数です。\ :math:`B = 1`\ ではオンサイトのスピン軌道 FLEX に
+なり、SU(2) 極限では\ :ref:`flex_bond_hf`\ の非スピン軌道のボンド FLEX を再現します
+（自己エネルギーはスピンの単位行列との積になり、感受率はその電荷・縦スピン・横スピンの
+チャネルに射影されます）。計算、キー、メモリ、出力は\ :ref:`flex_so_bond_tutorial`\ に
+まとめています。この版では CPU で動作し、\ ``chi0q``\ /\ ``chiq``\ を最後の写像のチャネル 0
+ブロックとして書き出し、ボンドアーカイブは書き出しません。\ ``hwave_sc``\ はその出力を
+まだ読めません。
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

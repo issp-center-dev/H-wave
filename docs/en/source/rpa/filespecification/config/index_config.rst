@@ -81,20 +81,34 @@ that has no effect under the current settings.
   (see :ref:`flex_spin_orbital`). Requirements and limitations of this
   version:
 
-  - on-site and in-cell (``R = 0``) interactions only (an off-site
-    declaration is refused);
+  - without ``longitudinal_bond_channels``: on-site and in-cell (``R = 0``)
+    interactions only (an off-site declaration is refused);
+  - ``longitudinal_bond_channels = true`` is supported: off-site rows of
+    every type are accepted (a complex coefficient on ``PairHop`` only) and
+    their exchange is resolved exactly on the bond channels. It runs on the
+    CPU (``gpu = true`` is ignored with a WARNING; ``gpu_required = true``
+    and ``longitudinal_bond_store = "device"`` are refused), writes no bond
+    archive (``longitudinal_bond_output_full = true`` and
+    ``longitudinal_bond_output_layout`` are refused), takes no in-process
+    pairing (``longitudinal_bond_pairing`` must be ``"none"``) and guards
+    every frequency (``longitudinal_bond_guard_freqs = "static"`` is
+    refused); ``so_bond_layout`` selects the layout and
+    ``longitudinal_bond_memory_cap_gb`` has the spin-orbital meaning; see
+    :ref:`flex_so_bond_tutorial`;
   - ``spinful_vertex_exchange`` must stay ``true`` (the default);
-  - ``longitudinal_bond_channels`` is not supported;
   - no seed: ``sigma_init``, ``trans_mod`` and ``green_init`` are refused,
     and the run starts from the bare Hartree-Fock state;
   - the other conditions of ``flex_hartree_fock`` apply (uniform Matsubara
-    grid, no sublattice, no external field, even ``Nmat``);
+    grid, no sublattice, even ``Nmat``); an Extern field is accepted (in the
+    physical orbital indices, scaled by ``coeff_extern``);
   - ``calc_scheme = "reduced"`` refuses spin-orbital input;
-  - the static Eliashberg solver (``hwave_sc``) reads the outputs of such a
-    run with ``[eliashberg] chi0q_mode = "flex"`` (write ``[file.output]
-    chiq``, ``chi0q`` and ``green``); see :ref:`sc_spin_orbital`. The
-    on-site dynamic solver (``frequency = "dynamic"``) reads them too (see
-    :ref:`sc_spin_orbital_dynamic`); the dynamic bond path and
+  - the static Eliashberg solver (``hwave_sc``) reads the outputs of a run
+    without ``longitudinal_bond_channels`` with ``[eliashberg] chi0q_mode =
+    "flex"`` (write ``[file.output] chiq``, ``chi0q`` and ``green``); see
+    :ref:`sc_spin_orbital`. The on-site dynamic solver (``frequency =
+    "dynamic"``) reads them too (see :ref:`sc_spin_orbital_dynamic`). The
+    outputs of a run with ``longitudinal_bond_channels = true`` are not read
+    yet (a later version adds the bond archive). The dynamic bond path and
     ``hwave_tsweep`` with ``run_eliashberg = true`` still refuse
     ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
     ``warm_start = false``.
@@ -361,7 +375,10 @@ that has no effect under the current settings.
   not SU(2) symmetric; requires ``flex_hartree_fock = true``,
   ``calc_scheme = "general"``, a spin-free system, the uniform Matsubara
   grid, no sublattice and an even ``Nmat``; see
-  :ref:`flex_bond_hf`). With ``longitudinal_bond_channels = true``
+  :ref:`flex_bond_hf`; with ``enable_spin_orbital = true`` it selects the
+  spin-orbital FLEX with bond channels of :ref:`flex_so_bond_tutorial`,
+  where the GPU, the archive and pairing options below are not available).
+  With ``longitudinal_bond_channels = true``
   (which requires ``flex_hartree_fock = true``) and ``gpu = true``,
   the dressing, the effective interaction and the self-energy
   transport run on the GPU (CuPy); the bond arrays stay in host memory
@@ -402,6 +419,11 @@ that has no effect under the current settings.
   The refusal message reports the estimate and the shapes behind it; on
   a machine with enough physical memory, raise the cap to proceed.
   Ignored with a warning unless ``longitudinal_bond_channels = true``.
+  With ``enable_spin_orbital = true`` (FLEX) the key has the spin-orbital
+  meaning instead: unset is ``0.8`` times the available host memory, a
+  positive value is that many GiB, ``0`` disables the check (with a
+  WARNING), and a negative or non-finite value is refused; see
+  :ref:`flex_so_bond_tutorial`.
 
 - ``longitudinal_bond_guard_freqs``
 
@@ -686,7 +708,7 @@ that has no effect under the current settings.
   true``, the spin-orbital FLEX described under that key), the uniform
   Matsubara grid
   (``matsubara_basis = "ir"`` is refused), no sublattice, no external
-  field and an even ``Nmat``. An off-site ``Exchange`` or ``PairHop`` is refused on its
+  field (accepted in spin-orbital mode) and an even ``Nmat``. An off-site ``Exchange`` or ``PairHop`` is refused on its
   own (it has no Hartree content, so its first order would enter without
   any higher order); it is accepted together with
   ``longitudinal_bond_channels = true``. ``gpu = true`` is accepted: on its own
@@ -799,7 +821,24 @@ that has no effect under the current settings.
   the host cap always, and the free device memory measured when the
   bond solve starts when ``gpu = true`` -- and refused when it exceeds
   either. Ignored with a warning unless
-  ``longitudinal_bond_channels = true``.
+  ``longitudinal_bond_channels = true``. With ``enable_spin_orbital =
+  true`` the automatic batch is the largest of 16, 8, 4, 2, 1 (not above
+  ``Nmat``) that fits the cap.
+
+- ``so_bond_layout``
+
+  **Type :**
+  String (default value is ``"auto"``; FLEX mode only)
+
+  **Description :**
+  The layout of the bond objects of the spin-orbital FLEX with bond
+  channels (``enable_spin_orbital = true`` and
+  ``longitudinal_bond_channels = true``): ``"auto"`` stores them in the
+  :math:`S_z`-packed layout when the input conserves :math:`S_z` and dense
+  otherwise; ``"dense"`` forces the dense layout. ``"sz_packed"`` cannot be
+  forced; any other value is refused. Read case-insensitively. Set without
+  both switches, the key is ignored with a WARNING. See
+  :ref:`flex_so_bond_tutorial`.
 
 - ``flex_second_order``
 

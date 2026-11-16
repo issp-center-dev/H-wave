@@ -2170,9 +2170,12 @@ was checked by running the combination.
      - general raises for a polarized one-body Hamiltonian
    * - ``enable_spin_orbital``
      - rejected
-     - accepted with ``flex_hartree_fock = true`` (on-site and in-cell interactions only)
-     - the static ``hwave_sc`` reads this output with ``chi0q_mode = "flex"``;
-       see :ref:`sc_spin_orbital`
+     - accepted with ``flex_hartree_fock = true`` (on-site and in-cell
+       interactions; off-site rows with ``longitudinal_bond_channels = true``)
+     - the static ``hwave_sc`` reads the output of a run without
+       ``longitudinal_bond_channels`` with ``chi0q_mode = "flex"`` (see
+       :ref:`sc_spin_orbital`); the outputs of a run with bond channels are
+       not read yet (see :ref:`flex_so_bond_tutorial`)
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
      - full orbital-pair

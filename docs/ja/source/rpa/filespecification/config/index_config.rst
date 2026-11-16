@@ -69,19 +69,32 @@ TOML形式
   Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点による1つのチャネルで
   総和されます（:ref:`flex_spin_orbital`\ を参照）。この版での要件と制限:
 
-  - オンサイトおよびセル内（\ ``R = 0``\ ）の相互作用のみ（オフサイトの宣言は拒否されます）
+  - ``longitudinal_bond_channels``\ なしでは、オンサイトおよびセル内（\ ``R = 0``\ ）の
+    相互作用のみ（オフサイトの宣言は拒否されます）
+  - ``longitudinal_bond_channels = true``\ に対応しています。すべての型のオフサイトの行を
+    受け付け（複素数の係数は\ ``PairHop``\ のみ）、その交換をボンドチャネルの上で厳密に
+    扱います。CPU で動作し（\ ``gpu = true``\ は WARNING 付きで無視、\ ``gpu_required =
+    true``\ と\ ``longitudinal_bond_store = "device"``\ は拒否）、ボンドアーカイブは
+    書き出さず（\ ``longitudinal_bond_output_full = true``\ と
+    ``longitudinal_bond_output_layout``\ は拒否）、プロセス内のペアリングは行わず
+    （\ ``longitudinal_bond_pairing``\ は\ ``"none"``\ のみ）、すべての振動数を検査します
+    （\ ``longitudinal_bond_guard_freqs = "static"``\ は拒否）。\ ``so_bond_layout``\ が
+    レイアウトを選び、\ ``longitudinal_bond_memory_cap_gb``\ はスピン軌道での意味を
+    持ちます。\ :ref:`flex_so_bond_tutorial`\ を参照
   - ``spinful_vertex_exchange``\ は\ ``true``\ （デフォルト）のままにする必要があります
-  - ``longitudinal_bond_channels``\ には対応していません
   - 初期値の指定はできません。\ ``sigma_init``\ ・\ ``trans_mod``\ ・
     ``green_init``\ は拒否され、計算は裸の Hartree-Fock 状態から始まります
-  - ``flex_hartree_fock``\ のその他の条件（一様松原格子、副格子なし、外場なし、
-    偶数の\ ``Nmat``\ ）も適用されます
+  - ``flex_hartree_fock``\ のその他の条件（一様松原格子、副格子なし、偶数の
+    ``Nmat``\ ）も適用されます。Extern 場は受け付けます（物理軌道インデックスで書き、
+    ``coeff_extern``\ 倍されます）
   - ``calc_scheme = "reduced"``\ はスピン軌道入力を拒否します
-  - 静的な Eliashberg ソルバー（\ ``hwave_sc``\ ）は\ ``[eliashberg] chi0q_mode =
-    "flex"``\ でこの計算の出力を読みます（\ ``[file.output]``\ の\ ``chiq``\ ・
-    ``chi0q``\ ・\ ``green``\ を指定してください）。\ :ref:`sc_spin_orbital`\ を参照。
-    オンサイトの動的ソルバー（\ ``frequency = "dynamic"``\ ）もこれを読みます
-    （\ :ref:`sc_spin_orbital_dynamic`\ を参照）。動的なボンド分解の経路と
+  - 静的な Eliashberg ソルバー（\ ``hwave_sc``\ ）は、\ ``longitudinal_bond_channels``\ を
+    使わない計算の出力を\ ``[eliashberg] chi0q_mode = "flex"``\ で読みます
+    （\ ``[file.output]``\ の\ ``chiq``\ ・\ ``chi0q``\ ・\ ``green``\ を指定してください）。
+    :ref:`sc_spin_orbital`\ を参照。オンサイトの動的ソルバー（\ ``frequency =
+    "dynamic"``\ ）もこれを読みます（\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
+    ``longitudinal_bond_channels = true``\ の計算の出力はまだ読めません（後の版で
+    ボンドアーカイブが加わります）。動的なボンド分解の経路と
     ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
     ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
     ``warm_start = false``\ で実行できます。
@@ -301,7 +314,9 @@ TOML形式
   スピン部分が SU(2) 対称でない場合は警告が出力されます。
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
   スピンフリー系・一様松原格子・副格子なし・偶数の\ ``Nmat``
-  が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\
+  が必要。:ref:`flex_bond_hf`\ を参照。\ ``enable_spin_orbital = true``\ では
+  :ref:`flex_so_bond_tutorial`\ のボンドチャネル付きスピン軌道 FLEX を選び、そこでは
+  以下の GPU・アーカイブ・ペアリングのオプションは使えません）。\ ``longitudinal_bond_channels = true``\
   （\ ``flex_hartree_fock = true``\ が前提）かつ\ ``gpu = true``\ の場合、
   ドレッシング・有効相互作用・自己エネルギーの転送が GPU（CuPy）上で
   実行されます。ボンド配列はホストメモリに置かれ、振動数バッチを1つずつ
@@ -338,6 +353,10 @@ TOML形式
   その根拠となる配列形状が示されるので、物理メモリに余裕がある計算機では
   上限を引き上げて実行してください。\ ``longitudinal_bond_channels = true``
   でない場合は警告付きで無視されます。
+  ``enable_spin_orbital = true``\ （FLEX）ではスピン軌道での意味を持ちます。未指定は
+  利用可能なホストメモリの\ ``0.8``\ 倍、正の値はその GiB 数、\ ``0``\ は判定を無効に
+  し（WARNING 付き）、負または有限でない値は拒否されます。
+  :ref:`flex_so_bond_tutorial`\ を参照してください。
 
 - ``longitudinal_bond_guard_freqs``
 
@@ -606,7 +625,7 @@ TOML形式
   ドレスドグリーン関数から再計算。:ref:`flex_bond_hf`\ を参照）。
   スピンフリー系での\ ``calc_scheme = "general"``\ （\ ``enable_spin_orbital =
   true``\ の場合は、そのキーの項で説明するスピン軌道 FLEX）、一様松原格子
-  （``matsubara_basis = "ir"``\ は拒否）、副格子なし、外場なし、
+  （``matsubara_basis = "ir"``\ は拒否）、副格子なし、外場なし（スピン軌道モードでは受け付けます）、
   偶数の\ ``Nmat``\ が必要です。オフサイトの\ ``Exchange``\ や\ ``PairHop``\ は単独では拒否されます
   （Hartree 成分がないため、その1次だけが高次なしに入ることになるため）。
   ``longitudinal_bond_channels = true``\ と併用する場合は受け付けられます。
@@ -713,6 +732,21 @@ TOML形式
   解法の開始時に計測されるデバイスの空きメモリも対象になり、
   いずれかを超えると拒否されます）。
   ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
+  ``enable_spin_orbital = true``\ では、自動のバッチは 16、8、4、2、1 のうち
+  （\ ``Nmat``\ を超えない範囲で）上限に収まる最大の値です。
+
+- ``so_bond_layout``
+
+  **形式 :** str型 (デフォルトは\ ``"auto"``\ 。FLEXモードのみ)
+
+  **説明 :**
+  ボンドチャネル付きスピン軌道 FLEX（\ ``enable_spin_orbital = true``\ かつ
+  ``longitudinal_bond_channels = true``\ ）のボンドの量のレイアウトです。\ ``"auto"``\ は
+  入力が\ :math:`S_z`\ を保存するときは\ :math:`S_z`\ でパックしたレイアウト、それ以外は
+  密なレイアウトを使います。\ ``"dense"``\ は密なレイアウトを強制します。\ ``"sz_packed"``\ は
+  強制できず、その他の値は拒否されます。大文字・小文字は区別しません。2つのスイッチが
+  そろっていないときに指定すると、WARNING 付きで無視されます。
+  :ref:`flex_so_bond_tutorial`\ を参照してください。
 
 - ``flex_second_order``
 
