@@ -316,6 +316,14 @@ HEAVY_TESTS = (
      "converged test (0.79 s macOS numpy 1.26.4, 0.45 s numpy 2.4.6, about "
      "2.1 s projected on Linux at x2.7); the one-map smoke "
      "TestCrossPathB1.test_one_map stays in the fast gate"),
+    # --- tests/test_flex_so_bond_layouts.py -- #270 spin-orbital bond FLEX layouts --
+    ("test_flex_so_bond_layouts", "TestConverged", "test_layouts_agree",
+     "gate C1b-PD converged: two converged spin-orbital bond FLEX solves of "
+     "ZEEMAN_SZ_ALL (S_z-packed and so_bond_layout = dense, 23 iterations each) "
+     "agree on Sigma, G, mu and NCond; heavy by design as a multi-iteration "
+     "converged test (1.22 s macOS numpy 1.26.4, 0.91 s numpy 2.4.6, about "
+     "3.3 s projected on Linux at x2.7); the one-map smoke "
+     "TestOneMap.test_layouts_agree stays in the fast gate"),
     # --- tests/test_flex_spin_orbital_ed.py -- #83 spin-orbital FLEX --
     ("test_flex_spin_orbital_ed", "TestSecondOrderWithSOC",
      "test_every_type",
