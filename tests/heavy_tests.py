@@ -313,25 +313,25 @@ HEAVY_TESTS = (
      "gate C1b-B1 converged: four converged spin-orbital FLEX solves (bond "
      "gate on and off, SOC_ONSITE dense and ZEEMAN_EXTERN_ONSITE packed, B = 1) "
      "agree on Sigma, G, mu and NCond; heavy by design as a multi-iteration "
-     "converged test (0.79 s macOS numpy 1.26.4, 0.45 s numpy 2.4.6, about "
-     "2.1 s projected on Linux at x2.7); the one-map smoke "
+     "converged test (0.77 s macOS numpy 1.26.4, 0.50 s with one BLAS thread, "
+     "0.43 s numpy 2.4.6, about 2.1 s projected on Linux at x2.7); the one-map smoke "
      "TestCrossPathB1.test_one_map stays in the fast gate"),
     # --- tests/test_flex_so_bond_layouts.py -- #270 spin-orbital bond FLEX layouts --
     ("test_flex_so_bond_layouts", "TestConverged", "test_layouts_agree",
      "gate C1b-PD converged: two converged spin-orbital bond FLEX solves of "
      "ZEEMAN_SZ_ALL (S_z-packed and so_bond_layout = dense, 23 iterations each) "
      "agree on Sigma, G, mu and NCond; heavy by design as a multi-iteration "
-     "converged test (1.22 s macOS numpy 1.26.4, 0.91 s numpy 2.4.6, about "
-     "3.3 s projected on Linux at x2.7); the one-map smoke "
+     "converged test (1.20 s macOS numpy 1.26.4, 0.58 s with one BLAS thread, "
+     "0.62 s numpy 2.4.6, about 3.2 s projected on Linux at x2.7); the one-map smoke "
      "TestOneMap.test_layouts_agree stays in the fast gate"),
     # --- tests/test_flex_so_bond_su2.py -- #270 spin-orbital bond FLEX, SU(2) limit --
     ("test_flex_so_bond_su2", "TestConverged", "test_fixed_points",
      "gate C1b-SU2 (iii): three converged bond FLEX solves of SU2_4X4 "
      "(non-spin-orbital, spin-orbital S_z-packed and dense, 19 iterations each) "
      "agree on Sigma and G (both spin blocks, off-spin blocks zero), mu and "
-     "NCond; heavy by design as a multi-iteration converged test (1.08 s macOS "
-     "numpy 1.26.4, 0.56 s numpy 2.4.6, about 2.9 s projected on Linux at "
-     "x2.7); the one-map smoke TestEntrySU2.test_full_map stays in the fast gate"),
+     "NCond; heavy by design as a multi-iteration converged test (1.15 s macOS "
+     "numpy 1.26.4, 0.55 s with one BLAS thread, 0.59 s numpy 2.4.6, about "
+     "3.1 s projected on Linux at x2.7); the one-map smoke TestEntrySU2.test_full_map stays in the fast gate"),
     # --- tests/test_flex_spin_orbital_ed.py -- #83 spin-orbital FLEX --
     ("test_flex_spin_orbital_ed", "TestSecondOrderWithSOC",
      "test_every_type",
