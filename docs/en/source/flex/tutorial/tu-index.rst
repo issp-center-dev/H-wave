@@ -1193,7 +1193,7 @@ The refusals name the setting and the reason. With the head
 - ``longitudinal_bond_pairing`` other than ``"none"``: ``<head> does not run
   the in-process pairing in this version (it arrives in a later version);
   remove longitudinal_bond_pairing.``;
-- ``longitudinal_bond_store = "device"`` (with ``gpu = true``): ``<head>
+- ``longitudinal_bond_store = "device"`` (with or without ``gpu = true``): ``<head>
   runs on the host only in this version (the device store arrives in a later
   version); set longitudinal_bond_store = "host" or "auto", or remove it.``;
 - ``gpu_required = true``: ``<head> runs on the host only in this version

@@ -1091,7 +1091,7 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
 - ``"none"``\ 以外の\ ``longitudinal_bond_pairing``\ : ``<head> does not run
   the in-process pairing in this version (it arrives in a later version);
   remove longitudinal_bond_pairing.``
-- ``longitudinal_bond_store = "device"``\ （\ ``gpu = true``\ と併用）:
+- ``longitudinal_bond_store = "device"``\ （\ ``gpu = true``\ の有無によらない）:
   ``<head> runs on the host only in this version (the device store arrives in
   a later version); set longitudinal_bond_store = "host" or "auto", or remove
   it.``
