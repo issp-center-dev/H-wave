@@ -28,7 +28,7 @@ the non-spin-orbital charge and spin susceptibilities. Staged (R13):
   is invisible); the same one map with two physical orbitals
   (``SU2_MIXED_6``, :class:`TestEntrySU2Norb2`), where a broken ``P_B``
   misses at the entry.
-* :class:`TestConverged` -- (iii) the converged fixed points (heavy; its
+* :class:`TestConverged` -- (iii) the converged fixed points (its
   fast smoke is :meth:`TestEntrySU2.test_full_map`).
 
 Both fixtures carry off-site Exchange and PairHop, so the non-spin-orbital
@@ -46,7 +46,6 @@ import numpy as np
 
 from tests import so_bond_entry_fixtures as F
 from tests import so_bond_flex_fixtures as X
-from tests.heavy_tests import heavy
 from tests.so_bond_oracles import CELL, rel
 
 #: the gate tolerance of the one-map and array comparisons
@@ -680,10 +679,9 @@ class TestEntrySU2Norb2(unittest.TestCase):
 
 
 class TestConverged(unittest.TestCase):
-    """C1b-SU2 (iii): the converged fixed points (heavy; fast smoke
+    """C1b-SU2 (iii): the converged fixed points (fast smoke
     :meth:`TestEntrySU2.test_full_map`)."""
 
-    @heavy
     def test_fixed_points(self):
         n = _converge(FX, so=False)
         _nonso_checks(self, n)

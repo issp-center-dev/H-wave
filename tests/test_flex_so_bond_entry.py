@@ -35,7 +35,6 @@ import numpy as np
 
 from tests import so_bond_entry_fixtures as F
 from tests import so_bond_flex_fixtures as X
-from tests.heavy_tests import heavy
 from tests.so_bond_oracles import build_h1, build_terms, free_density, rel, wick_hf_sigma_k
 
 #: the array tolerance of the one-map gates (C1b-M (c), C1b-B1)
@@ -401,7 +400,6 @@ class TestCrossPathB1(unittest.TestCase):
                 self.assertTrue(np.isfinite(miss))
                 self.assertGreaterEqual(miss, MISS)
 
-    @heavy
     def test_converged(self):
         for fx, _ in B1_FIXTURES:
             with self.subTest(fixture=fx.name):

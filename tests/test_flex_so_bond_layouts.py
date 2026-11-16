@@ -8,7 +8,7 @@ type on- and off-site, a complex off-site PairHop).
   the two runs really use different layouts (the layout reason lines and
   the store types of ``so_bond.open_store``); the compared content is
   off-site and spin polarized; a broken packed dressing misses.
-* :class:`TestConverged` -- the converged states (heavy; its fast smoke is
+* :class:`TestConverged` -- the converged states (its fast smoke is
   :class:`TestOneMap`): Sigma, G, mu, NCond within ``max(10 eps, 1e-8)``.
 
 Mutations patch module attributes looked up at call time; every reference
@@ -20,7 +20,6 @@ from unittest import mock
 import numpy as np
 
 from tests import so_bond_flex_fixtures as X
-from tests.heavy_tests import heavy
 from tests.so_bond_oracles import rel
 
 #: the array tolerance of the one-map gate
@@ -151,9 +150,8 @@ class TestOneMap(unittest.TestCase):
 
 
 class TestConverged(unittest.TestCase):
-    """C1b-PD, converged states (heavy; fast smoke :class:`TestOneMap`)."""
+    """C1b-PD, converged states (fast smoke :class:`TestOneMap`)."""
 
-    @heavy
     def test_layouts_agree(self):
         p = X.converge(FX)
         d = X.converge(FX, param=DENSE)
