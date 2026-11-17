@@ -284,6 +284,121 @@ def so_bond_flex_map(store, gamma_b, green_kw, green_scf, green0_tail, beta, geo
 
 
 # ---------------------------------------------------------------------------
+# The susceptibility pass of the bond archive
+# ---------------------------------------------------------------------------
+
+class SOBondArchivePass(NamedTuple):
+    """The result of :func:`so_bond_archive_pass`.
+
+    Fields
+    ------
+    cond_min : float
+        The smallest conditioning score of the dressing guard over the
+        pass; ``nan`` when the guard is off (``cond_tol = None``).
+    pole : tuple
+        :func:`hwave.solver.so_bond.static_pole_indicator` of the ``nu =
+        0`` slice of ``chibar_B`` of the final Green function: ``(entry,
+        per_sector, worst)``.
+    """
+
+    cond_min: float
+    pole: tuple
+
+
+def so_bond_archive_pass(store, gamma_b, green_scf, green0_tail, beta, geom, *, plan, cond_tol,
+                         trace=None):
+    """The susceptibility ``chi_B`` of the final Green function, written over
+    the store slot ``chibar`` (the bond archive's ``chi_w``).
+
+    The kernels and arguments are those of :func:`so_bond_flex_map`, without
+    the W conversion and the transport:
+
+    * bubble (phase ``archive_bubble``): ``chibar_B`` of ``green_scf`` with
+      its tail ``green0_tail`` on every bosonic slice into the slot
+      ``chibar`` (:func:`hwave.solver.so_bond.so_bond_bubble`);
+    * per frequency batch ``[l0, l1)`` of ``plan.nb`` slices (phase
+      ``archive_dressing``): the static pole indicator of the ``nu = 0``
+      slice (``l = nmat // 2``) before that batch is dressed, the dressing
+      ``chi_B = [1 + chibar_B Gamma_B]^{-1} chibar_B``
+      (:func:`hwave.solver.so_bond.so_bond_dress` with ``cond_tol``), and
+      ``chi_B`` put over the batch of ``chibar`` once it is complete.
+
+    Parameters
+    ----------
+    store : the block store of ``plan`` (:func:`hwave.solver.so_bond.open_store`)
+    gamma_b : the vertex ``Gamma_B`` in the plan's layout.
+    green_scf : ndarray (1, nmat, nvol, nd, nd)
+        The final Green function with its tail subtracted (or the Green
+        function itself without a tail); ``green0_tail`` its tail (same
+        shape) or ``None``.
+    beta : float
+    geom : hwave.solver.so_bond.BondSlotGeometry
+    plan : SOBondPlan
+        A plan with the consumer ``flex_scf`` built with ``keep_chi = True``
+        (its archive rows).
+    cond_tol : float or None
+        The conditioning guard of the dressing (``None`` disables it); a
+        refusal (:class:`hwave.solver.bond_channels.BondConditioningError`)
+        propagates.
+    trace : callable, optional
+        ``trace(phase)`` returns a context manager entered around each
+        phase; ``None`` is a null context.
+
+    Every module function is looked up at call time. Returns
+    :class:`SOBondArchivePass`."""
+    if not isinstance(plan, so_bond.SOBondPlan):
+        raise ValueError("so_bond_archive_pass: plan must be a SOBondPlan (plan_so_bond), got {}"
+                         .format(type(plan).__name__))
+    if "flex_scf" not in plan.consumers:
+        raise ValueError("so_bond_archive_pass: the plan needs the consumer flex_scf (closed "
+                         "consumers: {})".format(", ".join(plan.consumers)))
+    if not plan.keep_chi:
+        raise ValueError("so_bond_archive_pass: the plan must be built with keep_chi = True "
+                         "(plan_so_bond(..., keep_chi=True))")
+    nmat, nvol, nd, nb = plan.nmat, plan.nvol, plan.nd, plan.nb
+    gshape = (1, nmat, nvol, nd, nd)
+    for name, g in (("green_scf", green_scf), ("green0_tail", green0_tail)):
+        if g is None and name == "green0_tail":
+            continue
+        if tuple(np.shape(g)) != gshape:
+            raise ValueError("so_bond_archive_pass: {} must have shape {}, got {}".format(
+                name, gshape, tuple(np.shape(g))))
+    traced = _null_trace if trace is None else trace
+    shape = tuple(geom.spatial_shape)
+    dense = plan.layout == "dense"
+
+    with traced("archive_bubble"):
+        so_bond.so_bond_bubble(green_scf, green0_tail, beta, geom, shape, plan=plan, freq="all",
+                               sink=store)
+
+    cond_min = math.inf
+    pole = None
+    l_static = nmat // 2
+    for l0 in range(0, nmat, nb):
+        l1 = min(l0 + nb, nmat)
+        diag = {}
+        with traced("archive_dressing"):
+            X = store.get_freq_batch("chibar", l0, l1)
+            if l0 <= l_static < l1:
+                i = l_static - l0
+                static = X[i] if dense else so_bond.PackedArrays(
+                    X.sector_map, tuple(b[i] for b in X.blocks))
+                pole = so_bond.static_pole_indicator(static, gamma_b, shape)
+                del static
+            Y = so_bond.so_bond_dress(X, gamma_b, plan=plan, l0=l0, spatial_shape=shape,
+                                      cond_tol=cond_tol, diagnostics=diag)
+            del X
+            store.put_freq_batch("chibar", l0, l1, Y)
+            del Y
+        c = diag.get("cond_min")
+        if c is not None and c < cond_min:
+            cond_min = float(c)
+    if cond_tol is None or not math.isfinite(cond_min):
+        cond_min = float("nan")
+    return SOBondArchivePass(cond_min, pole)
+
+
+# ---------------------------------------------------------------------------
 # The admission of the spin-orbital bond FLEX
 # ---------------------------------------------------------------------------
 
