@@ -3369,6 +3369,9 @@ class FLEX(RPA):
             exc.args = ((str(exc) + FLEX._SO_BOND_COND_REMEDY
                          + so_bond_archive.T_PASS_REFUSAL_NOTE),) + exc.args[1:]
             raise
+        if self.longitudinal_bond_cond_tol is not None:
+            logger.info(so_bond_archive.T_PASS_GUARDS.format(
+                cond=res.cond_min, tol=self.longitudinal_bond_cond_tol))
         report = bond_channels.check_rpa_pole(
             {"spinful": res.pole[0]}, where=FLEX._SO_ARCHIVE_POLE_WHERE,
             consequence=FLEX._SO_ARCHIVE_POLE_CONSEQUENCE, log=logger, info=True)
@@ -6119,6 +6122,13 @@ class FLEX(RPA):
                 # the spin-orbital bond run writes to the validated path
                 np.savez(_paths["green"], **green_members)
                 logger.info("save_results: save green in file {}".format(_paths["green"]))
+                # an earlier archive naming this green file is left in place
+                # (never removed): say so once
+                from hwave.solver import flex_bond, so_bond_archive
+                so_bond_archive.warn_stale_index(
+                    flex_bond.resolve_output_paths(info_outputfile, path_to_output,
+                                                   ("longitudinal_bond",))["longitudinal_bond"],
+                    _paths["green"], logger)
             else:
                 np.savez(file_name, **green_members)
                 logger.info("save_results: save green in file {}".format(file_name))

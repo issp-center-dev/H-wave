@@ -326,7 +326,8 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
             raise ValueError(
                 "bond archive {}: this is a spin-orbital bond archive (written by the "
                 "spin-orbital FLEX with bond channels); the non-spin-orbital bond consumers "
-                "cannot read it, and no consumer of it exists in this version.".format(path))
+                "cannot read it, and hwave_sc does not read it in this version (read it with "
+                "hwave.solver.so_bond_archive.load_so_bond_archive).".format(path))
         if schema == 1 or "S_bond" not in files:
             raise ValueError(
                 "bond archive {}: schema {} was written by a version without the bond vertices S and C; "

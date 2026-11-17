@@ -44,11 +44,11 @@ class ArchiveInputs(NamedTuple):
     run: dict = None
 
 
-def _interaction():
+def _interaction(v=1.0):
     r = np.zeros(1, dtype=RECORD_DTYPE)
     r[0]["type"] = "CoulombIntra"
     r[0]["modes"] = (0, 1, 1, 0)
-    r[0]["v"] = 1.0
+    r[0]["v"] = v
     return fp.interaction_inputs(types.SimpleNamespace(
         records=r, declared_topology=np.zeros((1, 3), np.int64)))
 
@@ -81,10 +81,13 @@ def wavevector_index(cell):
 
 def archive_inputs(*, block_layout="dense", B=3, norb_phys=1, cell=(4, 1, 1), nmat=4,
                    seed=0, chibar=False, green_file="green.npz", beta=2.0,
-                   scf_converged=True, chi_fill=None):
+                   scf_converged=True, chi_fill=None, prov_overrides=None):
     """The writer inputs of a synthetic case (see the module docstring).
     ``chi_fill`` (a number, dense layout only) fills ``chi_w`` with that
-    value instead of random entries (a large array built fast)."""
+    value instead of random entries (a large array built fast).
+    ``prov_overrides`` replaces keyword arguments of the archive's
+    ``fingerprint.so_provenance_members`` call only (``transfer``,
+    ``interaction``, ``bond``, ...); ``run`` stays the case's."""
     rng = np.random.default_rng(seed)
     nd = 2 * norb_phys
     cell = tuple(int(n) for n in cell)
@@ -97,11 +100,13 @@ def archive_inputs(*, block_layout="dense", B=3, norb_phys=1, cell=(4, 1, 1), nm
     state = fp.so_state(beta=beta, nmat=nmat, mu=-0.3, density=0.8, calc_mu=True,
                         target=0.8)
     transfer = {((0, 0, 0), (0, 0)): -1.0 + 0j}
-    prov = fp.so_provenance_members(
+    prov_kw = dict(
         producer_stage="flex_so_bond", producer_label=LABEL,
         transfer=transfer, extern=None, meta=meta,
         fp_green=fp.green_digest(green, fp.GREEN_LAYOUT), state=state,
         interaction=_interaction(), bond=bond)
+    prov_kw.update(prov_overrides or {})
+    prov = fp.so_provenance_members(**prov_kw)
     run = dict(run_band=fp.band_inputs(transfer, None, meta), run_state=state,
                run_interaction=_interaction(), run_bond=bond)
     if chi_fill is None:

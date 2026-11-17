@@ -509,8 +509,9 @@ class TestOldSidecars(_Dir):
                 self.assert_valid(path)
 
     def test_candidate_matrix(self):
-        """The other ``*.npz`` files in the directory: a hidden partial
-        temporary is skipped; a candidate is an index only with a 0-d
+        """The other ``*.npz`` files in the directory: a partial temporary
+        of the writers' exact temporary name is skipped, any other hidden
+        name is a candidate; a candidate is an index only with a 0-d
         integer ``bond_archive_schema == 4``; an unreadable or malformed
         candidate keeps every old name and is named in ``kept by``; a valid
         index keeps the names it carries."""
@@ -532,8 +533,20 @@ class TestOldSidecars(_Dir):
                 return name
             return make
 
+        def hidden(name):
+            def make(d, old):
+                np.savez(os.path.join(d, name), bond_archive_schema=np.int64(4),
+                         **{"chi_w@0_file": np.str_(old[0])})
+                return name
+            return make
+
         rows = [
-            ("hidden_tmp", raw(".x.1-ab.tmp.npz", b"PK\x03\x04partial"), "removed"),
+            ("hidden_tmp", raw(".x.1-abcdef01.tmp.npz", b"PK\x03\x04partial"), "removed"),
+            ("hidden_tmp_long_pid", raw(".lb.123456-0123abcd.tmp.npz", b"PK\x03\x04"),
+             "removed"),
+            ("hidden_not_tmp", raw(".x.1-ab.tmp.npz", b"PK\x03\x04partial"), "all"),
+            ("hidden_junk", raw(".backup.npz", b"not a zip file at all"), "all"),
+            ("hidden_index", hidden(".backup.npz"), "one"),
             ("junk", raw("junk.npz", b"not a zip file at all"), "all"),
             ("schema_float", schema(np.float64(4.0)), "removed"),
             ("schema_str", schema(np.str_("4")), "removed"),
@@ -572,6 +585,37 @@ class TestOldSidecars(_Dir):
                 a = sa.load_so_bond_archive(path, **inputs.run)
                 np.testing.assert_array_equal(a.read_slot("chi_w", want="dense"),
                                               inputs.chi_w)
+
+    def test_tmp_name_pattern(self):
+        """The skipped names are exactly those of the writers' temporary
+        index (``eliashberg_bond_io._tmp_name``)."""
+        from hwave.solver.eliashberg_bond_io import _tmp_name
+        for target in ("lb.npz", os.path.join("d", "longitudinal_bond.npz"), "a.b.npz"):
+            with self.subTest(target=target):
+                self.assertRegex(os.path.basename(_tmp_name(target)), sa._TMP_NAME_RE)
+        for name in (".backup.npz", ".lb.npz", ".x.1-ab.tmp.npz", "x.1-abcdef01.tmp.npz",
+                     ".x.1-ABCDEF01.tmp.npz", ".x.p-abcdef01.tmp.npz"):
+            with self.subTest(name=name):
+                self.assertIsNone(sa._TMP_NAME_RE.match(name))
+
+    def test_hidden_copy_keeps_sidecars(self):
+        """A hidden copy ``.A.npz`` of the index still names its sidecars:
+        rewriting ``A.npz`` keeps them, and the copy (with its companion)
+        still loads."""
+        inputs = fx.archive_inputs()
+        a, first = self.write("A.npz", inputs=inputs)
+        hid = os.path.join(self.dir, ".A.npz")
+        shutil.copy(a, hid)
+        with self.assertLogs(LOG, "INFO") as lg:
+            _, second = self.write("A.npz", inputs=inputs)
+        self.assertEqual(lg.output, [_old_info(a, kept=first["sidecars"],
+                                               kept_by=[".A.npz"])])
+        self.assertEqual(second["removed"], [])
+        for n in first["sidecars"] + second["sidecars"]:
+            self.assertTrue(os.path.isfile(os.path.join(self.dir, n)), n)
+        fx.write_companion_green(os.path.join(self.dir, "green.npz"), inputs)
+        np.testing.assert_array_equal(
+            sa.load_so_bond_archive(hid, **inputs.run).read_slot("chi_w"), inputs.chi_w)
 
     def test_copied_index_keeps_sidecars(self):
         a, first = self.write("A.npz")
@@ -1039,6 +1083,25 @@ class TestMessages(unittest.TestCase):
             "cleaning up after a failed write ({error}); remove it by hand.",
             "T_NONSO_TAIL": "; the non-spin-orbital sidecars {names} at this stem are left in "
             "place",
+            "T_PASS_GUARDS": "spin-orbital bond archive: guards of the final susceptibility "
+            "pass: bond cond_min spinful {cond:.3e} (tol {tol:.1e})",
+            "T_STALE_INDEX": "spin-orbital bond archive '{path}': this run wrote the green file "
+            "'{green}' but no bond archive (longitudinal_bond_output_full = false or "
+            "IterationMax = 0); the earlier archive at '{path}' names this green file as its "
+            "companion, so it and its sidecar files are left in place and "
+            "load_so_bond_archive refuses them; remove them by hand or re-run with "
+            "longitudinal_bond_output_full = true.",
+            "T_INDEX_UNREADABLE": "'{path}' cannot be read as an npz archive ({error}); re-run "
+            "FLEX to regenerate the bond archive.",
+            "T_COMPANION_UNREADABLE": "companion green file '{green}' named by '{archive}' "
+            "cannot be read as an npz archive ({error}); keep the archive, its sidecars and "
+            "the green file together, or re-run FLEX.",
+            "T_SIDECAR_LINK": "'{archive}': the sidecar file '{name}' is a symbolic link; the "
+            "reader reads sidecars only as regular files next to the index (copy the file in "
+            "place of the link, or re-run FLEX).",
+            "T_OUTSIDE_DIR": "'{archive}': the {what} '{name}' resolves to '{real}', outside "
+            "the archive directory '{dir}'; keep the index, its sidecars and the companion "
+            "green file in that directory (the green file may be below it), or re-run FLEX.",
         }
         for name, text in want.items():
             self.assertEqual(getattr(sa, name), text, name)
@@ -1189,7 +1252,9 @@ class TestReader(_ReaderDir):
         self.assertIsInstance(a, sa.SOBondArchive)
         self.assertEqual(a._fields, ("path", "info", "layout", "bond_archive_layout", "B",
                                      "nd", "nmat", "nvol", "sector_map", "green_path",
-                                     "sources"))
+                                     "sources", "scf_converged", "rpa_past_pole"))
+        self.assertIs(a.scf_converged, True)
+        self.assertIsNone(a.rpa_past_pole)
         self.assertEqual((a.path, a.layout, a.bond_archive_layout, a.B, a.nd, a.nmat, a.nvol),
                          (path, block_layout, output_layout, 3, 2, 4, 4))
         self.assertEqual(a.green_path, os.path.normpath(os.path.join(d, "green.npz")))
@@ -1847,15 +1912,28 @@ class TestPoleMembers(_ReaderDir):
         return os.path.join(d, "lb.npz")
 
     def test_below_and_past_pole_load(self):
+        """Both load; ``rpa_past_pole`` is None below the pole and True past
+        it (the indicator and q stay members of the file only)."""
         below = self.sub("below")
         a = self.load(self.archive(below, self.inputs, "npz"), self.inputs)
         b = self.load(self.copy(), self.inputs)
+        self.assertIsNone(a.rpa_past_pole)
+        self.assertIs(b.rpa_past_pole, True)
         for arc in (a, b):
-            self.assertFalse(any("pole" in f for f in arc._fields))
+            self.assertEqual([f for f in arc._fields if "pole" in f], ["rpa_past_pole"])
             self.assertFalse(any(k.startswith("rpa_") for k in arc.sources))
-            for k in sa.POLE_MEMBERS:
+            for k in sa.POLE_MEMBERS[1:]:
                 self.assertFalse(hasattr(arc, k))
         np.testing.assert_array_equal(b.read_slot("chi_w"), self.inputs.chi_w)
+
+    def test_scf_converged_exposed(self):
+        """``scf_converged`` is the stored flag (False and True)."""
+        for flag in (False, True):
+            with self.subTest(scf_converged=flag):
+                inputs = fx.archive_inputs(scf_converged=flag)
+                d = self.sub("conv-{}".format(flag))
+                a = self.load(self.archive(d, inputs, "npz"), inputs)
+                self.assertIs(a.scf_converged, flag)
 
     def test_partial_or_mistyped_refused(self):
         rows = [
@@ -1892,6 +1970,237 @@ class TestPoleMembers(_ReaderDir):
                 with self.assertRaises(ValueError) as cm:
                     self.load(path, self.inputs)
                 self.assertEqual(str(cm.exception), _M(path, check, stored, expected))
+
+
+class TestTwoOrbitals(_ReaderDir):
+    """``norb_phys = 2`` (``nd = 4``), where the spin-block index
+    ``s * norb + a`` and the interleaved ``2 a + s`` differ: every slot and
+    output layout round-trips, and the packed archive read dense equals the
+    dense arrays (exact zeros off the sectors)."""
+
+    def test_round_trip(self):
+        for bl in ("dense", "sz_packed"):
+            for ol in ("npz", "sidecar"):
+                with self.subTest(block_layout=bl, output_layout=ol):
+                    inputs = fx.archive_inputs(block_layout=bl, norb_phys=2, chibar=True)
+                    d = self.sub("{}-{}".format(bl, ol))
+                    a = self.load(self.archive(d, inputs, ol), inputs)
+                    self.assertEqual((a.layout, a.bond_archive_layout, a.B, a.nd, a.nvol),
+                                     (bl, ol, 3, 4, 4))
+                    sm = inputs.sector_map
+                    self.assertEqual(sm.ND, 3 * 16)
+                    # the sector map of nd = 4 is not that of the interleaved order
+                    self.assertTrue(np.all(np.isin(np.arange(sm.ND), sm.index)))
+                    for name, ref in (("chi_w", inputs.chi_w), ("Gamma_bond", inputs.gamma_b),
+                                      ("chibar_w", inputs.chibar_w)):
+                        got = a.read_slot(name, want="dense")
+                        np.testing.assert_array_equal(got, ref)
+                        packed = a.read_slot(name, want="sz_packed")
+                        expect = so_bond.PackedArrays.from_dense(ref, sm, source="t")
+                        for gb, eb in zip(packed.blocks, expect.blocks):
+                            np.testing.assert_array_equal(gb, eb)
+                        np.testing.assert_array_equal(packed.to_dense(), ref)
+                    np.testing.assert_array_equal(a.read_slot("chi_w", l0=1, l1=3,
+                                                              want="dense"),
+                                                  inputs.chi_w[1:3])
+
+
+class TestFileRefusals(_RefusalBase):
+    """The index or its companion is not a readable npz archive (empty,
+    truncated, a single ``.npy`` array), a sidecar is a symbolic link, or a
+    sidecar or the companion resolves outside the archive directory: each a
+    single-line refusal; the link and containment checks come before any
+    payload header is read."""
+
+    BASES = (("dense", "npz"), ("dense", "sidecar"))
+
+    def test_bases_accepted(self):
+        self.accepts_bases()
+
+    @staticmethod
+    def _error(path):
+        try:
+            np.load(path, allow_pickle=False)
+        except Exception as exc:  # noqa: BLE001 - the text the reader quotes
+            return "{}: {}".format(type(exc).__name__, exc)
+        raise AssertionError("np.load accepted {}".format(path))
+
+    @staticmethod
+    def _damage(path, how):
+        if how == "empty":
+            open(path, "wb").close()
+        else:
+            size = os.path.getsize(path)
+            with open(path, "r+b") as fh:
+                fh.truncate(size // 2)
+
+    def test_unreadable_index(self):
+        for how in ("empty", "truncated"):
+            with self.subTest(how=how):
+                path = self.copy()
+                self._damage(path, how)
+                err = self._error(path)
+                self.assertTrue(err.startswith(("EOFError", "BadZipFile")), err)
+                self.refused(path, sa.T_INDEX_UNREADABLE.format(path=path, error=err),
+                             headers=0)
+
+    def test_unreadable_companion(self):
+        for how in ("empty", "truncated", "npy"):
+            with self.subTest(how=how):
+                path = self.copy()
+                green = os.path.join(os.path.dirname(path), "green.npz")
+                if how == "npy":
+                    with open(green, "wb") as fh:
+                        np.save(fh, np.zeros(3))
+                    err = "a single .npy array"
+                else:
+                    self._damage(green, how)
+                    err = self._error(green)
+                self.refused(path, sa.T_COMPANION_UNREADABLE.format(
+                    green=os.path.normpath(green), archive=path, error=err))
+
+    def _sidecar(self, path):
+        nonce = str(_members(path)["archive_nonce"][()])
+        return os.path.join(os.path.dirname(path), "chi_w.{}.npy".format(nonce))
+
+    def test_sidecar_link(self):
+        for target in ("outside", "inside"):
+            with self.subTest(target=target):
+                path = self.copy("dense", "sidecar")
+                full = self._sidecar(path)
+                where = (self.sub("elsewhere-{}".format(len(os.listdir(self.dir))))
+                         if target == "outside" else os.path.dirname(path))
+                moved = os.path.join(where, "moved.npy")
+                os.rename(full, moved)
+                os.symlink(moved, full)
+                self.refused(path, sa.T_SIDECAR_LINK.format(archive=path, name=full),
+                             headers=0)
+        # a dangling link is a link too
+        path = self.copy("dense", "sidecar")
+        full = self._sidecar(path)
+        os.remove(full)
+        os.symlink(os.path.join(self.dir, "nowhere.npy"), full)
+        self.refused(path, sa.T_SIDECAR_LINK.format(archive=path, name=full), headers=0)
+
+    def test_companion_outside(self):
+        # the green file itself a link to a file outside
+        path = self.copy()
+        d = os.path.dirname(path)
+        green = os.path.join(d, "green.npz")
+        out = self.sub("outside-green")
+        moved = os.path.join(out, "green.npz")
+        os.rename(green, moved)
+        os.symlink(moved, green)
+        self.refused(path, sa.T_OUTSIDE_DIR.format(
+            archive=path, what="companion green file", name=green,
+            real=os.path.realpath(moved), dir=os.path.realpath(d)), headers=0)
+        # below the directory through a linked parent directory
+        path = self.copy()
+        d = os.path.dirname(path)
+        out = self.sub("outside-parent")
+        os.rename(os.path.join(d, "green.npz"), os.path.join(out, "green.npz"))
+        os.symlink(out, os.path.join(d, "sub"))
+        _rewrite(path, dict(green_file=np.str_("sub/green.npz")))
+        green = os.path.join(d, "sub", "green.npz")
+        self.refused(path, sa.T_OUTSIDE_DIR.format(
+            archive=path, what="companion green file", name=green,
+            real=os.path.realpath(green), dir=os.path.realpath(d)), headers=0)
+
+    def test_links_inside_accepted(self):
+        """A companion that is a link to a file in the directory, or below
+        it through a linked directory inside it, is accepted (the archive
+        directory reached through a linked path too)."""
+        inputs = self.inputs["dense"]
+        path = self.copy()
+        d = os.path.dirname(path)
+        os.rename(os.path.join(d, "green.npz"), os.path.join(d, "real_green.npz"))
+        os.symlink(os.path.join(d, "real_green.npz"), os.path.join(d, "green.npz"))
+        self.load(path, inputs)
+        path = self.copy()
+        d = os.path.dirname(path)
+        os.makedirs(os.path.join(d, "real_sub"))
+        os.rename(os.path.join(d, "green.npz"), os.path.join(d, "real_sub", "green.npz"))
+        os.symlink(os.path.join(d, "real_sub"), os.path.join(d, "sub"))
+        _rewrite(path, dict(green_file=np.str_("sub/green.npz")))
+        self.load(path, inputs)
+        # the whole archive directory reached through a link
+        path = self.copy("dense", "sidecar")
+        link = os.path.join(self.dir, "linked")
+        os.symlink(os.path.dirname(path), link)
+        a = self.load(os.path.join(link, "lb.npz"), inputs)
+        np.testing.assert_array_equal(a.read_slot("chi_w"), inputs.chi_w)
+
+
+class TestArchiveCompatibility(_ReaderDir):
+    """Step 6 on its own: the archive's provenance differs from the run
+    while its companion matches the run (and the archive's fp_green is the
+    companion's), so the refusal names the archive, not the companion."""
+
+    def test_rows(self):
+        good = fx.archive_inputs()
+        bond = good.run["run_bond"]
+        dr, rv = np.asarray(bond.delta_r), np.asarray(bond.reverse)
+        perm = np.array([0, 2, 1])
+        other = bond._replace(delta_r=dr[perm], reverse=np.argsort(perm)[rv[perm]])
+        rows = (
+            ("interaction", dict(interaction=fx._interaction(2.0)), "interaction differs: "),
+            ("band", dict(transfer={((0, 0, 0), (0, 0)): -2.0 + 0j}), "band differs: "),
+            ("topology", dict(bond=other), "resolved bond topology differs: "),
+        )
+        for name, override, what in rows:
+            with self.subTest(row=name):
+                bad = fx.archive_inputs(prov_overrides=override)
+                self.assertEqual(str(np.asarray(bad.kwargs["provenance"]["fp_green"])),
+                                 str(np.asarray(good.kwargs["provenance"]["fp_green"])))
+                d = self.sub(name)
+                path, _ = self.write(d=d, inputs=bad, output_layout="npz")
+                fx.write_companion_green(os.path.join(d, "green.npz"), good)
+                with self.assertRaises(ValueError) as cm:
+                    self.load(path, good)
+                text = str(cm.exception)
+                self.assertTrue(text.startswith(
+                    "'{}' (written by {}) does not match this run: {}".format(
+                        path, fx.LABEL, what)), text)
+                self.assertNotIn("green.npz", text)
+                # the same archive with the case's provenance loads
+                d2 = self.sub(name + "-good")
+                path2, _ = self.write(d=d2, inputs=good, output_layout="npz")
+                fx.write_companion_green(os.path.join(d2, "green.npz"), good)
+                self.load(path2, good)
+
+
+class TestStaleIndex(_ReaderDir):
+    """``warn_stale_index``: one WARNING when the configured archive path is
+    a schema-4 spin-orbital index naming the green file just written;
+    nothing otherwise; nothing is removed."""
+
+    def test_rows(self):
+        inputs = fx.archive_inputs()
+        d = self.sub("d")
+        path = self.archive(d, inputs, "sidecar")
+        green = os.path.join(d, "green.npz")
+        before = _listing(d)
+        with self.assertLogs(LOG, "WARNING") as lg:
+            self.assertTrue(sa.warn_stale_index(path, green, LOG))
+        self.assertEqual(lg.output, ["WARNING:{}:{}".format(
+            LOG.name, sa.T_STALE_INDEX.format(path=path, green=green))])
+        self.assertEqual(_listing(d), before)
+        # no index, another green file, a non-spin-orbital index, junk
+        quiet = [(os.path.join(d, "absent.npz"), green),
+                 (path, os.path.join(d, "other_green.npz"))]
+        nonso = os.path.join(d, "nonso.npz")
+        np.savez(nonso, bond_archive_schema=np.int64(3), green_file=np.str_("green.npz"))
+        notso = os.path.join(d, "notso.npz")
+        np.savez(notso, bond_archive_schema=np.int64(4), spin_orbital=np.bool_(False),
+                 green_file=np.str_("green.npz"))
+        junk = os.path.join(d, "junk.npz")
+        with open(junk, "wb") as fh:
+            fh.write(b"not a zip")
+        quiet += [(nonso, green), (notso, green), (junk, green)]
+        for p, g in quiet:
+            with self.subTest(path=os.path.basename(p), green=os.path.basename(g)):
+                with self.assertNoLogs(LOG):
+                    self.assertFalse(sa.warn_stale_index(p, g, LOG))
 
 
 if __name__ == "__main__":

@@ -9823,17 +9823,24 @@ T_ONSITE_BOND = (
 def _refuse_bond_flex_output(path):
     """Refuse ``path`` when it is an output of the spin-orbital bond FLEX
     (``producer_stage = "flex_so_bond"``). Only the 0-d stage member is read;
-    a missing or unreadable file, or one without the member, is left to the
-    checks that follow."""
+    a missing or unreadable file, a file that is not an npz archive (a
+    single ``.npy`` array), or one without the member, is left to the checks
+    that follow."""
     import zipfile
     if not os.path.exists(path):
         return
     try:
-        with np.load(path, allow_pickle=False) as z:
+        loaded = np.load(path, allow_pickle=False)
+    except (OSError, ValueError, EOFError, zipfile.BadZipFile):
+        return
+    if not hasattr(loaded, "files"):
+        return
+    try:
+        with loaded as z:
             if "producer_stage" not in z.files:
                 return
             stage = z["producer_stage"]
-    except (OSError, ValueError, zipfile.BadZipFile):
+    except (OSError, ValueError, EOFError, zipfile.BadZipFile):
         return
     if stage.ndim == 0 and stage.dtype.kind == "U" and str(stage) == "flex_so_bond":
         raise ValueError(T_ONSITE_BOND.format(path=path))
@@ -9905,6 +9912,10 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             "[mode] enable_spin_orbital = true, [file.output] chiq, chi0q, green "
             "and sigma)")
 
+    # an output of the bond FLEX is refused before any other check (a
+    # missing file is left to the existence checks below)
+    for path in (chi_path, chi0_path, green_path, _so_flex_sigma_path(eli, flex_dir)):
+        _refuse_bond_flex_output(path)
     if not os.path.exists(chi_path):
         raise ValueError(
             "FLEX susceptibility archive '{}' not found. {}; set [eliashberg] "
@@ -9918,9 +9929,6 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             "check that this run's interaction files reproduce the FLEX run's "
             "vertex needs it. Set [file.output] chi0q in the FLEX run and "
             "[eliashberg] flex_chi0q to that file.".format(chi0_path, hint))
-    # an output of the bond FLEX is refused before any other metadata is read
-    for path in (chi_path, chi0_path, green_path, _so_flex_sigma_path(eli, flex_dir)):
-        _refuse_bond_flex_output(path)
     ir_hint = _SO_DYNAMIC_IR_HINT if full else _STATIC_IR_HINT
     logger.info("Loading spin-orbital FLEX chiq from: {}".format(chi_path))
     with np.load(chi_path) as data:

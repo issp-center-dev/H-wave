@@ -886,7 +886,16 @@ class TestSOBondArchiveRows(unittest.TestCase):
     the same fresh process as the unchanged dense run, after it: measured
     on macOS (numpy 2.4.6 and 1.26.4), the traced ``archive_dressing`` peak
     then exceeds the broken bound by about 24 % of the dropped row, and the
-    three phases of repeated runs in one process agree to about 1 KB."""
+    three phases of repeated runs in one process agree to about 1 KB.
+
+    The ``archive_write`` row is a bound, not a copy detector: at these
+    sizes its headroom (about 1.1 MB, dominated by the zip-chunk term) is
+    larger than ``chi_w`` itself (819 KB dense, 307 KB packed), so a full
+    copy of ``chi_w`` in the writer would still pass it. The writer's
+    no-copy property is covered by ``TestNoCopy`` of
+    ``tests/test_so_bond_archive.py`` (64 MiB) and by
+    ``TestWiring.test_no_store_copy`` of
+    ``tests/test_so_bond_archive_flex.py`` (the store's own slot)."""
 
     _cache = {}
 

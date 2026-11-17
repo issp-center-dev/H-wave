@@ -146,6 +146,36 @@ T_OLD_INDEX_KEPT = (
 T_CLEANUP_FAILED = (
     "spin-orbital bond archive: could not remove '{name}' while cleaning up after a failed "
     "write ({error}); remove it by hand.")
+#: the guard diagnostic of the final susceptibility pass (INFO, after it)
+T_PASS_GUARDS = (
+    "spin-orbital bond archive: guards of the final susceptibility pass: bond cond_min "
+    "spinful {cond:.3e} (tol {tol:.1e})")
+#: a run wrote the companion green file but no archive while an earlier
+#: archive at the configured path names that green file (WARNING; the files
+#: are left in place)
+T_STALE_INDEX = (
+    "spin-orbital bond archive '{path}': this run wrote the green file '{green}' but no bond "
+    "archive (longitudinal_bond_output_full = false or IterationMax = 0); the earlier "
+    "archive at '{path}' names this green file as its companion, so it and its sidecar files "
+    "are left in place and load_so_bond_archive refuses them; remove them by hand or re-run "
+    "with longitudinal_bond_output_full = true.")
+#: the reader: the index or its companion is not a readable npz archive
+T_INDEX_UNREADABLE = (
+    "'{path}' cannot be read as an npz archive ({error}); re-run FLEX to regenerate the bond "
+    "archive.")
+T_COMPANION_UNREADABLE = (
+    "companion green file '{green}' named by '{archive}' cannot be read as an npz archive "
+    "({error}); keep the archive, its sidecars and the green file together, or re-run FLEX.")
+#: the reader: a sidecar is a symbolic link, or a sidecar or the companion
+#: resolves outside the archive directory (refused before any of it is read)
+T_SIDECAR_LINK = (
+    "'{archive}': the sidecar file '{name}' is a symbolic link; the reader reads sidecars "
+    "only as regular files next to the index (copy the file in place of the link, or re-run "
+    "FLEX).")
+T_OUTSIDE_DIR = (
+    "'{archive}': the {what} '{name}' resolves to '{real}', outside the archive directory "
+    "'{dir}'; keep the index, its sidecars and the companion green file in that directory "
+    "(the green file may be below it), or re-run FLEX.")
 
 _W = "write_so_bond_archive: "
 
@@ -807,16 +837,23 @@ def write_so_bond_archive(path, *, chi_w, gamma_b, block_layout, output_layout, 
     return result
 
 
+#: the base names ``eliashberg_bond_io._tmp_name`` gives a temporary index
+#: (``.<root>.<pid>-<8 hex>.tmp.npz``)
+_TMP_NAME_RE = re.compile(r"^\..+\.[0-9]+-[0-9a-f]{8}\.tmp\.npz$")
+
+
 def _scan_candidates(side_dir, path):
     """``(other names, keep all, kept_by candidates)`` of the other ``*.npz``
-    files in ``side_dir`` (names starting with ``.`` and ``path`` itself
-    skipped): the sidecar names each schema-4 index carries, and the
-    unreadable or malformed candidates (each keeps every old name)."""
+    files in ``side_dir`` (the writers' temporary names
+    :data:`_TMP_NAME_RE` and ``path`` itself skipped; other hidden names
+    are candidates like any other): the sidecar names each schema-4 index
+    carries, and the unreadable or malformed candidates (each keeps every
+    old name)."""
     me = os.path.basename(path)
     carried = {}
     bad = []
     for n in sorted(os.listdir(side_dir)):
-        if not n.endswith(".npz") or n.startswith(".") or n == me:
+        if not n.endswith(".npz") or _TMP_NAME_RE.match(n) or n == me:
             continue
         full = os.path.join(side_dir, n)
         if not os.path.isfile(full):
@@ -871,6 +908,37 @@ def _clean_old_sidecars(path, side_dir, replaced, old, new_names, result, log):
             path=path, n=len(removed), removed=join(removed), k=len(kept), kept=join(kept),
             kept_by=join(kept_by),
             nonso=T_NONSO_TAIL.format(names=", ".join(nonso)) if nonso else ""))
+
+
+def warn_stale_index(path, green_path, log) -> bool:
+    """After a spin-orbital bond run wrote ``green_path`` without an
+    archive: one :data:`T_STALE_INDEX` WARNING when ``path`` (the configured
+    archive path) is a schema-4 spin-orbital index whose ``green_file``
+    resolves to ``green_path``. Nothing is removed, nothing is raised;
+    returns whether it warned."""
+    try:
+        if not os.path.isfile(path):
+            return False
+        d = np.load(path, allow_pickle=False)
+        if not hasattr(d, "files"):
+            return False
+        with d:
+            files = set(d.files)
+            if not _schema_four(d, files) or "spin_orbital" not in files:
+                return False
+            so = np.asarray(d["spin_orbital"])
+            if not (so.ndim == 0 and so.dtype.kind == "b" and bool(so[()])):
+                return False
+            g = _zero_d_string(d, "green_file", files)
+        if g is None or not green_file_ok(g, os.path.dirname(path) or "."):
+            return False
+        named = os.path.join(os.path.dirname(path), g)
+        if os.path.realpath(named) != os.path.realpath(green_path):
+            return False
+    except Exception:  # noqa: BLE001 - a notice only, never a failure of the run
+        return False
+    log.warning(T_STALE_INDEX.format(path=path, green=green_path))
+    return True
 
 
 # ------------------------------------------------------------------ the reader
@@ -1062,6 +1130,63 @@ def _check_extras(data, names, path, sv, sources, malformed):
     return out_layout, green_file, nvol
 
 
+def _inside(real, root) -> bool:
+    """Whether the resolved path ``real`` lies below the resolved directory
+    ``root``."""
+    try:
+        return real != root and os.path.commonpath([real, root]) == root
+    except ValueError:
+        # another drive
+        return False
+
+
+def _check_files(data, names, path, side_dir):
+    """(1c) Before any sidecar or companion is opened: every sidecar the
+    index names (a ``<block>_file`` member holding a plain file name) that
+    exists is a regular file, not a symbolic link (:data:`T_SIDECAR_LINK`),
+    and every such sidecar and the companion named by a well-formed
+    ``green_file`` resolve below the archive directory (both sides through
+    ``os.path.realpath``; :data:`T_OUTSIDE_DIR`). Malformed members are left
+    to the checks that follow."""
+    root = os.path.realpath(side_dir)
+    files = []
+    for f in sorted(n for n in names if isinstance(n, str) and n.endswith("_file")):
+        if f == "green_file" or not _BLOCK_RE.match(f[:-5]):
+            continue
+        v = _zero_d_string(data, f, names)
+        if not v or os.path.basename(v) != v or v in (".", ".."):
+            continue
+        full = os.path.join(side_dir, v)
+        if os.path.islink(full):
+            raise _fp.SOArchiveError(T_SIDECAR_LINK.format(archive=path, name=full))
+        files.append(("sidecar file", full))
+    g = _zero_d_string(data, "green_file", names)
+    if g is not None and green_file_ok(g, side_dir):
+        files.append(("companion green file", os.path.normpath(os.path.join(side_dir, g))))
+    for what, full in files:
+        if not os.path.lexists(full):
+            continue
+        real = os.path.realpath(full)
+        if not _inside(real, root):
+            raise _fp.SOArchiveError(T_OUTSIDE_DIR.format(archive=path, what=what, name=full,
+                                                          real=real, dir=root))
+
+
+def _load_npz(path, unreadable):
+    """``np.load(path, allow_pickle=False)`` as an open npz; a file that
+    cannot be read as one is ``unreadable(error text)`` (a missing file
+    raises ``FileNotFoundError``); a single ``.npy`` array is returned as
+    loaded (the caller refuses it)."""
+    import zipfile
+    try:
+        return np.load(path, allow_pickle=False)
+    except FileNotFoundError:
+        raise
+    except (OSError, EOFError, ValueError, zipfile.BadZipFile) as exc:
+        raise _fp.SOArchiveError(unreadable("{}: {}".format(type(exc).__name__, exc))) \
+            from None
+
+
 _SLOT_SET = "Gamma_bond, chi_w, chibar_w"
 _WANTS = (None, "dense", "sz_packed")
 
@@ -1075,8 +1200,12 @@ class SOBondArchive(NamedTuple):
     ``"sz_packed"``), ``bond_archive_layout`` (``"npz"`` or ``"sidecar"``),
     the dimensions ``B``, ``nd``, ``nmat``, ``nvol``, ``sector_map`` (the
     archive's S_z sector map when it is packed, else ``None``),
-    ``green_path`` (the companion Green file) and ``sources`` (block ->
-    ``("inline", shape)`` or ``(<sidecar path>, shape)``).
+    ``green_path`` (the companion Green file), ``sources`` (block ->
+    ``("inline", shape)`` or ``(<sidecar path>, shape)``), ``scf_converged``
+    (the run's self-consistency flag, a bool) and ``rpa_past_pole``
+    (``True`` when the archive carries the pole members -- its final
+    susceptibility is past the static RPA pole and describes no physical
+    state -- else ``None``).
 
     The payload is read only by :meth:`read_slot`, which opens the files
     on every call."""
@@ -1091,6 +1220,8 @@ class SOBondArchive(NamedTuple):
     sector_map: object
     green_path: str
     sources: object
+    scf_converged: bool
+    rpa_past_pole: Optional[bool]
 
     def _blocks(self, who, name):
         if not (isinstance(name, str) and name in SLOT_PAYLOADS):
@@ -1177,7 +1308,8 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
     read (only npy headers, after every scalar check):
 
     1. ``np.load(path, allow_pickle=False)``; a file that is not an npz
-       archive (a single ``.npy`` array) is :data:`T_NOT_SO_ARCHIVE`.
+       archive (a single ``.npy`` array) is :data:`T_NOT_SO_ARCHIVE`, one
+       that cannot be read (empty, truncated) :data:`T_INDEX_UNREADABLE`.
     1b. Before any header: the markers ``bond_archive_schema = 4`` and
         ``spin_orbital = True`` (:data:`T_NOT_SO_ARCHIVE`); the 0-d scalars
         ``nmat`` (even, > 0), ``B`` (>= 1), ``nd`` (even, >= 2),
@@ -1188,6 +1320,9 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
         norb_phys``, ``norb_phys = prov_norb_phys``, ``B = len(delta_r)``,
         ``nmat = state_nmat``, ``beta = state_beta``, ``cell_shape =
         prov_cell_shape``. These refusals name ``expected_producer``.
+    1c. Still before any header: no sidecar the index names is a symbolic
+        link (:data:`T_SIDECAR_LINK`), and the sidecars and the companion
+        resolve below the archive directory (:data:`T_OUTSIDE_DIR`).
     2. One structural pass, ``fingerprint.validate_structure`` of kind
        ``"bond"`` with the sidecar directory (the archive's).
     3. The schema-4 members: ``index_order``, ``freq_axis``,
@@ -1198,8 +1333,10 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
        prod(cell_shape)``, ``archive_nonce`` and the sidecar names
        ``<block>.<archive_nonce>.npy``, ``green_file``
        (:func:`green_file_ok`), ``momentum_convention`` and the pole members
-       (all or none, :func:`pole_group_problem`; not exposed).
-    4. The companion green file must exist (:data:`T_COMPANION_MISSING`).
+       (all or none, :func:`pole_group_problem`; exposed as
+       ``rpa_past_pole``, with ``scf_converged``).
+    4. The companion green file must exist (:data:`T_COMPANION_MISSING`)
+       and be a readable npz archive (:data:`T_COMPANION_UNREADABLE`).
     5. The companion: its structure (kind ``"green"``) and its compatibility
        with the run (its ``fp_green`` against its Green function).
     6. The archive's compatibility with the run, its ``fp_green`` against
@@ -1208,7 +1345,7 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
     """
     path = os.fspath(path)
     side_dir = os.path.dirname(path) or "."
-    loaded = np.load(path, allow_pickle=False)
+    loaded = _load_npz(path, lambda e: T_INDEX_UNREADABLE.format(path=path, error=e))
     if not hasattr(loaded, "files"):
         # a single .npy array, not an npz archive
         raise _fp.SOArchiveError(T_NOT_SO_ARCHIVE.format(path=path, schema="absent",
@@ -1218,6 +1355,8 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
         # (1b) the peek, before any header
         _is_so_archive(data, names, path)
         sv = _peek_scalars(data, names, _Malformed(path, expected_producer))
+        # (1c) the sidecar and companion files, before any of them is opened
+        _check_files(data, names, path, side_dir)
         # (2) one structural pass
         sources = {}
         kind, stage, version = _fp.validate_structure(
@@ -1240,7 +1379,12 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
                    run_interaction=run_interaction, need="so_bond",
                    expected_producer=expected_producer, run_bond=run_bond)
         # (5) the companion's structure and compatibility
-        with np.load(green_path, allow_pickle=False) as g:
+        loaded_g = _load_npz(green_path, lambda e: T_COMPANION_UNREADABLE.format(
+            green=green_path, archive=path, error=e))
+        if not hasattr(loaded_g, "files"):
+            raise _fp.SOArchiveError(T_COMPANION_UNREADABLE.format(
+                green=green_path, archive=path, error="a single .npy array"))
+        with loaded_g as g:
             g_names = set(g.files)
             g_valid = _fp.validate_structure(g, green_path, kind="green",
                                              expected_producer=expected_producer)
@@ -1251,6 +1395,8 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
         # (6) the archive's compatibility, bound to the companion's G
         info = _fp.check_so_compatibility(data, path, validated=(kind, stage, version, label),
                                           green_fp=green_fp, **run)
+        scf_converged = bool(np.asarray(data["scf_converged"])[()])
+        rpa_past_pole = True if "rpa_past_pole" in names else None
         sector_map = None
         if sv["layout"] == "sz_packed":
             sector_map = so_bond.sz_sector_map(
@@ -1258,4 +1404,5 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
     return SOBondArchive(path=path, info=info, layout=sv["layout"],
                          bond_archive_layout=out_layout, B=sv["B"], nd=sv["nd"],
                          nmat=sv["nmat"], nvol=nvol, sector_map=sector_map,
-                         green_path=green_path, sources=types.MappingProxyType(sources))
+                         green_path=green_path, sources=types.MappingProxyType(sources),
+                         scf_converged=scf_converged, rpa_past_pole=rpa_past_pole)

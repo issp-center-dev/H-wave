@@ -73,6 +73,14 @@ POLE_WHERE = ("FLEX longitudinal_bond_channels (spin-orbital, bond archive of th
 POLE_CONSEQUENCE = ("The bond archive's chi_w is built on that susceptibility; it describes no "
                     "physical state and is still written.")
 MAP_POLE_WHERE = "FLEX longitudinal_bond_channels (spin-orbital, final map)"
+T_PASS_GUARDS = ("spin-orbital bond archive: guards of the final susceptibility pass: bond "
+                 "cond_min spinful {cond:.3e} (tol {tol:.1e})")
+T_STALE_INDEX = (
+    "spin-orbital bond archive '{path}': this run wrote the green file '{green}' but no bond "
+    "archive (longitudinal_bond_output_full = false or IterationMax = 0); the earlier "
+    "archive at '{path}' names this green file as its companion, so it and its sidecar files "
+    "are left in place and load_so_bond_archive refuses them; remove them by hand or re-run "
+    "with longitudinal_bond_output_full = true.")
 T_NO_ARCHIVE_ITER0 = ("spin-orbital bond archive: IterationMax = 0 runs no map, so no bond "
                       "archive is written.")
 OLD_ITER0 = ("save_results: no map was executed (IterationMax=0); the last-map archives chi0q, "
@@ -100,8 +108,9 @@ FP_GREEN_MISMATCH = (
     "{label}.")
 T_NONSO_LOADER = (
     "bond archive {path}: this is a spin-orbital bond archive (written by the spin-orbital "
-    "FLEX with bond channels); the non-spin-orbital bond consumers cannot read it, and no "
-    "consumer of it exists in this version.")
+    "FLEX with bond channels); the non-spin-orbital bond consumers cannot read it, and "
+    "hwave_sc does not read it in this version (read it with "
+    "hwave.solver.so_bond_archive.load_so_bond_archive).")
 T_ONSITE_BOND = (
     "[mode] enable_spin_orbital = true (hwave_sc, issue #83): '{path}' was written by the "
     "spin-orbital FLEX with bond channels ([mode.param] longitudinal_bond_channels = true): "
@@ -235,13 +244,21 @@ BASES = {
 LAYOUTS = {"packed_npz": ("sz_packed", "npz"), "packed_sidecar": ("sz_packed", "sidecar"),
            "dense_npz": ("dense", "npz"), "dense_sidecar": ("dense", "sidecar"),
            "soc_npz": ("dense", "npz"), "soc_sidecar": ("dense", "sidecar")}
+#: the two-orbital chain (norb_phys = 2, nd = 4, B = 3), where the
+#: spin-block index s * norb + a differs from the interleaved 2 a + s:
+#: name -> (fixture, extra [mode.param], block layout, output layout)
+MIXED = {
+    "mixed_packed_npz": (X.SU2_MIXED_6, {}, "sz_packed", "npz"),
+    "mixed_packed_sidecar": (X.SU2_MIXED_6, SIDECAR, "sz_packed", "sidecar"),
+    "mixed_dense_npz": (X.SU2_MIXED_6, DENSE, "dense", "npz"),
+}
 _TMP = []
 RUNS = {}
 
 
 def setUpModule():
     _TMP.append(tempfile.TemporaryDirectory(prefix="so_bond_archive_flex_"))
-    for name, (fx, extra) in BASES.items():
+    for name, (fx, extra) in list(BASES.items()) + [(k, v[:2]) for k, v in MIXED.items()]:
         d = os.path.join(_TMP[0].name, name)
         os.makedirs(d)
         RUNS[name] = run_case(d, fx, dict(BASE_PARAM, **extra))
@@ -316,6 +333,42 @@ class TestRoundTrip(unittest.TestCase):
                 sidecars = sorted(glob.glob(os.path.join(run.out, "*.npy")))
                 self.assertEqual(len(sidecars), {"npz": 0, "sidecar": 1 if bl == "dense"
                                                  else 3}[ol], sidecars)
+
+    def test_two_orbitals(self):
+        """norb_phys = 2: every layout reads back the writer's arrays, the
+        packed archive read dense equals the dense run's chi_w, and chi_w
+        matches the oracle."""
+        from hwave.solver import so_bond
+        for name, (_, _, bl, ol) in MIXED.items():
+            with self.subTest(base=name):
+                run = RUNS[name]
+                self.assertEqual(len(run.written), 1)
+                w = run.written[0]
+                a = load(archive_path(run), run.solver)
+                self.assertEqual((a.layout, a.bond_archive_layout), (bl, ol))
+                self.assertEqual((a.B, a.nd, a.nmat, a.nvol), (3, 4, X.FLEX_NMAT, 6))
+                for slot, want in (("chi_w", w["chi_w"]), ("Gamma_bond", w["gamma_b"])):
+                    got = a.read_slot(slot)
+                    if bl == "sz_packed":
+                        self.assertIsInstance(got, so_bond.PackedArrays)
+                        for g, e in zip(got.blocks, want.blocks):
+                            np.testing.assert_array_equal(g, e)
+                    else:
+                        np.testing.assert_array_equal(got, want)
+                dev = rel(a.read_slot("chi_w", want="dense"), oracle_chi(run))
+                print("archive chi_w vs oracle %-20s %.3e" % (name, dev))
+                self.assertTrue(np.isfinite(dev))
+                self.assertLessEqual(dev, TOL)
+        dn = load(archive_path(RUNS["mixed_dense_npz"]), RUNS["mixed_dense_npz"].solver)
+        dd = dn.read_slot("chi_w")
+        for name in ("mixed_packed_npz", "mixed_packed_sidecar"):
+            with self.subTest(packed=name):
+                p = load(archive_path(RUNS[name]), RUNS[name].solver)
+                dev = rel(p.read_slot("chi_w", want="dense"), dd)
+                self.assertTrue(np.isfinite(dev))
+                self.assertLessEqual(dev, TOL)
+                np.testing.assert_array_equal(
+                    dn.read_slot("chi_w", want="sz_packed").to_dense(), dd)
 
     def test_packed_equals_dense(self):
         """The packed archive read dense equals the dense run's chi_w; the
@@ -606,6 +659,38 @@ class TestSidecar(_Copies):
             repr(na), LABEL))
         self.assertEqual((spy.slot_reads(), spy.mmap), ([], []))
 
+    def test_rerun_without_archive_warns(self):
+        """A re-run that writes green.npz but no archive (output_full =
+        false, or IterationMax = 0) into the directory of a sidecar archive
+        warns once and leaves the old index and its sidecars in place; the
+        reader then refuses them (fp_green mismatch). A run without an
+        earlier archive does not warn."""
+        for name, param in (("off", dict(BASE_PARAM, Longitudinal_Bond_Output_Full=False,
+                                          IterationMax=3)),
+                            ("iter0", dict(BASE_PARAM, IterationMax=0))):
+            with self.subTest(rerun=name):
+                path = self.copy("packed_sidecar")
+                d = os.path.dirname(path)
+                keep = sorted(n for n in os.listdir(d)
+                              if n.endswith(".npy") or n == "longitudinal_bond.npz")
+                self.assertEqual(len(keep), 4)
+                before = {n: os.path.getmtime(os.path.join(d, n)) for n in keep}
+                run = run_case(os.path.dirname(d), X.ZEEMAN_SZ_ALL, param)
+                self.assertEqual(run.out, d)
+                self.assertEqual(run.written, ())
+                green = os.path.join(d, "green.npz")
+                warn = T_STALE_INDEX.format(path=path, green=green)
+                self.assertEqual([m for m in messages(run.records, "WARNING")
+                                  if "bond archive" in m], [warn])
+                for n in keep:
+                    self.assertEqual(os.path.getmtime(os.path.join(d, n)), before[n], n)
+                with self.assertRaises(ValueError) as cm:
+                    load(path, run.solver)
+                self.assertIn("fp_green mismatch", str(cm.exception))
+        fresh = run_case(os.path.join(self.dir, "fresh"), X.ZEEMAN_SZ_ALL,
+                         dict(BASE_PARAM, Longitudinal_Bond_Output_Full=False))
+        self.assertNotIn("bond archive", " ".join(messages(fresh.records, "WARNING")))
+
     def test_rerun_removes_old_sidecars(self):
         path = self.copy("packed_sidecar")
         d = os.path.dirname(path)
@@ -776,6 +861,51 @@ class TestCrossRefusals(_Copies):
         self.assertEqual(str(cm.exception),
                          T_ONSITE_BOND.format(path=os.path.join(out, "chiq.npz")))
 
+    def test_onsite_bond_chiq_without_chi0q(self):
+        """The bond refusal comes before the existence checks: a bond chiq
+        whose chi0q is missing is refused as a bond output, naming
+        chiq.npz."""
+        import hwave.sc as sc
+        from tests.test_flex_so_bond_entry import _sc_input
+        out = os.path.dirname(self.copy("packed_npz"))
+        os.remove(os.path.join(out, "chi0q.npz"))
+        with tempfile.TemporaryDirectory() as d2:
+            inp = _sc_input(d2, X.ZEEMAN_EXTERN_ONSITE, out,
+                            {"Bond_Channels": False, "Chi0q_Mode": "flex",
+                             "Frequency": "dynamic"})
+            with self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
+        self.assertEqual(str(cm.exception),
+                         T_ONSITE_BOND.format(path=os.path.join(out, "chiq.npz")))
+
+    def test_onsite_peek_leaves_other_files(self):
+        """The on-site peek reads only npz archives: a missing file, a single
+        .npy array, an empty or truncated file and an npz without the stage
+        member are left to the checks that follow; a bond output is
+        refused."""
+        import hwave.sc as sc
+        out = os.path.dirname(self.copy("packed_npz"))
+        chiq = os.path.join(out, "chiq.npz")
+        with self.assertRaises(ValueError) as cm:
+            sc._refuse_bond_flex_output(chiq)
+        self.assertEqual(str(cm.exception), T_ONSITE_BOND.format(path=chiq))
+        d = os.path.join(self.dir, "peek")
+        os.makedirs(d)
+        npy = os.path.join(d, "array.npz")
+        with open(npy, "wb") as fh:
+            np.save(fh, np.zeros(3))
+        empty = os.path.join(d, "empty.npz")
+        open(empty, "wb").close()
+        half = os.path.join(d, "half.npz")
+        shutil.copy(chiq, half)
+        with open(half, "r+b") as fh:
+            fh.truncate(os.path.getsize(half) // 2)
+        plain = os.path.join(d, "plain.npz")
+        np.savez(plain, x=np.zeros(2))
+        for path in (os.path.join(d, "absent.npz"), npy, empty, half, plain):
+            with self.subTest(path=os.path.basename(path)):
+                self.assertIsNone(sc._refuse_bond_flex_output(path))
+
     def test_capability_backstop(self):
         """The capability check behind the on-site peek: a copy of the
         archive run's chiq checked as an on-site artifact."""
@@ -853,8 +983,18 @@ class TestWiring(_Copies):
         self.assertIs(kw["info"], True)
         self.assertEqual(a[0], {"spinful": passes[0].pole[0]})
         self.assertEqual(messages(run.records).count(T_PASS), 1)
+        # the guard diagnostic of the pass, once, after it
+        guards = T_PASS_GUARDS.format(cond=passes[0].cond_min,
+                                      tol=run.solver.longitudinal_bond_cond_tol)
+        self.assertTrue(np.isfinite(passes[0].cond_min))
+        msgs = messages(run.records, "INFO")
+        self.assertEqual(msgs.count(guards), 1)
+        self.assertGreater(msgs.index(guards), msgs.index(T_PASS))
         arch = _members(archive_path(run))
         self.assertFalse([k for k in arch if k.startswith("rpa_")])
+        a = load(archive_path(run), run.solver)
+        self.assertIs(a.scf_converged, False)
+        self.assertIsNone(a.rpa_past_pole)
 
     def test_pole_members_past_pole(self):
         from hwave.solver import flex_so_bond, so_bond
@@ -881,7 +1021,7 @@ class TestWiring(_Copies):
         for n in ("chi0q", "chiq"):
             self.assertFalse([k for k in _members(os.path.join(run.out, n + ".npz"))
                               if k.startswith("rpa_")])
-        load(archive_path(run), run.solver)
+        self.assertIs(load(archive_path(run), run.solver).rpa_past_pole, True)
         # unpatched, below the pole: none
         self.assertFalse([k for k in _members(archive_path(RUNS["packed_npz"]))
                           if k.startswith("rpa_")])

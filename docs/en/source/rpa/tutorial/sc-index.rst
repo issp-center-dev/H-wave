@@ -3046,8 +3046,9 @@ producer:
      - ``[mode.param] longitudinal_bond_channels`` of the FLEX run
    * - ``bond archive <file>: this is a spin-orbital bond archive (written by
        the spin-orbital FLEX with bond channels); the non-spin-orbital bond
-       consumers cannot read it, and no consumer of it exists in this
-       version.``
+       consumers cannot read it, and hwave_sc does not read it in this
+       version (read it with
+       hwave.solver.so_bond_archive.load_so_bond_archive).``
      - A schema-4 archive given to the non-spin-orbital bond pairing
        (``hwave_sc`` with ``bond_channels = true`` and ``frequency =
        "dynamic"``). There is no conversion.
