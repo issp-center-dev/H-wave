@@ -1262,7 +1262,7 @@ class TestCompatibilitySplit(unittest.TestCase):
         self.assertEqual(list(params), [
             "data", "path", "validated", "run_band", "run_state", "nmat_rule",
             "run_interaction", "need", "expected_producer", "run_bond", "green",
-            "green_layout", "green_fp"])
+            "green_layout", "green_fp", "check_green"])
         for k in list(params)[2:]:
             self.assertEqual(params[k].kind, inspect.Parameter.KEYWORD_ONLY)
         for k in ("expected_producer", "run_bond", "green", "green_layout", "green_fp"):
@@ -1387,6 +1387,214 @@ class TestStateRelations(unittest.TestCase):
     def test_reads_no_payload(self):
         d = _NoPayload(_archive())
         self.assertIsNone(fp.check_state_relations(d, "a.npz", "test producer"))
+
+
+_MISMATCH_AB = ("'chiq.npz' (written by test producer): fp_green mismatch: the Green function "
+                "this run loaded has digest bbbbbbbbbbbb..., the archive records "
+                "aaaaaaaaaaaa... (both at fingerprint_version 2); the Green function and the "
+                "susceptibility do not come from the same run. Regenerate both with test "
+                "producer.")
+_NOT_READ = "check_so_compatibility: green and green_fp are not read with check_green = False"
+
+
+class TestDeferredGreen(unittest.TestCase):
+    """``check_green = False`` stops before the green step; the digest is
+    compared afterwards by :func:`check_green_digest` with the same text."""
+    RUN_BAND = TestVersionTwoChecks.RUN_BAND
+    RUN_STATE = TestVersionTwoChecks.RUN_STATE
+
+    def _args(self, **kw):
+        args = dict(run_band=self.RUN_BAND, run_state=self.RUN_STATE, nmat_rule="exact",
+                    run_interaction=INTER, need="so_onsite")
+        args.update(kw)
+        return args
+
+    def _calls(self, d, **kw):
+        v = ("chiq", "rpa_so", 2, "test producer")
+        return (("check_so_compatibility",
+                 lambda: fp.check_so_compatibility(d, "chiq.npz", validated=v,
+                                                   **self._args(**kw))),
+                ("check_so_archive",
+                 lambda: fp.check_so_archive(d, "chiq.npz", kind="chiq",
+                                             **self._args(**kw))))
+
+    def _logs(self, call):
+        with self.assertLogs(fp.check_logger, "DEBUG") as cm:
+            fp.check_logger.debug("start")
+            result = call()
+        return result, cm.output[1:]
+
+    def test_deferred_then_digest(self):
+        g = _rand((1, 8, 1, 4, 4))
+        right = fp.green_digest(g, "b_f_k_o_o_v1", version=2)
+        d = _archive()                          # stores "a" * 64, not g's digest
+        for via, call in self._calls(d, check_green=False):
+            with self.subTest(via=via):
+                info, logs = self._logs(call)
+                self.assertEqual(logs, [])      # no producer-assertion INFO
+                self.assertEqual(info.producer_fp_green, GREEN_FP)
+                self.assertEqual(info, fp.check_so_archive(d, "chiq.npz", kind="chiq",
+                                                           **self._args()))
+                with self.assertRaises(fp.SOArchiveError) as cm:
+                    fp.check_green_digest(info.producer_fp_green, "chiq.npz",
+                                          label=info.producer_label, green_fp="b" * 64)
+                self.assertEqual(str(cm.exception), _MISMATCH_AB)
+                self.assertEqual(cm.exception.check, "green")
+        d = _archive(fp_green=right)
+        info = fp.check_so_compatibility(d, "chiq.npz",
+                                         validated=("chiq", "rpa_so", 2, "test producer"),
+                                         check_green=False, **self._args())
+        out, logs = self._logs(lambda: fp.check_green_digest(
+            info.producer_fp_green, "chiq.npz", label="test producer", green_fp=right))
+        self.assertEqual(out, right)
+        self.assertEqual(logs, [])
+
+    def test_mismatch_text_shared(self):
+        """The deferred compare gives the text of the one-stage green step."""
+        d = _archive()
+        with self.assertRaises(fp.SOArchiveError) as one:
+            fp.check_so_archive(d, "chiq.npz", kind="chiq", green_fp="b" * 64,
+                                **self._args())
+        with self.assertRaises(fp.SOArchiveError) as two:
+            fp.check_green_digest(GREEN_FP, "chiq.npz", label="test producer",
+                                  green_fp="b" * 64)
+        self.assertEqual(str(one.exception), _MISMATCH_AB)
+        self.assertEqual(str(two.exception), _MISMATCH_AB)
+
+    def test_green_with_check_green_false(self):
+        g = _rand((1, 8, 1, 4, 4))
+        for extra in (dict(green_fp="b" * 64), dict(green=g, green_layout="b_f_k_o_o_v1"),
+                      dict(green=g)):
+            for via, call in self._calls(_archive(), check_green=False, **extra):
+                with self.subTest(via=via, extra=sorted(extra)):
+                    with self.assertRaises(ValueError) as cm:
+                        call()
+                    self.assertIs(type(cm.exception), ValueError)
+                    self.assertEqual(str(cm.exception), _NOT_READ)
+
+    def test_green_digest_needs_a_string(self):
+        with self.assertRaises(TypeError) as cm:
+            fp.check_green_digest(GREEN_FP, "chiq.npz", label="test producer", green_fp=None)
+        self.assertEqual(str(cm.exception),
+                         "check_green_digest: green_fp must be the digest string, got None")
+
+    def test_defaults_unchanged(self):
+        d = _archive()
+        for via, call in self._calls(d):
+            with self.subTest(via=via):
+                info, logs = self._logs(call)
+                self.assertEqual(logs, ["INFO:qlms.solver.fingerprint:fp_green: producer "
+                                        "assertion (chiq.npz)"])
+                self.assertEqual(info.producer_fp_green, GREEN_FP)
+        for name in ("check_so_archive", "check_so_compatibility"):
+            p = inspect.signature(getattr(fp, name)).parameters["check_green"]
+            self.assertIs(p.default, True)
+            self.assertEqual(p.kind, inspect.Parameter.KEYWORD_ONLY)
+        params = inspect.signature(fp.check_green_digest).parameters
+        self.assertEqual(list(params), ["stored", "path", "label", "green_fp"])
+        self.assertEqual([params[k].kind for k in ("label", "green_fp")],
+                         [inspect.Parameter.KEYWORD_ONLY] * 2)
+
+
+class TestStepNames(unittest.TestCase):
+    """Each refusal of the compatibility steps names its step in ``check``;
+    its text is unchanged."""
+    RUN_BAND = TestVersionTwoChecks.RUN_BAND
+    RUN_STATE = TestVersionTwoChecks.RUN_STATE
+
+    def _rows(self):
+        T2 = dict(T)
+        T2[((0, 0, 0), (0, 0))] = -1.5 + 0j
+        far = _archive(state=fp.so_state(beta=2.0, nmat=8, mu=-0.3, density=0.9,
+                                         calc_mu=True, target=0.8))
+        file_rec = _records(("Exchange", (0, 1, 1, 0), (1, 0, 0), 0.29))
+        run_rec = file_rec.copy()
+        run_rec[0]["v"] = 0.31
+        gap = _archive("gap", "sc_so_bond_static")
+        bond = dict(path="gap.npz", kind="gap", need="so_bond", run_bond=BOND)
+        other = fp.interaction_inputs(_Compiled(_COMPILED.records))
+        return (
+            ("residual", far, {},
+             "'chiq.npz' cannot be reused: the producer did not reach its filling (residual "
+             "1.000e-01 electrons per cell > 1e-8·max(1,|t|) = 1.000e-08). Regenerate it "
+             "with test producer so that its density closes to that tolerance."),
+            ("band", _archive(), dict(run_band=fp.band_inputs(T2, E, META2)),
+             "'chiq.npz' (written by test producer) does not match this run: band "
+             "differs: Transfer: file 2 rows, run 2 rows; first differing row "
+             "(R=(0, 0, 0), a=1, b=1): file (-1+0j), run (-1.5+0j). Archives are "
+             "reused only at the identical state point (not a warm start across a "
+             "sweep); re-run test producer with this input (the same "
+             "Transfer/Extern/coeff_extern)."),
+            ("interaction", _archive(interaction=fp.interaction_inputs(_Compiled(file_rec))),
+             dict(run_interaction=fp.interaction_inputs(_Compiled(run_rec))),
+             "'chiq.npz' (written by test producer) does not match this run: interaction "
+             "differs: file 1 records, run 1 records; first differing record Exchange modes "
+             "(0, 1, 1, 0) cells ((0, 0, 0), (1, 0, 0), (0, 0, 0), (0, 0, 0)): file "
+             "(0.29+0j), run (0.31+0j). Archives are reused only at the identical state "
+             "point (not a warm start across a sweep); re-run test producer with this input "
+             "(the same interaction definitions)."),
+            ("capability", _archive(), dict(need="so_bond", run_bond=BOND),
+             "chiq.npz was produced by test producer (so_onsite), but this run needs a "
+             "so_bond artifact"),
+            ("topology", gap, dict(run_interaction=other, **bond),
+             "'gap.npz' (written by test producer) does not match this run: declared "
+             "topology differs: file 5 displacements, run 3 displacements. Archives are "
+             "reused only at the identical state point (not a warm start across a sweep); "
+             "re-run test producer with this input (the same interaction definitions)."),
+            ("resolved_topology", gap,
+             dict(bond, run_bond=BOND._replace(reverse=REV_SWAPPED)),
+             "'gap.npz' (written by test producer) does not match this run: resolved "
+             "bond topology differs: file delta_r [[0, 0, 0], [1, 0, 0], [-1, 0, 0]] "
+             "reverse [0, 2, 1] (max_shells 1), run delta_r [[0, 0, 0], [1, 0, 0], "
+             "[-1, 0, 0]] reverse [0, 1, 2] (max_shells 1). Archives are reused only "
+             "at the identical state point (not a warm start across a sweep); re-run "
+             "test producer with this input (the same bond settings)."),
+            ("state", _archive(), dict(run_state=self.RUN_STATE._replace(beta=4.0)),
+             "'chiq.npz' (written by test producer) does not match this run: state "
+             "differs: beta 2.0 (file) vs 4.0 (run). Archives are reused only at "
+             "the identical state point; re-run test producer at this filling and "
+             "temperature."),
+            ("green", _archive(), dict(green_fp="b" * 64), _MISMATCH_AB),
+        )
+
+    def test_steps(self):
+        names = []
+        for step, d, kw, text in self._rows():
+            args = dict(kind="chiq", run_band=self.RUN_BAND, run_state=self.RUN_STATE,
+                        nmat_rule="exact", run_interaction=INTER, need="so_onsite")
+            args.update(kw)
+            path = args.pop("path", "chiq.npz")
+            kind = args.pop("kind")
+            v = fp.validate_structure(d, path, kind=kind) + ("test producer",)
+            for via, call in (
+                    ("check_so_archive",
+                     lambda: fp.check_so_archive(d, path, kind=kind, **args)),
+                    ("check_so_compatibility",
+                     lambda: fp.check_so_compatibility(d, path, validated=v, **args))):
+                with self.subTest(step=step, via=via):
+                    with self.assertRaises(fp.SOArchiveError) as cm:
+                        call()
+                    self.assertEqual(cm.exception.check, step)
+                    self.assertEqual(str(cm.exception), text)
+                    self.assertEqual(cm.exception.args, (text,))
+            names.append(step)
+        self.assertEqual(names, ["residual", "band", "interaction", "capability", "topology",
+                                 "resolved_topology", "state", "green"])
+
+    def test_default_and_structure(self):
+        e = fp.SOArchiveError("text")
+        self.assertIsNone(e.check)
+        self.assertEqual((str(e), e.args), ("text", ("text",)))
+        e = fp.SOArchiveError("text", check="band")
+        self.assertEqual((str(e), e.args, e.check), ("text", ("text",), "band"))
+        self.assertIsInstance(e, ValueError)
+        d = _archive()
+        d["fingerprint_version"] = np.int64(3)
+        with self.assertRaises(fp.SOArchiveError) as cm:
+            fp.check_so_archive(d, "chiq.npz", kind="chiq", run_band=self.RUN_BAND,
+                                run_state=self.RUN_STATE, nmat_rule="exact",
+                                run_interaction=INTER, need="so_onsite")
+        self.assertIsNone(cm.exception.check)
 
 
 if __name__ == "__main__":
