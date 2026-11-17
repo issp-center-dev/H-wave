@@ -36,12 +36,10 @@ H = ("[mode] enable_spin_orbital = true with [mode.param] longitudinal_bond_chan
      "(FLEX)")
 CAP_KEY = "[mode.param] longitudinal_bond_memory_cap_gb"
 
-T_OUTPUT_FULL = (H + " does not write the bond archive in this version (the spin-orbital bond "
-                 "archive arrives in a later version); remove longitudinal_bond_output_full "
-                 "or set it to false.")
-T_OUTPUT_LAYOUT = (H + " does not write the bond archive in this version (the spin-orbital "
-                   "bond archive arrives in a later version); remove "
-                   "longitudinal_bond_output_layout.")
+T_OUTPUT_LAYOUT_VALUE = (
+    "[mode.param] longitudinal_bond_output_layout must be \"npz\" or \"sidecar\" (\"npz\" "
+    "writes the single-file archive, the default; \"sidecar\" writes an index npz plus the "
+    "two big channel members as memory-mappable .npy files next to it), got {!r}")
 T_PAIRING = (H + " does not run the in-process pairing in this version (it arrives in a later "
              "version); remove longitudinal_bond_pairing.")
 T_STORE = (H + " runs on the host only in this version (the device store arrives in a later "
@@ -100,6 +98,31 @@ T_REMEDY_AUTO = ("The frequency batch was selected automatically; the smallest b
 T_REMEDY_SET = ("longitudinal_bond_freq_batch = 4 is set; a smaller value, or removing it so "
                 "that the run chooses, lowers the dressing rows.")
 T_REMEDY_SET_1 = "longitudinal_bond_freq_batch = 1 is set (the smallest batch)."
+# the bond archive (longitudinal_bond_output_full = true)
+T_NEED_GREEN = (H + ": longitudinal_bond_output_full = true needs [file.output] green (the bond "
+                "archive names the Green function its susceptibility was built from as its "
+                "companion green_file; [file.output] keys are case-sensitive); add green to "
+                "[file.output].")
+T_GREEN_DIR = (H + ": the bond archive '{archive}' and its companion green file '{green}' must "
+               "be in the same directory or the green file below it (green_file is stored as a "
+               "relative path without '..').")
+T_NPZ_TOO_LARGE = (H + ": longitudinal_bond_output_layout = \"npz\" cannot hold the bond archive "
+                   "member {member} ({size}, above the small-array bound {bound} = min(1 GiB, "
+                   "cap / 8)); set longitudinal_bond_output_layout = \"sidecar\" or remove it "
+                   "(the sidecar layout is then chosen).")
+T_FORCED = ("spin-orbital bond archive: sidecar layout (the member {member} of {size} is above "
+            "the small-array bound {bound}); the susceptibility is written as .npy files next "
+            "to the index.")
+T_ARCHIVE_KEY_IGNORED = ("[file.output] longitudinal_bond is written only with [mode.param] "
+                         "longitudinal_bond_output_full = true; no bond archive is written by "
+                         "this run.")
+T_NO_ARCHIVE_ITER0 = ("spin-orbital bond archive: IterationMax = 0 runs no map, so no bond "
+                      "archive is written.")
+T_REMEDY_ARCHIVE = ("longitudinal_bond_output_full = true adds the archive phases "
+                    "(archive_bubble, archive_dressing, archive_write); setting it to false "
+                    "removes them.")
+#: the [mode.param] key of the archive, in mixed case
+FULL = {"Longitudinal_Bond_Output_Full": True}
 
 #: a CoulombInter coefficient with an imaginary part (Hermitian-closed)
 _COMPLEX_INTER = X.ZEEMAN_SZ_ALL._replace(
@@ -232,9 +255,7 @@ class TestRefusals(_Case):
 
     def _rows(self):
         return (
-            (T_OUTPUT_FULL, {"longitudinal_bond_output_full": True}),
-            (T_OUTPUT_LAYOUT, {"longitudinal_bond_output_layout": "sidecar"}),
-            (T_OUTPUT_LAYOUT, {"longitudinal_bond_output_layout": "bogus"}),
+            (T_OUTPUT_LAYOUT_VALUE, {"longitudinal_bond_output_layout": "bogus"}),
             (T_PAIRING, {"longitudinal_bond_pairing": "singlet"}),
             (T_PAIRING, {"longitudinal_bond_pairing": "both"}),
             (T_STORE, {"gpu": True, "longitudinal_bond_store": "device"}),
@@ -242,7 +263,7 @@ class TestRefusals(_Case):
             (T_STORE, {"gpu": False, "longitudinal_bond_store": "device"}),
             (T_GUARD_FREQS, {"longitudinal_bond_guard_freqs": "static"}),
             (T_GPU_REQUIRED, {"gpu_required": True}),
-            (T_LAYOUT_VALUE.format("bogus"), {"so_bond_layout": "bogus"}),
+            (T_LAYOUT_VALUE, {"so_bond_layout": "bogus"}),
             (T_LAYOUT_FORCED, {"so_bond_layout": "sz_packed"}),
         )
 
@@ -252,9 +273,8 @@ class TestRefusals(_Case):
                      for k, v in param.items()}
             for p in (param, mixed):
                 exp = text
-                if "so_bond_layout" in [k.lower() for k in p] and text.startswith(
-                        "[mode.param] so_bond_layout must"):
-                    exp = T_LAYOUT_VALUE.format([v for v in p.values()][0])
+                if text in (T_LAYOUT_VALUE, T_OUTPUT_LAYOUT_VALUE):
+                    exp = text.format([v for v in p.values()][0])
                 with self.subTest(param=p):
                     self.assertRefused(exp, param=p)
 
@@ -277,6 +297,10 @@ class TestRefusals(_Case):
         """The values the table accepts construct and admit."""
         for p in ({"longitudinal_bond_output_full": False},
                   {"Longitudinal_Bond_Output_Full": False},
+                  {"longitudinal_bond_output_full": True},
+                  {"Longitudinal_Bond_Output_Full": True,
+                   "Longitudinal_Bond_Output_Layout": " SideCar "},
+                  {"longitudinal_bond_output_layout": "npz"},
                   {"longitudinal_bond_store": "host"}, {"Longitudinal_Bond_Store": "AUTO"},
                   {"longitudinal_bond_guard_freqs": "all"},
                   {"Longitudinal_Bond_Guard_Freqs": " All "},
@@ -334,19 +358,233 @@ class TestWarningsAndInfo(_Case):
         self.assertNotIn(("INFO", T_PAIRLIFT), msgs)   # ZEEMAN_SZ_ALL has no PairLift
         self.assertFalse(any("Bond-resolved FLEX preflight (ESTIMATE)" in m for _, m in msgs))
 
-    def test_no_sidecar_warning(self):
-        """The layout key is refused by its presence, before the non-SO value
-        check (whose sidecar WARNING is not logged)."""
-        with self.capture() as msgs:
-            with self.assertRaises(ValueError):
-                self.build(param={"longitudinal_bond_output_layout": "sidecar"})
-        self.assertFalse(any(T_SIDECAR in m for _, m in msgs), msgs)
+    def test_sidecar_warning(self):
+        """A sidecar layout without longitudinal_bond_output_full writes no
+        archive: the WARNING of the non-spin-orbital bond FLEX, once."""
+        for p in ({"longitudinal_bond_output_layout": "sidecar"},
+                  {"Longitudinal_Bond_Output_Layout": "SiDeCaR"}):
+            with self.subTest(param=p):
+                with self.capture() as msgs:
+                    s, _ = self.build(param=p)
+                self.assertEqual(sum(T_SIDECAR in m for lv, m in msgs if lv == "WARNING"), 1,
+                                 msgs)
+                self.assertEqual(s._so_output_layout, "sidecar")
 
     def test_no_nonso_pairlift_info(self):
         _, msgs = self.run_logs(F.SOC_ALL_TYPES)
         self.assertOnce(msgs, "INFO", T_PAIRLIFT)
         self.assertOnce(msgs, "INFO", T_SOC_REASON)
         self.assertFalse(any(T_NONSO_PAIRLIFT in m for _, m in msgs), msgs)
+
+
+class TestArchiveConfig(_Case):
+    """The bond archive's configuration (``longitudinal_bond_output_full =
+    true``): the layout request, the archive rows of the admission, the
+    output-path refusals and the notices."""
+
+    def test_layout_request(self):
+        from hwave.solver import so_bond_archive as sa
+        rows = (({"longitudinal_bond_output_full": True}, None, "npz"),
+                (dict(FULL, LONGITUDINAL_BOND_OUTPUT_LAYOUT=" SIDECAR "), "sidecar", "sidecar"),
+                (dict(FULL, longitudinal_bond_output_layout="NpZ"), "npz", "npz"),
+                ({"longitudinal_bond_output_full": False}, None, None))
+        for fx, member, nbytes in ((X.ZEEMAN_SZ_ALL, "chi_w@0", 409600),
+                                   (F.SOC_ALL_TYPES, "chi_w", 1638400)):
+            for p, request, layout in rows:
+                with self.subTest(fixture=fx.name, param=p):
+                    s, gi = self.build(fx, param=dict(p, longitudinal_bond_memory_cap_gb=0))
+                    self.assertEqual(s._so_output_layout, request)
+                    adm = self.preflight(s, gi)
+                    if layout is None:
+                        self.assertIsNone(adm.archive)
+                        self.assertFalse(adm.plan.keep_chi)
+                        self.assertFalse([r for r in adm.plan.rows
+                                          if r[0].startswith("archive_")])
+                        continue
+                    self.assertEqual(adm.archive, sa.ArchiveLayout(layout, False, member, nbytes,
+                                                                   float(2 ** 30)))
+                    self.assertTrue(adm.plan.keep_chi)
+                    self.assertEqual(sorted({r[0] for r in adm.plan.rows
+                                             if r[0].startswith("archive_")}),
+                                     ["archive_bubble", "archive_dressing", "archive_write"])
+
+    def test_archive_rows_at_the_call_site(self):
+        """Every plan of an archive run is built with keep_chi, the archive
+        remedy and the archive rows of flex_so_bond_rows(archive=(layout,
+        largest inline member))."""
+        from hwave.solver import flex_so_bond, so_bond
+        from hwave.solver import so_bond_archive as sa
+        real_plan, real_rows = so_bond.plan_so_bond, flex_so_bond.flex_so_bond_rows
+        for layout in ("npz", "sidecar"):
+            with self.subTest(layout=layout):
+                plans, rows = [], []
+
+                def plan(**kw):
+                    plans.append(kw)
+                    return real_plan(**kw)
+
+                def flex_rows(**kw):
+                    rows.append(kw)
+                    return real_rows(**kw)
+                s, gi = self.build(param=dict(FULL, Longitudinal_Bond_Output_Layout=layout,
+                                              longitudinal_bond_memory_cap_gb=0))
+                with mock.patch.object(so_bond, "plan_so_bond", plan), \
+                        mock.patch.object(flex_so_bond, "flex_so_bond_rows", flex_rows):
+                    adm = self.preflight(s, gi)
+                transfer, extern = s._so_band_tables()[:2]
+                compiled = s.ham_info.so_context.compiled
+                inline = sa.inline_max_bytes(
+                    nmat=16, nvol=16, B=5, nd=2, block_layout="sz_packed", output_layout=layout,
+                    n_transfer=len(transfer), n_extern=len(extern),
+                    n_rec=len(compiled.records), n_topology=len(compiled.declared_topology))
+                self.assertEqual([r["archive"] for r in rows], [(layout, inline)])
+                self.assertEqual(len(plans), 2)                  # one trial (nb = 16), final
+                for kw in plans:
+                    self.assertIs(kw["keep_chi"], True)
+                    self.assertEqual(kw["archive_remedy"], T_REMEDY_ARCHIVE)
+                    self.assertIn(("archive_write", "archive_write",
+                                   min(inline, 16 * 2 ** 20) + 2 ** 20), kw["extra_rows"])
+                self.assertEqual(adm.archive.layout, layout)
+
+    def test_need_green(self):
+        for info in ({}, {"Green": "green"}):
+            with self.subTest(output=info):
+                s, _ = self.build(param=FULL)
+                with self.assertRaises(ValueError) as cm:
+                    s.validate_output_paths(dict(info, path_to_output=self.d), self.d)
+                self.assertEqual(str(cm.exception), T_NEED_GREEN)
+        # accepted: green given; no archive (output_full false, IterationMax = 0)
+        s, _ = self.build(param=FULL)
+        s.validate_output_paths({"path_to_output": self.d, "green": "g"}, self.d)
+        for p in ({"longitudinal_bond_output_full": False}, dict(FULL, IterationMax=0)):
+            with self.subTest(param=p):
+                s, _ = self.build(param=p)
+                s.validate_output_paths({"path_to_output": self.d}, self.d)
+
+    def test_green_dir(self):
+        s, _ = self.build(param=FULL)
+        for out in ({"green": "green", "longitudinal_bond": "sub/lb"},
+                    {"green": "../g", "longitudinal_bond": "lb"}):
+            with self.subTest(output=out):
+                with self.assertRaises(ValueError) as cm:
+                    s.validate_output_paths(dict(out, path_to_output=self.d), self.d)
+                archive = os.path.abspath(os.path.join(self.d, out["longitudinal_bond"] + ".npz"))
+                green = os.path.abspath(os.path.join(self.d, out["green"] + ".npz"))
+                self.assertEqual(str(cm.exception),
+                                 T_GREEN_DIR.format(archive=archive, green=green))
+        for out in ({"green": "sub/g", "longitudinal_bond": "lb"},
+                    {"green": "g", "longitudinal_bond": "x/../lb"}):
+            with self.subTest(output=out):
+                s.validate_output_paths(dict(out, path_to_output=self.d), self.d)
+
+    def test_no_archive_iter0(self):
+        for p in (dict(FULL, IterationMax=0), {"longitudinal_bond_output_full": True,
+                                               "iterationmax": 0}):
+            with self.subTest(param=p):
+                s, msgs = self.run_logs(param=p)
+                self.assertOnce(msgs, "INFO", T_NO_ARCHIVE_ITER0)
+                self.assertIsNone(s._so_admission.archive)
+                self.assertFalse(s._so_admission.plan.keep_chi)
+        for p in ({"IterationMax": 0}, FULL):
+            with self.subTest(param=p):
+                _, msgs = self.run_logs(param=p)
+                self.assertNotIn(("INFO", T_NO_ARCHIVE_ITER0), msgs)
+
+    def test_npz_too_large_before_allocation(self):
+        """An explicit "npz" with a slot member above the small-array bound
+        (cap / 8) is refused by the admission, before any bond array."""
+        from hwave.solver import so_bond
+        for fx, member, size in ((X.ZEEMAN_SZ_ALL, "chi_w@0", "0.39 MiB"),
+                                 (F.SOC_ALL_TYPES, "chi_w", "1.56 MiB")):
+            with self.subTest(fixture=fx.name):
+                text = T_NPZ_TOO_LARGE.format(member=member, size=size, bound="0.01 MiB")
+                param = dict(FULL, Longitudinal_Bond_Output_Layout="NPZ",
+                             longitudinal_bond_memory_cap_gb=1e-4)
+                s, gi = self.build(fx, param=param)
+                s._phase_b_reset(gi)
+                tracemalloc.start()
+                try:
+                    base = tracemalloc.get_traced_memory()[0]
+                    tracemalloc.reset_peak()
+                    with self.assertRaises(ValueError) as cm:
+                        s._phase_b_preflight(gi)
+                    peak = tracemalloc.get_traced_memory()[1] - base
+                finally:
+                    tracemalloc.stop()
+                self.assertEqual(str(cm.exception), text)
+                self.assertLessEqual(peak, 2 ** 20)
+                s, gi = self.build(fx, param=param)
+                with mock.patch.object(so_bond, "open_store", wraps=so_bond.open_store) as spy:
+                    with self.assertRaises(ValueError) as cm:
+                        s.solve(gi, self.d)
+                self.assertEqual(str(cm.exception), text)
+                self.assertEqual(spy.call_count, 0)
+
+    def test_forced_sidecar(self):
+        """Unset layout and a member above the bound: the sidecar layout and
+        one INFO; an explicit choice is never overridden."""
+        from hwave.solver import so_bond
+        forced = T_FORCED.format(member="chi_w@0", size="0.39 MiB", bound="0.12 MiB")
+        for p, layout, info in ((FULL, "sidecar", 1),
+                                (dict(FULL, longitudinal_bond_output_layout="Sidecar"),
+                                 "sidecar", 0)):
+            with self.subTest(param=p):
+                with mock.patch.object(so_bond, "small_array_bound",
+                                       return_value=float(2 ** 17)):
+                    s, msgs = self.run_logs(param=p)
+                self.assertEqual(msgs.count(("INFO", forced)), info)
+                self.assertEqual(s._so_admission.archive.layout, layout)
+                self.assertIs(s._so_admission.archive.forced, bool(info))
+        with mock.patch.object(so_bond, "small_array_bound", return_value=float(2 ** 17)):
+            with self.assertRaises(ValueError) as cm:
+                self.run_logs(param=dict(FULL, longitudinal_bond_output_layout="npz"))
+        self.assertEqual(str(cm.exception), T_NPZ_TOO_LARGE.format(
+            member="chi_w@0", size="0.39 MiB", bound="0.12 MiB"))
+        _, msgs = self.run_logs(param=FULL)
+        self.assertFalse([m for _, m in msgs if m.startswith(forced[:40])])
+
+    def test_remedy_archive(self):
+        """An over-cap refusal in an archive phase names the key that adds
+        the archive phases, after the batch note; without the archive it does
+        not."""
+        for p, note in ((FULL, T_REMEDY_AUTO),
+                        (dict(FULL, longitudinal_bond_freq_batch=4), T_REMEDY_SET)):
+            with self.subTest(param=p):
+                s, gi = self.build(param=dict(p, longitudinal_bond_memory_cap_gb=1e-6))
+                with self.assertRaises(ValueError) as cm:
+                    self.preflight(s, gi)
+                msg = str(cm.exception)
+                self.assertIn(" in phase archive_", msg.split("\n")[0])
+                self.assertEqual(msg.count(T_REMEDY_ARCHIVE), 1)
+                self.assertIn("(" + CAP_KEY + "). " + note + " " + T_REMEDY_ARCHIVE
+                              + " Memory grows", msg)
+        s, gi = self.build(param={"longitudinal_bond_memory_cap_gb": 1e-6})
+        with self.assertRaises(ValueError) as cm:
+            self.preflight(s, gi)
+        self.assertNotIn(T_REMEDY_ARCHIVE, str(cm.exception))
+
+    def test_archive_key_ignored(self):
+        """[file.output] longitudinal_bond without output_full: one INFO from
+        save_results, no archive; not on the non-spin-orbital gate."""
+        cases = ((X.ZEEMAN_SZ_ALL, {"Longitudinal_Bond_Output_Full": False}, True, 1),
+                 (X.ZEEMAN_SZ_ALL, FULL, True, 0),
+                 (F.SU2_4X4, {}, False, 0))
+        for fx, p, so, count in cases:
+            with self.subTest(fixture=fx.name, param=p):
+                d = self._dir()
+                inp = X.write_flex_case(d, fx, so=so, param=p,
+                                        output={"green": "green", "longitudinal_bond": "lb"})
+                info = inp["file"]["output"]
+                out = info["path_to_output"]
+                os.makedirs(out)
+                with self.capture() as msgs:
+                    s, gi = X.build_solver(inp)
+                    s.validate_output_paths(info, out)
+                    s.solve(gi, out)
+                    s.save_results(info, gi)
+                self.assertEqual(msgs.count(("INFO", T_ARCHIVE_KEY_IGNORED)), count)
+                self.assertEqual(os.path.exists(os.path.join(out, "lb.npz")),
+                                 bool(so and count == 0))
 
 
 class TestCapParsing(_Case):

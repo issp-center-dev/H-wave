@@ -62,8 +62,8 @@ POLE_CONSEQUENCE = ("The final FLEX state (its effective interaction W and self-
                     "built on that susceptibility; it describes no physical state and is "
                     "still reported.")
 OUTPUT_INFO = ("spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B "
-               "and chi_B of the last map; the bond-resolved arrays are not written in this "
-               "version.")
+               "and chi_B of the last SCF iteration; the bond-resolved arrays are written only "
+               "with longitudinal_bond_output_full = true.")
 SO_BOND_FLEX_REFUSAL = (
     "[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "
     "\"flex\" with bond_channels = true is not available yet: the spin-orbital bond path "

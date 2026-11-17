@@ -442,7 +442,12 @@ class SOBondFlexAdmission(NamedTuple):
         The frequency batch of the plan.
     sector_dyson : bool
         Whether the Dyson step inverts per S_z sector (the band and every
-        interaction record conserve S_z)."""
+        interaction record conserve S_z).
+    archive : so_bond_archive.ArchiveLayout or None
+        The output layout of the bond archive when the run writes one
+        (``longitudinal_bond_output_full = true`` and ``IterationMax >
+        0``; the plan then carries the archive phases); ``None``
+        otherwise."""
     topo: object
     geom: object
     layout: str
@@ -453,10 +458,12 @@ class SOBondFlexAdmission(NamedTuple):
     bond_inputs: object
     nb: int
     sector_dyson: bool
+    archive: object = None
 
 
 def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_shells,
-                       layout_request, cap_raw, freq_batch, depth, mixing, n_types, log):
+                       layout_request, cap_raw, freq_batch, depth, mixing, n_types, log,
+                       output_full=False, output_layout=None, max_iter=1):
     """The :class:`SOBondFlexAdmission` of a spin-orbital bond FLEX run.
 
     ``compiled`` is the run's compiled interaction, ``transfer`` / ``extern``
@@ -471,10 +478,24 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
     cap), ``depth`` / ``mixing`` / ``n_types`` the SCF rows' parameters
     (:func:`flex_so_bond_rows`).
 
-    Logs (on ``log``) the B = 1 notice, the layout's reason line, the cap
-    and the auto-selected batch. An over-cap run is refused with
-    :func:`hwave.solver.so_bond.plan_so_bond`'s text, which names how the
-    batch was chosen; no other exception of a candidate plan is caught."""
+    ``output_full`` is ``longitudinal_bond_output_full``, ``output_layout``
+    the ``longitudinal_bond_output_layout`` request (``None`` when unset)
+    and ``max_iter`` the ``IterationMax`` of the run. With ``output_full``
+    and ``max_iter > 0`` the run writes the bond archive: its output layout
+    is chosen once the cap is resolved
+    (:func:`hwave.solver.so_bond_archive.archive_layout`; an explicit
+    ``"npz"`` above the small-array bound is refused here, before any bond
+    array exists), and every plan is built with ``keep_chi = True`` and the
+    archive rows (:func:`flex_so_bond_rows` ``archive=``); an over-cap
+    refusal in an archive phase names the key that adds them. With
+    ``output_full`` and ``max_iter = 0`` no archive is written (one INFO).
+
+    Logs (on ``log``) the B = 1 notice, the layout's reason line, the cap,
+    the auto-selected batch, the forced sidecar layout of the archive and
+    the no-archive notice of ``max_iter = 0``. An over-cap run is refused
+    with :func:`hwave.solver.so_bond.plan_so_bond`'s text, which names how
+    the batch was chosen; no other exception of a candidate plan is
+    caught."""
     nd = 2 * int(compiled.norb_phys)
     topo, bond_inputs, _ = so_bond.bond_run(compiled, cell, max_shells)
     shape = tuple(int(x) for x in shape)
@@ -489,12 +510,32 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
     caps = so_bond.resolve_host_cap(cap_raw, key=CAP_KEY, log=log)
     nmat = int(nmat)
     nvol = int(np.prod(shape))
+    arch = rows_archive = None
+    if output_full and int(max_iter) > 0:
+        from . import so_bond_archive
+        arch = so_bond_archive.archive_layout(
+            member_bytes=so_bond_archive.slot_member_bytes(nmat=nmat, nvol=nvol, B=B, nd=nd,
+                                                           layout=layout),
+            small_array_bytes=so_bond.small_array_bound(caps), request=output_layout)
+        inline_max = so_bond_archive.inline_max_bytes(
+            nmat=nmat, nvol=nvol, B=B, nd=nd, block_layout=layout, output_layout=arch.layout,
+            n_transfer=len(transfer), n_extern=0 if extern is None else len(extern),
+            n_rec=len(compiled.records),
+            n_topology=int(np.asarray(compiled.declared_topology).reshape(-1, 3).shape[0]))
+        rows_archive = (arch.layout, inline_max)
+    elif output_full:
+        from . import so_bond_archive
+        log.info(so_bond_archive.T_NO_ARCHIVE_ITER0)
     resident, extra = flex_so_bond_rows(nmat=nmat, nvol=nvol, nd=nd, depth=depth,
-                                        mixing=mixing, n_types=n_types)
+                                        mixing=mixing, n_types=n_types, archive=rows_archive)
     common = dict(nmat=nmat, nvol=nvol, B=B, nd=nd, consumers=("flex_scf",), layout=layout,
                   layout_reason=reason, cap_key=CAP_KEY,
                   shell_rows=so_bond.shell_rows(compiled, topo, cell),
                   max_shells_key=MAX_SHELLS_KEY, resident_rows=resident, extra_rows=extra)
+    if arch is not None:
+        # the archive's final susceptibility pass dresses chibar in place
+        # (keep_chi); its phases are named in an over-cap refusal
+        common.update(keep_chi=True, archive_remedy=so_bond_archive.T_REMEDY_ARCHIVE)
     if freq_batch is None:
         candidates = [n for n in FREQ_BATCH_CANDIDATES if n <= nmat]
         nb = candidates[-1]
@@ -513,7 +554,11 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
     plan = so_bond.plan_so_bond(caps=caps, nb=nb, remedy_note=note, **common)
     if freq_batch is None:
         log.info(_NB_INFO.format(nb=plan.nb))
+    if arch is not None and arch.forced:
+        log.info(so_bond_archive.T_FORCED.format(
+            member=arch.member, size=so_bond_archive.format_bytes(arch.member_bytes),
+            bound=so_bond_archive.format_bytes(arch.bound)))
     sector_dyson = bool(so_bond.band_conserves_sz(transfer, extern, compiled.norb_phys).conserving
                         and so_bond.records_conserve_sz(compiled) is None)
     return SOBondFlexAdmission(topo, geom, layout, reason, sector_map, plan, caps, bond_inputs,
-                               int(plan.nb), sector_dyson)
+                               int(plan.nb), sector_dyson, arch)

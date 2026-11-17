@@ -26,7 +26,8 @@ included, :func:`nonso_transfer_rows`); :func:`build_solver` constructs the
 solver from it as ``hwave.qlms.run`` does. :func:`run_input` /
 :func:`run_flex` solve it (the iteration-hook payloads and the log records
 collected in a :class:`RunResult`), :func:`one_map` runs one map and
-:func:`converge` the converged state.
+:func:`converge` the converged state; :func:`run_inputs` gives the run-side
+inputs of the bond archive reader for a solved run.
 
 At module level this module imports numpy, the standard library and the
 test-side fixture modules only; a helper that drives production code
@@ -45,7 +46,8 @@ from tests.so_bond_oracles import closed_row
 __all__ = ["V_CPH", "ZEEMAN_SZ_ALL", "SOC_ALL_TYPES_CPH", "ZEEMAN_EXTERN_ONSITE", "SU2_MIXED",
            "CHAIN_TRANSFER", "SU2_MIXED_6", "nonso_transfer_rows",
            "FLEX_NMAT", "FLEX_T", "onsite_rows", "interaction_tables", "fixture_mu",
-           "write_flex_case", "build_solver", "RunResult", "run_input", "run_flex",
+           "write_flex_case", "build_solver", "run_inputs", "RunResult", "run_input",
+           "run_flex",
            "one_map", "converge",
            "CONVERGE_PARAM"]
 
@@ -178,7 +180,8 @@ def fixture_mu(fixture):
     return float(F.independent_green(fixture, nmat=FLEX_NMAT, beta=1.0 / FLEX_T)[1])
 
 
-def write_flex_case(tmpdir, fixture, *, gate=True, so=True, param=None, mode=None):
+def write_flex_case(tmpdir, fixture, *, gate=True, so=True, param=None, mode=None,
+                    output=None):
     """Write the input files of ``fixture`` into ``tmpdir`` and return the
     ``input_dict`` of a FLEX run.
 
@@ -193,7 +196,9 @@ def write_flex_case(tmpdir, fixture, *, gate=True, so=True, param=None, mode=Non
     ``filling`` / ``Ncond``), ``coeff_tail = 0.0``, ``IterationMax = 1``,
     ``EPS = 12``, ``Mix = 0.5``. ``param`` and ``mode`` override the
     ``[mode.param]`` and ``[mode]`` tables (keys matched
-    case-insensitively; a key already present keeps its spelling)."""
+    case-insensitively; a key already present keeps its spelling);
+    ``output`` updates ``[file.output]`` as given (its keys are
+    case-sensitive, as every FLEX writer reads them)."""
     if mode is not None and any(k.lower() == "param" for k in mode):
         raise ValueError("write_flex_case: pass the [mode.param] overrides as param=")
     if so or not fixture.transfer:
@@ -217,6 +222,7 @@ def write_flex_case(tmpdir, fixture, *, gate=True, so=True, param=None, mode=Non
                           "calc_scheme": "general"}, mode, "[mode]")
     mode_tbl["param"] = par
     input_dict["mode"] = mode_tbl
+    input_dict["file"]["output"].update(output or {})
     return input_dict
 
 
@@ -237,6 +243,19 @@ def build_solver(input_dict):
     reader = read_input_k.QLMSkInput(input_dict["file"]["input"])
     solver = flex_mod.FLEX(reader.get_param("ham"), {}, info_mode)
     return solver, reader.get_param("green")
+
+
+def run_inputs(solver):
+    """The run-side inputs of ``hwave.solver.so_bond_archive.
+    load_so_bond_archive`` for the spin-orbital bond FLEX ``solver`` after
+    its solve: ``{"run_band", "run_state", "run_interaction",
+    "run_bond"}`` (its band tables, its final state, its compiled
+    interaction and the bond inputs of its admission)."""
+    from hwave.solver import fingerprint
+    return dict(run_band=fingerprint.band_inputs(*solver._so_band_tables()),
+                run_state=solver._so_state,
+                run_interaction=solver.ham_info.so_context.interaction,
+                run_bond=solver._so_admission.bond_inputs)
 
 
 class _Records(logging.Handler):
