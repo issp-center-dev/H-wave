@@ -1,4 +1,4 @@
-"""The schema-4 spin-orbital bond archive: its writer.
+"""The schema-4 spin-orbital bond archive: its writer and its reader.
 
 * ``write_so_bond_archive`` writes the members of the design's archive
   table (section 6.2) plus the markers of this version, dense or S_z-packed,
@@ -16,6 +16,11 @@
   still name them.
 * Preconditions, the ``green_file`` rule and the pole group are refused
   before anything is written.
+* ``load_so_bond_archive`` accepts what the writer wrote (both slot layouts,
+  npz and sidecar) and reads it back against the fixture builder's arrays
+  in either slot layout and by frequency slice; it refuses every malformed
+  or mismatched variant with its exact text, the scalar and relational
+  checks before any payload header, no payload before all checks.
 """
 import contextlib
 import logging
@@ -24,6 +29,7 @@ import shutil
 import tempfile
 import tracemalloc
 import unittest
+import zipfile
 from unittest import mock
 
 import numpy as np
@@ -343,11 +349,12 @@ class TestAtomicIndex(_Dir):
 
 class TestPostCommit(_Dir):
     def test_post_commit_failure_keeps_archive(self):
-        path, first = self.write()
+        inputs = fx.archive_inputs()
+        path, first = self.write(inputs=inputs)
         with mock.patch.object(sa, "_scan_candidates",
                                side_effect=RuntimeError("injected scan")):
             with self.assertLogs(LOG, "WARNING") as cm:
-                path2, out = self.write()
+                path2, out = self.write(inputs=inputs)
         self.assertEqual(path2, path)
         self.assertEqual(cm.output, ["WARNING:{}:{}".format(
             LOG.name, sa.T_OLD_SIDECARS_SCAN_FAILED.format(path=path,
@@ -355,6 +362,10 @@ class TestPostCommit(_Dir):
         self.assert_valid(path)
         for n in out["sidecars"]:
             self.assertTrue(os.path.isfile(os.path.join(self.dir, n)))
+        # the new archive loads and reads back
+        fx.write_companion_green(os.path.join(self.dir, "green.npz"), inputs)
+        a = sa.load_so_bond_archive(path, **inputs.run)
+        np.testing.assert_array_equal(a.read_slot("chi_w"), inputs.chi_w)
 
 
 class TestCompanion(_Dir):
@@ -556,6 +567,11 @@ class TestOldSidecars(_Dir):
                     self.assertFalse(os.path.exists(os.path.join(d, n)), n)
                 self.assertTrue(os.path.exists(os.path.join(d, cand)))
                 self.assert_valid(path)
+                # the archive loads (the junk and malformed neighbours do not matter)
+                fx.write_companion_green(os.path.join(d, "green.npz"), inputs)
+                a = sa.load_so_bond_archive(path, **inputs.run)
+                np.testing.assert_array_equal(a.read_slot("chi_w", want="dense"),
+                                              inputs.chi_w)
 
     def test_copied_index_keeps_sidecars(self):
         a, first = self.write("A.npz")
@@ -1049,6 +1065,826 @@ class TestMessages(unittest.TestCase):
                     "chi.{}.npy".format(n), "sub/chi_w.{}.npy".format(n),
                     "chi_w.{}.npz".format(n), "chi_w.{}.npy".format(n[:31])):
             self.assertIsNone(sa.parse_sidecar_name(bad), bad)
+
+
+# ================================================================ the reader
+def _M(path, check, stored, expected, label=fx.LABEL):
+    """The single-line malformed text of the archive checks."""
+    return "'{}' is malformed or truncated: {} ({} vs {}). Regenerate it with {}.".format(
+        path, check, stored, expected, label)
+
+
+def _bounded(text):
+    return text if len(text) <= 80 else text[:77] + "..."
+
+
+def _rewrite(path, changes=None, raw=None):
+    """Rewrite the npz at ``path`` with ``changes`` (``_DROP`` removes a
+    member) and ``raw`` members (name -> bytes, written as ``<name>.npy``
+    without any npy encoding)."""
+    raw = raw or {}
+    with np.load(path, allow_pickle=False) as z:
+        m = {k: z[k] for k in z.files if k not in raw}
+    for k, v in (changes or {}).items():
+        if v is _DROP:
+            m.pop(k, None)
+        else:
+            m[k] = v
+    np.savez(path, **m)
+    if raw:
+        with zipfile.ZipFile(path, "a") as zf:
+            for k, b in raw.items():
+                zf.writestr(k + ".npy", b)
+
+
+def _members(path):
+    with np.load(path, allow_pickle=False) as z:
+        return {k: z[k] for k in z.files}
+
+
+class _Spies:
+    """Counts the npy header reads (``fingerprint._read_header`` and
+    ``npy_header.read_npy_header``), the ``mmap_mode`` loads and the slot
+    block reads of an open npz during the ``with`` block."""
+
+    def __init__(self, blocks=()):
+        self.blocks = set(blocks)
+
+    def __enter__(self):
+        from hwave.solver import npy_header
+        self.header, self.npy, self.mmap, self.items = [], [], [], []
+        real_rh, real_nh, real_load = fp._read_header, npy_header.read_npy_header, np.load
+        real_get = np.lib.npyio.NpzFile.__getitem__
+        spy = self
+
+        def rh(*a, **kw):
+            spy.header.append(a[1])
+            return real_rh(*a, **kw)
+
+        def nh(*a, **kw):
+            spy.npy.append(1)
+            return real_nh(*a, **kw)
+
+        def load(*a, **kw):
+            if kw.get("mmap_mode") is not None:
+                spy.mmap.append(a[0])
+            return real_load(*a, **kw)
+
+        def get(npz, key):
+            spy.items.append(key)
+            return real_get(npz, key)
+
+        self._stack = contextlib.ExitStack()
+        self._stack.enter_context(mock.patch.object(fp, "_read_header", rh))
+        self._stack.enter_context(mock.patch.object(npy_header, "read_npy_header", nh))
+        self._stack.enter_context(mock.patch.object(np, "load", load))
+        self._stack.enter_context(mock.patch.object(np.lib.npyio.NpzFile, "__getitem__", get))
+        return self
+
+    def __exit__(self, *exc):
+        self._stack.close()
+        return False
+
+    def slot_reads(self):
+        return [k for k in self.items if k.split("@")[0] in sa.SLOT_PAYLOADS
+                and not k.endswith(("_file", "_nbytes"))]
+
+
+def _all_blocks(block_layout):
+    out = []
+    for p in sa.SLOT_PAYLOADS:
+        out += _blocks(p, block_layout)
+    return out
+
+
+class _ReaderDir(_Dir):
+    def archive(self, d, inputs, output_layout, green=True, **kw):
+        """Write the archive ``lb.npz`` of ``inputs`` into ``d`` with its
+        companion ``green.npz`` (unless ``green`` is False)."""
+        path, _ = self.write(d=d, inputs=inputs, output_layout=output_layout, **kw)
+        if green:
+            fx.write_companion_green(os.path.join(d, "green.npz"), inputs)
+        return path
+
+    @staticmethod
+    def load(path, inputs, **kw):
+        return sa.load_so_bond_archive(path, **inputs.run, **kw)
+
+
+class TestReader(_ReaderDir):
+    def test_accepts_and_reads(self):
+        for block_layout in ("dense", "sz_packed"):
+            for output_layout in ("npz", "sidecar"):
+                with self.subTest(block_layout=block_layout, output_layout=output_layout):
+                    self._accepts_and_reads(block_layout, output_layout)
+
+    def _accepts_and_reads(self, block_layout, output_layout):
+        d = self.sub("{}-{}".format(block_layout, output_layout))
+        inputs = fx.archive_inputs(block_layout=block_layout, chibar=True)
+        path = self.archive(d, inputs, output_layout)
+        with _Spies() as spy:
+            a = self.load(path, inputs)
+        self.assertEqual(spy.slot_reads(), [])
+        self.assertEqual(spy.mmap, [])
+        self.assertIsInstance(a, sa.SOBondArchive)
+        self.assertEqual(a._fields, ("path", "info", "layout", "bond_archive_layout", "B",
+                                     "nd", "nmat", "nvol", "sector_map", "green_path",
+                                     "sources"))
+        self.assertEqual((a.path, a.layout, a.bond_archive_layout, a.B, a.nd, a.nmat, a.nvol),
+                         (path, block_layout, output_layout, 3, 2, 4, 4))
+        self.assertEqual(a.green_path, os.path.normpath(os.path.join(d, "green.npz")))
+        self.assertEqual(a.info.producer_label, fx.LABEL)
+        self.assertEqual(a.info.version, 2)
+        self.assertEqual(a.info.producer_fp_green,
+                         fp.green_digest(inputs.green, fp.GREEN_LAYOUT))
+        sm = inputs.sector_map
+        if block_layout == "dense":
+            self.assertIsNone(a.sector_map)
+        else:
+            np.testing.assert_array_equal(a.sector_map.index, sm.index)
+            self.assertEqual(a.sector_map.sizes, sm.sizes)
+        with np.load(path) as z:
+            nonce = str(z["archive_nonce"][()])
+        want_sources = {}
+        for b in _all_blocks(block_layout):
+            n = sm.ND if block_layout == "dense" else sm.sizes[
+                so_bond.SECTOR_ORDER.index(b.split("@")[1])]
+            lead = (4,) if b.startswith("Gamma_bond") else (4, 4)
+            side = output_layout == "sidecar" and not b.startswith("Gamma_bond")
+            want_sources[b] = (os.path.join(d, "{}.{}.npy".format(b, nonce)) if side
+                               else "inline", lead + (n, n))
+        self.assertEqual(dict(a.sources), want_sources)
+        for name in sa.SLOT_PAYLOADS:
+            self.assertTrue(a.has_slot(name))
+
+        dense_ref = {"Gamma_bond": inputs.gamma_b, "chi_w": inputs.chi_w,
+                     "chibar_w": inputs.chibar_w}
+        for name, ref in dense_ref.items():
+            ranges = [(None, None)] if name == "Gamma_bond" else [
+                (None, None), (0, 4), (1, 3), (3, 4), (0, 1)]
+            for l0, l1 in ranges:
+                sl = slice(None) if l0 is None else slice(l0, l1)
+                for want in (None, "dense", "sz_packed"):
+                    with self.subTest(name=name, want=want, l0=l0, l1=l1):
+                        kw = {} if l0 is None else dict(l0=l0, l1=l1)
+                        with _Spies() as spy:
+                            got = a.read_slot(name, want=want, **kw)
+                        side = (output_layout == "sidecar" and name != "Gamma_bond")
+                        self.assertEqual(len(spy.mmap), (1 if block_layout == "dense" else 3)
+                                         if side else 0)
+                        target = want or block_layout
+                        if target == "dense":
+                            self.assertIs(type(got), np.ndarray)
+                            self.assertEqual(got.dtype, np.complex128)
+                            self.assertTrue(got.flags.writeable and got.flags.c_contiguous)
+                            np.testing.assert_array_equal(got, ref[sl])
+                        else:
+                            self.assertIsInstance(got, so_bond.PackedArrays)
+                            expect = so_bond.PackedArrays.from_dense(ref[sl], sm, source="t")
+                            for gb, eb in zip(got.blocks, expect.blocks):
+                                self.assertIs(type(gb), np.ndarray)
+                                np.testing.assert_array_equal(gb, eb)
+                            if block_layout == "sz_packed" and l0 is None:
+                                stored = inputs.kwargs[{"Gamma_bond": "gamma_b"}.get(
+                                    name, name)]
+                                for gb, eb in zip(got.blocks, stored.blocks):
+                                    np.testing.assert_array_equal(gb, eb)
+
+        # an archive without chibar_w
+        d2 = self.sub("{}-{}-nochibar".format(block_layout, output_layout))
+        inputs2 = fx.archive_inputs(block_layout=block_layout)
+        b = self.load(self.archive(d2, inputs2, output_layout), inputs2)
+        self.assertTrue(b.has_slot("chi_w"))
+        self.assertFalse(b.has_slot("chibar_w"))
+        self.assertNotIn("chibar_w", {k.split("@")[0] for k in b.sources})
+
+    def test_leak_same_in_both_storage_layouts(self):
+        inputs = fx.archive_inputs()
+        chi = inputs.chi_w.copy()
+        chi[0] *= 10.0                         # the largest entries outside the slice
+        off = (np.flatnonzero(inputs.sector_map.sector_of != 0)[0],
+               inputs.sector_map.index[0])     # a sector +-1 row, a sector 0 column
+        chi[2, 1, off[0], off[1]] = 1e-3
+        texts = []
+        for output_layout in ("npz", "sidecar"):
+            d = self.sub(output_layout)
+            path = self.archive(d, inputs, output_layout, chi_w=chi)
+            a = self.load(path, inputs)
+            leak = 1e-3 / float(np.max(np.abs(chi[2:3])))
+            with self.assertRaises(ValueError) as cm:
+                a.read_slot("chi_w", want="sz_packed", l0=2, l1=3)
+            self.assertEqual(str(cm.exception), (
+                "'{}' is dense with nonzero S_z-off-sector entries (measured leak = {:.3e}; "
+                "packing requires exactly 0) although this run conserves S_z: incompatible "
+                "Hamiltonian (produced from a different, S_z-breaking input). Regenerate it "
+                "with this version.").format(path, leak))
+            texts.append(str(cm.exception).replace(path, "<path>"))
+        self.assertEqual(texts[0], texts[1])
+
+
+class TestDenseArchiveReadPacked(_ReaderDir):
+    def test_dense_archive_read_packed(self):
+        inputs = fx.archive_inputs()
+        sm = inputs.sector_map
+        chi = inputs.chi_w.copy()
+        i, j = np.flatnonzero(sm.sector_of == 1)[0], sm.index[0]
+        chi[3, 2, i, j] = 1e-14 * np.max(np.abs(chi[3]))      # round-off level, slice 3
+        d = self.sub("d")
+        path = self.archive(d, inputs, "npz", chi_w=chi)
+        a = self.load(path, inputs)
+        self.assertIsNone(a.sector_map)
+        got = a.read_slot("chi_w", want="sz_packed", l0=0, l1=3)
+        expect = so_bond.PackedArrays.from_dense(chi[0:3], sm, source="t")
+        for gb, eb in zip(got.blocks, expect.blocks):
+            np.testing.assert_array_equal(gb, eb)
+        self.assertEqual(got.lead_shape, (3, 4))
+        g = a.read_slot("Gamma_bond", want="sz_packed")
+        for gb, eb in zip(g.blocks, so_bond.PackedArrays.from_dense(
+                inputs.gamma_b, sm, source="t").blocks):
+            np.testing.assert_array_equal(gb, eb)
+        for l0, l1 in ((3, 4), (None, None)):
+            with self.subTest(l0=l0, l1=l1):
+                kw = {} if l0 is None else dict(l0=l0, l1=l1)
+                sl = chi[3:4] if l0 is not None else chi
+                leak = abs(chi[3, 2, i, j]) / float(np.max(np.abs(sl)))
+                with self.assertRaises(ValueError) as cm:
+                    a.read_slot("chi_w", want="sz_packed", **kw)
+                self.assertEqual(str(cm.exception), (
+                    "'{}' is dense with nonzero S_z-off-sector entries (measured leak = "
+                    "{:.3e}; packing requires exactly 0) although this run conserves S_z: "
+                    "numerical leakage from a non-canonical producer. Regenerate it with this "
+                    "version.").format(path, leak))
+        # the dense read keeps the entry
+        np.testing.assert_array_equal(a.read_slot("chi_w", l0=3, l1=4), chi[3:4])
+
+
+class TestReadSlotContract(_ReaderDir):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.inputs = fx.archive_inputs()
+        d = cls._tmp.name
+        sa.write_so_bond_archive(os.path.join(d, "lb.npz"), output_layout="npz", log=LOG,
+                                 **cls.inputs.kwargs)
+        fx.write_companion_green(os.path.join(d, "green.npz"), cls.inputs)
+        cls.a = sa.load_so_bond_archive(os.path.join(d, "lb.npz"), **cls.inputs.run)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def err(self, text, fn, *a, **kw):
+        with self.assertRaises(ValueError) as cm:
+            fn(*a, **kw)
+        self.assertEqual(str(cm.exception), text)
+
+    def test_texts(self):
+        a = self.a
+        for bad in ("chi", "Gamma_bond@0", "chi_w@0", None, 3):
+            with self.subTest(name=bad):
+                self.err("read_slot: unknown member {!r} (Gamma_bond, chi_w, chibar_w)"
+                         .format(bad), a.read_slot, bad)
+                self.err("has_slot: unknown member {!r} (Gamma_bond, chi_w, chibar_w)"
+                         .format(bad), a.has_slot, bad)
+        for bad in ("Dense", "packed", "", 0, ["dense"]):
+            with self.subTest(want=bad):
+                self.err("read_slot: want must be None, 'dense' or 'sz_packed', got {!r}"
+                         .format(bad), a.read_slot, "chi_w", want=bad)
+        self.err("'{}' has no chibar_w (this producer does not write it)".format(a.path),
+                 a.read_slot, "chibar_w")
+        for kw in (dict(l0=0), dict(l1=1), dict(l0=0, l1=1)):
+            with self.subTest(**kw):
+                self.err("read_slot: Gamma_bond has no frequency axis", a.read_slot,
+                         "Gamma_bond", **kw)
+        for l0, l1 in ((-1, 2), (2, 2), (3, 1), (0, 5), (4, None), (None, 0), (1.0, 2),
+                       (True, 2), (0, np.float64(2.0))):
+            with self.subTest(l0=l0, l1=l1):
+                s0 = 0 if l0 is None else l0
+                s1 = 4 if l1 is None else l1
+                self.err("read_slot: frequency range [{}, {}) outside [0, 4)".format(s0, s1),
+                         a.read_slot, "chi_w", l0=l0, l1=l1)
+
+    def test_defaults(self):
+        a = self.a
+        full = a.read_slot("chi_w")
+        np.testing.assert_array_equal(full, self.inputs.chi_w)
+        np.testing.assert_array_equal(a.read_slot("chi_w", l0=0, l1=4), full)
+        np.testing.assert_array_equal(a.read_slot("chi_w", l0=2), full[2:])
+        np.testing.assert_array_equal(a.read_slot("chi_w", l1=2), full[:2])
+        np.testing.assert_array_equal(a.read_slot("chi_w", l0=np.int64(1), l1=np.int32(3)),
+                                      full[1:3])
+
+
+class _RefusalBase(_ReaderDir):
+    """Archives built once per class (``BASES``), copied per row; every
+    class first accepts each base archive."""
+
+    BASES = (("dense", "npz"), ("dense", "sidecar"), ("sz_packed", "npz"),
+             ("sz_packed", "sidecar"))
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.inputs = {}
+        cls.base = {}
+        for bl, ol in cls.BASES:
+            d = os.path.join(cls._tmp.name, "{}-{}".format(bl, ol))
+            os.makedirs(d)
+            inputs = fx.archive_inputs(block_layout=bl)
+            sa.write_so_bond_archive(os.path.join(d, "lb.npz"), output_layout=ol, log=LOG,
+                                     **inputs.kwargs)
+            fx.write_companion_green(os.path.join(d, "green.npz"), inputs)
+            cls.inputs[bl] = inputs
+            cls.base[(bl, ol)] = d
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def copy(self, bl="dense", ol="npz"):
+        d = os.path.join(self.dir, "c{}".format(len(os.listdir(self.dir))))
+        shutil.copytree(self.base[(bl, ol)], d)
+        return os.path.join(d, "lb.npz")
+
+    def accepts_bases(self):
+        for bl, ol in self.BASES:
+            with self.subTest(bl=bl, ol=ol):
+                a = self.load(self.copy(bl, ol), self.inputs[bl])
+                self.assertEqual((a.layout, a.bond_archive_layout), (bl, ol))
+
+    def refused(self, path, text, bl="dense", headers=None, **kw):
+        with _Spies() as spy:
+            with self.assertRaises(ValueError) as cm:
+                self.load(path, self.inputs[bl], **kw)
+        self.assertEqual(str(cm.exception), text)
+        self.assertEqual(spy.slot_reads(), [])
+        self.assertEqual(spy.mmap, [])
+        if headers == 0:
+            self.assertEqual((spy.header, spy.npy), ([], []))
+        return spy
+
+
+class TestReaderRefusals(_RefusalBase):
+    """Every refusal of ``load_so_bond_archive`` (R10 steps 1b to 6), with
+    its exact text, on a copy of an archive the class first accepts."""
+
+    def test_bases_accepted(self):
+        self.accepts_bases()
+
+    def test_not_so_archive(self):
+        def t(schema, so):
+            return lambda p: sa.T_NOT_SO_ARCHIVE.format(path=p, schema=schema, so=so)
+        rows = [
+            ("non-SO schema 3", None, t("3", "absent")),
+            ("marker missing", dict(spin_orbital=_DROP), t("4", "absent")),
+            ("marker false", dict(spin_orbital=np.bool_(False)), t("4", "False")),
+            ("marker int", dict(spin_orbital=np.int64(1)), t("4", "1")),
+            ("schema missing", dict(bond_archive_schema=_DROP), t("absent", "True")),
+            ("schema 3", dict(bond_archive_schema=np.int64(3)), t("3", "True")),
+            ("schema float", dict(bond_archive_schema=np.float64(4.0)), t("4.0", "True")),
+            ("schema bool", dict(bond_archive_schema=np.bool_(True)), t("True", "True")),
+            ("schema 1-d", dict(bond_archive_schema=np.array([4])), t("[4]", "True")),
+        ]
+        for name, ch, text in rows:
+            with self.subTest(row=name):
+                path = self.copy()
+                if ch is None:
+                    np.savez(path, bond_archive_schema=np.int64(3),
+                             S_bond=np.zeros((2, 2)), producer_label=np.str_("x"))
+                else:
+                    _rewrite(path, ch)
+                self.refused(path, text(path), headers=0)
+
+    def test_each_row(self):
+        L = fx.LABEL
+        dense_rows = [
+            # (1b) the scalars, before any header
+            ("nmat missing", dict(nmat=_DROP), ("member nmat is missing", "absent", "present")),
+            ("nmat float", dict(nmat=np.float64(4)),
+             ("member nmat is not a 0-d integer", "float64/0d", "int/0d")),
+            ("nmat bool", dict(nmat=np.bool_(True)),
+             ("member nmat is not a 0-d integer", "bool/0d", "int/0d")),
+            ("nmat 1-d", dict(nmat=np.array([4])),
+             ("member nmat is not a 0-d integer", "int64/1d", "int/0d")),
+            ("nmat odd", dict(nmat=np.int64(3)),
+             ("member nmat is out of range", "3", "> 0 and even")),
+            ("nmat zero", dict(nmat=np.int64(0)),
+             ("member nmat is out of range", "0", "> 0 and even")),
+            ("B zero", dict(B=np.int64(0)), ("member B is out of range", "0", ">= 1")),
+            ("B str", dict(B=np.str_("3")),
+             ("member B is not a 0-d integer", "<U1/0d", "int/0d")),
+            ("nd odd", dict(nd=np.int64(3)),
+             ("member nd is out of range", "3", ">= 2 and even")),
+            ("nd zero", dict(nd=np.int64(0)),
+             ("member nd is out of range", "0", ">= 2 and even")),
+            ("norb_phys zero", dict(norb_phys=np.int64(0)),
+             ("member norb_phys is out of range", "0", ">= 1")),
+            ("state_nmat float", dict(state_nmat=np.float64(4.0)),
+             ("member state_nmat is not a 0-d integer", "float64/0d", "int/0d")),
+            ("state_nmat missing", dict(state_nmat=_DROP),
+             ("member state_nmat is missing", "absent", "present")),
+            ("prov_norb_phys str", dict(prov_norb_phys=np.str_("1")),
+             ("member prov_norb_phys is not a 0-d integer", "<U1/0d", "int/0d")),
+            ("beta int", dict(beta=np.int64(2)),
+             ("member beta is not a 0-d float", "int64/0d", "float/0d")),
+            ("beta inf", dict(beta=np.float64(np.inf)),
+             ("member beta is out of range", "inf", "finite and > 0")),
+            ("beta negative", dict(beta=np.float64(-2.0)),
+             ("member beta is out of range", "-2.0", "finite and > 0")),
+            ("state_beta nan", dict(state_beta=np.float64(np.nan)),
+             ("member state_beta is out of range", "nan", "finite and > 0")),
+            ("state_beta 1-d", dict(state_beta=np.array([2.0])),
+             ("member state_beta is not a 0-d float", "float64/1d", "float/0d")),
+            ("cell_shape (2,)", dict(cell_shape=np.array([4, 1])),
+             ("member cell_shape is not an integer (3,) array", "int64/(2,)", "int/(3,)")),
+            ("cell_shape float", dict(cell_shape=np.array([4.0, 1.0, 1.0])),
+             ("member cell_shape is not an integer (3,) array", "float64/(3,)", "int/(3,)")),
+            ("cell_shape zero", dict(cell_shape=np.array([4, 0, 1])),
+             ("member cell_shape is out of range", "[4, 0, 1]", "entries >= 1")),
+            ("prov_cell_shape missing", dict(prov_cell_shape=_DROP),
+             ("member prov_cell_shape is missing", "absent", "present")),
+            ("prov_cell_shape (3, 1)", dict(prov_cell_shape=np.array([[4], [1], [1]])),
+             ("member prov_cell_shape is not an integer (3,) array", "int64/(3, 1)",
+              "int/(3,)")),
+            ("delta_r float", dict(delta_r=np.zeros((3, 3))),
+             ("member delta_r is not an integer (B', 3) array", "float64/(3, 3)",
+              "int/(B', 3)")),
+            ("delta_r (3, 2)", dict(delta_r=np.zeros((3, 2), np.int64)),
+             ("member delta_r is not an integer (B', 3) array", "int64/(3, 2)",
+              "int/(B', 3)")),
+        ] + [(n, ch, t) for n, ch, t in RELATION_ROWS]
+        for name, ch, (check, stored, expected) in dense_rows:
+            with self.subTest(row=name):
+                path = self.copy()
+                _rewrite(path, ch)
+                self.refused(path, _M(path, check, stored, expected), headers=0)
+        # (1b) refusals name the expected producer, not producer_label
+        path = self.copy()
+        _rewrite(path, dict(nmat=_DROP))
+        self.refused(path, _M(path, "member nmat is missing", "absent", "present",
+                              "some producer"), headers=0, expected_producer="some producer")
+
+        # (3) the schema-4 extras, after the one structural pass
+        extras = [
+            ("index_order wrong", "dense", "npz", dict(index_order=np.str_("pair_major")),
+             ("index_order is not this version's", "'pair_major'",
+              "'bond_major_pair_code_slot'")),
+            ("index_order missing", "dense", "npz", dict(index_order=_DROP),
+             ("member index_order is missing", "absent", "present")),
+            ("index_order 1-d", "dense", "npz", dict(index_order=np.array(["a"])),
+             ("member index_order is not a 0-d string", "<U1/1d", "str/0d")),
+            ("freq_axis wrong", "dense", "npz", dict(freq_axis=np.str_("ir")),
+             ("freq_axis is not this version's", "'ir'", "'uniform_boson_centered'")),
+            ("layout unknown", "dense", "npz", dict(bond_archive_layout=np.str_("zip")),
+             ("bond_archive_layout is not a known layout", "'zip'", "'npz' or 'sidecar'")),
+            ("layout missing", "dense", "npz", dict(bond_archive_layout=_DROP),
+             ("member bond_archive_layout is missing", "absent", "present")),
+            ("inline chi in a sidecar archive", "dense", "npz",
+             dict(bond_archive_layout=np.str_("sidecar")),
+             ("payload member chi_w does not follow bond_archive_layout sidecar", "inline",
+              "sidecar")),
+            ("sidecar chi in an npz archive", "dense", "sidecar",
+             dict(bond_archive_layout=np.str_("npz")),
+             ("payload member chi_w does not follow bond_archive_layout npz", "sidecar",
+              "inline")),
+            ("sidecar chi in an npz archive (packed)", "sz_packed", "sidecar",
+             dict(bond_archive_layout=np.str_("npz")),
+             ("payload member chi_w@0 does not follow bond_archive_layout npz", "sidecar",
+              "inline")),
+            ("green_layout wrong", "dense", "npz", dict(green_layout=np.str_("b_k_f")),
+             ("green_layout is not the canonical layout", "'b_k_f'", "'b_f_k_o_o_v1'")),
+            ("scf_converged int", "dense", "npz", dict(scf_converged=np.int64(1)),
+             ("member scf_converged is not a 0-d bool", "int64/0d", "bool/0d")),
+            ("scf_converged missing", "dense", "npz", dict(scf_converged=_DROP),
+             ("member scf_converged is missing", "absent", "present")),
+            ("types 2-d", "dense", "npz", dict(types=np.array([["CoulombIntra"]])),
+             ("member types is not a 1-d string array", "<U12/2d", "str/1d")),
+            ("types int", "dense", "npz", dict(types=np.array([1])),
+             ("member types is not a 1-d string array", "int64/1d", "str/1d")),
+            ("types missing", "dense", "npz", dict(types=_DROP),
+             ("member types is missing", "absent", "present")),
+            ("nvol of Gamma_bond", "dense", "npz",
+             dict(cell_shape=np.array([8, 1, 1]), prov_cell_shape=np.array([8, 1, 1])),
+             ("payload member Gamma_bond has the wrong leading shape", "(4,)", "(8,)")),
+            ("leading shape of chi_w", "dense", "sidecar",
+             dict(nmat=np.int64(6), state_nmat=np.int64(6)),
+             ("payload member chi_w has the wrong leading shape", "(4, 4)", "(6, 4)")),
+            ("leading shape of chi_w@0", "sz_packed", "npz",
+             dict(nmat=np.int64(2), state_nmat=np.int64(2)),
+             ("payload member chi_w@0 has the wrong leading shape", "(4, 4)", "(2, 4)")),
+            ("nonce upper case", "dense", "npz", dict(archive_nonce=np.str_("A" * 32)),
+             ("archive_nonce is not 32 lowercase hex characters", repr("A" * 32),
+              "32 hex characters")),
+            ("nonce short", "dense", "npz", dict(archive_nonce=np.str_("a" * 31)),
+             ("archive_nonce is not 32 lowercase hex characters", repr("a" * 31),
+              "32 hex characters")),
+            ("nonce missing", "dense", "npz", dict(archive_nonce=_DROP),
+             ("member archive_nonce is missing", "absent", "present")),
+            ("green_file empty", "dense", "npz", dict(green_file=np.str_("")),
+             ("green_file is not a relative file path", "''",
+              "a file name or a relative path below the archive directory")),
+            ("green_file dot", "dense", "npz", dict(green_file=np.str_(".")),
+             ("green_file is not a relative file path", "'.'",
+              "a file name or a relative path below the archive directory")),
+            ("green_file directory", "dense", "npz", dict(green_file=np.str_("sub")),
+             ("green_file is not a relative file path", "'sub'",
+              "a file name or a relative path below the archive directory")),
+            ("green_file up", "dense", "npz", dict(green_file=np.str_("../green.npz")),
+             ("green_file is not a relative file path", "'../green.npz'",
+              "a file name or a relative path below the archive directory")),
+            ("green_file absolute", "dense", "npz", dict(green_file=np.str_("/g/green.npz")),
+             ("green_file is not a relative file path", "'/g/green.npz'",
+              "a file name or a relative path below the archive directory")),
+            ("green_file int", "dense", "npz", dict(green_file=np.int64(3)),
+             ("member green_file is not a 0-d string", "int64/0d", "str/0d")),
+            ("green_file missing", "dense", "npz", dict(green_file=_DROP),
+             ("member green_file is missing", "absent", "present")),
+            ("momentum missing", "dense", "npz", dict(momentum_convention=_DROP),
+             ("member momentum_convention is missing", "absent", "present")),
+        ]
+        for name, bl, ol, ch, (check, stored, expected) in extras:
+            with self.subTest(row=name):
+                path = self.copy(bl, ol)
+                os.makedirs(os.path.join(os.path.dirname(path), "sub"))
+                _rewrite(path, ch)
+                self.refused(path, _M(path, check, stored, expected, L), bl=bl)
+
+        # the momentum marker is checked by the shared rule
+        path = self.copy()
+        _rewrite(path, dict(momentum_convention=np.str_("e_minus_ikR")))
+        self.refused(path, "file '{}' records momentum_convention = 'e_minus_ikR' but this "
+                     "build uses 'e_plus_ikR'; regenerate the file.".format(path))
+
+    def test_sidecar_rows(self):
+        L = fx.LABEL
+        # a sidecar named with another nonce (the generic check accepts it)
+        path = self.copy("dense", "sidecar")
+        d = os.path.dirname(path)
+        m = _members(path)
+        nonce = str(m["archive_nonce"][()])
+        other = "b" * 32
+        os.rename(os.path.join(d, "chi_w.{}.npy".format(nonce)),
+                  os.path.join(d, "chi_w.{}.npy".format(other)))
+        _rewrite(path, {"chi_w_file": np.str_("chi_w.{}.npy".format(other))})
+        self.refused(path, _M(path, "sidecar file name of chi_w does not carry the "
+                              "archive_nonce", repr("chi_w.{}.npy".format(other)),
+                              repr("chi_w.{}.npy".format(nonce)), L))
+        # Gamma_bond as a sidecar
+        path = self.copy("dense", "sidecar")
+        d = os.path.dirname(path)
+        m = _members(path)
+        nonce = str(m["archive_nonce"][()])
+        name = "Gamma_bond.{}.npy".format(nonce)
+        np.save(os.path.join(d, name), m["Gamma_bond"])
+        _rewrite(path, {"Gamma_bond": _DROP, "Gamma_bond_file": np.str_(name),
+                        "Gamma_bond_nbytes": np.int64(os.path.getsize(os.path.join(d, name)))})
+        self.refused(path, _M(path, "payload member Gamma_bond does not follow "
+                              "bond_archive_layout sidecar", "sidecar", "inline", L))
+        # the structural pass runs: a sidecar one byte longer
+        path = self.copy("dense", "sidecar")
+        d = os.path.dirname(path)
+        nonce = str(_members(path)["archive_nonce"][()])
+        full = os.path.join(d, "chi_w.{}.npy".format(nonce))
+        size = os.path.getsize(full)
+        with open(full, "ab") as fh:
+            fh.write(b"\0")
+        self.refused(path, _M(path, "sidecar member chi_w has the wrong size",
+                              "{} bytes, {} recorded".format(size + 1, size),
+                              "{} bytes".format(size), L))
+
+    def test_companion_rows(self):
+        L = fx.LABEL
+        inputs = self.inputs["dense"]
+        # missing
+        path = self.copy()
+        os.remove(os.path.join(os.path.dirname(path), "green.npz"))
+        self.refused(path, sa.T_COMPANION_MISSING.format(
+            green=os.path.normpath(os.path.join(os.path.dirname(path), "green.npz")),
+            archive=path))
+        # named below the directory, missing
+        path = self.copy()
+        _rewrite(path, dict(green_file=np.str_("sub/./g.npz")))
+        self.refused(path, sa.T_COMPANION_MISSING.format(
+            green=os.path.normpath(os.path.join(os.path.dirname(path), "sub", "g.npz")),
+            archive=path))
+        # a re-stamped companion of another G: the archive's fp_green differs
+        g2 = inputs.green + 1.0
+        d1, d2 = (fp.green_digest(g, fp.GREEN_LAYOUT) for g in (inputs.green, g2))
+        path = self.copy()
+        gpath = os.path.join(os.path.dirname(path), "green.npz")
+        m = fx.companion_green_members(inputs, g2)
+        m["fp_green"] = np.str_(d2)
+        np.savez(gpath, **m)
+        self.refused(path, (
+            "'{}' (written by {}): fp_green mismatch: the Green function this run loaded has "
+            "digest {}..., the archive records {}... (both at fingerprint_version 2); the "
+            "Green function and the susceptibility do not come from the same run. "
+            "Regenerate both with {}.").format(path, L, d2[:12], d1[:12], L))
+        # a companion of another G, not re-stamped: its own check refuses it
+        path = self.copy()
+        gpath = os.path.join(os.path.dirname(path), "green.npz")
+        fx.write_companion_green(gpath, inputs, g2)
+        self.refused(path, (
+            "'{}' (written by {}): fp_green mismatch: the Green function this run loaded has "
+            "digest {}..., the archive records {}... (both at fingerprint_version 2); the "
+            "Green function and the susceptibility do not come from the same run. "
+            "Regenerate both with {}.").format(gpath, L, d2[:12], d1[:12], L))
+
+    def test_no_payload_read_before_checks(self):
+        """No slot block is read (inline member or sidecar) by the reader,
+        neither when it accepts nor when it refuses."""
+        for bl, ol in self.BASES:
+            with self.subTest(bl=bl, ol=ol):
+                with _Spies() as spy:
+                    self.load(self.copy(bl, ol), self.inputs[bl])
+                self.assertEqual(spy.slot_reads(), [])
+                self.assertEqual(spy.mmap, [])
+                # the header of every stored block is read, the data never
+                names = [os.path.basename(h) for h in spy.header]
+                for b in _all_blocks(bl):
+                    if b.startswith("chibar_w"):
+                        continue
+                    self.assertTrue(any(n.startswith(b + ".") for n in names), (b, names))
+        for row in ("freq", "relation", "companion"):
+            with self.subTest(row=row):
+                path = self.copy("dense", "sidecar")
+                if row == "freq":
+                    _rewrite(path, dict(freq_axis=np.str_("ir")))
+                elif row == "relation":
+                    _rewrite(path, dict(nmat=np.int64(6)))
+                else:
+                    os.remove(os.path.join(os.path.dirname(path), "green.npz"))
+                with _Spies() as spy:
+                    with self.assertRaises(ValueError):
+                        self.load(path, self.inputs["dense"])
+                self.assertEqual(spy.slot_reads(), [])
+                self.assertEqual(spy.mmap, [])
+
+    def test_order(self):
+        path = self.copy()
+        os.remove(os.path.join(os.path.dirname(path), "green.npz"))
+        _rewrite(path, dict(freq_axis=np.str_("ir")))
+        self.refused(path, _M(path, "freq_axis is not this version's", "'ir'",
+                              "'uniform_boson_centered'"))
+        # the (1b) scalars come before the marker-free structure checks
+        path = self.copy()
+        _rewrite(path, dict(fingerprint_version=_DROP, nmat=np.int64(3)))
+        self.refused(path, _M(path, "member nmat is out of range", "3", "> 0 and even"),
+                     headers=0)
+
+    def test_single_structural_pass(self):
+        for bl, ol in self.BASES:
+            with self.subTest(bl=bl, ol=ol):
+                path = self.copy(bl, ol)
+                calls = []
+                real = fp._validate
+
+                def spy(data, p, *a, **kw):
+                    calls.append(p)
+                    return real(data, p, *a, **kw)
+
+                with mock.patch.object(fp, "_validate", spy):
+                    self.load(path, self.inputs[bl])
+                self.assertEqual(calls, [path, os.path.join(os.path.dirname(path),
+                                                            "green.npz")])
+
+    def test_bounded_repr(self):
+        long_text = "x" * 1000
+        path = self.copy()
+        _rewrite(path, dict(index_order=np.str_(long_text)))
+        stored = _bounded(repr(long_text))
+        self.assertEqual(len(stored), 80)
+        self.refused(path, _M(path, "index_order is not this version's", stored,
+                              "'bond_major_pair_code_slot'"))
+        path = self.copy()
+        so = np.ones(1000, dtype=bool)
+        _rewrite(path, dict(spin_orbital=so))
+        self.refused(path, sa.T_NOT_SO_ARCHIVE.format(
+            path=path, schema="4", so=_bounded(repr(so.tolist()))), headers=0)
+        self.assertEqual(len(_bounded(repr(so.tolist()))), 80)
+
+
+#: the six (1b) relations, in the reader's order
+RELATION_ROWS = [
+    ("nd", dict(nd=np.int64(4)), ("nd differs from 2 * norb_phys", "4", "2")),
+    ("norb_phys", dict(nd=np.int64(4), norb_phys=np.int64(2)),
+     ("norb_phys differs from prov_norb_phys", "2", "1")),
+    ("B", dict(B=np.int64(5)), ("B differs from len(delta_r)", "5", "3")),
+    ("nmat", dict(nmat=np.int64(6)), ("nmat differs from state_nmat", "6", "4")),
+    ("beta", dict(beta=np.float64(3.0)), ("beta differs from state_beta", "3.0", "2.0")),
+    ("cell_shape", dict(cell_shape=np.array([2, 2, 1])),
+     ("cell_shape differs from prov_cell_shape", "[2, 2, 1]", "[4, 1, 1]")),
+]
+
+
+class TestPrecedence(_RefusalBase):
+    """Each (1b) relation broken together with an unreadable payload header
+    (inline or sidecar) is refused with the relational text before any
+    header is read."""
+    BASES = (("dense", "npz"), ("dense", "sidecar"))
+
+    def test_bases_accepted(self):
+        self.accepts_bases()
+
+    def test_relational_before_headers(self):
+        for where in ("inline", "sidecar"):
+            for name, ch, (check, stored, expected) in RELATION_ROWS:
+                with self.subTest(where=where, relation=name):
+                    path = self._bad_header(where, ch)
+                    self.refused(path, _M(path, check, stored, expected), headers=0)
+            with self.subTest(where=where, relation=None):
+                # without a relational defect the bad header is what is refused
+                path = self._bad_header(where, {})
+                with _Spies() as spy:
+                    with self.assertRaises(ValueError) as cm:
+                        self.load(path, self.inputs["dense"])
+                self.assertIn("payload member chi_w has an unreadable npy header",
+                              str(cm.exception))
+                self.assertGreater(len(spy.header), 0)
+                self.assertGreater(len(spy.npy), 0)
+
+    def _bad_header(self, where, changes):
+        if where == "inline":
+            path = self.copy("dense", "npz")
+            _rewrite(path, changes, raw={"chi_w": b"not an npy header" * 8})
+        else:
+            path = self.copy("dense", "sidecar")
+            _rewrite(path, changes)
+            nonce = str(_members(path)["archive_nonce"][()])
+            full = os.path.join(os.path.dirname(path), "chi_w.{}.npy".format(nonce))
+            size = os.path.getsize(full)
+            with open(full, "r+b") as fh:
+                fh.write(b"\0" * 64)
+            self.assertEqual(os.path.getsize(full), size)
+        return path
+
+
+class TestPoleMembers(_ReaderDir):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.inputs = fx.archive_inputs()
+        cls.past = os.path.join(cls._tmp.name, "past")
+        os.makedirs(cls.past)
+        sa.write_so_bond_archive(os.path.join(cls.past, "lb.npz"), output_layout="npz",
+                                 log=LOG, extra_members=dict(POLE), **cls.inputs.kwargs)
+        fx.write_companion_green(os.path.join(cls.past, "green.npz"), cls.inputs)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def copy(self):
+        d = os.path.join(self.dir, "c{}".format(len(os.listdir(self.dir))))
+        shutil.copytree(self.past, d)
+        return os.path.join(d, "lb.npz")
+
+    def test_below_and_past_pole_load(self):
+        below = self.sub("below")
+        a = self.load(self.archive(below, self.inputs, "npz"), self.inputs)
+        b = self.load(self.copy(), self.inputs)
+        for arc in (a, b):
+            self.assertFalse(any("pole" in f for f in arc._fields))
+            self.assertFalse(any(k.startswith("rpa_") for k in arc.sources))
+            for k in sa.POLE_MEMBERS:
+                self.assertFalse(hasattr(arc, k))
+        np.testing.assert_array_equal(b.read_slot("chi_w"), self.inputs.chi_w)
+
+    def test_partial_or_mistyped_refused(self):
+        rows = [
+            ("q missing", dict(rpa_pole_q_spinful=_DROP),
+             ("pole member rpa_pole_q_spinful is missing", "absent", "present")),
+            ("only the flag", dict(rpa_pole_q_spinful=_DROP,
+                                   rpa_pole_indicator_spinful=_DROP),
+             ("pole member rpa_pole_indicator_spinful is missing", "absent", "present")),
+            ("flag missing", dict(rpa_past_pole=_DROP),
+             ("pole member rpa_past_pole is missing", "absent", "present")),
+            ("flag false", dict(rpa_past_pole=np.bool_(False)),
+             ("rpa_past_pole is not true", "False", "True")),
+            ("flag int", dict(rpa_past_pole=np.int64(1)),
+             ("rpa_past_pole is not true", "1", "True")),
+            ("indicator int", dict(rpa_pole_indicator_spinful=np.int64(1)),
+             ("rpa_pole_indicator_spinful is not a finite float64 scalar", "int64/0d",
+              "float64/0d")),
+            ("indicator nan", dict(rpa_pole_indicator_spinful=np.float64(np.nan)),
+             ("rpa_pole_indicator_spinful is not a finite float64 scalar", "nan",
+              "finite")),
+            ("q shape", dict(rpa_pole_q_spinful=np.zeros(2)),
+             ("rpa_pole_q_spinful is not a finite float64 (3,) array", "float64/(2,)",
+              "float64/(3,)")),
+            ("q float32", dict(rpa_pole_q_spinful=np.zeros(3, np.float32)),
+             ("rpa_pole_q_spinful is not a finite float64 (3,) array", "float32/(3,)",
+              "float64/(3,)")),
+            ("stray", dict(rpa_other=np.float64(1.0)),
+             ("member rpa_other is not a pole member", "present", "absent")),
+        ]
+        for name, ch, (check, stored, expected) in rows:
+            with self.subTest(row=name):
+                path = self.copy()
+                _rewrite(path, ch)
+                with self.assertRaises(ValueError) as cm:
+                    self.load(path, self.inputs)
+                self.assertEqual(str(cm.exception), _M(path, check, stored, expected))
 
 
 if __name__ == "__main__":

@@ -31,13 +31,17 @@ class ArchiveInputs(NamedTuple):
     """``kwargs`` of the writer (without ``path``, ``output_layout`` and
     ``log``), the companion ``green`` ``(1, nmat, nvol, nd, nd)``, the
     dense ``chi_w`` / ``gamma_b`` / ``chibar_w`` arrays (``chibar_w`` None
-    when not requested) and the case's sector map."""
+    when not requested), the case's sector map and ``run``, the run-side
+    keyword arguments of ``so_bond_archive.load_so_bond_archive``
+    (``run_band``, ``run_state``, ``run_interaction``, ``run_bond``) of the
+    same case."""
     kwargs: dict
     green: np.ndarray
     chi_w: np.ndarray
     gamma_b: np.ndarray
     chibar_w: object
     sector_map: object
+    run: dict = None
 
 
 def _interaction():
@@ -92,11 +96,14 @@ def archive_inputs(*, block_layout="dense", B=3, norb_phys=1, cell=(4, 1, 1), nm
     meta = fp.BandMeta(0.0, True, "spin_block", nd, norb_phys, cell, cell)
     state = fp.so_state(beta=beta, nmat=nmat, mu=-0.3, density=0.8, calc_mu=True,
                         target=0.8)
+    transfer = {((0, 0, 0), (0, 0)): -1.0 + 0j}
     prov = fp.so_provenance_members(
         producer_stage="flex_so_bond", producer_label=LABEL,
-        transfer={((0, 0, 0), (0, 0)): -1.0 + 0j}, extern=None, meta=meta,
+        transfer=transfer, extern=None, meta=meta,
         fp_green=fp.green_digest(green, fp.GREEN_LAYOUT), state=state,
         interaction=_interaction(), bond=bond)
+    run = dict(run_band=fp.band_inputs(transfer, None, meta), run_state=state,
+               run_interaction=_interaction(), run_bond=bond)
     if chi_fill is None:
         chi = block_diagonal(sm, (nmat, nvol), rng)
     else:
@@ -123,7 +130,7 @@ def archive_inputs(*, block_layout="dense", B=3, norb_phys=1, cell=(4, 1, 1), nm
         scf_converged=scf_converged)
     if chibar:
         kwargs["chibar_w"] = store(chibar_w)
-    return ArchiveInputs(kwargs, green, chi, gam, chibar_w, sm)
+    return ArchiveInputs(kwargs, green, chi, gam, chibar_w, sm, run)
 
 
 def companion_green_members(inputs, green=None):

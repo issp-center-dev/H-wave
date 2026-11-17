@@ -13,8 +13,10 @@ path relative to the index's directory).
 
 This module holds the archive's fixed values and message texts, the layout
 choice (:func:`archive_layout`), the byte counts the memory plan uses
-(:func:`slot_member_bytes`, :func:`inline_max_bytes`) and the writer
-(:func:`write_so_bond_archive`). The rules the writer and the reader share
+(:func:`slot_member_bytes`, :func:`inline_max_bytes`), the writer
+(:func:`write_so_bond_archive`) and the validating reader
+(:func:`load_so_bond_archive`, returning a :class:`SOBondArchive` whose
+:meth:`SOBondArchive.read_slot` reads the slot payloads). The rules the writer and the reader share
 -- the ``green_file`` rule (:func:`green_file_ok`), the pole group
 (:func:`pole_group_problem`) and the reading of an index's sidecar names
 (:func:`index_sidecars`) -- are defined once, here.
@@ -870,3 +872,389 @@ def _clean_old_sidecars(path, side_dir, replaced, old, new_names, result, log):
             path=path, n=len(removed), removed=join(removed), k=len(kept), kept=join(kept),
             kept_by=join(kept_by),
             nonso=T_NONSO_TAIL.format(names=", ".join(nonso)) if nonso else ""))
+
+
+# ------------------------------------------------------------------ the reader
+#: the longest stored value a refusal quotes (longer ones end in ``...``)
+_REPR_BOUND = 80
+_NONCE_RE = re.compile(r"^[0-9a-f]{32}$")
+_GREEN_FILE_RULE = "a file name or a relative path below the archive directory"
+
+
+def _bounded(text) -> str:
+    """``text`` cut to at most :data:`_REPR_BOUND` characters."""
+    text = str(text)
+    if len(text) <= _REPR_BOUND:
+        return text
+    return text[:_REPR_BOUND - 3] + "..."
+
+
+def _value_text(a) -> str:
+    return _bounded(repr(a.tolist()))
+
+
+def _is_so_archive(data, names, path):
+    """(1b) The markers: ``bond_archive_schema`` a 0-d integer equal to 4
+    and ``spin_orbital`` a 0-d bool True, else :data:`T_NOT_SO_ARCHIVE`."""
+    shown = {}
+    good = True
+    for key, kinds, want in (("bond_archive_schema", "iu", SCHEMA), ("spin_orbital", "b", True)):
+        if key not in names:
+            shown[key] = "absent"
+            good = False
+            continue
+        a = np.asarray(data[key])
+        shown[key] = _value_text(a)
+        if not (a.ndim == 0 and a.dtype.kind in kinds and a[()] == want):
+            good = False
+    if not good:
+        raise _fp.SOArchiveError(T_NOT_SO_ARCHIVE.format(
+            path=path, schema=shown["bond_archive_schema"], so=shown["spin_orbital"]))
+
+
+#: (1b) the 0-d scalars in their order: (name, kind, range text, range rule)
+_SCALAR_RULES = (
+    ("nmat", "int", "> 0 and even", lambda v: v > 0 and v % 2 == 0),
+    ("B", "int", ">= 1", lambda v: v >= 1),
+    ("nd", "int", ">= 2 and even", lambda v: v >= 2 and v % 2 == 0),
+    ("norb_phys", "int", ">= 1", lambda v: v >= 1),
+    ("state_nmat", "int", None, None),
+    ("prov_norb_phys", "int", None, None),
+    ("beta", "float", "finite and > 0", lambda v: math.isfinite(v) and v > 0),
+    ("state_beta", "float", "finite and > 0", lambda v: math.isfinite(v) and v > 0),
+)
+
+
+def _peek_scalars(data, names, malformed) -> dict:
+    """(1b) The operational scalars, the cell and bond tables and their
+    relations, from the small members only (no payload header is read)."""
+    def member(k):
+        if k not in names:
+            malformed("member {} is missing".format(k), "absent", "present")
+        return np.asarray(data[k])
+
+    v = {}
+    for k, kind, rule_text, rule in _SCALAR_RULES:
+        a = member(k)
+        kinds = "iu" if kind == "int" else "f"
+        if a.ndim != 0 or a.dtype.kind not in kinds:
+            malformed("member {} is not a 0-d {}".format(k, "integer" if kind == "int"
+                                                         else "float"),
+                      "{}/{}d".format(a.dtype, a.ndim), "{}/0d".format(kind))
+        x = int(a[()]) if kind == "int" else float(a[()])
+        if rule is not None and not rule(x):
+            malformed("member {} is out of range".format(k), repr(x), rule_text)
+        v[k] = x
+    for k in ("cell_shape", "prov_cell_shape"):
+        a = member(k)
+        if a.shape != (3,) or a.dtype.kind not in "iu":
+            malformed("member {} is not an integer (3,) array".format(k),
+                      "{}/{}".format(a.dtype, a.shape), "int/(3,)")
+        if not np.all(a >= 1):
+            malformed("member {} is out of range".format(k), _value_text(a), "entries >= 1")
+        v[k] = a.astype(np.int64)
+    dr = member("delta_r")
+    if dr.ndim != 2 or dr.shape[1] != 3 or dr.dtype.kind not in "iu":
+        malformed("member delta_r is not an integer (B', 3) array",
+                  "{}/{}".format(dr.dtype, dr.shape), "int/(B', 3)")
+
+    # the relations, in this order; the copies of a recorded state field
+    # use the structure check's own rule and wording
+    if v["nd"] != 2 * v["norb_phys"]:
+        malformed("nd differs from 2 * norb_phys", v["nd"], 2 * v["norb_phys"])
+    _fp.check_state_relations(data, malformed.path, malformed.label, members=("norb_phys",))
+    if v["B"] != dr.shape[0]:
+        malformed("B differs from len(delta_r)", v["B"], dr.shape[0])
+    _fp.check_state_relations(data, malformed.path, malformed.label, members=("nmat", "beta"))
+    if not np.array_equal(v["cell_shape"], v["prov_cell_shape"]):
+        malformed("cell_shape differs from prov_cell_shape", _value_text(v["cell_shape"]),
+                  _value_text(v["prov_cell_shape"]))
+    return v
+
+
+class _Malformed:
+    """The malformed refusal of :mod:`fingerprint` for ``path`` naming
+    ``label``; keeps both for the shared relation check."""
+
+    def __init__(self, path, label):
+        self.path, self.label = path, label
+        self._raise = _fp._malformed_raiser(path, label)
+
+    def __call__(self, check, stored, expected):
+        self._raise(check, stored, expected)
+
+
+def _str_member(data, names, k, malformed) -> str:
+    if k not in names:
+        malformed("member {} is missing".format(k), "absent", "present")
+    a = np.asarray(data[k])
+    if a.ndim != 0 or a.dtype.kind != "U":
+        malformed("member {} is not a 0-d string".format(k), "{}/{}d".format(a.dtype, a.ndim),
+                  "str/0d")
+    return str(a[()])
+
+
+def _check_extras(data, names, path, sv, sources, malformed):
+    """(3) The schema-4 members the structure check does not know; returns
+    ``(bond_archive_layout, green_file, nvol)``."""
+    for k, want in (("index_order", INDEX_ORDER), ("freq_axis", FREQ_AXIS)):
+        got = _str_member(data, names, k, malformed)
+        if got != want:
+            malformed("{} is not this version's".format(k), _bounded(repr(got)), repr(want))
+    out_layout = _str_member(data, names, "bond_archive_layout", malformed)
+    if out_layout not in OUTPUT_LAYOUTS:
+        malformed("bond_archive_layout is not a known layout", _bounded(repr(out_layout)),
+                  "'npz' or 'sidecar'")
+    blocks = [b for p in SLOT_PAYLOADS for b in _block_names(p, sv["layout"]) if b in sources]
+    for b in blocks:
+        side = sources[b][0] != "inline"
+        want_side = out_layout == "sidecar" and not b.startswith("Gamma_bond")
+        if side != want_side:
+            malformed("payload member {} does not follow bond_archive_layout {}".format(
+                b, out_layout), "sidecar" if side else "inline",
+                "sidecar" if want_side else "inline")
+    gl = _str_member(data, names, "green_layout", malformed)
+    if gl != GREEN_LAYOUT:
+        malformed("green_layout is not the canonical layout", _bounded(repr(gl)),
+                  repr(GREEN_LAYOUT))
+    if "scf_converged" not in names:
+        malformed("member scf_converged is missing", "absent", "present")
+    a = np.asarray(data["scf_converged"])
+    if a.ndim != 0 or a.dtype.kind != "b":
+        malformed("member scf_converged is not a 0-d bool", "{}/{}d".format(a.dtype, a.ndim),
+                  "bool/0d")
+    if "types" not in names:
+        malformed("member types is missing", "absent", "present")
+    a = np.asarray(data["types"])
+    if a.ndim != 1 or a.dtype.kind != "U":
+        malformed("member types is not a 1-d string array", "{}/{}d".format(a.dtype, a.ndim),
+                  "str/1d")
+    nvol = int(np.prod(sv["cell_shape"]))
+    for b in blocks:
+        lead = tuple(sources[b][1][:-2])
+        want = (nvol,) if b.startswith("Gamma_bond") else (sv["nmat"], nvol)
+        if lead != want:
+            malformed("payload member {} has the wrong leading shape".format(b), str(lead),
+                      str(want))
+    nonce = _str_member(data, names, "archive_nonce", malformed)
+    if not _NONCE_RE.match(nonce):
+        malformed("archive_nonce is not 32 lowercase hex characters", _bounded(repr(nonce)),
+                  "32 hex characters")
+    for b in blocks:
+        if sources[b][0] == "inline":
+            continue
+        base = os.path.basename(sources[b][0])
+        if parse_sidecar_name(base) != (b, nonce):
+            malformed("sidecar file name of {} does not carry the archive_nonce".format(b),
+                      _bounded(repr(base)), repr(sidecar_name(b, nonce)))
+    green_file = _str_member(data, names, "green_file", malformed)
+    if not green_file_ok(green_file, os.path.dirname(path) or "."):
+        malformed("green_file is not a relative file path", _bounded(repr(green_file)),
+                  _GREEN_FILE_RULE)
+    if "momentum_convention" not in names:
+        malformed("member momentum_convention is missing", "absent", "present")
+    from .rpa import check_momentum_marker
+    check_momentum_marker(data, path)
+    problem = pole_group_problem({k: data[k] for k in names
+                                  if isinstance(k, str) and k.startswith("rpa_")})
+    if problem is not None:
+        check, stored, expected = problem
+        malformed(check, _bounded(stored), expected)
+    return out_layout, green_file, nvol
+
+
+_SLOT_SET = "Gamma_bond, chi_w, chibar_w"
+_WANTS = (None, "dense", "sz_packed")
+
+
+def _is_index(v):
+    return not isinstance(v, (bool, np.bool_)) and isinstance(v, (int, np.integer))
+
+
+class SOBondArchive(NamedTuple):
+    """A schema-4 spin-orbital bond archive accepted by
+    :func:`load_so_bond_archive`.
+
+    ``path`` (as given), ``info`` (the ``fingerprint.SOArchiveInfo`` of the
+    compatibility check), ``layout`` (the stored slot layout, ``"dense"`` or
+    ``"sz_packed"``), ``bond_archive_layout`` (``"npz"`` or ``"sidecar"``),
+    the dimensions ``B``, ``nd``, ``nmat``, ``nvol``, ``sector_map`` (the
+    archive's S_z sector map when it is packed, else ``None``),
+    ``green_path`` (the companion Green file) and ``sources`` (block ->
+    ``("inline", shape)`` or ``(<sidecar path>, shape)``).
+
+    The payload is read only by :meth:`read_slot`, which opens the files
+    on every call."""
+    path: str
+    info: object
+    layout: str
+    bond_archive_layout: str
+    B: int
+    nd: int
+    nmat: int
+    nvol: int
+    sector_map: object
+    green_path: str
+    sources: object
+
+    def _blocks(self, who, name):
+        if not (isinstance(name, str) and name in SLOT_PAYLOADS):
+            raise ValueError("{}: unknown member {!r} ({})".format(who, name, _SLOT_SET))
+        return _block_names(name, self.layout)
+
+    def has_slot(self, name) -> bool:
+        """Whether the archive stores the slot payload ``name``
+        (``"Gamma_bond"``, ``"chi_w"`` or ``"chibar_w"``)."""
+        return all(b in self.sources for b in self._blocks("has_slot", name))
+
+    def read_slot(self, name, *, want=None, l0=None, l1=None):
+        """The slot payload ``name`` (``"Gamma_bond"``, ``"chi_w"`` or
+        ``"chibar_w"``), frequencies ``[l0, l1)`` (``l0`` None -> 0, ``l1``
+        None -> ``nmat``; ``Gamma_bond`` has no frequency axis), in the
+        layout ``want``: ``None`` (the stored layout), ``"dense"`` (an
+        ndarray ``(..., ND, ND)``) or ``"sz_packed"`` (a
+        ``so_bond.PackedArrays``).
+
+        Every call opens the files: an inline member is read whole (it is
+        below the small-array bound), a sidecar through ``np.load(...,
+        mmap_mode="r")``; the slice is copied. A packed archive read dense
+        is expanded with exact zeros off the sectors. A dense archive read
+        packed uses the S_z sector map of its bond set and is refused when
+        the requested slice has a nonzero off-sector entry, with the
+        measured leak of that slice."""
+        blocks = self._blocks("read_slot", name)
+        if not (want is None or (isinstance(want, str) and want in _WANTS)):
+            raise ValueError("read_slot: want must be None, 'dense' or 'sz_packed', got {!r}"
+                             .format(want))
+        if not all(b in self.sources for b in blocks):
+            raise ValueError("'{}' has no {} (this producer does not write it)".format(
+                self.path, name))
+        if name == "Gamma_bond":
+            if l0 is not None or l1 is not None:
+                raise ValueError("read_slot: Gamma_bond has no frequency axis")
+            sl = None
+        else:
+            s0 = 0 if l0 is None else l0
+            s1 = self.nmat if l1 is None else l1
+            if not (_is_index(s0) and _is_index(s1) and 0 <= s0 < s1 <= self.nmat):
+                raise ValueError("read_slot: frequency range [{}, {}) outside [0, {})".format(
+                    s0, s1, self.nmat))
+            sl = slice(int(s0), int(s1))
+        arrays = [self._read_block(b, sl) for b in blocks]
+        target = self.layout if want is None else want
+        if self.layout == "dense":
+            if target == "dense":
+                return arrays[0]
+            return so_bond.PackedArrays.from_dense(arrays[0], self._bond_sector_map(),
+                                                   source=self.path)
+        packed = so_bond.PackedArrays(self.sector_map, tuple(arrays))
+        return packed if target == "sz_packed" else packed.to_dense()
+
+    def _read_block(self, block, sl):
+        src = self.sources[block][0]
+        if src == "inline":
+            with np.load(self.path, allow_pickle=False) as z:
+                a = z[block]
+            if sl is None:
+                return a.astype(np.complex128, copy=False)       # native byte order
+            return np.array(a[sl], dtype=np.complex128)
+        m = np.load(src, mmap_mode="r", allow_pickle=False)
+        try:
+            return np.array(m if sl is None else m[sl], dtype=np.complex128)
+        finally:
+            del m
+
+    def _bond_sector_map(self):
+        """The S_z sector map of the archive's bond set (its ``reverse`` and
+        ``nd``), for a dense archive read packed."""
+        with np.load(self.path, allow_pickle=False) as z:
+            rev = np.asarray(z["reverse"])
+        return so_bond.sz_sector_map(types.SimpleNamespace(reverse=rev), self.nd)
+
+
+def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond,
+                         expected_producer=PRODUCER_LABEL) -> SOBondArchive:
+    """Load the schema-4 spin-orbital bond archive at ``path`` for a run of
+    band ``run_band``, state ``run_state``, interaction ``run_interaction``
+    and bond set ``run_bond`` (the ``fingerprint`` inputs).
+
+    The steps, each refusal a single-line ``ValueError``; no slot payload is
+    read (only npy headers, after every scalar check):
+
+    1. ``np.load(path, allow_pickle=False)``.
+    1b. Before any header: the markers ``bond_archive_schema = 4`` and
+        ``spin_orbital = True`` (:data:`T_NOT_SO_ARCHIVE`); the 0-d scalars
+        ``nmat`` (even, > 0), ``B`` (>= 1), ``nd`` (even, >= 2),
+        ``norb_phys`` (>= 1), ``state_nmat``, ``prov_norb_phys``
+        (integers), ``beta``, ``state_beta`` (finite floats > 0); the
+        tables ``cell_shape``, ``prov_cell_shape`` (integer ``(3,)``, >= 1)
+        and ``delta_r`` (integer ``(B', 3)``); then the relations ``nd = 2
+        norb_phys``, ``norb_phys = prov_norb_phys``, ``B = len(delta_r)``,
+        ``nmat = state_nmat``, ``beta = state_beta``, ``cell_shape =
+        prov_cell_shape``. These refusals name ``expected_producer``.
+    2. One structural pass, ``fingerprint.validate_structure`` of kind
+       ``"bond"`` with the sidecar directory (the archive's).
+    3. The schema-4 members: ``index_order``, ``freq_axis``,
+       ``bond_archive_layout`` (``Gamma_bond`` always inline; the
+       ``chi_w``/``chibar_w`` blocks sidecars exactly in the sidecar
+       layout), ``green_layout``, ``scf_converged``, ``types``, the
+       leading shapes ``(nvol,)`` and ``(nmat, nvol)`` with ``nvol =
+       prod(cell_shape)``, ``archive_nonce`` and the sidecar names
+       ``<block>.<archive_nonce>.npy``, ``green_file``
+       (:func:`green_file_ok`), ``momentum_convention`` and the pole members
+       (all or none, :func:`pole_group_problem`; not exposed).
+    4. The companion green file must exist (:data:`T_COMPANION_MISSING`).
+    5. The companion: its structure (kind ``"green"``) and its compatibility
+       with the run (its ``fp_green`` against its Green function).
+    6. The archive's compatibility with the run, its ``fp_green`` against
+       the digest of the companion's Green function (an archive whose
+       companion was replaced by another Green function is refused here).
+    """
+    path = os.fspath(path)
+    side_dir = os.path.dirname(path) or "."
+    with np.load(path, allow_pickle=False) as data:
+        names = set(data.files)
+        # (1b) the peek, before any header
+        _is_so_archive(data, names, path)
+        sv = _peek_scalars(data, names, _Malformed(path, expected_producer))
+        # (2) one structural pass
+        sources = {}
+        kind, stage, version = _fp.validate_structure(
+            data, path, kind="bond", expected_producer=expected_producer,
+            sidecar_dir=side_dir, sources_out=sources)
+        label = _fp._readable_label(data, names)
+        if label == _fp.UNKNOWN_PRODUCER and expected_producer:
+            label = expected_producer
+        malformed = _fp._malformed_raiser(path, label)
+        sv["layout"] = str(np.asarray(data["block_layout"])[()])
+        # (3) the schema-4 members
+        out_layout, green_file, nvol = _check_extras(data, names, path, sv, sources,
+                                                     malformed)
+        # (4) the companion exists
+        green_path = os.path.normpath(os.path.join(os.path.dirname(path), green_file))
+        if not os.path.isfile(green_path):
+            raise _fp.SOArchiveError(T_COMPANION_MISSING.format(green=green_path,
+                                                                archive=path))
+        run = dict(run_band=run_band, run_state=run_state, nmat_rule="exact",
+                   run_interaction=run_interaction, need="so_bond",
+                   expected_producer=expected_producer, run_bond=run_bond)
+        # (5) the companion's structure and compatibility
+        with np.load(green_path, allow_pickle=False) as g:
+            g_names = set(g.files)
+            g_valid = _fp.validate_structure(g, green_path, kind="green",
+                                             expected_producer=expected_producer)
+            g_label = _fp._readable_label(g, g_names)
+            green_fp = _fp.green_digest(g["green"], GREEN_LAYOUT)
+            _fp.check_so_compatibility(g, green_path, validated=g_valid + (g_label,),
+                                       green_fp=green_fp, **run)
+        # (6) the archive's compatibility, bound to the companion's G
+        info = _fp.check_so_compatibility(data, path, validated=(kind, stage, version, label),
+                                          green_fp=green_fp, **run)
+        sector_map = None
+        if sv["layout"] == "sz_packed":
+            sector_map = so_bond.sz_sector_map(
+                types.SimpleNamespace(reverse=np.asarray(data["reverse"])), sv["nd"])
+    return SOBondArchive(path=path, info=info, layout=sv["layout"],
+                         bond_archive_layout=out_layout, B=sv["B"], nd=sv["nd"],
+                         nmat=sv["nmat"], nvol=nvol, sector_map=sector_map,
+                         green_path=green_path, sources=types.MappingProxyType(sources))
