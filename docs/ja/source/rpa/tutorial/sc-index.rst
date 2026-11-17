@@ -2366,7 +2366,7 @@ Pauli 射影
 ``calc_scheme = "general"``\ 、\ ``[mode.param] flex_hartree_fock = true``\ で実行した
 FLEX の4つのアーカイブ（\ ``longitudinal_bond_channels = true``\ の計算は拒否されます。その
 アーカイブは\ ``producer_stage = "flex_so_bond"``\ を持ち、ボンド分解した計算を表すためです。
-メッセージはファイルを示します。\ :ref:`sc_so_archive_checks`\ のトラブルシューティングの表と
+メッセージはファイル名を示します。\ :ref:`sc_so_archive_checks`\ のトラブルシューティングの表と
 :ref:`flex_so_bond_archive`\ を参照）を\ ``[file.input] path_to_flex_output``\ （なければ
 ``[file.output] path_to_output``\ ）から読みます。
 
@@ -2643,7 +2643,7 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
           ファイル（\ :ref:`flex_so_bond_archive`\ ）
 
    サイドカーのブロックでは、ヘッダーはサイドカーファイルから読みます。その名前は
-   アーカイブのディレクトリにある素のファイル名でアーカイブの\ ``archive_nonce``\ を
+   アーカイブのディレクトリにある、ディレクトリ部分のないファイル名でアーカイブの\ ``archive_nonce``\ を
    含み、その大きさは記録された\ ``<block>_nbytes``\ とも、ヘッダーとデータの和とも
    等しくなければなりません。インデックス内とサイドカーの両方にあるブロックは拒否
    されます。
@@ -2657,11 +2657,14 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
    ``flex_so_bond``\ のすべてのアーカイブ: chi0q、chiq、green、sigma、ボンドアーカイブ）は、
    ``"dense"``\ または\ ``"sz_packed"``\ の文字列\ ``block_layout``\ を記録していなければ
    なりません。オンサイトの段階のアーカイブは\ ``block_layout``\ を持ちません。メンバー名の
-   接頭辞\ ``sz_sector_``\ は予約されています。ギャップのアーカイブ（どちらのレイアウト
-   でもギャップ全体として保存）、オンサイトの段階のアーカイブ、または\ ``flex_so_bond``\ の
-   chi0q、chiq、green、sigma のアーカイブが、この接頭辞で始まる名前のメンバーを持つと、
-   不正なものとして拒否されます。3つのセクターマップのメンバーを持つのはパックの
-   ボンドアーカイブだけです。
+   接頭辞\ ``sz_sector_``\ は予約されています。セクターの対応表の3つのメンバー
+   ``sz_sector_order``\ 、\ ``sz_sector_offsets``\ 、\ ``sz_sector_index``\ を持つのはパックの
+   スピン軌道ボンドアーカイブだけで、3つすべてを持たなければなりません。それ以外の
+   アーカイブ（ギャップのアーカイブ（どちらのレイアウトでもギャップ全体として保存）、
+   オンサイトの段階のアーカイブ、\ ``flex_so_bond``\ の chi0q、chiq、green、sigma の
+   アーカイブ、密なボンドアーカイブ）がこの接頭辞で始まる名前のメンバーを持つとき、
+   およびパックのボンドアーカイブがそれ以外のそのようなメンバーを持つときは、不正な
+   ものとして拒否されます。
 
 2. **この計算との整合。**\ 次の順に検査し、最初の差分を報告します。
 
@@ -2831,10 +2834,17 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
    * - ``'<file>' was written by producer_stage 'sc_so_bond_dynamic', which
        this version does not read yet (the dynamic spin-orbital bond path
        arrives in a later version).``
-     - ボンド分解のスピン軌道経路のアーカイブで、このバージョンは認識するだけです。
-       ``rpa_so``\ または\ ``flex_so_onsite``\ のアーカイブを使ってください。
+     - この版の計算はこの段階を書き出しません（動的なボンドの経路は
+       ``enable_spin_orbital``\ を最初に拒否します）。したがってファイルは後の版で書き出
+       されたか、変更されています。スピン軌道のアーカイブの読み込み側はどれも、構造の検査で、
+       バンドと状態の検査より前にこれを拒否します。この版の計算のアーカイブを与えてください。
+       ``hwave_sc``\ にはスピン軌道 RPA（\ ``rpa_so``\ ）またはオンサイトの FLEX
+       （\ ``flex_so_onsite``\ ）の chi0q、chiq、green、sigma を、\ ``load_so_bond_archive``\ には
+       ボンドチャネル付きのスピン軌道 FLEX（\ ``flex_so_bond``\ ）のボンドアーカイブを
+       与えます。
      - ``[eliashberg] flex_chiq``\ 、\ ``flex_chi0q``\ 、\ ``flex_green``\ 、
-       ``flex_sigma``
+       ``flex_sigma``\ （\ ``"flex"``\ ）、\ ``[file.output] chi0q``\ （\ ``"load"``\ ）、
+       ``load_so_bond_archive``\ に与えるパス
    * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83): '<file>'
        was written by the spin-orbital FLEX with bond channels ([mode.param]
        longitudinal_bond_channels = true): the chi0q, chiq and green of that
@@ -2844,7 +2854,9 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
      - FLEX の計算がボンドチャネルを使いました（どの\ :math:`B`\ でも、\ :math:`B = 1`\ でも）。
        その chi0q/chiq はボンド分解した感受率のチャネル 0 ブロックです。オンサイトの
        ソルバーには、ボンドチャネルなしで FLEX を実行し直してください。
-     - FLEX の計算の\ ``[mode.param] longitudinal_bond_channels``
+     - FLEX の計算の\ ``[mode.param] longitudinal_bond_channels``\ 。この計算の
+       ``[file.input] path_to_flex_output``\ 、\ ``[eliashberg] flex_chiq``\ 、
+       ``flex_chi0q``\ 、\ ``flex_green``\ 、\ ``flex_sigma``
    * - ``bond archive <file>: this is a spin-orbital bond archive (written by
        the spin-orbital FLEX with bond channels); the non-spin-orbital bond
        consumers cannot read it, and hwave_sc does not read it in this
@@ -2852,7 +2864,7 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
        hwave.solver.so_bond_archive.load_so_bond_archive).``
      - スキーマ 4 のアーカイブを非スピン軌道のボンドのペアリング（\ ``bond_channels =
        true``\ と\ ``frequency = "dynamic"``\ の\ ``hwave_sc``\ ）に与えました。変換は
-       ありません。スキーマ 3 のアーカイブには非スピン軌道の FLEX を実行し直してください。
+       ありません。スキーマ 3 のアーカイブを得るには、非スピン軌道の FLEX を実行し直してください。
      - ``[eliashberg] flex_bond_archive``\ 、\ ``bond_channels``
    * - ``'<file>' is not a spin-orbital bond archive (bond_archive_schema
        <schema>, spin_orbital <so>); write it with FLEX, [mode]
@@ -2873,7 +2885,7 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
        (keep the archive, its sidecars and the green file together, or
        re-run FLEX)``
      - アーカイブを green ファイルなしで移動・コピーしたか、green ファイルを削除
-       しました。インデックス、サイドカー（あれば）、green ファイルを、green ファイルを
+       しました。インデックス、サイドカー（あれば）、green ファイルを、green ファイルの位置を
        ``green_file``\ が記録する相対パスに保ったまままとめて移す
        （\ :ref:`flex_so_bond_archive`\ ）か、FLEX を実行し直してください。
      - ``[file.output] green``\ 、\ ``longitudinal_bond``
@@ -2906,10 +2918,11 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
      - 対となる green ファイルがアーカイブの Green 関数ではありません。置き換えられた、
        green ファイルの確定とインデックスの確定の間で書き出しが失敗して古いインデックスが
        残った（\ :ref:`flex_so_bond_archive`\ の「書き出しが失敗したとき」）、
-       ``longitudinal_bond_output_full = false``\ か\ ``IterationMax = 0``\ の後の計算が
-       green ファイルを上書きして古いインデックスが残った（WARNING ``spin-orbital bond
-       archive '<path>': this run wrote the green file '<green>' but no bond archive
-       ...``\ ）、またはインデックスが再実行と同じディレクトリのコピーである（そこでの
+       その後に\ ``longitudinal_bond_output_full = false``\ または\ ``IterationMax = 0``\ で
+       実行した計算が green ファイルを上書きして古いインデックスが残った（WARNING
+       ``spin-orbital bond archive '<path>': this run wrote the green file '<green>' but
+       no bond archive ...``\ ）、またはインデックスが再実行したのと同じディレクトリ内の
+       コピーである（そこでの
        コピーはバックアップになりません。\ :ref:`flex_so_bond_archive`\ の「移動と
        再実行」）のいずれかです。\ ``longitudinal_bond_output_full = true``\ （と
        ``IterationMax > 0``\ ）で FLEX を実行し直すか、古いアーカイブを削除してください。

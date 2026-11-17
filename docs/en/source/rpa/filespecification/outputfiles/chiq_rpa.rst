@@ -319,8 +319,9 @@ omitted (an INFO line lists them); only ``sigma``, ``green`` and ``energy``
 of the seed state are written.
 
 **Spin-orbital bond archive (schema 4).** With ``[mode]
-enable_spin_orbital = true`` and ``longitudinal_bond_output_full = true``
-the same ``[file.output] longitudinal_bond`` file is a different archive:
+enable_spin_orbital = true``, ``longitudinal_bond_channels = true`` and
+``longitudinal_bond_output_full = true`` (which requires ``[file.output]
+green``, the archive's companion) the same ``[file.output] longitudinal_bond`` file is a different archive:
 ``bond_archive_schema = 4`` and ``spin_orbital = True``. It holds
 ``chi_w``, :math:`\chi_B` of the **final** Green function from one extra
 susceptibility pass (not of the last SCF iteration), and ``Gamma_bond``, in the

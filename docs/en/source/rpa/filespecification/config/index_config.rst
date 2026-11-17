@@ -109,10 +109,11 @@ that has no effect under the current settings.
     :ref:`sc_spin_orbital`. The on-site dynamic solver (``frequency =
     "dynamic"``) reads them too (see :ref:`sc_spin_orbital_dynamic`). The
     outputs of a run with ``longitudinal_bond_channels = true`` are refused
-    by ``hwave_sc``; its bond archive is read in this version only through
-    the Python function
-    ``hwave.solver.so_bond_archive.load_so_bond_archive`` (``hwave_sc``
-    reads it in a later version). The dynamic bond path and
+    by ``hwave_sc``, which reads its bond archive in a later version. In
+    this version solver-side consumers read the bond archive through the
+    Python function ``hwave.solver.so_bond_archive.load_so_bond_archive``,
+    and a script inspects it with ``numpy.load`` (see
+    :ref:`flex_so_bond_archive`). The dynamic bond path and
     ``hwave_tsweep`` with ``run_eliashberg = true`` still refuse
     ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
     ``warm_start = false``.
@@ -801,9 +802,9 @@ that has no effect under the current settings.
   susceptibility pass, the bond vertex and their provenance, with
   ``green.npz`` as its companion (``[file.output] green`` is required);
   ``IterationMax = 0`` writes no archive. ``hwave_sc`` does not read this
-  archive in this version (read it with
-  ``hwave.solver.so_bond_archive.load_so_bond_archive``). See
-  :ref:`flex_so_bond_archive`.
+  archive in this version: solver-side consumers read it with
+  ``hwave.solver.so_bond_archive.load_so_bond_archive``, and a script
+  inspects it with ``numpy.load``. See :ref:`flex_so_bond_archive`.
 
 - ``longitudinal_bond_output_layout``
 

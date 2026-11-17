@@ -1264,7 +1264,7 @@ version it runs on the CPU and writes ``chi0q``/``chiq`` as the channel-0
 blocks of the last SCF iteration; with ``longitudinal_bond_output_full =
 true`` it also writes the spin-orbital bond archive of the final Green
 function (:ref:`flex_so_bond_archive`). ``hwave_sc`` does not read its
-outputs yet. A FLEX-only ``hwave_tsweep`` runs it with ``warm_start =
+outputs in this version (a later version reads the bond archive). A FLEX-only ``hwave_tsweep`` runs it with ``warm_start =
 false``, as above.
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

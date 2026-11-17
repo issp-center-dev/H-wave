@@ -304,8 +304,9 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 （INFO ログに一覧が出ます）、初期状態の\ ``sigma``\ ・\ ``green``\ ・\ ``energy``\ のみが
 書き出されます。
 
-**スピン軌道ボンドアーカイブ（スキーマ 4）。** ``[mode] enable_spin_orbital = true``\ かつ
-``longitudinal_bond_output_full = true``\ では、同じ\ ``[file.output] longitudinal_bond``\ の
+**スピン軌道ボンドアーカイブ（スキーマ 4）。** ``[mode] enable_spin_orbital = true``\ 、
+``longitudinal_bond_channels = true``\ 、\ ``longitudinal_bond_output_full = true``\ （アーカイブの
+対となる\ ``[file.output] green``\ が必要）では、同じ\ ``[file.output] longitudinal_bond``\ の
 ファイルは別のアーカイブになります。\ ``bond_archive_schema = 4``\ 、\ ``spin_orbital =
 True``\ です。追加の感受率パス1回で求めた\ **最終**\ の Green 関数（最後の SCF 反復ではない）の
 :math:`\chi_B`\ である\ ``chi_w``\ と、\ ``Gamma_bond``\ を、\ ``block_layout``\ が記録する

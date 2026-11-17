@@ -2826,8 +2826,8 @@ The check then runs in two steps.
           files (:ref:`flex_so_bond_archive`)
 
    For a sidecar block the header is read from the sidecar file, whose
-   name must be a plain file name in the archive's directory carrying the
-   archive's ``archive_nonce``, and whose size must equal both the recorded
+   name must be a file name without a directory part, in the archive's
+   directory, carrying the archive's ``archive_nonce``, and whose size must equal both the recorded
    ``<block>_nbytes`` and the header plus the data; a block stored both in
    the index and as a sidecar is refused.
 
@@ -2842,11 +2842,14 @@ The check then runs in two steps.
    chiq, green, sigma and the bond archive) must record ``block_layout``,
    a string that is ``"dense"`` or ``"sz_packed"``; an archive of an
    on-site stage carries no ``block_layout``. The member-name prefix
-   ``sz_sector_`` is reserved: a gap archive (stored as the full gap in
-   either layout), an archive of an on-site stage, or a chi0q, chiq, green
-   or sigma archive of ``flex_so_bond`` with a member whose name starts
-   with it is refused as malformed; only a packed bond archive carries the
-   three sector-map members.
+   ``sz_sector_`` is reserved: only a packed spin-orbital bond archive
+   carries the three sector-map members ``sz_sector_order``,
+   ``sz_sector_offsets`` and ``sz_sector_index`` (and must carry all
+   three); any other archive with a member whose name starts with it (a gap
+   archive, stored as the full gap in either layout, an archive of an
+   on-site stage, a chi0q, chiq, green or sigma archive of
+   ``flex_so_bond``, or a dense bond archive), and a packed bond archive
+   with any other such member, is refused as malformed.
 
 2. **Compatibility with this run**, in this order; the first difference is
    reported.
@@ -3028,11 +3031,19 @@ producer:
    * - ``'<file>' was written by producer_stage 'sc_so_bond_dynamic', which
        this version does not read yet (the dynamic spin-orbital bond path
        arrives in a later version).``
-     - The archive comes from a bond-resolved spin-orbital path that this
-       version only recognises. Use an archive of ``rpa_so`` or
-       ``flex_so_onsite``.
+     - No run of this version writes this stage (the dynamic bond path
+       refuses ``enable_spin_orbital`` up front), so the file comes from a
+       later version or was modified. Every spin-orbital archive reader
+       refuses it in the structure check, before the band and state checks.
+       Give the reader the archives of
+       a run of this version: for ``hwave_sc``, the chi0q, chiq, green and
+       sigma of a spin-orbital RPA (``rpa_so``) or on-site FLEX
+       (``flex_so_onsite``) run; for ``load_so_bond_archive``, the bond
+       archive of the spin-orbital FLEX with bond channels
+       (``flex_so_bond``).
      - ``[eliashberg] flex_chiq``, ``flex_chi0q``, ``flex_green``,
-       ``flex_sigma``
+       ``flex_sigma`` (``"flex"``); ``[file.output] chi0q`` (``"load"``);
+       the path given to ``load_so_bond_archive``
    * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83): '<file>'
        was written by the spin-orbital FLEX with bond channels ([mode.param]
        longitudinal_bond_channels = true): the chi0q, chiq and green of that
@@ -3043,7 +3054,9 @@ producer:
        :math:`B = 1`); its chi0q/chiq are channel-0 blocks of the
        bond-resolved susceptibility. Rerun FLEX without the bond channels
        for the on-site solver.
-     - ``[mode.param] longitudinal_bond_channels`` of the FLEX run
+     - ``[mode.param] longitudinal_bond_channels`` of the FLEX run;
+       ``[file.input] path_to_flex_output``, ``[eliashberg] flex_chiq``,
+       ``flex_chi0q``, ``flex_green``, ``flex_sigma`` of this run
    * - ``bond archive <file>: this is a spin-orbital bond archive (written by
        the spin-orbital FLEX with bond channels); the non-spin-orbital bond
        consumers cannot read it, and hwave_sc does not read it in this

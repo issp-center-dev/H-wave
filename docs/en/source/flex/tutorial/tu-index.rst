@@ -1521,8 +1521,9 @@ spin-orbital bond archive (``bond_archive_schema = 4``): the
 bond-resolved dressed susceptibility :math:`\chi_B` of the **final** Green
 function, the bare bond vertex :math:`\Gamma_B` and the provenance of both,
 next to the Green function it was built from. ``hwave_sc`` does not read
-this archive in this version; it is read through the Python function
-``load_so_bond_archive`` (*Reading it* below).
+this archive in this version. Solver-side consumers read it through the
+Python function ``load_so_bond_archive`` (*Reading it* below); a script
+looks at its members with ``numpy.load`` (*Inspecting it by hand* below).
 
 **Configuration.** On top of the input of :ref:`flex_so_bond_tutorial`
 (Input above), the archive needs two settings, the flag and the green
@@ -1539,7 +1540,9 @@ output:
      longitudinal_bond = "longitudinal_bond"  # the default name
 
 Below, ``green.npz`` stands for the configured ``[file.output] green``
-file and ``longitudinal_bond.npz`` for the configured archive.
+file and ``longitudinal_bond.npz`` for the configured archive. In the
+messages, ``<head>`` stands for ``[mode] enable_spin_orbital = true with
+[mode.param] longitudinal_bond_channels = true (FLEX)``.
 
 - The archive goes to ``[file.output] longitudinal_bond`` (default
   ``longitudinal_bond.npz``; a name without ``.npz`` gets the suffix, as
@@ -1568,7 +1571,7 @@ file and ``longitudinal_bond.npz`` for the configured archive.
     there is no cap and the bound is 1 GiB); then the sidecar layout is
     chosen, with the INFO line ``spin-orbital bond archive: sidecar layout
     (the member <member> of <size> is above the small-array bound <bound>);
-    the susceptibility is written as .npy files next to the index.``. With
+    the susceptibility is written as .npy files next to the index.`` With
     several bond channels the peak memory is only a few times the largest
     member, so members above cap / 8 are written as sidecars even under a
     modest cap. With ``longitudinal_bond_memory_cap_gb`` unset the choice
@@ -1635,7 +1638,7 @@ writes the standard outputs (the self-consistency does not depend on the
 archive).
 
 **Members.** The dimension symbols: :math:`n_d = 2N` (:math:`N` =
-``norb_phys``), :math:`N_D = B n_d^2` (``ND``), :math:`n_{\rm vol}` =
+``norb_phys``), :math:`N_D = B n_d^2`, :math:`n_{\rm vol}` =
 the product of ``cell_shape`` (the number of wave vectors), and
 :math:`n_\sigma` the size of the :math:`S_z` sector :math:`\sigma \in
 \{0, +1, -1\}` of the packed layout: :math:`n_0 = 2BN^2`, :math:`n_{+1} =
@@ -1665,7 +1668,7 @@ spin-block modes :math:`x, y`, :math:`S_z = +1/2` for :math:`x < N`) is
        sectors, ``["0", "+1", "-1"]`` (string ``(3,)``);
        ``sz_sector_offsets`` int64 ``(4,)``, the cumulative sector sizes
        :math:`[0, n_0, n_0 + n_{+1}, N_D]`; ``sz_sector_index`` int64
-       ``(ND,)``, the dense slot :math:`I = m n_d^2 + x n_d + y` of every
+       :math:`(N_D,)`, the dense slot :math:`I = m n_d^2 + x n_d + y` of every
        packed position (the sectors concatenated in that order, ascending
        within a sector): the block ``<name>@<σ>`` holds the rows and
        columns ``sz_sector_index[sz_sector_offsets[s]:sz_sector_offsets[s +
@@ -1822,11 +1825,11 @@ records. Copy the sidecars as regular files (a symbolic link is refused,
 see *Reading it* above). A missing companion is refused: ``companion green
 file '<green>' named by '<archive>' is missing (keep the archive, its
 sidecars and the green file together, or re-run FLEX)``. To list which
-sidecars an index names, print its layout and nonce (an ``"npz"`` archive
-has no sidecars; in the ``"sidecar"`` layout every name it carries is
-``<block>.<archive_nonce>.npy``)::
+sidecars an index names, print its layout and the recorded sidecar file
+names, the ``<block>_file`` members (an ``"npz"`` archive has none; in the
+``"sidecar"`` layout every name is ``<block>.<archive_nonce>.npy``)::
 
-   python -c "import numpy as np; z = np.load('output/longitudinal_bond.npz'); print(z['bond_archive_layout'], z['archive_nonce'])"
+   python -c "import numpy as np; z = np.load('output/longitudinal_bond.npz'); print(z['bond_archive_layout'], [str(z[k]) for k in z.files if k.endswith('_file') and k != 'green_file'])"
 
 .. warning::
 
@@ -2578,8 +2581,9 @@ it is requested), both in the static solver (see :ref:`sc_spin_orbital`) and
 in the dynamic one, which uses :math:`\chi` at every bosonic frequency (see
 :ref:`sc_spin_orbital_dynamic`). This holds for a run without
 ``longitudinal_bond_channels``: ``hwave_sc`` refuses the outputs of the
-spin-orbital FLEX with bond channels, whose bond archive is read in this
-version only through the Python function ``load_so_bond_archive`` (see
+spin-orbital FLEX with bond channels. Their bond archive is read by
+solver-side consumers through the Python function ``load_so_bond_archive``,
+and a script inspects it with ``numpy.load`` (see
 :ref:`flex_so_bond_archive`).
 
 Spin-polarized FLEX (Zeeman field)
