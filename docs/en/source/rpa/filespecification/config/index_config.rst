@@ -87,9 +87,10 @@ that has no effect under the current settings.
     every type are accepted (a complex coefficient on ``PairHop`` only) and
     their exchange is resolved exactly on the bond channels. It runs on the
     CPU (``gpu = true`` is ignored with a WARNING; ``gpu_required = true``
-    and ``longitudinal_bond_store = "device"`` are refused), writes no bond
-    archive (``longitudinal_bond_output_full = true`` and
-    ``longitudinal_bond_output_layout`` are refused), takes no in-process
+    and ``longitudinal_bond_store = "device"`` are refused), writes the
+    spin-orbital bond archive (schema 4) of the final Green function with
+    ``longitudinal_bond_output_full = true`` (``[file.output] green`` is
+    then required; see :ref:`flex_so_bond_archive`), takes no in-process
     pairing (``longitudinal_bond_pairing`` must be ``"none"``) and guards
     every frequency (``longitudinal_bond_guard_freqs = "static"`` is
     refused); ``so_bond_layout`` selects the layout and
@@ -107,8 +108,11 @@ that has no effect under the current settings.
     "flex"`` (write ``[file.output] chiq``, ``chi0q`` and ``green``); see
     :ref:`sc_spin_orbital`. The on-site dynamic solver (``frequency =
     "dynamic"``) reads them too (see :ref:`sc_spin_orbital_dynamic`). The
-    outputs of a run with ``longitudinal_bond_channels = true`` are not read
-    yet (a later version adds the bond archive). The dynamic bond path and
+    outputs of a run with ``longitudinal_bond_channels = true`` are refused
+    by ``hwave_sc``; its bond archive is read in this version only through
+    the Python function
+    ``hwave.solver.so_bond_archive.load_so_bond_archive`` (``hwave_sc``
+    reads it in a later version). The dynamic bond path and
     ``hwave_tsweep`` with ``run_eliashberg = true`` still refuse
     ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
     ``warm_start = false``.
@@ -375,8 +379,9 @@ that has no effect under the current settings.
   not SU(2) symmetric; requires ``flex_hartree_fock = true``,
   ``calc_scheme = "general"``, a spin-free system (or, with
   ``enable_spin_orbital = true``, the spin-orbital FLEX with bond channels
-  of :ref:`flex_so_bond_tutorial`, where the GPU, the archive and pairing
-  options below are not available), the uniform Matsubara grid, no
+  of :ref:`flex_so_bond_tutorial`, where the GPU and pairing options below
+  are not available and the archive is the spin-orbital bond archive of
+  :ref:`flex_so_bond_archive`), the uniform Matsubara grid, no
   sublattice and an even ``Nmat``; see :ref:`flex_bond_hf`).
   With ``longitudinal_bond_channels = true``
   (which requires ``flex_hartree_fock = true``) and ``gpu = true``,
@@ -790,7 +795,12 @@ that has no effect under the current settings.
   (the bubble, overwritten in place by the effective interaction) or two
   with ``longitudinal_bond_pairing``; the archive size is logged before
   writing. Ignored with a warning unless
-  ``longitudinal_bond_channels = true``.
+  ``longitudinal_bond_channels = true``. With ``enable_spin_orbital =
+  true`` it writes instead the spin-orbital bond archive (schema 4):
+  :math:`\chi_B` of the final Green function from one extra
+  susceptibility pass, the bond vertex and their provenance, with
+  ``green.npz`` as its companion (``[file.output] green`` is required);
+  ``IterationMax = 0`` writes no archive. See :ref:`flex_so_bond_archive`.
 
 - ``longitudinal_bond_output_layout``
 
@@ -809,7 +819,12 @@ that has no effect under the current settings.
   time, so a large channel member is never fully resident. Meaningful
   only with ``longitudinal_bond_output_full = true`` (no archive is
   written otherwise); a ``"sidecar"`` request without it is ignored with
-  a warning.
+  a warning. With ``enable_spin_orbital = true`` the sidecars are
+  ``<block>.<archive_nonce>.npy`` (one per ``chi_w`` block), and an unset
+  key lets the archive choose: ``"npz"`` unless a ``chi_w`` member is above
+  the small-array bound :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`, then
+  ``"sidecar"`` (an explicit ``"npz"`` above the bound is refused); see
+  :ref:`flex_so_bond_archive`.
 
 - ``longitudinal_bond_freq_batch``
 
@@ -1428,7 +1443,11 @@ to the definition files.
   :ref:`flex_bond_hf`). A name without the ``.npz`` suffix gets it
   appended, as for the other ``.npz`` outputs. It must not resolve to the
   same file as any other output of the run (the collision is refused
-  before the calculation starts).
+  before the calculation starts). With ``enable_spin_orbital = true`` it
+  names the spin-orbital bond archive (:ref:`flex_so_bond_archive`); the
+  ``green`` file must then be in the same directory or below it, and
+  without ``longitudinal_bond_output_full = true`` the key is ignored with
+  an INFO line.
 
 - ``eliashberg_bond_singlet``, ``eliashberg_bond_triplet``,
   ``eigenvalue_bond_singlet``, ``eigenvalue_bond_triplet``,

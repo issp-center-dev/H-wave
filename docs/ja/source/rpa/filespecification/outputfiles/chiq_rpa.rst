@@ -295,6 +295,23 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 （INFO ログに一覧が出ます）、初期状態の\ ``sigma``\ ・\ ``green``\ ・\ ``energy``\ のみが
 書き出されます。
 
+**スピン軌道ボンドアーカイブ（スキーマ 4）** ``[mode] enable_spin_orbital = true``\ かつ
+``longitudinal_bond_output_full = true``\ では、同じ\ ``[file.output] longitudinal_bond``\ の
+ファイルは別のアーカイブになります。\ ``bond_archive_schema = 4``\ 、\ ``spin_orbital =
+True``\ です。追加の感受率パス1回で求めた\ **最終**\ の Green 関数（最後の写像ではない）の
+:math:`\chi_B`\ である\ ``chi_w``\ と、\ ``Gamma_bond``\ を、\ ``block_layout``\ が記録する
+密（\ ``chi_w``\ 、\ ``Gamma_bond``\ ）または\ :math:`S_z`\ パック（\ ``chi_w@0``\ 、
+``chi_w@+1``\ 、\ ``chi_w@-1``\ 、\ ``Gamma_bond``\ も同様）のレイアウトで持ちます。
+``"sidecar"``\ のレイアウトでは\ ``chi_w``\ のブロックはファイル
+``<block>.<archive_nonce>.npy``\ で、\ ``<block>_file``\ がその名前を、
+``<block>_nbytes``\ がその大きさを示します。\ ``Gamma_bond``\ は常にインデックスに
+置かれます。\ ``green_file``\ はインデックスのディレクトリからの相対パスで対となる
+``green.npz``\ を示し、アーカイブの\ ``fp_green``\ はそのファイルのものに等しくなります。
+``chi_s_w``\ 、\ ``chi_c_w``\ 、\ ``S_bond``\ 、\ ``C_bond``\ はなく、非スピン軌道の
+ボンドの読み込み側はこのアーカイブを拒否します。メンバーの一覧、レイアウトの規則、
+移動と再実行、書き出しが失敗したときの振る舞いは\ :ref:`flex_so_bond_archive`\ に
+あります。
+
 
 .. _subsec:eliashberg_bond_outputs:
 

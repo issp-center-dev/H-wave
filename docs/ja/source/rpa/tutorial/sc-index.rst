@@ -2027,7 +2027,7 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
      - 静的な\ ``hwave_sc``\ とオンサイトの動的な\ ``hwave_sc``\ は
        ``longitudinal_bond_channels``\ を使わない計算の出力を\ ``chi0q_mode = "flex"``\ で
        読みます（\ :ref:`sc_spin_orbital`\ と\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
-       ボンドチャネル付きの計算の出力はまだ読めません（\ :ref:`flex_so_bond_tutorial`\ を参照）
+       ボンドチャネル付きの計算の出力は拒否されます（\ :ref:`flex_so_bond_archive`\ を参照）
    * - 保存される感受率
      - 密度‐密度成分のみ\ ``chi_{(a,a),(b,b)}``
      - orbital-pair 全体
@@ -2365,8 +2365,9 @@ Pauli 射影
 ``chi0q_mode = "flex"``\ では、\ ``enable_spin_orbital = true``\ 、
 ``calc_scheme = "general"``\ 、\ ``[mode.param] flex_hartree_fock = true``\ で実行した
 FLEX の4つのアーカイブ（\ ``longitudinal_bond_channels = true``\ の計算は拒否されます。その
-アーカイブは\ ``producer_stage = "flex_so_bond"``\ を持ち、この版では読まないためです。
-:ref:`flex_so_bond_tutorial`\ を参照）を\ ``[file.input] path_to_flex_output``\ （なければ
+アーカイブは\ ``producer_stage = "flex_so_bond"``\ を持ち、ボンド分解した計算を表すためです。
+メッセージはファイルを示します。\ :ref:`sc_so_archive_checks`\ のトラブルシューティングの表と
+:ref:`flex_so_bond_archive`\ を参照）を\ ``[file.input] path_to_flex_output``\ （なければ
 ``[file.output] path_to_output``\ ）から読みます。
 
 - ``[eliashberg] flex_chiq``\ （既定値\ ``"chiq.npz"``\ ）: スピンフル感受率
@@ -2525,7 +2526,9 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 
 スピン軌道のアーカイブはすべて version 2 の来歴メンバーを付けて書き出されます。
 ``chi0q.npz``\ と\ ``chiq.npz``\ はスピン軌道の RPA と FLEX が、
-``green.npz``\ と\ ``sigma.npz``\ はスピン軌道の FLEX が、
+``green.npz``\ と\ ``sigma.npz``\ はスピン軌道の FLEX が、スピン軌道ボンドアーカイブ
+（\ ``longitudinal_bond.npz``\ 、\ :ref:`flex_so_bond_archive`\ ）はボンドチャネル付きの
+スピン軌道 FLEX が、
 ``gap.npz``\ ・\ ``gap_dynamic.npz``\ は\ ``hwave_sc``\ が書き出します。メンバーは次のとおりです。
 
 - ``fingerprint_version = 2``\ 、\ ``producer_stage``\ 、\ ``producer_label``\ 、
@@ -2579,6 +2582,11 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
    * - ``green.npz``\ 、\ ``sigma.npz``
      - ``hwave <input.toml>``\ （スピン軌道の FLEX）
      - ``[file.output] green``\ 、\ ``sigma``
+   * - ``longitudinal_bond.npz``\ （スピン軌道ボンドアーカイブ）と、その対となる
+       ``green.npz``
+     - ``hwave <input.toml>``\ （\ ``longitudinal_bond_channels = true``\ と
+       ``longitudinal_bond_output_full = true``\ のスピン軌道の FLEX）
+     - ``[file.output] longitudinal_bond``\ 、\ ``green``
    * - ``gap.npz``\ 、\ ``gap_dynamic.npz``
      - ``hwave_sc <input.toml>``
      - ``[eliashberg] output_gap``\ （アーカイブ名はギャップのファイル名の拡張子を
@@ -2614,30 +2622,46 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
         - 書き出す\ ``producer_stage``
         - 本体のメンバー
       * - ``chi0q.npz``
-        - ``rpa_so``\ 、\ ``flex_so_onsite``
+        - ``rpa_so``\ 、\ ``flex_so_onsite``\ 、\ ``flex_so_bond``
         - ``chi0q``
       * - ``chiq.npz``
-        - ``rpa_so``\ 、\ ``flex_so_onsite``
+        - ``rpa_so``\ 、\ ``flex_so_onsite``\ 、\ ``flex_so_bond``
         - ``chiq``
       * - ``green.npz``
-        - ``flex_so_onsite``
+        - ``flex_so_onsite``\ 、\ ``flex_so_bond``
         - ``green``\ 、\ ``green_layout``
       * - ``sigma.npz``
-        - ``flex_so_onsite``
+        - ``flex_so_onsite``\ 、\ ``flex_so_bond``
         - ``sigma_static``
       * - ``gap.npz``\ 、\ ``gap_dynamic.npz``
         - ``sc_so_static``\ 、\ ``sc_so_dynamic``\ 、\ ``sc_so_bond_static``
         - ``gap``
+      * - スピン軌道ボンドアーカイブ
+        - ``flex_so_bond``
+        - ``Gamma_bond``\ と\ ``chi_w``\ （密）、またはその\ ``@0``\ 、\ ``@+1``\ 、
+          ``@-1``\ のブロック（パック）。\ ``chi_w``\ はインデックス内かサイドカー
+          ファイル（\ :ref:`flex_so_bond_archive`\ ）
 
-   段階\ ``sc_so_bond_dynamic``\ と\ ``flex_so_bond``\ は認識されますが、まだ
-   読み込めません。専用のメッセージで拒否されます（下の表を参照）。
+   サイドカーのブロックでは、ヘッダーはサイドカーファイルから読みます。その名前は
+   アーカイブのディレクトリにある素のファイル名でアーカイブの\ ``archive_nonce``\ を
+   含み、その大きさは記録された\ ``<block>_nbytes``\ とも、ヘッダーとデータの和とも
+   等しくなければなりません。インデックス内とサイドカーの両方にあるブロックは拒否
+   されます。
 
-   *レイアウトのメンバー。*\ ボンド分解した段階（\ ``sc_so_bond_static``\ ）の
-   アーカイブは、\ ``"dense"``\ または\ ``"sz_packed"``\ の文字列\ ``block_layout``\ を
-   記録していなければなりません。オンサイトの段階のアーカイブは\ ``block_layout``\ を
-   持ちません。メンバー名の接頭辞\ ``sz_sector_``\ は予約されています。ギャップの
-   アーカイブ（どちらのレイアウトでもギャップ全体として保存）またはオンサイトの段階の
-   アーカイブが、この接頭辞で始まる名前のメンバーを持つと、不正なものとして拒否されます。
+   段階\ ``sc_so_bond_dynamic``\ は認識されますが、まだ読み込めません。専用の
+   メッセージで拒否されます（下の表を参照）。\ ``flex_so_bond``\ の出力は
+   ``load_so_bond_archive``\ だけが読み（ボンドアーカイブとその対となる green
+   ファイル）、\ ``hwave_sc``\ のオンサイトの読み込み側はそれを拒否します（下の表を参照）。
+
+   *レイアウトのメンバー。*\ ボンド分解した段階のアーカイブ（\ ``sc_so_bond_static``\ と、
+   ``flex_so_bond``\ のすべてのアーカイブ: chi0q、chiq、green、sigma、ボンドアーカイブ）は、
+   ``"dense"``\ または\ ``"sz_packed"``\ の文字列\ ``block_layout``\ を記録していなければ
+   なりません。オンサイトの段階のアーカイブは\ ``block_layout``\ を持ちません。メンバー名の
+   接頭辞\ ``sz_sector_``\ は予約されています。ギャップのアーカイブ（どちらのレイアウト
+   でもギャップ全体として保存）、オンサイトの段階のアーカイブ、または\ ``flex_so_bond``\ の
+   chi0q、chiq、green、sigma のアーカイブが、この接頭辞で始まる名前のメンバーを持つと、
+   不正なものとして拒否されます。3つのセクターマップのメンバーを持つのはパックの
+   ボンドアーカイブだけです。
 
 2. **この計算との整合。**\ 次の順に検査し、最初の差分を報告します。
 
@@ -2659,8 +2683,10 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
       Green 関数はバンドから作り、\ ``bond_green``\ と\ ``chi0q_mode = "flex"``\ は
       拒否するので、スピン軌道 FLEX の\ ``green.npz``\ （\ ``"so_onsite"``\ ）はボンドの
       経路の入力になりません。宣言されたボンドトポロジーと解決されたボンドトポロジーは
-      ボンド分解を使う側だけが比較しますが、このバージョンにはアーカイブをその立場で
-      読む計算はありません。
+      ボンド分解を使う側だけが比較します。このバージョンでその立場にあるのは、
+      スピン軌道ボンドアーカイブの Python 関数\ ``load_so_bond_archive``
+      （\ :ref:`flex_so_bond_archive`\ ）だけで、\ ``"so_bond"``\ を使い、\ ``Nmat``\ の
+      一致を求めます。
    4. *状態。*\ :math:`\beta`\ （相対\ :math:`10^{-12}`\ ）、μ の探索の有無
       （\ ``hwave_sc``\ はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
       目標値\ ``filling * 2N``\ （1セルあたりの電子数、相対\ :math:`10^{-12}`\ ）、その目標値に
@@ -2804,12 +2830,101 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
      - ``[eliashberg] flex_green``\ 、\ ``flex_sigma``\ 、\ ``flex_chiq``
    * - ``'<file>' was written by producer_stage 'sc_so_bond_dynamic', which
        this version does not read yet (the dynamic spin-orbital bond path
-       arrives in a later version).``\ （\ ``'flex_so_bond'``\ 、"the
-       spin-orbital bond FLEX" も）
+       arrives in a later version).``
      - ボンド分解のスピン軌道経路のアーカイブで、このバージョンは認識するだけです。
        ``rpa_so``\ または\ ``flex_so_onsite``\ のアーカイブを使ってください。
      - ``[eliashberg] flex_chiq``\ 、\ ``flex_chi0q``\ 、\ ``flex_green``\ 、
        ``flex_sigma``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83): '<file>'
+       was written by the spin-orbital FLEX with bond channels ([mode.param]
+       longitudinal_bond_channels = true): the chi0q, chiq and green of that
+       run describe the bond-resolved run, which [eliashberg] chi0q_mode =
+       "flex" cannot use. Re-run FLEX with longitudinal_bond_channels = false
+       for this mode.``
+     - FLEX の計算がボンドチャネルを使いました（どの\ :math:`B`\ でも、\ :math:`B = 1`\ でも）。
+       その chi0q/chiq はボンド分解した感受率のチャネル 0 ブロックです。オンサイトの
+       ソルバーには、ボンドチャネルなしで FLEX を実行し直してください。
+     - FLEX の計算の\ ``[mode.param] longitudinal_bond_channels``
+   * - ``bond archive <file>: this is a spin-orbital bond archive (written by
+       the spin-orbital FLEX with bond channels); the non-spin-orbital bond
+       consumers cannot read it, and no consumer of it exists in this
+       version.``
+     - スキーマ 4 のアーカイブを非スピン軌道のボンドのペアリング（\ ``bond_channels =
+       true``\ と\ ``frequency = "dynamic"``\ の\ ``hwave_sc``\ ）に与えました。変換は
+       ありません。
+     - スキーマ 3 のアーカイブを書き出す非スピン軌道の FLEX の計算
+   * - ``'<file>' is not a spin-orbital bond archive (bond_archive_schema
+       <schema>, spin_orbital <so>); write it with FLEX, [mode]
+       enable_spin_orbital = true, [mode.param] longitudinal_bond_channels =
+       true and longitudinal_bond_output_full = true.``
+     - ``load_so_bond_archive``\ に別のファイル（たとえば非スピン軌道のスキーマ 3 の
+       アーカイブ）を与えました。\ ``absent``\ はメンバーがないことを表します。
+     - スピン軌道の FLEX の計算、\ ``[file.output] longitudinal_bond``
+   * - ``companion green file '<green>' named by '<archive>' is missing
+       (keep the archive, its sidecars and the green file together, or
+       re-run FLEX)``
+     - アーカイブを\ ``green.npz``\ なしで移動・コピーしたか、green ファイルを削除
+       しました。3つをまとめて移す（\ :ref:`flex_so_bond_archive`\ ）か、FLEX を実行し
+       直してください。
+     - ``[file.output] green``\ 、\ ``longitudinal_bond``
+   * - ``'<archive>' (written by <producer>): fp_green mismatch: the Green
+       function this run loaded has digest ..., the archive records ...;
+       the Green function and the susceptibility do not come from the same
+       run. ...``
+     - 対となる\ ``green.npz``\ がアーカイブの Green 関数ではありません。置き換えられたか、
+       green ファイルの確定とインデックスの確定の間で書き出しが失敗し、古いインデックスが
+       残りました（\ :ref:`flex_so_bond_archive`\ の「書き出しが失敗したとき」）。FLEX を
+       実行し直してください。
+     - ``[file.output] green``\ 、\ ``longitudinal_bond``
+   * - ``'<archive>' is malformed or truncated: sidecar member <block> has
+       the wrong size (...)``\ 、\ ``... sidecar member <block> file '<name>' is
+       missing ...``\ 、\ ``... sidecar file name of <block> does not carry the
+       archive_nonce ...``\ 、\ ``... payload member <block> has an unreadable
+       npy header ...``\ （dtype、階数、スロットの形状の誤り、\ ``... is stored both
+       inline and as a sidecar ...``\ も）
+     - サイドカーが途中で切れている、ない、別のアーカイブのサイドカーに置き換えられて
+       いる、または壊れています。どの検査もヘッダーとファイルの大きさだけを読みます。
+       FLEX を実行し直してください（同じパスへの再実行は、置き換えたアーカイブの
+       サイドカーを削除します）。
+     - ``[file.output] longitudinal_bond``
+   * - ``... member block_layout is missing ...``
+     - この版より前に書き出された、ボンドチャネル付きスピン軌道 FLEX の出力です
+       （\ ``block_layout``\ がない）。この版で作り直してください。
+     - FLEX の計算の\ ``[file.output]``\ のアーカイブ
+   * - ``<head>: longitudinal_bond_output_full = true needs [file.output]
+       green ...``\ （\ ``<head>`` = ``[mode] enable_spin_orbital = true with
+       [mode.param] longitudinal_bond_channels = true (FLEX)``\ ）
+     - ボンドアーカイブには対となる green ファイルが必要です。\ ``[file.output]``\ の
+       キーは大文字小文字を区別します。
+     - ``[file.output] green``
+   * - ``<head>: the bond archive '<archive>' and its companion green file
+       '<green>' must be in the same directory or the green file below it
+       ...``
+     - ``green_file``\ は\ ``..``\ を含まない相対パスで保存されます。
+     - ``[file.output] green``\ 、\ ``longitudinal_bond``
+   * - ``<head>: longitudinal_bond_output_layout = "npz" cannot hold the
+       bond archive member <member> (<size>, above the small-array bound
+       <bound> = min(1 GiB, cap / 8)); ...``
+     - ``chi_w``\ のメンバーが単一ファイルには大きすぎます。\ ``"sidecar"``\ を指定するか、
+       キーを外してください。
+     - ``[mode.param] longitudinal_bond_output_layout``
+   * - ``spin-orbital bond FLEX needs an estimated peak of ... in phase
+       archive_... ... longitudinal_bond_output_full = true adds the archive
+       phases (archive_bubble, archive_dressing, archive_write); setting it
+       to false removes them. ...``
+     - メモリの受け入れ判定がボンドアーカイブのフェーズを拒否しました。上限を上げる、
+       ``Nmat``\ か k 格子を減らす、または\ ``longitudinal_bond_output_full = false``\ に
+       してください。
+     - ``[mode.param] longitudinal_bond_memory_cap_gb``\ 、
+       ``longitudinal_bond_output_full``
+   * - ``... This happened in the final susceptibility pass of the bond
+       archive; set longitudinal_bond_output_full = false to skip that
+       pass.``
+     - ボンドアーカイブのパスでドレッシングのガードが拒否しました。計算の出力は
+       書き出されません。\ ``longitudinal_bond_cond_tol``\ を下げるか、標準の出力を
+       得るには\ ``longitudinal_bond_output_full = false``\ にしてください。
+     - ``[mode.param] longitudinal_bond_cond_tol``\ 、
+       ``longitudinal_bond_output_full``
    * - ``... needs the general (4-index) spinful chi0q ...``\ （load モード、
        スピン混成のホッピングのない Zeeman 場）
      - スピン軌道 RPA は Zeeman 項だけの模型をスピン対角の形に簡約します。

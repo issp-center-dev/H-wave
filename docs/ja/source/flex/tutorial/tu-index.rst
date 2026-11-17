@@ -1075,8 +1075,13 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
      - 効果なし（INFO を1行出します）
    * - ``longitudinal_bond_pairing``
      - ``"none"``\ のみ（デフォルト）
-   * - ``longitudinal_bond_output_full``\ 、\ ``longitudinal_bond_output_layout``
-     - 拒否（\ ``longitudinal_bond_output_full = false``\ は受け付けます）
+   * - ``longitudinal_bond_output_full``
+     - ``true``\ で最終 Green 関数のスピン軌道ボンドアーカイブ（スキーマ 4）を
+       書き出します。\ :ref:`flex_so_bond_archive`\ を参照
+   * - ``longitudinal_bond_output_layout``
+     - ``"npz"``\ または\ ``"sidecar"``\ （大文字小文字を区別しません）。未指定なら
+       アーカイブが選びます（小配列の上限を超えるメンバーがなければ単一ファイル）。
+       :ref:`flex_so_bond_archive`\ を参照
    * - ``longitudinal_bond_half_grid``
      - すべてのスピン軌道計算と同じく拒否
 
@@ -1084,10 +1089,6 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
 ``[mode] enable_spin_orbital = true with [mode.param] longitudinal_bond_channels = true (FLEX)``
 を以下\ ``<head>``\ と書きます。
 
-- ``longitudinal_bond_output_full = true``\ と、任意の
-  ``longitudinal_bond_output_layout``\ : ``<head> does not write the bond
-  archive in this version (the spin-orbital bond archive arrives in a later
-  version); remove ...``
 - ``"none"``\ 以外の\ ``longitudinal_bond_pairing``\ : ``<head> does not run
   the in-process pairing in this version (it arrives in a later version);
   remove longitudinal_bond_pairing.``
@@ -1298,6 +1299,13 @@ Stoner 因子が 1 を超え、\ :math:`\mathrm{Im}\,\Sigma(i\omega_n>0)`\ が�
   it so that the run chooses, lowers the dressing rows.``
 - ``longitudinal_bond_freq_batch = 1 is set (the smallest batch).``
 
+``longitudinal_bond_output_full = true``\ では、見積もりに3つのフェーズ
+``archive_bubble``\ 、\ ``archive_dressing``\ 、\ ``archive_write``\ （ボンドアーカイブ、
+:ref:`flex_so_bond_archive`\ ）が加わります。拒否されたフェーズがそのいずれかのときは、
+``<how the batch was chosen>``\ の後に\ ``longitudinal_bond_output_full = true adds the
+archive phases (archive_bubble, archive_dressing, archive_write); setting it to
+false removes them.``\ という文が続きます。
+
 行の表は見積もりのすべての行を示します。シェルごとの表は、各オフサイトシェルのボンド長と
 その行の最大の結合を示し、外側のシェルが結合ゼロだけを持つときは、それらを取り除く
 ``longitudinal_bond_max_shells``\ の値を示す節で終わります。
@@ -1329,11 +1337,21 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
   規約（\ ``(nmat, nvol, nd, nd, nd, nd)``\ 、\ ``chi_convention = "spin_orbital"``\ ）で
   持ちます。\ :math:`B = 1`\ ではオンサイトの配列に一致します。これらは
   ``[file.output]``\ で指定したときだけ書き出され、\ ``IterationMax = 0``\ （写像を1回も
-  行わない）では書き出されません。この版では\ ``longitudinal_bond_*``\ のメンバーも
-  ボンドアーカイブも書き出されず、chi0q か chiq を書き出すとき、計算は INFO レベルで
-  そのことを記録します::
+  行わない）では書き出されません。\ ``longitudinal_bond_*``\ のメンバーはこれらには
+  書き込まれません。chi0q か chiq を書き出すとき、計算は INFO レベルでそのことを
+  記録します。ボンドアーカイブなしでは::
 
-     spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last map; the bond-resolved arrays are not written in this version.
+     spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last SCF iteration; the bond-resolved arrays are written only with longitudinal_bond_output_full = true.
+
+  ボンドアーカイブありでは（\ :ref:`flex_so_bond_archive`\ ）::
+
+     spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last SCF iteration; the bond archive holds chi_B of the final Green function.
+
+- ``block_layout``\ : green、sigma、chi0q、chiq は計算のレイアウト（\ ``"dense"``\ または
+  ``"sz_packed"``\ 、0 次元の文字列）を記録します。\ ``IterationMax = 0``\ でも記録し、
+  ``sz_sector_*``\ のメンバーは持ちません。この版より前に書き出されたこの経路の出力には
+  ``block_layout``\ がなく、スピン軌道の読み込み側は不正なファイル
+  （\ ``member block_layout is missing``\ ）として拒否します。この版で作り直してください。
 
 - 来歴: すべてのファイルは\ ``producer_stage = "flex_so_bond"``\ 、
   ``fp_capability = "so_bond"``\ 、解決したボンドトポロジーのダイジェスト
@@ -1346,15 +1364,19 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
 
 .. important::
 
-   ``hwave_sc``\ はこれらの出力をまだ読めません。後の版でボンドアーカイブが加わります。
-   スピン軌道の\ ``hwave_sc``\ は、この経路が書いた\ ``chi0q_mode = "flex"``\ の
-   アーカイブを拒否します（\ ``... was written by producer_stage 'flex_so_bond',
-   which this version does not read yet ...``\ ）。オフサイトのある模型のペアリングには、
+   この版の\ ``hwave_sc``\ はこの経路の出力を読みません（後の版でボンドアーカイブを
+   読みます）。\ ``chi0q_mode = "flex"``\ のスピン軌道\ ``hwave_sc``\ （静的・動的）は、
+   この経路の chi0q、chiq、green、sigma を、すべての\ :math:`B`\ で、ファイル名を
+   示して拒否します::
+
+      [mode] enable_spin_orbital = true (hwave_sc, issue #83): '<file>' was written by the spin-orbital FLEX with bond channels ([mode.param] longitudinal_bond_channels = true): the chi0q, chiq and green of that run describe the bond-resolved run, which [eliashberg] chi0q_mode = "flex" cannot use. Re-run FLEX with longitudinal_bond_channels = false for this mode.
+
+   オフサイトのある模型のペアリングには、
    :ref:`sc_so_bond_static`\ の静的なボンド経路を使ってください。この経路はバンド
    （Transfer と Extern）から自分で裸のボンドバブルを作り、この経路の\ ``green.npz``\ は
    読みません（スピン軌道モードでは\ ``bond_green``\ は拒否されます）。
 
-この版で使えないもの: ボンドアーカイブ、プロセス内のペアリング、GPU、半分のボソン
+この版で使えないもの: プロセス内のペアリング、GPU、半分のボソン
 格子、初期値（\ ``sigma_init``\ 、\ ``trans_mod``\ 、\ ``green_init``\ 。オンサイトの
 スピン軌道 FLEX と同じ）。\ ``flex_hartree_fock``\ のその他の条件（一様松原格子、
 副格子なし、偶数の\ ``Nmat``\ ）も適用されます。Extern 場は受け付けます
@@ -1362,6 +1384,251 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
 （\ ``[continuation] run_eliashberg = false``\ ）で\ ``warm_start = false``\ のときだけ
 実行します。各段は裸の Hartree-Fock 状態から始まります。\ ``warm_start = true``\ と
 ``run_eliashberg = true``\ は、すべてのスピン軌道計算と同じく拒否されます。
+
+.. _flex_so_bond_archive:
+
+ボンドアーカイブ
+""""""""""""""""
+
+``longitudinal_bond_output_full = true``\ のとき、計算はスピン軌道ボンドアーカイブ
+（\ ``bond_archive_schema = 4``\ ）を書き出します。中身は\ **最終**\ の Green 関数の
+ボンド分解したドレスド感受率\ :math:`\chi_B`\ 、裸のボンドバーテックス\ :math:`\Gamma_B`\ 、
+およびその両方の来歴で、それを作った Green 関数の隣に置かれます。
+
+**設定**
+
+- アーカイブは\ ``[file.output] longitudinal_bond``\ （デフォルト
+  ``longitudinal_bond.npz``\ 。\ ``.npz``\ のない名前には、他のアーカイブと同じく
+  接尾辞が付きます）に書き出されます。\ ``longitudinal_bond_output_full = true``\ が
+  なければこのキーは無視され、INFO が1行出ます: ``[file.output] longitudinal_bond
+  is written only with [mode.param] longitudinal_bond_output_full = true; no bond
+  archive is written by this run.``
+- ``[file.output] green``\ が必要です。アーカイブは\ ``green.npz``\ を対となるファイル
+  （companion）として名指しします。\ ``[file.output]``\ のキーは大文字小文字を区別します
+  （\ ``Green``\ というキーでは green は出力されません）。このキーがないと計算の前に
+  拒否されます: ``<head>: longitudinal_bond_output_full = true needs [file.output]
+  green (the bond archive names the Green function its susceptibility was built
+  from as its companion green_file; [file.output] keys are case-sensitive); add
+  green to [file.output].``
+- green ファイルはアーカイブと同じディレクトリかその下に置く必要があります:
+  ``<head>: the bond archive '<archive>' and its companion green file '<green>'
+  must be in the same directory or the green file below it (green_file is stored
+  as a relative path without '..').``
+- ``longitudinal_bond_output_layout``\ （大文字小文字を区別しません）:
+
+  - 未指定: 単一ファイルの\ ``"npz"``\ 。ただし最大の\ ``chi_w``\ メンバーが小配列の上限
+    :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`\ （cap は
+    ``longitudinal_bond_memory_cap_gb``\ ）を超えるときはサイドカーのレイアウトが選ばれ、
+    INFO ``spin-orbital bond archive: sidecar layout (the member <member> of <size>
+    is above the small-array bound <bound>); the susceptibility is written as .npy
+    files next to the index.``\ が出ます。受け入れたピークメモリは最大のメンバーの
+    数倍なので、上限が cap / 8 となる 8 GiB 未満の cap ではまず起こりません。大きな
+    cap のもとで 1 GiB を超えるメンバーの場合です。
+  - ``"sidecar"``\ : 常にサイドカーのレイアウト。
+  - ``"npz"``\ : 常に単一ファイル。上限を超えるメンバーは計算の前に拒否されます:
+    ``<head>: longitudinal_bond_output_layout = "npz" cannot hold the bond archive
+    member <member> (<size>, above the small-array bound <bound> = min(1 GiB, cap
+    / 8)); set longitudinal_bond_output_layout = "sidecar" or remove it (the
+    sidecar layout is then chosen).``
+
+  ``longitudinal_bond_output_full = true``\ なしの\ ``"sidecar"``\ は、非スピン軌道の
+  ボンド FLEX と同じ WARNING 付きで無視されます。
+- ``IterationMax = 0``\ では写像を1回も行わず、アーカイブは書き出されません:
+  ``spin-orbital bond archive: IterationMax = 0 runs no map, so no bond archive is
+  written.``\ （初期状態の\ ``green``\ と\ ``sigma``\ は\ ``block_layout``\ 付きで
+  書き出されます。）
+
+**どの Green 関数か** ``chi_w``\ は最終の Green 関数、つまり\ ``green.npz``\ の Green
+関数の\ :math:`\chi_B`\ です。自己無撞着計算の後の追加の感受率パス1回で求めます。
+最終の Green 関数のボンドバブル\ :math:`\bar\chi_B`\ と、その\ :math:`\Gamma_B`\ による
+ドレッシングを、すべてのボソン振動数で計算します。有効相互作用も自己エネルギーも
+作りません。計算は\ ``spin-orbital bond archive: chi_w is chi_B of the final Green
+function (one extra susceptibility pass after the self-consistency).``\ を記録します。
+``chi0q.npz``\ と\ ``chiq.npz``\ は\ **最後の SCF 反復**\ のチャネル 0 ブロックのまま
+（上の「出力」）なので、\ ``chi_w``\ のチャネル 0 ブロックは一般に\ ``chiq``\ と異なります。
+アーカイブの\ ``fp_green``\ は\ ``green.npz``\ の\ ``fp_green``\ に等しくなります。
+
+*コスト* このパスのコストは、有効相互作用と自己エネルギーを除いた SCF 写像1回分程度です。
+メモリの受け入れ判定にはこのパスの3つのフェーズ（\ ``archive_bubble``\ 、
+``archive_dressing``\ 、\ ``archive_write``\ 。上の「メモリ」を参照）が加わります。
+これらのフェーズは最終状態の配列とパス自身の行を合わせて保持します。
+
+*極の検査* パスは最終の\ :math:`\bar\chi_B`\ の\ :math:`\nu = 0`\ の断面で RPA 極の
+指標を計算し、INFO レベルで記録します。極以上では WARNING（場所
+``FLEX longitudinal_bond_channels (spin-orbital, bond archive of the final Green
+function)``\ ）が出て、\ ``The bond archive's chi_w is built on that susceptibility; it
+describes no physical state and is still written.``\ で終わります
+（\ :ref:`bond_rpa_pole`\ を参照）。計算は止まらず、アーカイブは極のメンバー
+``rpa_past_pole``\ （\ ``True``\ ）、\ ``rpa_pole_indicator_spinful``\ （浮動小数点数）、
+``rpa_pole_q_spinful``\ （\ ``(3,)``\ の浮動小数点数）を持ちます。極より下ではこれらは
+ありません。この経路の chi0q と chiq は極のメンバーを持ちません。
+
+*パスでの拒否* パスのドレッシングは、各写像と同じく\ ``longitudinal_bond_cond_tol``\ で
+検査されます。拒否されると計算は止まり、\ **計算の出力は一切書き出されません**\ 。
+メッセージはドレッシングのガードの対処法と\ ``This happened in the final
+susceptibility pass of the bond archive; set longitudinal_bond_output_full = false
+to skip that pass.``\ で終わります。\ ``longitudinal_bond_output_full = false``\ に
+すれば、同じ入力で標準の出力が書き出されます（自己無撞着計算はアーカイブに依存
+しません）。
+
+**メンバー** :math:`n_d = 2N`\ （\ :math:`N`\ は\ ``norb_phys``\ ）、\ ``ND`` =
+:math:`B n_d^2`\ 。パックのレイアウトでは3つの\ :math:`S_z`\ セクターの大きさは
+:math:`n_0 = 2BN^2`\ 、\ :math:`n_{+1} = n_{-1} = BN^2`\ です。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - メンバー
+     - 内容
+   * - ``bond_archive_schema``\ 、\ ``spin_orbital``
+     - ``4``\ （整数）、\ ``True``
+   * - ``index_convention``\ 、\ ``index_order``\ 、\ ``freq_axis``
+     - ``"spin_block"``\ 、\ ``"bond_major_pair_code_slot"``\ 、
+       ``"uniform_boson_centered"``\ （一様格子のボソン軸。\ ``chiq.npz``\ と同じ順序）
+   * - ``block_layout``
+     - ``"dense"``\ または\ ``"sz_packed"``\ 。計算のレイアウト
+       （上の\ :ref:`レイアウト <flex_so_bond_tutorial>`\ ）。パックのアーカイブは
+       ``sz_sector_order``\ 、\ ``sz_sector_offsets``\ 、\ ``sz_sector_index``\ も持ちます
+   * - ``bond_archive_layout``
+     - ``"npz"``\ または\ ``"sidecar"``
+   * - ``norb_phys``\ 、\ ``nd``\ 、\ ``nmat``\ 、\ ``B``\ 、\ ``cell_shape``\ 、\ ``beta``\ 、
+       ``types``
+     - 次元、逆温度、相互作用の種類（重複なしで整列）
+   * - ``Gamma_bond``\ （密）または\ ``Gamma_bond@0``\ 、\ ``Gamma_bond@+1``\ 、
+       ``Gamma_bond@-1``\ （パック）
+     - :math:`\Gamma_B`\ 。複素数の\ ``(nvol, ND, ND)``\ または\ ``(nvol, n_σ, n_σ)``\ 。
+       常にインデックスに格納されます
+   * - ``chi_w``\ （密）または\ ``chi_w@0``\ 、\ ``chi_w@+1``\ 、\ ``chi_w@-1``\ （パック）
+     - 最終の Green 関数の\ :math:`\chi_B`\ 。複素数の\ ``(nmat, nvol, ND, ND)``\ または
+       ``(nmat, nvol, n_σ, n_σ)``\ 。インデックス内（\ ``"npz"``\ ）か、サイドカー
+       ファイル（\ ``"sidecar"``\ ）
+   * - ``<block>_file``\ 、\ ``<block>_nbytes``\ （サイドカーのレイアウト。\ ``chi_w``\ の
+       ブロックごとに1組）
+     - サイドカーのファイル名\ ``<block>.<archive_nonce>.npy``\ （インデックスの
+       ディレクトリで解決）と、そのバイト数
+   * - ``archive_nonce``
+     - 32 文字の小文字16進数。書き出しのたびに新しくなり、すべてのサイドカー名に
+       含まれます
+   * - ``green_file``\ 、\ ``green_layout``
+     - インデックスのディレクトリからの対となる Green ファイルの相対パス（\ ``..``\ を
+       含まない）、\ ``"b_f_k_o_o_v1"``
+   * - ``momentum_convention``\ 、\ ``wavevector_unit``\ 、\ ``wavevector_index``
+     - 運動量の規約のマーカー
+   * - ``scf_converged``
+     - 自己無撞着計算が収束したか（bool）
+   * - 来歴
+     - バージョン 2 のメンバー（\ :ref:`sc_so_archive_checks`\ ）。
+       ``producer_stage = "flex_so_bond"``\ 、\ ``fp_capability = "so_bond"``\ 、
+       ``fp_resolved_topology``\ 、\ ``delta_r``\ 、\ ``reverse``\ 、
+       ``slot_convention``\ 、\ ``max_shells``\ 、および最終状態の\ ``fp_green``\ と
+       ``state_*``
+   * - ``rpa_past_pole``\ 、\ ``rpa_pole_indicator_spinful``\ 、
+       ``rpa_pole_q_spinful``
+     - 極を超えたときだけ（上の「極の検査」）
+
+``chibar_w``\ （裸の\ :math:`\bar\chi_B`\ ）は FLEX では書き出しません。読み込み側は、
+あれば受け付けます（\ ``has_slot("chibar_w")``\ ）。ログの\ ``chibar_w archive:
+none``\ はそのままです。
+
+**読み込み** この版では、アーカイブは Python 関数
+``hwave.solver.so_bond_archive.load_so_bond_archive(path, *, run_band, run_state,
+run_interaction, run_bond)``\ で読みます。4つのキーワード引数は、読み込む側の計算の
+バンドの表、状態、コンパイルした相互作用、ボンドの入力（フィンガープリント検査の
+入力）です。\ ``hwave_sc``\ は後の版でこれを読みます。この関数が返すオブジェクトの
+``has_slot``\ と\ ``read_slot(name, want=None, l0=None, l1=None)``\ は、
+``Gamma_bond``\ 、\ ``chi_w``\ （と\ ``chibar_w``\ ）を、格納したレイアウト、
+``"dense"``\ 、\ ``"sz_packed"``\ のいずれかで返します（密なアーカイブをパックで読むとき、
+要求した断面にセクター外のゼロでない成分があれば拒否されます）。ペイロードの配列を
+読む前に、次の順で検査します。
+
+1. マーカー\ ``bond_archive_schema = 4``\ と\ ``spin_orbital = True``\ 、次元とその関係
+   （\ ``nd = 2 norb_phys``\ 、\ ``B``\ が\ ``delta_r``\ の行数、\ ``nmat``/``beta``\ が
+   その\ ``state_*``\ の写しに等しい、\ ``cell_shape``\ が\ ``prov_cell_shape``\ に等しい）。
+2. 構造を1回で: 来歴、ペイロードの npy ヘッダー（インデックス内またはサイドカー）の
+   dtype、階数、大きさ。サイドカーではファイル名（ディレクトリ部分がなく、アーカイブの
+   ノンスを含む）と大きさ（ファイルの大きさ = ``<block>_nbytes`` = ヘッダーとデータの和）。
+3. 表のスキーマ 4 のメンバー。
+4. 対となる green ファイルが存在すること。
+5. 対となる green ファイルの構造と、計算との整合性。
+6. アーカイブと計算との整合性、および対となるファイルの Green 関数のダイジェストに対する
+   アーカイブの\ ``fp_green``\ 。
+
+整合性の検査は\ :ref:`sc_so_archive_checks`\ と同じで、アーカイブは同一の状態点
+（\ ``Nmat``\ を含む）でのみ再利用されます。対となるファイルが別の Green 関数に置き換え
+られたアーカイブは\ ``fp_green``\ の検査で拒否されます。\ ``read_slot``\ は呼ぶたびに
+ファイルを開き直します。読み込み側が使っている間は、アーカイブ（およびそのサイドカーや
+green ファイル）を書き換えたり置き換えたりしないでください。
+
+**移動と再実行** インデックス、そのサイドカー、\ ``green.npz``\ はまとめて扱ってください。
+``green_file``\ とサイドカー名はインデックスのディレクトリからの相対なので、3つを
+まとめてどのディレクトリにも移せます。対となるファイルがないと拒否されます:
+``companion green file '<green>' named by '<archive>' is missing (keep the archive,
+its sidecars and the green file together, or re-run FLEX)``\ 。
+
+.. warning::
+
+   インデックスだけをコピーしないでください。コピーは同じサイドカーを名指しします。
+   コピーのパスへの再実行は共有のサイドカーを残し（別のインデックスが名指ししている
+   ため）、元のパスへの再実行は、ディレクトリ内の他のインデックスが名指ししていない
+   ときだけ古いサイドカーを削除します。
+
+同じパスへの再実行は、インデックスを置き換えてから、置き換えたアーカイブのサイドカーを
+削除します。ただし、新しいインデックスやディレクトリ内の他のスキーマ 4 のインデックスが
+名指ししているもの、およびそこにある\ ``*.npz``\ が読めないか不正なインデックスであるために残すもの（このときは
+古い名前をすべて残します）は除きます。INFO が1行それらを示します:
+``spin-orbital bond archive '<path>': removed <n> sidecar file(s) of the archive it
+replaced: <names>; kept <k> (named by another index, a malformed candidate or this
+one): <names>; kept by: <files>``\ 。同じステムにある非スピン軌道のボンドアーカイブの
+サイドカー（\ ``<stem>_chi_s_w.npy``\ 、\ ``<stem>_chi_c_w.npy``\ ）は、そのまま残すと
+示され、削除されません。異常終了した計算が残したファイル（どのインデックスも名指し
+しないサイドカー）も削除されません。削除の失敗は、フルパスを示す WARNING 1つです
+（\ ``... could not remove the old sidecar file '<path>' (<error>); remove it by hand
+if no other archive uses it.``\ ）。
+
+**書き出しが失敗したとき** ``green.npz``\ とインデックスは、それぞれのディレクトリで
+まず一時的な名前に書き出され、名前の変更で確定されます。先に green ファイル、次に
+インデックスです。2回の名前の変更は1つの不可分な操作ではないので、失敗した書き出しは
+次のいずれかを残します。
+
+- 前の組: green の確定より前に失敗したとき（新しいサイドカーと一時ファイルは削除
+  されます）。
+- 新しい組: 2回の名前の変更がどちらも成功したとき（その後の古いサイドカーの削除の
+  失敗がこれを壊すことはありません）。
+- インデックスのない新しい\ ``green.npz``\ : インデックスの確定に失敗したとき。前の
+  インデックスは削除されます（WARNING ``spin-orbital bond archive '<path>': writing the
+  new index failed after the companion green file '<green>' was replaced; the
+  previous index was removed so that no archive names a different Green function
+  (<error>).``\ ）。削除されたインデックスのサイドカーは、どのインデックスも名指し
+  しない孤立したファイルとして残ることがあります。
+
+2回の名前の変更の間の異常終了や、前のインデックスの削除の失敗（WARNING ``... and the
+previous index could not be removed (<error>); it names a different Green function,
+so load_so_bond_archive refuses it; remove it or re-run FLEX.``\ ）は、別の Green 関数の
+green ファイルの隣に古いインデックスを残すことがあります。\ ``load_so_bond_archive``\ は
+これを\ ``fp_green mismatch``\ のメッセージで拒否します。失敗した書き出しの後片付けが
+失敗したときは、フルパスを示す WARNING 1つです（\ ``spin-orbital bond archive: could
+not remove '<path>' while cleaning up after a failed write (<error>); remove it by
+hand.``\ ）。
+
+``sigma.npz``\ 、\ ``chi0q.npz``\ 、\ ``chiq.npz``\ は、入出力の失敗に対してすべての FLEX
+計算と同じ振る舞いをします（失敗の前に書いた出力は残ります）。green の確定より前に
+失敗したあとは、新しい sigma、chi0q、chiq が前の green とアーカイブの組の隣に置かれる
+ことがあります。それぞれが自分の\ ``fp_green``\ を持つので、それらを比較する読み込み側は
+この混在を拒否します。上の「すべてか無か」の規則（「パスでの拒否」）が対象とするのは、
+パスの条件スコアによる拒否だけです。1つのディレクトリに同時に書き出す複数の計算には
+対応していません。
+
+.. note::
+
+   **残るリスク** アーカイブはサイドカーのペイロードのハッシュを持ちません。大きさと
+   ヘッダーが同じ別の\ ``.npy``\ ファイルを、このアーカイブのノンスの名前に変えたものは
+   検出されません。アーカイブを移したり共有したりするときは、ファイルシステムの
+   ツール（たとえば\ ``sha256sum``\ ）でファイルのチェックサムを記録して比較して
+   ください。
+
+この読み込み関数と他の読み込み側の拒否メッセージは、\ :ref:`sc_so_archive_checks`\ の
+トラブルシューティングの表にあります。
 
 
 .. _flex_bond_pairing_tutorial:
@@ -2023,7 +2290,8 @@ FLEX は指定されたアーカイブだけを出力します）を読みます
 （\ :ref:`sc_spin_orbital`\ を参照）でも、すべてのボソン振動数の\ :math:`\chi`\ を使う
 動的なソルバー（\ :ref:`sc_spin_orbital_dynamic`\ を参照）でも使えます。
 これは\ ``longitudinal_bond_channels``\ を使わない計算についてです。ボンドチャネル付きの
-スピン軌道 FLEX の出力は、\ ``hwave_sc``\ はまだ読めません（\ :ref:`flex_so_bond_tutorial`\ を
+スピン軌道 FLEX の出力は\ ``hwave_sc``\ が拒否します。そのボンドアーカイブは、この版では
+Python 関数\ ``load_so_bond_archive``\ でのみ読めます（\ :ref:`flex_so_bond_archive`\ を
 参照）。
 
 スピン偏極した FLEX（Zeeman 磁場）
