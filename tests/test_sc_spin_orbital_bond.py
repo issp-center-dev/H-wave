@@ -27,7 +27,7 @@ from hwave.solver import (backend, bond_channels, eliashberg_bond, fingerprint, 
 from hwave.sc import (_SO_BOND_CHI0Q_UNUSED, _SO_BOND_DIAGNOSTICS_REFUSAL,
                       _SO_BOND_FLEX_KEYS_UNUSED, _SO_BOND_FLEX_REFUSAL,
                       _SO_BOND_GPU_IGNORED, _SO_BOND_GPU_REQUIRED_REFUSAL,
-                      _SO_BOND_GREEN_REFUSAL, _SO_BOND_LAYOUT_IGNORED,
+                      _SO_BOND_LAYOUT_IGNORED,
                       _SO_BOND_PRECONDITION_REFUSAL)
 from tests import so_bond_entry_fixtures as F
 from tests import so_bond_flex_fixtures as _flex_fixtures
@@ -93,12 +93,6 @@ class TestConfigParsing(unittest.TestCase):
                          "[eliashberg] so_bond_layout set but bond_channels=false; it only "
                          "applies to the spin-orbital bond path and is ignored here.")
         self.assertEqual(
-            _SO_BOND_GREEN_REFUSAL,
-            _W + ": [eliashberg] bond_green is not available with bond_channels in "
-            "spin-orbital mode: no run writes a spin-orbital bond-resolved Green function "
-            "yet (it arrives with the spin-orbital bond FLEX). Remove bond_green; the Green "
-            "function is built from the Transfer (and Extern) input.")
-        self.assertEqual(
             _SO_BOND_DIAGNOSTICS_REFUSAL,
             _W + ": [eliashberg] bond_diagnostics is not available in spin-orbital mode "
             "(its character analysis is the singlet/triplet one of the non-spin-orbital "
@@ -139,7 +133,6 @@ class TestConfigParsing(unittest.TestCase):
     def test_each_refusal(self):
         on = {"bond_channels": True}
         rows = [
-            ("bond_green", {"bond_green": "g.npz"}, _SO_BOND_GREEN_REFUSAL),
             ("bond_diagnostics true", {"bond_diagnostics": True},
              _SO_BOND_DIAGNOSTICS_REFUSAL),
             ("bond_diagnostics false", {"bond_diagnostics": False},
@@ -169,8 +162,6 @@ class TestConfigParsing(unittest.TestCase):
 
     def test_refusal_order(self):
         on = {"bond_channels": True}
-        self.assertEqual(self._refusal(dict(on, bond_green="g.npz", bond_diagnostics=True)),
-                         _SO_BOND_GREEN_REFUSAL)
         self.assertEqual(
             self._refusal(dict(on, Bond_Precondition_RTOL=1e-3, bond_precondition_atol=0.0)),
             _SO_BOND_PRECONDITION_REFUSAL.format(key="bond_precondition_atol"))
@@ -182,8 +173,6 @@ class TestConfigParsing(unittest.TestCase):
                          _SO_BOND_GPU_REQUIRED_REFUSAL)
 
     def test_case_insensitive_keys(self):
-        self.assertEqual(self._refusal({"Bond_Channels": True, "Bond_Green": "g.npz"}),
-                         _SO_BOND_GREEN_REFUSAL)
         self.assertEqual(self._refusal({"Bond_Channels": "on", "Bond_Diagnostics": False}),
                          _SO_BOND_DIAGNOSTICS_REFUSAL)
         self.assertEqual(self._refusal({"BOND_CHANNELS": True, "Chi0q_Mode": "flex"}),
@@ -3908,8 +3897,6 @@ def _refusal_rows():
         ("bond_precondition_atol", F.SOC_ALL_TYPES, {"Bond_Precondition_ATOL": 1e-12},
          _SO_BOND_PRECONDITION_REFUSAL.format(key="Bond_Precondition_ATOL"),
          "_read_interaction_files"),
-        ("bond_green", F.SOC_ALL_TYPES, {"Bond_Green": "green.npz"}, _SO_BOND_GREEN_REFUSAL,
-         "_read_interaction_files"),
         ("gpu_required", F.SOC_ALL_TYPES, {"GPU_Required": True, "Gpu": True},
          _SO_BOND_GPU_REQUIRED_REFUSAL, "_read_interaction_files"),
         ("off-site rows, bond_channels = false", F.SOC_ALL_TYPES, {"Bond_Channels": False},
@@ -4010,7 +3997,7 @@ class TestRefusalMatrix(unittest.TestCase):
 
     def test_rows(self):
         rows = _refusal_rows()
-        self.assertEqual(len(rows), 24)
+        self.assertEqual(len(rows), 23)
         for label, fixture, eli, text, first_skipped in rows:
             with self.subTest(row=label):
                 got, entered = self._refuse(fixture, eli)

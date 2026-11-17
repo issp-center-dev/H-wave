@@ -423,6 +423,24 @@ def _warn_stale_bond_options(eli_param):
             "here.", ", ".join(stale))
 
 
+def _parse_bond_green(eli_param):
+    """``[eliashberg] bond_green`` of the mapping ``eli_param`` as given
+    (the spin-orbital mapping is case-insensitive, the non-spin-orbital one
+    is not): ``None`` when absent, else the value as a string, used verbatim
+    as a path (relative to the working directory); an empty string is
+    refused."""
+    bond_green = eli_param.get("bond_green")
+    if bond_green is None:
+        return None
+    bond_green = str(bond_green)
+    if not bond_green:
+        raise ValueError(
+            "[eliashberg] bond_green must be a path to a Green-function "
+            "npz file; got an empty string. Omit the key to build the "
+            "bare Green function from the transfer Hamiltonian.")
+    return bond_green
+
+
 def _read_bond_config(eli_param):
     """Read the ``[eliashberg]`` bond-channel options (spec S5).
 
@@ -451,14 +469,7 @@ def _read_bond_config(eli_param):
 
     bond_diagnostics = _bond_bool_option(eli_param, "bond_diagnostics", False)
 
-    bond_green = eli_param.get("bond_green")
-    if bond_green is not None:
-        bond_green = str(bond_green)
-        if not bond_green:
-            raise ValueError(
-                "[eliashberg] bond_green must be a path to a Green-function "
-                "npz file; got an empty string. Omit the key to build the "
-                "bare Green function from the transfer Hamiltonian.")
+    bond_green = _parse_bond_green(eli_param)
 
     max_shells = _bond_int_option(eli_param, "bond_max_shells")
     if max_shells is not None and max_shells < 0:
@@ -506,11 +517,6 @@ def _read_bond_config(eli_param):
 _SO_BOND_LAYOUT_IGNORED = (
     "[eliashberg] so_bond_layout set but bond_channels=false; it only applies to "
     "the spin-orbital bond path and is ignored here.")
-_SO_BOND_GREEN_REFUSAL = (
-    _SO_WHAT + ": [eliashberg] bond_green is not available with bond_channels in "
-    "spin-orbital mode: no run writes a spin-orbital bond-resolved Green function "
-    "yet (it arrives with the spin-orbital bond FLEX). Remove bond_green; the Green "
-    "function is built from the Transfer (and Extern) input.")
 _SO_BOND_DIAGNOSTICS_REFUSAL = (
     _SO_WHAT + ": [eliashberg] bond_diagnostics is not available in spin-orbital "
     "mode (its character analysis is the singlet/triplet one of the "
@@ -558,7 +564,8 @@ class _SOBondConfig(NamedTuple):
     ``bond_max_shells`` cutoff (``None`` = every shell); ``coeff_tail``,
     ``coeff_tail_source`` the resolved ``bond_coeff_tail``
     (:func:`_resolve_bond_coeff_tail`); ``g2_tail`` the Matsubara tail
-    switch."""
+    switch; ``green`` the ``bond_green`` path (``None``: the Green function
+    is built from the band)."""
     use_bond: bool
     layout_request: object
     cap_raw: object
@@ -566,6 +573,7 @@ class _SOBondConfig(NamedTuple):
     coeff_tail: object
     coeff_tail_source: object
     g2_tail: object
+    green: object = None
 
 
 def _read_so_bond_config(eli_param):
@@ -575,14 +583,18 @@ def _read_so_bond_config(eli_param):
     With ``bond_channels`` off the bond options are ignored with a WARNING
     (the non-spin-orbital one, plus one for ``so_bond_layout``) and never
     parsed. With it on, the options the spin-orbital bond path does not use
-    are refused, the first offender winning, in this order: ``bond_green``;
+    are refused, the first offender winning, in this order:
     ``bond_diagnostics`` (any value); any ``bond_precondition_*`` key (any
     value; the first in lower-case order, named as spelled);
     ``chi0q_mode = "flex"``; ``gpu_required = true``. Then the values are
-    validated: ``so_bond_layout`` (:func:`hwave.solver.so_bond.parse_layout_key`),
-    ``bond_max_shells >= 0``, ``bond_memory_cap_gb`` a finite number ``>= 0``
-    (``0`` disables the memory admission check), ``bond_coeff_tail`` and
-    ``g2_tail``. Nothing here reads a file or selects a backend."""
+    validated: ``bond_green`` (:func:`_parse_bond_green`: a non-empty path;
+    the Green function of the static bond path is then read from that file,
+    the green.npz of a spin-orbital bond FLEX run, instead of being built
+    from the band), ``so_bond_layout``
+    (:func:`hwave.solver.so_bond.parse_layout_key`), ``bond_max_shells >=
+    0``, ``bond_memory_cap_gb`` a finite number ``>= 0`` (``0`` disables the
+    memory admission check), ``bond_coeff_tail`` and ``g2_tail``. Nothing
+    here reads a file or selects a backend."""
     from requests.structures import CaseInsensitiveDict
     from hwave.solver import so_bond
     eli = CaseInsensitiveDict(eli_param or {})
@@ -592,8 +604,6 @@ def _read_so_bond_config(eli_param):
             logger.warning(_SO_BOND_LAYOUT_IGNORED)
         return _SOBondConfig(False, None, None, None, None, None, None)
 
-    if "bond_green" in eli:
-        raise ValueError(_SO_BOND_GREEN_REFUSAL)
     if "bond_diagnostics" in eli:
         raise ValueError(_SO_BOND_DIAGNOSTICS_REFUSAL)
     precondition = sorted(
@@ -606,6 +616,7 @@ def _read_so_bond_config(eli_param):
     if backend.as_bool(eli.get("gpu_required", False)):
         raise ValueError(_SO_BOND_GPU_REQUIRED_REFUSAL)
 
+    green = _parse_bond_green(eli)
     layout = eli.get("so_bond_layout")
     layout_request = so_bond.parse_layout_key(
         "auto" if layout is None else layout, key="[eliashberg] so_bond_layout")
@@ -630,14 +641,15 @@ def _read_so_bond_config(eli_param):
     coeff_tail, coeff_tail_source = _resolve_bond_coeff_tail(eli)
     g2_tail = _coerce_g2_tail(eli.get("g2_tail", True))
     return _SOBondConfig(True, layout_request, cap_raw, max_shells, coeff_tail,
-                         coeff_tail_source, g2_tail)
+                         coeff_tail_source, g2_tail, green)
 
 
 def _so_bond_entry_warnings(eli_param, log):
     """The WARNINGs, at most one each, of the options a spin-orbital bond
     run accepts but does not use: ``chi0q_mode`` / ``chi0q_tensor`` (no
     chi0q is read or computed), ``gpu = true`` (the kernel is CPU-only) and
-    ``flex_chi_s`` / ``flex_chi_c`` (no FLEX output is read)."""
+    ``flex_chi_s`` / ``flex_chi_c`` (no FLEX susceptibility is read; a FLEX
+    Green function is read only through ``bond_green``)."""
     from requests.structures import CaseInsensitiveDict
     eli = CaseInsensitiveDict(eli_param or {})
 
@@ -2907,13 +2919,18 @@ def _so_flex_consumed_state(green_sc, epsilon_k, sigma_static, mu, beta,
                                 calc_mu=True, target=target)
 
 
-def _so_writer_members(stage, label, so_run, fp_green, state, *, bond=None):
+def _so_writer_members(stage, label, so_run, fp_green, state, *, bond=None,
+                       fp_green_source=None):
     """The fingerprint members of a hwave_sc gap archive: this run's band
-    and interaction fingerprints, and the Green function and state its
-    kernel used (never the producer's); ``fp_green`` is
-    :func:`_so_green_fp` of that Green function. A bond-resolved
-    (``"so_bond"``) stage also records its bond inputs: ``bond`` when given,
-    else ``so_run.bond.inputs``; an on-site stage takes none."""
+    and interaction fingerprints, and the Green function its kernel used
+    and the state of that Green function; ``fp_green`` is
+    :func:`_so_green_fp` of it. The state is the run's own, except for a
+    Green function read from ``[eliashberg] bond_green``, whose state is the
+    producer's recorded state of that same Green function;
+    ``fp_green_source`` (optional) is the file's digest when the kernel used
+    its S_z-sector projection. A bond-resolved (``"so_bond"``) stage also
+    records its bond inputs: ``bond`` when given, else
+    ``so_run.bond.inputs``; an on-site stage takes none."""
     from hwave.solver import fingerprint
     if fingerprint.STAGE_CAPABILITY.get(stage) == "so_bond":
         if bond is None and so_run.bond is not None:
@@ -2925,7 +2942,7 @@ def _so_writer_members(stage, label, so_run, fp_green, state, *, bond=None):
         producer_stage=stage, producer_label=label,
         transfer=so_run.band.transfer, extern=so_run.band.extern,
         meta=so_run.band.meta, fp_green=fp_green, state=state,
-        interaction=so_run.context.interaction, bond=bond)
+        interaction=so_run.context.interaction, bond=bond, fp_green_source=fp_green_source)
 
 
 def _so_green_fp(green_kw):
@@ -3392,36 +3409,275 @@ def _build_bond_green(eigenvalues, eigenvectors, mu, beta, nmat,
 class _SOBondGreen(NamedTuple):
     """The Green function of a static spin-orbital bond run.
 
-    ``carrier`` is the :class:`_BondGreen` built on the canonical band
-    (``full_sc`` ``(nd, nd, Nx, Ny, Nz, nmat)`` in spin-block order, on the
-    centered fermionic grid ``w_n = (2n + 1 - nmat) pi / beta``); ``fp_green``
-    its :func:`_so_green_fp`; ``conserving`` whether the band conserves S_z
-    (then G has exactly zero S_z-off-sector entries); ``eigenvalues`` the
-    band ``(Nx, Ny, Nz, nd)``, ascending per k; ``mu`` the chemical
-    potential."""
+    ``carrier`` is the :class:`_BondGreen` of the run (``full_sc`` ``(nd,
+    nd, Nx, Ny, Nz, nmat)`` in spin-block order, on the centered fermionic
+    grid ``w_n = (2n + 1 - nmat) pi / beta``): built on the canonical band
+    (``source = "internal"``), or read from ``[eliashberg] bond_green``
+    (``source = "external_npz"``, no tail correction). ``fp_green`` is the
+    digest of the Green function the kernel uses (:func:`_so_green_fp`;
+    for a borrowed one projected onto the S_z sectors, the projected one);
+    ``conserving`` whether the band conserves S_z (decided by the Transfer
+    table alone on both paths; then the band's G has exactly zero
+    S_z-off-sector entries); ``eigenvalues`` the band ``(Nx, Ny, Nz, nd)``,
+    ascending per k (``None`` for a borrowed G: no band is diagonalized);
+    ``mu`` the chemical potential (a borrowed G: the file's ``state_mu``).
+
+    A borrowed G also records: ``state``, the producer's recorded state of
+    that Green function (the gap archive records it);
+    ``fp_green_source``, the file's digest when the G was projected (else
+    ``None``); ``leak``, its S_z leak (``None`` when the input does not
+    conserve S_z and no leak was measured); ``scf_converged``, the file's
+    ``scf_converged`` (``None`` when it records none). On the internal path
+    these are ``None`` and ``source`` is ``"internal"``."""
     carrier: object
     fp_green: str
     conserving: bool
     eigenvalues: object
     mu: float
+    state: object = None
+    fp_green_source: object = None
+    leak: object = None
+    source: str = "internal"
+    scf_converged: object = None
+
+
+#: the texts of a Green function read from ``[eliashberg] bond_green`` on the
+#: static spin-orbital bond path (``{path}`` the configured path, ``{label}``
+#: the producer it names)
+T_BG_MISSING = "[eliashberg] bond_green file not found: {path}"
+T_BG_SHAPE = ("'{path}' is malformed or truncated: green shape differs from this run "
+              "({stored} vs {expected}). Regenerate it with {label}.")
+T_BG_NONFINITE = ("'{path}' is malformed or truncated: green has non-finite values at "
+                  "frequency index {n}. Regenerate it with {label}.")
+T_BG_MARKER = ("'{path}' is malformed or truncated: {member} is missing or older than this "
+               "build requires. Regenerate it with {label}.")
+T_BG_KGRID = ("'{path}' is malformed or truncated: wavevector_index is not the k grid of "
+              "CellShape {shape}. Regenerate it with {label}.")
+_SO_BOND_GREEN_ONSITE_REMEDY = (
+    "[eliashberg] bond_green needs the green.npz of a spin-orbital FLEX run with "
+    "[mode.param] longitudinal_bond_channels = true (the bond-resolved run); re-run FLEX "
+    "with it.")
+_SO_BOND_GREEN_IS_ARCHIVE = (
+    _SO_WHAT + ": [eliashberg] bond_green = '{path}' is the bond archive of a spin-orbital "
+    "FLEX run, not a Green function; set bond_green to its companion green file '{green}'.")
+_SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN = (
+    _SO_WHAT + ": [eliashberg] bond_green = '{path}' is the bond archive of a spin-orbital "
+    "FLEX run, not a Green function, and it records no readable companion green file; set "
+    "bond_green to the green.npz written by that FLEX run ([file.output] green).")
+_SO_BOND_GREEN_NONSO_ARCHIVE = (
+    _SO_WHAT + ": [eliashberg] bond_green = '{path}' is a bond archive, not a Green "
+    "function; set bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] "
+    "longitudinal_bond_channels = true.")
+#: INFO (``%s``: path, producer label, leak text, ``"yes"`` / ``"no"``)
+_SO_BOND_GREEN_ACCEPTED_INFO = (
+    "[eliashberg] bond_green: '%s' (written by %s) passed the archive checks; S_z leak %s; "
+    "projected: %s.")
+_SO_BOND_GREEN_LEAK_UNCHECKED = "not checked (the input does not conserve S_z)"
+#: WARNING (``%s`` path)
+_SO_BOND_GREEN_UNCONVERGED = (
+    "[eliashberg] bond_green '%s' records scf_converged = false: the FLEX run did not "
+    "converge; its Green function is used as stored.")
+#: WARNING (``%r`` the configured bond_coeff_tail, ``%s`` path)
+_SO_BOND_TAIL_NOT_APPLIED = (
+    "[eliashberg] bond_coeff_tail = %r is not applied with bond_green = '%s': the tail "
+    "correction needs the analytic asymptote of the band Green function, which a Green "
+    "function read from a file does not provide (bond_coeff_tail_applied = 0).")
+#: INFO
+_SO_BOND_TAIL_DEFAULT_INFO = (
+    "[eliashberg] bond_coeff_tail: the default 1.0 applies to the band Green function only; "
+    "the Green function read from bond_green is used without a tail correction.")
+
+
+def _so_conserving_input(so_run, norb_phys):
+    """Whether the whole input of ``so_run`` conserves S_z (its band AND its
+    interaction records; :func:`hwave.solver.so_bond.input_conserves_sz`):
+    the rule that decides whether a borrowed Green function is checked for
+    S_z leakage and projected. The ``so_bond_layout`` override never
+    decides it."""
+    from hwave.solver import so_bond
+    return bool(so_bond.input_conserves_sz(
+        so_run.band.transfer, so_run.band.extern, so_run.context.compiled,
+        norb_phys).conserving)
+
+
+class _SOBorrowed(NamedTuple):
+    """The Green function a static spin-orbital bond run reads from
+    ``[eliashberg] bond_green`` (:func:`_so_borrowed_green`): ``used`` the
+    canonical ``(1, nmat, nvol, nd, nd)`` G the kernel uses (read-only; the
+    array read from the file, or its S_z-sector projection), ``fp_file``
+    the digest of the G as stored (equal to the file's ``fp_green``),
+    ``fp_used`` that of ``used``, ``leak`` its S_z leak (``None`` when the
+    input does not conserve S_z), ``projected`` whether ``used`` is the
+    projection, ``state`` the file's recorded state, ``label`` its
+    producer and ``scf_converged`` the file's marker (``None`` when
+    absent)."""
+    used: object
+    fp_file: str
+    fp_used: str
+    leak: object
+    projected: bool
+    state: object
+    label: str
+    scf_converged: object
+
+
+def _so_bond_green_archive_hint(z, path):
+    """Refuse (ValueError) a ``bond_green`` that names a bond archive index
+    instead of a Green function: a schema-4 spin-orbital index (naming its
+    companion green file when it records a readable one) or any other bond
+    archive. The decode is the archive reader's own
+    (``so_bond_archive._schema_four`` / ``_zero_d_string``)."""
+    from hwave.solver import so_bond_archive
+    files = set(z.files)
+    if "bond_archive_schema" not in files:
+        return
+    so = None
+    if "spin_orbital" in files:
+        so = np.asarray(z["spin_orbital"])
+    if (so_bond_archive._schema_four(z, files) and so is not None and so.ndim == 0
+            and so.dtype.kind == "b" and bool(so[()])):
+        green = so_bond_archive._zero_d_string(z, "green_file", files)
+        if green:
+            raise ValueError(_SO_BOND_GREEN_IS_ARCHIVE.format(
+                path=path, green=os.path.join(os.path.dirname(path), green)))
+        raise ValueError(_SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=path))
+    raise ValueError(_SO_BOND_GREEN_NONSO_ARCHIVE.format(path=path))
+
+
+def _so_borrowed_green(path, so_run, *, norb_phys, nmat, shape, conserving_input):
+    """Read and check the Green function of ``[eliashberg] bond_green =
+    path`` for the static spin-orbital bond run ``so_run`` (``nmat``
+    frequencies on the k grid ``shape = (Nx, Ny, Nz)``, ``nd = 2
+    norb_phys``) and return the :class:`_SOBorrowed` record.
+
+    The checks, in this order, every one before the payload is read: the
+    file exists (FileNotFoundError) and is an npz; it is not a bond archive
+    index (:func:`_so_bond_green_archive_hint`); its structure
+    (:func:`hwave.solver.fingerprint.validate_structure`, a ``green``
+    archive); its compatibility with this run
+    (:func:`hwave.solver.fingerprint.check_so_compatibility` with the green
+    step deferred: residual, band, interaction, capability ``so_bond``, the
+    declared and resolved bond topology, the state point at the same Nmat);
+    the ``momentum_convention``, ``wavevector_index`` (the C-order k grid of
+    ``shape``) and ``sc_vertex_version`` (``>= PLACEMENT_VERSION``) markers;
+    the ``green`` header shape ``(1, nmat, nvol, nd, nd)``. An on-site
+    spin-orbital FLEX Green function is refused on capability with a remedy
+    sentence. Then the payload is read once, from the open handle, and the
+    handle closed; the G must be finite, and its digest must be the file's
+    ``fp_green``. When ``conserving_input`` (:func:`_so_conserving_input`),
+    the G goes through :func:`hwave.solver.so_bond.project_borrowed_green`
+    (no leak: used as is; a round-off leak up to 1e-12: projected, with a
+    WARNING; more: refused). Otherwise it is used as stored and no leak is
+    measured. The file's ``scf_converged`` is returned, not logged (the
+    caller logs it once the file is accepted)."""
+    from hwave.solver import fingerprint, so_bond
+    from hwave.solver import rpa as _rpa
+    norb_phys = int(norb_phys)
+    nd = 2 * norb_phys
+    shape = tuple(int(x) for x in shape)
+    nvol = int(np.prod(shape))
+    if not os.path.exists(path):
+        raise FileNotFoundError(T_BG_MISSING.format(path=path))
+    z = _require_npz(np.load(path, allow_pickle=False), path, "[eliashberg] bond_green file")
+    with z:
+        _so_bond_green_archive_hint(z, path)
+        vs = fingerprint.validate_structure(z, path, kind="green",
+                                            expected_producer=_SO_FLEX_PRODUCER)
+        label = fingerprint._readable_label(z, set(z.files))
+        if label == fingerprint.UNKNOWN_PRODUCER:
+            label = _SO_FLEX_PRODUCER
+        try:
+            info = fingerprint.check_so_compatibility(
+                z, path, validated=tuple(vs) + (label,), run_band=so_run.band,
+                run_state=so_run.state, nmat_rule="exact",
+                run_interaction=so_run.context.interaction, need="so_bond",
+                run_bond=so_run.bond.inputs, expected_producer=_SO_FLEX_PRODUCER,
+                check_green=False)
+        except fingerprint.SOArchiveError as e:
+            if (e.check == "capability"
+                    and fingerprint.STAGE_CAPABILITY.get(vs[1]) == "so_onsite"):
+                raise fingerprint.SOArchiveError(
+                    str(e) + ". " + _SO_BOND_GREEN_ONSITE_REMEDY, check="capability") from e
+            raise
+        label = info.producer_label
+        files = set(z.files)
+        # the markers: scf_converged is remembered (logged once the file is
+        # accepted); the others are required
+        scf_converged = (bool(np.asarray(z["scf_converged"])) if "scf_converged" in files
+                         else None)
+        if not _rpa.check_momentum_marker(z, path):
+            raise fingerprint.SOArchiveError(T_BG_MARKER.format(
+                path=path, member="momentum_convention", label=label))
+        if "wavevector_index" not in files:
+            raise fingerprint.SOArchiveError(T_BG_MARKER.format(
+                path=path, member="wavevector_index", label=label))
+        index = np.asarray(z["wavevector_index"])
+        grid = np.indices(shape).reshape(3, -1).T
+        if not (index.dtype.kind in "iu" and index.shape == (nvol, 3)
+                and np.array_equal(np.mod(index, shape), grid)):
+            raise fingerprint.SOArchiveError(T_BG_KGRID.format(
+                path=path, shape=list(shape), label=label))
+        version = _decode_version_stamp(z, "sc_vertex_version", path)
+        if version is None or version < PLACEMENT_VERSION:
+            raise fingerprint.SOArchiveError(T_BG_MARKER.format(
+                path=path, member="sc_vertex_version", label=label))
+        with z.zip.open("green.npy") as fh:
+            stored = tuple(int(x) for x in _npy_header.read_npy_header(fh).shape)
+        expected = (1, int(nmat), nvol, nd, nd)
+        if stored != expected:
+            raise fingerprint.SOArchiveError(T_BG_SHAPE.format(
+                path=path, stored=stored, expected=expected, label=label))
+        raw = z["green"]
+    for n in range(raw.shape[1]):
+        if not np.isfinite(raw[:, n]).all():
+            raise fingerprint.SOArchiveError(T_BG_NONFINITE.format(path=path, n=n, label=label))
+    fp_file = fingerprint.green_digest(raw, fingerprint.GREEN_LAYOUT)
+    fingerprint.check_green_digest(info.producer_fp_green, path, label=label,
+                                   green_fp=fp_file, green_only=True)
+    if conserving_input:
+        used, leak = so_bond.project_borrowed_green(raw, norb_phys=norb_phys, source=path)
+        projected = used is not raw
+        del raw
+        fp_used = (fingerprint.green_digest(used, fingerprint.GREEN_LAYOUT) if projected
+                   else fp_file)
+    else:
+        used, leak, projected, fp_used = raw, None, False, fp_file
+        del raw
+    used.setflags(write=False)
+    return _SOBorrowed(used, fp_file, fp_used, None if leak is None else float(leak),
+                       bool(projected), info.producer_state, label, scf_converged)
 
 
 def _so_bond_green(epsilon_k, so_run, *, norb_phys, filling, beta, nmat,
-                   coeff_tail):
+                   coeff_tail, bond_green=None, coeff_tail_source="default"):
     """The :class:`_SOBondGreen` of a static spin-orbital bond run.
 
     ``epsilon_k`` is the run's spin-block band (:func:`_so_epsilon_k`) and
     ``so_run`` its :class:`_SORun`. Whether the band conserves S_z is decided
     by the Transfer table alone
     (:func:`hwave.solver.so_bond.band_conserves_sz`; never by the layout of
-    the bond objects, so a forced dense layout gives the same G); the band is
-    then diagonalized per spin sector when it does
-    (:func:`hwave.solver.so_bond.canonical_band_eigen`). mu holds ``filling``
-    electrons per orbital per spin, counted over the ``nd = 2 norb_phys``
-    spin-orbitals. ``coeff_tail`` is the resolved ``[eliashberg]
-    bond_coeff_tail`` (:func:`_resolve_bond_coeff_tail`); it changes only
-    the deflated Green function of the bubble, never ``full_sc``. The
-    carrier's arrays are returned read-only."""
+    the bond objects, so a forced dense layout gives the same G).
+
+    Without ``bond_green`` the Green function is built from the band: the
+    band is diagonalized per spin sector when it conserves S_z
+    (:func:`hwave.solver.so_bond.canonical_band_eigen`), mu holds
+    ``filling`` electrons per orbital per spin, counted over the ``nd = 2
+    norb_phys`` spin-orbitals, and ``coeff_tail`` (the resolved
+    ``[eliashberg] bond_coeff_tail``, :func:`_resolve_bond_coeff_tail`)
+    changes only the deflated Green function of the bubble, never
+    ``full_sc``.
+
+    With ``bond_green`` (a path) the Green function is read from that file
+    (:func:`_so_borrowed_green`; the band still decides the checks and,
+    with the interaction, whether the G is projected onto the S_z sectors,
+    :func:`_so_conserving_input`); mu and the state are the file's, and no
+    tail correction is applied (``coeff_tail_applied = 0``): the default
+    ``bond_coeff_tail`` (``coeff_tail_source = "default"``) is noted at
+    INFO, a configured non-zero one gets a WARNING. Once the file is
+    accepted, one INFO line gives its leak and whether it was projected,
+    and a file that records ``scf_converged = false`` gets one WARNING.
+
+    The carrier's arrays are returned read-only."""
     from hwave.solver import so_bond
     norb_phys = int(norb_phys)
     if coeff_tail is None:
@@ -3429,6 +3685,30 @@ def _so_bond_green(epsilon_k, so_run, *, norb_phys, filling, beta, nmat,
                          "[eliashberg] bond_coeff_tail, got None")
     conserving = bool(so_bond.band_conserves_sz(
         so_run.band.transfer, so_run.band.extern, norb_phys).conserving)
+    if bond_green is not None:
+        shape = tuple(int(x) for x in np.shape(epsilon_k)[2:5])
+        conserving_input = _so_conserving_input(so_run, norb_phys)
+        borrowed = _so_borrowed_green(bond_green, so_run, norb_phys=norb_phys, nmat=nmat,
+                                      shape=shape, conserving_input=conserving_input)
+        full_sc = _green_canonical_to_sc(borrowed.used, shape)
+        full_sc.setflags(write=False)
+        carrier = _BondGreen(full_sc=full_sc, deflated_kw=borrowed.used, green0_tail=None,
+                             coeff_tail_requested=float(coeff_tail), coeff_tail_applied=0.0,
+                             source="external_npz")
+        logger.info(_SO_BOND_GREEN_ACCEPTED_INFO, bond_green, borrowed.label,
+                    _SO_BOND_GREEN_LEAK_UNCHECKED if borrowed.leak is None
+                    else "%.3e" % borrowed.leak, "yes" if borrowed.projected else "no")
+        if borrowed.scf_converged is False:
+            logger.warning(_SO_BOND_GREEN_UNCONVERGED, bond_green)
+        if coeff_tail_source == "default":
+            logger.info(_SO_BOND_TAIL_DEFAULT_INFO)
+        elif float(coeff_tail) != 0.0:
+            logger.warning(_SO_BOND_TAIL_NOT_APPLIED, float(coeff_tail), bond_green)
+        return _SOBondGreen(
+            carrier, borrowed.fp_used, conserving, None, float(borrowed.state.mu),
+            state=borrowed.state,
+            fp_green_source=borrowed.fp_file if borrowed.projected else None,
+            leak=borrowed.leak, source="external_npz", scf_converged=borrowed.scf_converged)
     eigenvalues, eigenvectors = so_bond.canonical_band_eigen(
         epsilon_k, norb_phys, conserving=conserving)
     mu = _determine_mu(eigenvalues, beta, filling, 2 * norb_phys)
@@ -3508,8 +3788,8 @@ def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
     refused in either layout, and the plan is built with the rows of every
     phase of the static path (``spectral_shift`` is the run's raw
     ``[eliashberg] spectral_shift``: the eigensolver rows keep the outputs it
-    implies). An over-cap run is refused here, before any bond array is
-    allocated."""
+    implies; a Green function read from ``bond_green`` adds its read row).
+    An over-cap run is refused here, before any bond array is allocated."""
     from hwave.solver import so_bond
     info = {}
     caps = so_bond.resolve_host_cap(cfg.cap_raw, key=_SO_BOND_CAP_KEY, log=log,
@@ -3533,7 +3813,8 @@ def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
         extra_rows=so_bond.static_so_bond_rows(
             nmat=nmat, nvol=nvol, B=geom.B, nd=nd, layout=layout, solver_mode=solver_mode,
             num_eigenvalues=num_eigenvalues, max_iter=max_iter, spatial_shape=shape,
-            spectral_shift=spectral_shift))
+            spectral_shift=spectral_shift,
+            green_source="band" if cfg.green is None else "file"))
     sector_map = so_bond.sz_sector_map(geom, nd) if layout == "sz_packed" else None
     return _SOBondAdmission(caps, cap_summary, geom, layout, reason, sector_map, plan)
 
@@ -9394,14 +9675,16 @@ _SO_BOND_GAP_LISTING = ("eigenvalues", "eigenvectors", "eigenvector_spin_weights
                         "eigenvalue_match", "pp_sectors")
 
 
-def _so_bond_gap_members(listed, pole=()):
+def _so_bond_gap_members(listed, pole=(), green_source=False):
     """The member set of a static spin-orbital bond gap archive: the stage's
     provenance members, :data:`_SO_BOND_GAP_BASE` and, when ``listed`` (the
     eigenvalue listing is not empty), :data:`_SO_BOND_GAP_LISTING`. A run
     past the static RPA pole (issue #345) also has the members ``pole`` of
     its :class:`~hwave.solver.bond_channels.RpaPoleReport`
     (``rpa_past_pole``, ``rpa_pole_indicator_spinful``,
-    ``rpa_pole_q_spinful``); ``pole`` must be exactly those or empty."""
+    ``rpa_pole_q_spinful``); ``pole`` must be exactly those or empty. A run
+    whose kernel used the S_z-sector projection of a Green function read
+    from ``bond_green`` (``green_source``) also has ``fp_green_source``."""
     from hwave.solver import fingerprint
     pole = tuple(pole)
     if pole and set(pole) != {"rpa_past_pole", "rpa_pole_indicator_spinful",
@@ -9410,6 +9693,8 @@ def _so_bond_gap_members(listed, pole=()):
     names = set(fingerprint.required_members("gap", "sc_so_bond_static"))
     names.update(_SO_BOND_GAP_BASE)
     names.update(pole)
+    if green_source:
+        names.add("fp_green_source")
     if listed:
         names.update(_SO_BOND_GAP_LISTING)
     return frozenset(names)
@@ -9607,7 +9892,9 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
         record["block_layout"] = np.array(str(block_layout))
         if listed:
             record["pp_sectors"] = np.asarray(bond_report.pp_sectors, dtype=np.int8)
-        expected = _so_bond_gap_members(listed, pole=tuple(pole_members))
+        expected = _so_bond_gap_members(
+            listed, pole=tuple(pole_members),
+            green_source="fp_green_source" in provenance_members)
         if set(record) != expected:
             raise RuntimeError(
                 "_so_output_record: the bond gap archive members differ from the "
@@ -11265,7 +11552,8 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
         eigenvalue_method=eigenvalue_method, log=logger)
     logger.info("Calculating Green's function G(k, iwn) (spin-orbital bond)...")
     so_green = _so_bond_green(epsilon_k, so_run, norb_phys=norb_phys, filling=filling,
-                              beta=beta, nmat=nmat, coeff_tail=cfg.coeff_tail)
+                              beta=beta, nmat=nmat, coeff_tail=cfg.coeff_tail,
+                              bond_green=cfg.green, coeff_tail_source=cfg.coeff_tail_source)
     logger.info("mu = {:.6f}".format(so_green.mu))
     logger.info("Building the spin-orbital bond pairing operator...")
     static = _build_so_bond_operator(so_run, admission, so_green, beta=beta, nmat=nmat,
@@ -11352,10 +11640,16 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
                 report.reported, report.gap_status, report.selection)
 
     # --- outputs ---
-    state = _so_own_state(so_green.eigenvalues, beta, so_green.mu, nmat,
-                          so_run.state.target)
+    # the state of the Green function the kernel used: the run's own for the
+    # band's G, the producer's recorded state for a borrowed one
+    if so_green.state is not None:
+        state = so_green.state
+    else:
+        state = _so_own_state(so_green.eigenvalues, beta, so_green.mu, nmat,
+                              so_run.state.target)
     members = _so_writer_members("sc_so_bond_static", _SO_BOND_STATIC_LABEL, so_run,
-                                 so_green.fp_green, state, bond=so_run.bond.inputs)
+                                 so_green.fp_green, state, bond=so_run.bond.inputs,
+                                 fp_green_source=so_green.fp_green_source)
     block_layout, layout_reason = static.layout, static.layout_reason
     sz_residual = max(static.r_V, static.r_G)
     pole = static.pole
