@@ -2896,7 +2896,8 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
        it), or re-run FLEX.``
      - サイドカー（\ ``<what>`` = ``sidecar file``\ ）か green ファイル
        （\ ``companion green file``\ ）が、シンボリックリンクを通してアーカイブの
-       ディレクトリの外に解決されます。ファイルをそのディレクトリにコピーしてください。
+       ディレクトリの外に解決されます。ファイルを\ ``<name>``\ としてそのディレクトリ
+       （green ファイルではその下でもかまいません）にコピーしてください。
      - ``[file.output] green``\ 、\ ``longitudinal_bond``
    * - ``'<archive>' (written by <producer>): fp_green mismatch: the Green
        function this run loaded has digest ..., the archive records ...;
@@ -2910,7 +2911,8 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
        archive '<path>': this run wrote the green file '<green>' but no bond archive
        ...``\ ）、またはインデックスが再実行と同じディレクトリのコピーである（そこでの
        コピーはバックアップになりません。\ :ref:`flex_so_bond_archive`\ の「移動と
-       再実行」）のいずれかです。FLEX を実行し直してください。
+       再実行」）のいずれかです。\ ``longitudinal_bond_output_full = true``\ （と
+       ``IterationMax > 0``\ ）で FLEX を実行し直すか、古いアーカイブを削除してください。
      - ``[file.output] green``\ 、\ ``longitudinal_bond``
    * - ``'<archive>' is malformed or truncated: sidecar member <block> has
        the wrong size (...)``\ 、\ ``... sidecar member <block> file '<name>' is

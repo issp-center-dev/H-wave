@@ -79,8 +79,9 @@ T_STALE_INDEX = (
     "spin-orbital bond archive '{path}': this run wrote the green file '{green}' but no bond "
     "archive (longitudinal_bond_output_full = false or IterationMax = 0); the earlier "
     "archive at '{path}' names this green file as its companion, so it and its sidecar files "
-    "are left in place and load_so_bond_archive refuses them; remove them by hand or re-run "
-    "with longitudinal_bond_output_full = true.")
+    "are left in place; they may be stale, and load_so_bond_archive refuses them when the new "
+    "green file differs; remove them by hand or re-run with longitudinal_bond_output_full = "
+    "true.")
 T_NO_ARCHIVE_ITER0 = ("spin-orbital bond archive: IterationMax = 0 runs no map, so no bond "
                       "archive is written.")
 OLD_ITER0 = ("save_results: no map was executed (IterationMax=0); the last-map archives chi0q, "

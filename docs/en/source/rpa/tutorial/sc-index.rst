@@ -3096,8 +3096,8 @@ producer:
        it), or re-run FLEX.``
      - A sidecar (``<what>`` = ``sidecar file``) or the green file
        (``companion green file``) resolves, through a symbolic link, to a
-       place outside the archive's directory. Copy the files into that
-       directory.
+       place outside the archive's directory. Copy the file to ``<name>``
+       in (or, for the green file, below) that directory.
      - ``[file.output] green``, ``longitudinal_bond``
    * - ``'<archive>' (written by <producer>): fp_green mismatch: the Green
        function this run loaded has digest ..., the archive records ...;
@@ -3112,7 +3112,9 @@ producer:
        ``spin-orbital bond archive '<path>': this run wrote the green file
        '<green>' but no bond archive ...``), or the index is a copy in the
        same directory as a re-run (a copy there is no backup; see *Moving
-       and re-running* in :ref:`flex_so_bond_archive`). Rerun FLEX.
+       and re-running* in :ref:`flex_so_bond_archive`). Rerun FLEX with
+       ``longitudinal_bond_output_full = true`` (and ``IterationMax > 0``),
+       or remove the stale archive.
      - ``[file.output] green``, ``longitudinal_bond``
    * - ``'<archive>' is malformed or truncated: sidecar member <block> has
        the wrong size (...)``, ``... sidecar member <block> file '<name>' is

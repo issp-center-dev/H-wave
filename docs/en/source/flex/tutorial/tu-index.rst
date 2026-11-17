@@ -1569,7 +1569,7 @@ file and ``longitudinal_bond.npz`` for the configured archive.
     chosen, with the INFO line ``spin-orbital bond archive: sidecar layout
     (the member <member> of <size> is above the small-array bound <bound>);
     the susceptibility is written as .npy files next to the index.``. With
-    several bond channels the admitted peak is only a few times the largest
+    several bond channels the peak memory is only a few times the largest
     member, so members above cap / 8 are written as sidecars even under a
     modest cap. With ``longitudinal_bond_memory_cap_gb`` unset the choice
     depends on the memory available on the host, so the same input can
@@ -1740,9 +1740,9 @@ version), not written by hand. The function returns an object with
   ``l1`` unset: ``nmat``; ``Gamma_bond`` has no frequency axis and takes
   neither). ``want = None`` returns the stored layout, ``"dense"`` a
   complex128 ndarray :math:`(\dots, N_D, N_D)` and ``"sz_packed"`` a
-  ``hwave.solver.so_bond.PackedArrays`` (its ``blocks`` are the three
-  complex128 sector blocks :math:`(\dots, n_\sigma, n_\sigma)` in the order
-  ``"0"``, ``"+1"``, ``"-1"``). A packed archive read dense is filled with
+  ``hwave.solver.so_bond.PackedArrays`` (its ``blocks`` are a tuple of the
+  three complex128 sector blocks :math:`(\dots, n_\sigma, n_\sigma)` in the
+  order ``"0"``, ``"+1"``, ``"-1"``). A packed archive read dense is filled with
   exact zeros off the sectors; a dense archive read packed is refused when
   the requested slice has a nonzero entry off the sectors (the message
   gives the measured leak). Every call opens the files again and returns a
@@ -1762,14 +1762,15 @@ Before any payload array is read the function checks, in this order:
    symbolic link (``'<archive>': the sidecar file '<name>' is a symbolic
    link; the reader reads sidecars only as regular files next to the index
    (copy the file in place of the link, or re-run FLEX).``), and every
-   sidecar and the companion green file resolve, with symbolic links
-   followed, below the archive directory (``'<archive>': the <what>
+   sidecar resolves, with symbolic links followed, in the archive directory
+   and the companion green file in it or below it (``'<archive>': the <what>
    '<name>' resolves to '<real>', outside the archive directory '<dir>';
    keep the index, its sidecars and the companion green file in that
    directory (the green file may be below it), or re-run FLEX.``, with
    ``<what>`` = ``sidecar file`` or ``companion green file``). The archive
    directory itself may be reached through a link, and the companion may
-   be a link, or sit in a linked subdirectory, that resolves below it;
+   be a link, or sit in a linked subdirectory, that resolves in it or below
+   it;
 4. the structure, once: the provenance, the npy headers of the payloads
    (in the index or in the sidecars) with dtype, rank and size, and for a
    sidecar its file name (no directory part, the archive's nonce) and its
@@ -1821,10 +1822,11 @@ records. Copy the sidecars as regular files (a symbolic link is refused,
 see *Reading it* above). A missing companion is refused: ``companion green
 file '<green>' named by '<archive>' is missing (keep the archive, its
 sidecars and the green file together, or re-run FLEX)``. To list which
-sidecars an index names, print its nonce (every name it carries is
+sidecars an index names, print its layout and nonce (an ``"npz"`` archive
+has no sidecars; in the ``"sidecar"`` layout every name it carries is
 ``<block>.<archive_nonce>.npy``)::
 
-   python -c "import numpy as np; print(np.load('output/longitudinal_bond.npz')['archive_nonce'])"
+   python -c "import numpy as np; z = np.load('output/longitudinal_bond.npz'); print(z['bond_archive_layout'], z['archive_nonce'])"
 
 .. warning::
 
@@ -1836,8 +1838,8 @@ sidecars an index names, print its nonce (every name it carries is
    another index names them. This holds for a hidden copy too (for example
    ``.backup.npz``): every ``*.npz`` in the directory except the writer's
    own temporary files counts as a candidate index. To keep an archive,
-   copy the index, its sidecars (``*.<archive_nonce>.npy``) and the green
-   file into a separate directory.
+   copy the index, any sidecars (``*.<archive_nonce>.npy``, in the sidecar
+   layout) and the green file into a separate directory.
 
 A re-run into the same path replaces the index and then removes the
 sidecars of the archive it replaced, except those named by the new index,
@@ -1863,12 +1865,13 @@ A re-run that writes the green file but no archive
 (``longitudinal_bond_output_full = false``, or ``IterationMax = 0``)
 removes nothing. When the configured ``[file.output] longitudinal_bond``
 file is a spin-orbital index that names that green file, it is left on disk
-with its sidecars and no longer matches the green file; the run says so
+with its sidecars and may no longer match the green file; the run says so
 with one WARNING: ``spin-orbital bond archive '<path>': this run wrote the
 green file '<green>' but no bond archive (longitudinal_bond_output_full =
 false or IterationMax = 0); the earlier archive at '<path>' names this
-green file as its companion, so it and its sidecar files are left in place
-and load_so_bond_archive refuses them; remove them by hand or re-run with
+green file as its companion, so it and its sidecar files are left in place;
+they may be stale, and load_so_bond_archive refuses them when the new green
+file differs; remove them by hand or re-run with
 longitudinal_bond_output_full = true.``
 
 **When writing fails.** ``green.npz`` and the index are each written to a

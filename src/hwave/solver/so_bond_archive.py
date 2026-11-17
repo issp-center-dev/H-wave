@@ -157,8 +157,9 @@ T_STALE_INDEX = (
     "spin-orbital bond archive '{path}': this run wrote the green file '{green}' but no bond "
     "archive (longitudinal_bond_output_full = false or IterationMax = 0); the earlier "
     "archive at '{path}' names this green file as its companion, so it and its sidecar files "
-    "are left in place and load_so_bond_archive refuses them; remove them by hand or re-run "
-    "with longitudinal_bond_output_full = true.")
+    "are left in place; they may be stale, and load_so_bond_archive refuses them when the new "
+    "green file differs; remove them by hand or re-run with longitudinal_bond_output_full = "
+    "true.")
 #: the reader: the index or its companion is not a readable npz archive
 T_INDEX_UNREADABLE = (
     "'{path}' cannot be read as an npz archive ({error}); re-run FLEX to regenerate the bond "

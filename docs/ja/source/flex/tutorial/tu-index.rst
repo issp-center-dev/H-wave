@@ -1444,7 +1444,7 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
     .npy files next to the index.``\ が出ます。cap は計算前のメモリ検査で決まったホストの
     メモリ上限です（\ ``longitudinal_bond_memory_cap_gb``\ 。未指定なら利用可能な
     ホストメモリの 0.8 倍。\ ``0``\ のとき、またはメモリの上限が決められないときは
-    上限なしで、小配列の上限は 1 GiB）。ボンドチャネルが複数あると、受け入れたピークは
+    上限なしで、小配列の上限は 1 GiB）。ボンドチャネルが複数あると、ピークメモリは
     最大のメンバーの数倍にすぎないので、控えめな cap でも cap / 8 を超えるメンバーは
     サイドカーとして書き出されます。\ ``longitudinal_bond_memory_cap_gb``\ が未指定だと、
     この選択はホストで利用可能なメモリによるので、同じ入力でも計算機によってレイアウトが
@@ -1491,7 +1491,7 @@ describes no physical state and is still written.``\ で終わります
 ありません。この経路の chi0q と chiq は極のメンバーを持ちません。
 
 *パスでの拒否。* パスのドレッシングは、各 SCF 反復と同じく\ ``longitudinal_bond_cond_tol``\ で
-検査されます。パスの後、計算はドレッシングのボンドの条件数の最小値（\ ``cond_min``\ ）を
+検査されます。パスの後、計算はドレッシングのボンドの最小の条件スコア（\ ``cond_min``\ ）を
 INFO レベルで記録します: ``spin-orbital bond archive: guards of the final
 susceptibility pass: bond cond_min spinful <cond> (tol <tol>)``\ 。ガードが拒否すると
 計算は止まり、\ **計算の出力は一切書き出されません**\ 。
@@ -1599,7 +1599,7 @@ run_interaction, run_bond)``\ で読みます。4つのキーワード引数は�
   ``want = None``\ は格納したレイアウトを、\ ``"dense"``\ は complex128 の ndarray
   :math:`(\dots, N_D, N_D)`\ を、\ ``"sz_packed"``\ は\ ``hwave.solver.so_bond.PackedArrays``
   （その\ ``blocks``\ は\ ``"0"``\ 、\ ``"+1"``\ 、\ ``"-1"``\ の順の3つの complex128 の
-  セクターブロック\ :math:`(\dots, n_\sigma, n_\sigma)`\ ）を返します。パックのアーカイブを
+  セクターブロック\ :math:`(\dots, n_\sigma, n_\sigma)`\ のタプル）を返します。パックのアーカイブを
   密で読むとセクター外は厳密な 0 で埋まります。密なアーカイブをパックで読むとき、要求した
   断面にセクター外のゼロでない成分があれば拒否されます（メッセージは測った漏れを示します）。
   呼ぶたびにファイルを開き直し、写しを返します（サイドカーはメモリマップし、断面だけを
@@ -1617,12 +1617,13 @@ run_interaction, run_bond)``\ で読みます。4つのキーワード引数は�
    ないこと（\ ``'<archive>': the sidecar file '<name>' is a symbolic link; the reader
    reads sidecars only as regular files next to the index (copy the file in place of
    the link, or re-run FLEX).``\ ）、およびすべてのサイドカーと対となる green ファイルが、
-   シンボリックリンクをたどった先でアーカイブのディレクトリの下にあること
+   シンボリックリンクをたどった先で、サイドカーはアーカイブのディレクトリの中に、green
+   ファイルはその中かその下にあること
    （\ ``'<archive>': the <what> '<name>' resolves to '<real>', outside the archive
    directory '<dir>'; keep the index, its sidecars and the companion green file in
    that directory (the green file may be below it), or re-run FLEX.``\ 。\ ``<what>``\ は
    ``sidecar file``\ または\ ``companion green file``\ ）。アーカイブのディレクトリ自体は
-   リンク経由でもよく、対となるファイルは、その下に解決されるリンクやリンクした
+   リンク経由でもよく、対となるファイルは、その中かその下に解決されるリンクやリンクした
    サブディレクトリの中にあってもかまいません。
 4. 構造を1回で: 来歴、ペイロードの npy ヘッダー（インデックス内またはサイドカー）の
    dtype、階数、大きさ。サイドカーではファイル名（ディレクトリ部分がなく、アーカイブの
@@ -1670,10 +1671,13 @@ green ファイル）を書き換えたり置き換えたりしないでくだ�
 （シンボリックリンクは拒否されます。上の「読み込み」を参照）。対となるファイルがないと
 拒否されます: ``companion green file '<green>' named by '<archive>' is missing (keep the
 archive, its sidecars and the green file together, or re-run FLEX)``\ 。インデックスが
-名指しするサイドカーを調べるには、そのノンスを表示します（名指しする名前はどれも
-``<block>.<archive_nonce>.npy``\ です）::
+名指しするサイドカーを調べるには、そのレイアウトとノンスを表示します（\ ``"npz"``\ の
+アーカイブにはサイドカーがありません。\ ``"sidecar"``\ のレイアウトでは、名指しする名前は
+どれも\ ``<block>.<archive_nonce>.npy``\ です）。
 
-   python -c "import numpy as np; print(np.load('output/longitudinal_bond.npz')['archive_nonce'])"
+.. code-block:: bash
+
+   python -c "import numpy as np; z = np.load('output/longitudinal_bond.npz'); print(z['bond_archive_layout'], z['archive_nonce'])"
 
 .. warning::
 
@@ -1684,8 +1688,8 @@ archive, its sidecars and the green file together, or re-run FLEX)``\ 。イン�
    コピーが名指しするサイドカーは、別のインデックスが名指ししているので残されます。
    隠しファイルのコピー（たとえば\ ``.backup.npz``\ ）でも同じです。書き出し側自身の
    一時ファイルを除き、ディレクトリ内のすべての\ ``*.npz``\ がインデックスの候補として
-   扱われます。アーカイブを保存するには、インデックス、そのサイドカー
-   （\ ``*.<archive_nonce>.npy``\ ）、green ファイルを別のディレクトリにコピーしてください。
+   扱われます。アーカイブを保存するには、インデックス、サイドカー（サイドカーのレイアウト
+   のとき、\ ``*.<archive_nonce>.npy``\ ）、green ファイルを別のディレクトリにコピーしてください。
 
 同じパスへの再実行は、インデックスを置き換えてから、置き換えたアーカイブのサイドカーを
 削除します。ただし、新しいインデックスやディレクトリ内の他のスキーマ 4 のインデックス
@@ -1709,12 +1713,12 @@ green ファイルを書き出してアーカイブを書き出さない再実�
 false``\ 、または\ ``IterationMax = 0``\ ）は、何も削除しません。設定した
 ``[file.output] longitudinal_bond``\ のファイルがその green ファイルを名指しするスピン軌道の
 インデックスであれば、それはサイドカーとともにディスクに残され、もう green ファイルと
-一致しません。計算はこれを WARNING 1つで示します: ``spin-orbital bond archive '<path>':
+一致しない可能性があります。計算はこれを WARNING 1つで示します: ``spin-orbital bond archive '<path>':
 this run wrote the green file '<green>' but no bond archive
 (longitudinal_bond_output_full = false or IterationMax = 0); the earlier archive at
 '<path>' names this green file as its companion, so it and its sidecar files are left in
-place and load_so_bond_archive refuses them; remove them by hand or re-run with
-longitudinal_bond_output_full = true.``
+place; they may be stale, and load_so_bond_archive refuses them when the new green file
+differs; remove them by hand or re-run with longitudinal_bond_output_full = true.``
 
 **書き出しが失敗したとき。** ``green.npz``\ とインデックスは、それぞれのディレクトリで
 まず一時的な名前に書き出され、名前の変更で確定されます。先に green ファイル、次に
