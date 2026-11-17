@@ -106,9 +106,11 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(
             _SO_BOND_FLEX_REFUSAL,
             _W + ": [eliashberg] chi0q_mode = \"flex\" with bond_channels = true is not "
-            "available yet: the spin-orbital bond path builds its bond bubble from the "
-            "band's Green function and reads no FLEX output. Remove chi0q_mode (or leave "
-            "it unset); it is not used on this path.")
+            "available: the spin-orbital bond path builds its bond bubble from a Green "
+            "function (the band's, or the file named by bond_green) and reads no FLEX "
+            "susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green "
+            "function, set bond_green to the green.npz of a spin-orbital FLEX run with "
+            "[mode.param] longitudinal_bond_channels = true.")
         self.assertEqual(
             _SO_BOND_GPU_REQUIRED_REFUSAL,
             _W + ": [eliashberg] gpu_required = true is not available with bond_channels "
@@ -128,7 +130,7 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(
             _SO_BOND_FLEX_KEYS_UNUSED,
             "[eliashberg] %s: not used for bond_channels=true in spin-orbital mode (the "
-            "spin-orbital bond path reads no FLEX output).")
+            "spin-orbital bond path reads no FLEX susceptibility).")
 
     def test_each_refusal(self):
         on = {"bond_channels": True}
@@ -3990,10 +3992,12 @@ class TestRefusalMatrix(unittest.TestCase):
         """The chi0q_mode = "flex" refusal, written out (the rows compare
         with the constant)."""
         self.assertEqual(_SO_BOND_FLEX_REFUSAL, (
-            _SO_CONFIG + "chi0q_mode = \"flex\" with bond_channels = true is not available "
-            "yet: the spin-orbital bond path builds its bond bubble from the band's Green "
-            "function and reads no FLEX output. Remove chi0q_mode (or leave it unset); it is "
-            "not used on this path."))
+            _SO_CONFIG + "chi0q_mode = \"flex\" with bond_channels = true is not available: "
+            "the spin-orbital bond path builds its bond bubble from a Green function (the "
+            "band's, or the file named by bond_green) and reads no FLEX susceptibility. "
+            "Remove chi0q_mode (or leave it unset); to use a FLEX Green function, set "
+            "bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] "
+            "longitudinal_bond_channels = true."))
 
     def test_rows(self):
         rows = _refusal_rows()

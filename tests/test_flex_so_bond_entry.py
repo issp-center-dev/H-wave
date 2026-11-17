@@ -66,9 +66,11 @@ OUTPUT_INFO = ("spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks 
                "with longitudinal_bond_output_full = true.")
 SO_BOND_FLEX_REFUSAL = (
     "[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "
-    "\"flex\" with bond_channels = true is not available yet: the spin-orbital bond path "
-    "builds its bond bubble from the band's Green function and reads no FLEX output. Remove "
-    "chi0q_mode (or leave it unset); it is not used on this path.")
+    "\"flex\" with bond_channels = true is not available: the spin-orbital bond path builds "
+    "its bond bubble from a Green function (the band's, or the file named by bond_green) and "
+    "reads no FLEX susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green "
+    "function, set bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] "
+    "longitudinal_bond_channels = true.")
 PAIRHOP_NOTICE = "PairHop declares 4 off-site term(s)"
 STONER_LABEL = "RPA pole indicator max_q eig[-chibar_B Gamma_B] (spinful) (q, i nu = 0)"
 

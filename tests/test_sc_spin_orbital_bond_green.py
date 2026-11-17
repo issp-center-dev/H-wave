@@ -550,5 +550,104 @@ class TestTailPolicy(unittest.TestCase):
                         "provide (bond_coeff_tail_applied = 0).".format(shown, path)])
 
 
+# ------------------------------------------------------------ public entry
+_LADDER_BORROWED = (
+    "[eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond "
+    "dressing on the Green function read from bond_green = '%s' (its approximation level, "
+    "e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that Green "
+    "function at RPA-ladder level; it is NOT the bond susceptibility of the run that wrote "
+    "the file, so absolute lambda values are not comparable with FLEX/dynamic references.")
+_FLEX_REFUSAL = (
+    _W + ": [eliashberg] chi0q_mode = \"flex\" with bond_channels = true is not available: "
+    "the spin-orbital bond path builds its bond bubble from a Green function (the band's, or "
+    "the file named by bond_green) and reads no FLEX susceptibility. Remove chi0q_mode (or "
+    "leave it unset); to use a FLEX Green function, set bond_green to the green.npz of a "
+    "spin-orbital FLEX run with [mode.param] longitudinal_bond_channels = true.")
+_FLEX_KEYS_UNUSED = (
+    "[eliashberg] %s: not used for bond_channels=true in spin-orbital mode (the spin-orbital "
+    "bond path reads no FLEX susceptibility).")
+_ACCEPTED_INFO = ("[eliashberg] bond_green: '%s' (written by %s) passed the archive checks; "
+                  "S_z leak %s; projected: %s.")
+
+
+class TestBorrowedEntry(unittest.TestCase):
+    """The public entry on a borrowed Green function: the run texts and the
+    eigenvalue.dat lines."""
+
+    def test_texts(self):
+        self.assertEqual(sc._SO_BOND_FLEX_REFUSAL, _FLEX_REFUSAL)
+        self.assertEqual(sc._SO_BOND_FLEX_KEYS_UNUSED, _FLEX_KEYS_UNUSED)
+        self.assertEqual(sc._SO_BOND_RPA_LADDER_BORROWED, _LADDER_BORROWED)
+        self.assertEqual(sc._SO_BOND_GREEN_ACCEPTED_INFO, _ACCEPTED_INFO)
+
+    def test_entry_outputs(self):
+        path = _copy(self, "ZEEMAN_SZ_ALL")
+        r = F.run_case(X.ZEEMAN_SZ_ALL, eliashberg={"Bond_Green": path}, fresh=True)
+        keys = T._dat_keys(r.eigenvalue_dat)
+        extra = ("bond_green", "bond_coeff_tail_applied", "bond_green_leak",
+                 "bond_green_scf_converged")
+        for k in T._BOND_DAT_KEYS + extra:
+            self.assertIn(k, keys)
+        self.assertEqual(keys["bond_green"], path)
+        self.assertEqual(keys["bond_coeff_tail_applied"], "0.0")
+        self.assertEqual(keys["bond_green_leak"], "0.000e+00")
+        self.assertEqual(keys["bond_green_scf_converged"], "true")
+        self.assertEqual(keys["bond_coeff_tail"], "1.0")
+        self.assertEqual(keys["approximation"],
+                         "static RPA-ladder bond dressing on a borrowed Green function")
+        warns = [x.getMessage() for x in r.records if x.levelno == logging.WARNING]
+        infos = [x.getMessage() for x in r.records]
+        self.assertEqual(warns.count(_LADDER_BORROWED % path), 1)
+        self.assertEqual(warns.count(sc._SO_BOND_RPA_LADDER), 0)
+        accepted = _ACCEPTED_INFO % (path, _LABEL, "0.000e+00", "no")
+        self.assertEqual(infos.count(accepted), 1)
+        self.assertLess(infos.index(accepted), infos.index(_LADDER_BORROWED % path))
+
+    def test_non_conserving_entry(self):
+        path = _copy(self, "SOC_ALL_TYPES")
+        r = F.run_case(F.SOC_ALL_TYPES, eliashberg={"Bond_Green": path}, fresh=True)
+        keys = T._dat_keys(r.eigenvalue_dat)
+        self.assertNotIn("bond_green_leak", keys)
+        self.assertEqual(keys["bond_green"], path)
+        self.assertEqual(keys["bond_green_scf_converged"], "true")
+        infos = [x.getMessage() for x in r.records]
+        self.assertEqual(infos.count(_ACCEPTED_INFO % (
+            path, _LABEL, "not checked (the input does not conserve S_z)", "no")), 1)
+
+    def test_internal_entry_unchanged(self):
+        r = F.run_case(X.ZEEMAN_SZ_ALL, fresh=True)
+        keys = T._dat_keys(r.eigenvalue_dat)
+        for k in ("bond_green", "bond_green_leak", "bond_coeff_tail_applied",
+                  "bond_green_scf_converged"):
+            self.assertNotIn(k, keys)
+        self.assertEqual(keys["approximation"], "static RPA-ladder bond dressing")
+        warns = [x.getMessage() for x in r.records if x.levelno == logging.WARNING]
+        self.assertEqual(warns.count(sc._SO_BOND_RPA_LADDER), 1)
+
+    def test_refused_entry_logs_no_ladder(self):
+        path = _copy(self, "ZEEMAN_SZ_ALL")
+        seen = []
+
+        class H(logging.Handler):
+            def emit(self, record):
+                seen.append(record)
+        root = logging.getLogger()
+        h = H(logging.INFO)
+        level = root.level
+        root.addHandler(h)
+        root.setLevel(logging.INFO)
+        try:
+            with self.assertRaises(fingerprint.SOArchiveError) as cm:
+                F.run_case(X.ZEEMAN_SZ_ALL, eliashberg={"Bond_Green": path},
+                           param={"Nmat": 16}, fresh=True)
+        finally:
+            root.removeHandler(h)
+            root.setLevel(level)
+        self.assertIn("state differs", str(cm.exception))
+        msgs = [r.getMessage() for r in seen]
+        self.assertNotIn(_LADDER_BORROWED % path, msgs)
+        self.assertNotIn(sc._SO_BOND_RPA_LADDER, msgs)
+
+
 if __name__ == "__main__":
     unittest.main()

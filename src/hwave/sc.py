@@ -529,9 +529,11 @@ _SO_BOND_PRECONDITION_REFUSAL = (
     "no such check. Remove {key}.")
 _SO_BOND_FLEX_REFUSAL = (
     _SO_WHAT + ": [eliashberg] chi0q_mode = \"flex\" with bond_channels = true is "
-    "not available yet: the spin-orbital bond path builds its bond bubble from the "
-    "band's Green function and reads no FLEX output. Remove chi0q_mode (or leave it "
-    "unset); it is not used on this path.")
+    "not available: the spin-orbital bond path builds its bond bubble from a Green "
+    "function (the band's, or the file named by bond_green) and reads no FLEX "
+    "susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green "
+    "function, set bond_green to the green.npz of a spin-orbital FLEX run with "
+    "[mode.param] longitudinal_bond_channels = true.")
 _SO_BOND_GPU_REQUIRED_REFUSAL = (
     _SO_WHAT + ": [eliashberg] gpu_required = true is not available with "
     "bond_channels = true: the spin-orbital bond-resolved kernel runs on the CPU "
@@ -548,7 +550,7 @@ _SO_BOND_GPU_IGNORED = (
     "follow-up).")
 _SO_BOND_FLEX_KEYS_UNUSED = (
     "[eliashberg] %s: not used for bond_channels=true in spin-orbital mode (the "
-    "spin-orbital bond path reads no FLEX output).")
+    "spin-orbital bond path reads no FLEX susceptibility).")
 
 _SO_BOND_PRECONDITION_PREFIX = "bond_precondition_"
 _SO_BOND_CAP_KEY = "[eliashberg] bond_memory_cap_gb"
@@ -11491,6 +11493,14 @@ _SO_BOND_RPA_LADDER = (
     "demonstrates the qualitative V-dependence of the pairing eigenvalue; it is NOT a "
     "conserving FLEX result (the bond chi-bar is built here at RPA-ladder level), so "
     "absolute lambda values are not comparable with FLEX/dynamic references.")
+#: WARNING of a run on a Green function read from ``bond_green`` (``%s`` path)
+_SO_BOND_RPA_LADDER_BORROWED = (
+    "[eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond "
+    "dressing on the Green function read from bond_green = '%s' (its approximation level, "
+    "e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that "
+    "Green function at RPA-ladder level; it is NOT the bond susceptibility of the run that "
+    "wrote the file, so absolute lambda values are not comparable with FLEX/dynamic "
+    "references.")
 #: the eigenvalue.dat note of a power iteration with no gap space (no
 #: sector was iterated; the format field is solver_mode)
 _SO_BOND_NO_ITERATION = (
@@ -11543,7 +11553,8 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
         logger.info(_SO_BOND_B1_INFO)
     elif _so_bond_has_offsite_pairlift(so_run.context.compiled):
         logger.info(_SO_BOND_PAIRLIFT_INFO)
-    logger.warning(_SO_BOND_RPA_LADDER)
+    if cfg.green is None:
+        logger.warning(_SO_BOND_RPA_LADDER)
 
     raw_shift = eli_param.get("spectral_shift")
     admission = _admit_so_bond_static(
@@ -11554,6 +11565,9 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
     so_green = _so_bond_green(epsilon_k, so_run, norb_phys=norb_phys, filling=filling,
                               beta=beta, nmat=nmat, coeff_tail=cfg.coeff_tail,
                               bond_green=cfg.green, coeff_tail_source=cfg.coeff_tail_source)
+    if cfg.green is not None:
+        # after the file is accepted: a refused file logs no ladder text
+        logger.warning(_SO_BOND_RPA_LADDER_BORROWED, cfg.green)
     logger.info("mu = {:.6f}".format(so_green.mu))
     logger.info("Building the spin-orbital bond pairing operator...")
     static = _build_so_bond_operator(so_run, admission, so_green, beta=beta, nmat=nmat,
@@ -11659,6 +11673,16 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
     # them, so the kernel is freed at once, not at the next collection)
     if block_layout == "sz_packed":
         static.kernel.drop_sector_ops()
+    borrowed_lines = None
+    if cfg.green is not None:
+        borrowed_lines = {"bond_green": str(cfg.green),
+                          "bond_coeff_tail_applied": repr(float(
+                              so_green.carrier.coeff_tail_applied))}
+        if so_green.leak is not None:
+            borrowed_lines["bond_green_leak"] = "%.3e" % so_green.leak
+        if so_green.scf_converged is not None:
+            borrowed_lines["bond_green_scf_converged"] = (
+                "true" if so_green.scf_converged else "false")
     del static, so_green
     ops = None
     prov, weights, gap_comments = _so_output_record(
@@ -11678,13 +11702,17 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
         "g2_tail": "true" if cfg.g2_tail else "false",
         "bond_coeff_tail": repr(float(cfg.coeff_tail)),
         "bond_coeff_tail_source": str(cfg.coeff_tail_source),
-        "approximation": "static RPA-ladder bond dressing",
+        "approximation": ("static RPA-ladder bond dressing" if borrowed_lines is None
+                          else "static RPA-ladder bond dressing on a borrowed Green "
+                          "function"),
         "gap_status": str(report.gap_status),
         "pp_sector": str(int(report.pp_sector)),
         "selection": str(report.selection),
     }
     # iteration_converged ("both" only) is written by _save_results, after
     # "# Iteration eigenvalue"
+    if borrowed_lines:
+        bond_lines.update(borrowed_lines)
     clash = sorted(set(bond_lines) & set(prov))
     if clash:
         raise RuntimeError("_solve_so_bond_static: provenance keys written twice: "
