@@ -17,7 +17,6 @@ from typing import Optional
 
 import contextlib
 import os
-from pathlib import PurePath
 import numpy as np
 from requests.structures import CaseInsensitiveDict
 from .base import ParamDict
@@ -2544,9 +2543,13 @@ class FLEX(RPA):
             if "green" not in info_outputfile:
                 raise ValueError(so_bond_archive.T_NEED_GREEN)
             green, archive = paths["green"], paths["longitudinal_bond"]
-            rel = os.path.relpath(os.path.abspath(green),
-                                  os.path.dirname(os.path.abspath(archive)))
-            if ".." in PurePath(rel).parts:
+            archive_dir = os.path.dirname(os.path.abspath(archive))
+            try:
+                rel = os.path.relpath(os.path.abspath(green), archive_dir)
+            except ValueError:
+                # another drive: no relative path exists
+                rel = None
+            if rel is None or not so_bond_archive.green_file_ok(rel, archive_dir):
                 raise ValueError(so_bond_archive.T_GREEN_DIR.format(archive=archive, green=green))
         return paths
 
@@ -5822,7 +5825,7 @@ class FLEX(RPA):
                       and so_payload is not None)
         if (so_adm is not None and self.max_iter > 0
                 and ("chi0q" in info_outputfile or "chiq" in info_outputfile)):
-            logger.info(FLEX._SO_OUTPUT_INFO_ARCHIVE if so_adm.archive is not None
+            logger.info(FLEX._SO_OUTPUT_INFO_ARCHIVE if so_archive
                         else FLEX._SO_OUTPUT_INFO)
         if (so_adm is not None and not self.longitudinal_bond_output_full
                 and "longitudinal_bond" in info_outputfile):
@@ -6110,7 +6113,7 @@ class FLEX(RPA):
                 **_freq_meta("F"),
                 **self._second_order_members())
             if so_archive:
-                # written with the archive, as its companion (R20)
+                # written with the archive, as its companion
                 self._save_so_bond_archive(_paths, green_members, so_payload, so_prov)
             elif so_adm is not None:
                 # the spin-orbital bond run writes to the validated path

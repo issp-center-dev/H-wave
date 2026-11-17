@@ -14,8 +14,8 @@ and ``save_results`` at the public entry and read the archive back with
   writer (captured by a spy on the writer, never compared with the reader
   itself);
 * :class:`TestContent` -- ``chi_w`` against a test-local oracle built from
-  the companion ``green.npz`` (the production bubble, a test-side vertex
-  and ``np.linalg.solve`` per ``(l, q)``), with and without a tail, its
+  the companion ``green.npz`` (the production bubble and vertex, and an
+  independent ``np.linalg.solve`` per ``(l, q)``), with and without a tail, its
   non-vacuity against ``chiq.npz`` and a break row;
 * :class:`TestCompanion`, :class:`TestSidecar`, :class:`TestStructure`,
   :class:`TestCompatibility` -- the companion pair, the sidecar layout, the
@@ -285,7 +285,7 @@ class _Copies(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# C1b-A (a): round trip
+# round trip
 # --------------------------------------------------------------------------
 
 class TestRoundTrip(unittest.TestCase):
@@ -340,7 +340,7 @@ class TestRoundTrip(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# C1b-A (b): content
+# content
 # --------------------------------------------------------------------------
 
 def oracle_chi(run, tail=None):
@@ -458,7 +458,7 @@ class TestContent(_Copies):
 
 
 # --------------------------------------------------------------------------
-# C1b-A (c): companion
+# companion
 # --------------------------------------------------------------------------
 
 class TestCompanion(_Copies):
@@ -481,9 +481,15 @@ class TestCompanion(_Copies):
         os.remove(os.path.join(os.path.dirname(path), "green.npz"))
         self.refused(path, T_COMPANION_MISSING.format(
             green=os.path.join(os.path.dirname(path), "green.npz"), archive=path))
-        # a companion of another G (a consistent green.npz of another run)
+        # a companion of another G: the consistent green.npz of a run of the
+        # same case stopped after one map (a genuinely different G)
+        other_run = run_case(os.path.join(self.dir, "other"), X.ZEEMAN_SZ_ALL,
+                             dict(BASE_PARAM, IterationMax=1, **DENSE))
+        other = os.path.join(other_run.out, "green.npz")
         path = self.copy()
-        other = os.path.join(RUNS["packed_npz"].out, "green.npz")
+        self.assertGreaterEqual(rel(_members(other)["green"],
+                                    _members(os.path.join(os.path.dirname(path),
+                                                          "green.npz"))["green"]), NONVAC)
         shutil.copy(other, os.path.join(os.path.dirname(path), "green.npz"))
         self.assertNotEqual(str(_members(other)["fp_green"]),
                             str(_members(path)["fp_green"]))
@@ -520,7 +526,7 @@ class TestCompanion(_Copies):
 
 
 # --------------------------------------------------------------------------
-# C1b-A (d): sidecar / npz
+# sidecar / npz
 # --------------------------------------------------------------------------
 
 class TestSidecar(_Copies):
@@ -618,7 +624,7 @@ class TestSidecar(_Copies):
 
 
 # --------------------------------------------------------------------------
-# C1b-A (e): structure and compatibility
+# structure and compatibility
 # --------------------------------------------------------------------------
 
 class TestStructure(_Copies):
@@ -738,7 +744,7 @@ class TestCompatibility(_Copies):
 
 
 # --------------------------------------------------------------------------
-# C1b-A (f): cross-refusals on the real outputs (the on-site hwave_sc rows
+# cross-refusals on the real outputs (the on-site hwave_sc rows
 # of B = 1 and B > 1, static and dynamic, are TestOnsiteRefusesBond of
 # tests/test_flex_so_bond_entry.py)
 # --------------------------------------------------------------------------
@@ -979,7 +985,8 @@ class TestWiring(_Copies):
 
     def test_one_predicate(self):
         """An admitted archive without the pass's payload: the plain green
-        file, no archive and no temporary file."""
+        file, no archive, no temporary file and the output notice without
+        the archive."""
         from hwave.solver import fingerprint
         inp = X.write_flex_case(self.dir, X.ZEEMAN_SZ_ALL, param=BASE_PARAM, output=OUTPUTS)
         info = inp["file"]["output"]
@@ -989,7 +996,18 @@ class TestWiring(_Copies):
         s.solve(gi, out)
         self.assertIsNotNone(s._so_admission.archive)
         gi.pop("so_bond_archive")
-        s.save_results(info, gi)
+        root, handler = logging.getLogger(), _Records()
+        level = root.level
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+        try:
+            s.save_results(info, gi)
+        finally:
+            root.removeHandler(handler)
+            root.setLevel(level)
+        msgs = messages(handler.records)
+        self.assertEqual(msgs.count(INFO_NO_ARCHIVE), 1)
+        self.assertNotIn(INFO_ARCHIVE, msgs)
         self.assertEqual(sorted(os.listdir(out)),
                          ["chi0q.npz", "chiq.npz", "green.npz", "sigma.npz"])
         g = _members(os.path.join(out, "green.npz"))
@@ -1016,7 +1034,7 @@ class TestWiring(_Copies):
 
 
 # --------------------------------------------------------------------------
-# the green commit (R20)
+# the green commit
 # --------------------------------------------------------------------------
 
 def _tmp_greens(d):

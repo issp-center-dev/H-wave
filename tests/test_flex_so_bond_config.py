@@ -477,6 +477,35 @@ class TestArchiveConfig(_Case):
             with self.subTest(output=out):
                 s.validate_output_paths(dict(out, path_to_output=self.d), self.d)
 
+    def test_green_dir_shared_rule(self):
+        """The output-path check applies the archive's own green_file rule,
+        and a green file on another drive (no relative path) is the same
+        refusal, not a bare error of os.path.relpath."""
+        from hwave.solver import so_bond_archive
+        out = {"green": "g", "longitudinal_bond": "lb", "path_to_output": self.d}
+        archive = os.path.abspath(os.path.join(self.d, "lb.npz"))
+        green = os.path.abspath(os.path.join(self.d, "g.npz"))
+        text = T_GREEN_DIR.format(archive=archive, green=green)
+        s, _ = self.build(param=FULL)
+        s.validate_output_paths(dict(out), self.d)                  # positive control
+        calls = []
+
+        def rule(rel, archive_dir):
+            calls.append((rel, archive_dir))
+            return False
+        with mock.patch.object(so_bond_archive, "green_file_ok", rule):
+            with self.assertRaises(ValueError) as cm:
+                s.validate_output_paths(dict(out), self.d)
+        self.assertEqual(calls, [("g.npz", os.path.dirname(archive))])
+        self.assertEqual(str(cm.exception), text)
+
+        def other_drive(path, start=os.curdir):
+            raise ValueError("path is on mount 'C:', start on mount 'D:'")
+        with mock.patch.object(os.path, "relpath", other_drive):
+            with self.assertRaises(ValueError) as cm:
+                s.validate_output_paths(dict(out), self.d)
+        self.assertEqual(str(cm.exception), text)
+
     def test_no_archive_iter0(self):
         for p in (dict(FULL, IterationMax=0), {"longitudinal_bond_output_full": True,
                                                "iterationmax": 0}):

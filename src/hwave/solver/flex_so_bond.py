@@ -100,6 +100,8 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
         ("post_scf", "post_scf", int(G + C)),
         ("post_scf", "density_einsum_workspace", int(density_ws)))
     if archive is not None:
+        # the writer's zip chunk (numpy's zip writer copies one of this size)
+        from .so_bond_archive import _ZIP_CHUNK
         layout, inline_max = archive
         if layout not in ("npz", "sidecar"):
             raise ValueError("flex_so_bond_rows: archive[0] must be 'npz' or 'sidecar', got {!r}"
@@ -112,7 +114,7 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
         extra += (("archive_bubble", "final_state_live", int(4 * G + 2 * H)),
                   ("archive_dressing", "final_state_live", int(4 * G + 2 * H)),
                   ("archive_write", "archive_write",
-                   int(min(int(inline_max), 16 * 2 ** 20) + 2 ** 20)),
+                   int(min(int(inline_max), _ZIP_CHUNK) + 2 ** 20)),
                   ("archive_write", "archive_index", 65536),
                   ("archive_write", "final_state_live", int(3 * G + 2 * H)))
     return resident, extra

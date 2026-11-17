@@ -1425,8 +1425,9 @@ class _RefusalBase(_ReaderDir):
 
 
 class TestReaderRefusals(_RefusalBase):
-    """Every refusal of ``load_so_bond_archive`` (R10 steps 1b to 6), with
-    its exact text, on a copy of an archive the class first accepts."""
+    """Every refusal of ``load_so_bond_archive`` (steps 1 to 6 of its
+    docstring), with its exact text, on a copy of an archive the class
+    first accepts."""
 
     def test_bases_accepted(self):
         self.accepts_bases()
@@ -1454,6 +1455,12 @@ class TestReaderRefusals(_RefusalBase):
                 else:
                     _rewrite(path, ch)
                 self.refused(path, text(path), headers=0)
+        # a single .npy array under the archive's name: not an npz archive
+        path = self.copy()
+        with open(path, "wb") as f:
+            np.save(f, np.zeros((2, 2)))
+        self.assertIsInstance(np.load(path, allow_pickle=False), np.ndarray)
+        self.refused(path, t("absent", "absent")(path))
 
     def test_each_row(self):
         L = fx.LABEL

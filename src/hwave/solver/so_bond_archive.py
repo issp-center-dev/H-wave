@@ -1,4 +1,4 @@
-"""The schema-4 spin-orbital bond archive (design section 6.2).
+"""The schema-4 spin-orbital bond archive (issue #270).
 
 The spin-orbital FLEX with bond channels (``[mode] enable_spin_orbital =
 true``, ``[mode.param] longitudinal_bond_channels = true`` and
@@ -59,7 +59,6 @@ OUTPUT_LAYOUTS = ("npz", "sidecar")
 BLOCK_LAYOUTS = ("dense", "sz_packed")
 #: the slot payloads; ``Gamma_bond`` is always stored inline
 SLOT_PAYLOADS = ("Gamma_bond", "chi_w", "chibar_w")
-SIDECAR_PAYLOADS = ("chi_w", "chibar_w")
 #: the pole members (the final susceptibility past its pole), all or none
 POLE_MEMBERS = ("rpa_past_pole", "rpa_pole_indicator_spinful", "rpa_pole_q_spinful")
 #: the operational scalars the caller gives (the bond topology members
@@ -1067,10 +1066,6 @@ _SLOT_SET = "Gamma_bond, chi_w, chibar_w"
 _WANTS = (None, "dense", "sz_packed")
 
 
-def _is_index(v):
-    return not isinstance(v, (bool, np.bool_)) and isinstance(v, (int, np.integer))
-
-
 class SOBondArchive(NamedTuple):
     """A schema-4 spin-orbital bond archive accepted by
     :func:`load_so_bond_archive`.
@@ -1136,7 +1131,7 @@ class SOBondArchive(NamedTuple):
         else:
             s0 = 0 if l0 is None else l0
             s1 = self.nmat if l1 is None else l1
-            if not (_is_index(s0) and _is_index(s1) and 0 <= s0 < s1 <= self.nmat):
+            if not (_is_int(s0) and _is_int(s1) and 0 <= s0 < s1 <= self.nmat):
                 raise ValueError("read_slot: frequency range [{}, {}) outside [0, {})".format(
                     s0, s1, self.nmat))
             sl = slice(int(s0), int(s1))
@@ -1181,7 +1176,8 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
     The steps, each refusal a single-line ``ValueError``; no slot payload is
     read (only npy headers, after every scalar check):
 
-    1. ``np.load(path, allow_pickle=False)``.
+    1. ``np.load(path, allow_pickle=False)``; a file that is not an npz
+       archive (a single ``.npy`` array) is :data:`T_NOT_SO_ARCHIVE`.
     1b. Before any header: the markers ``bond_archive_schema = 4`` and
         ``spin_orbital = True`` (:data:`T_NOT_SO_ARCHIVE`); the 0-d scalars
         ``nmat`` (even, > 0), ``B`` (>= 1), ``nd`` (even, >= 2),
@@ -1212,7 +1208,12 @@ def load_so_bond_archive(path, *, run_band, run_state, run_interaction, run_bond
     """
     path = os.fspath(path)
     side_dir = os.path.dirname(path) or "."
-    with np.load(path, allow_pickle=False) as data:
+    loaded = np.load(path, allow_pickle=False)
+    if not hasattr(loaded, "files"):
+        # a single .npy array, not an npz archive
+        raise _fp.SOArchiveError(T_NOT_SO_ARCHIVE.format(path=path, schema="absent",
+                                                         so="absent"))
+    with loaded as data:
         names = set(data.files)
         # (1b) the peek, before any header
         _is_so_archive(data, names, path)

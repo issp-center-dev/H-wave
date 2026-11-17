@@ -1993,7 +1993,11 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
     in phase ``bubble``, ``dress_batch = 7 * 16 nb nvol ND^2`` and
     ``pole_slice = 2 * 16 nvol ND^2`` (the static slice copy and its eigen
     workspace) in phase ``dressing``, ``w_batch_workspace = 4 * 16 nb nvol
-    ND^2`` in phase ``w_conversion``. The peak is the maximum over the
+    ND^2`` in phase ``w_conversion``; with ``keep_chi``, the archive's
+    final susceptibility pass adds the pair block in phase
+    ``archive_bubble`` and ``dress_batch`` and ``pole_slice`` in phase
+    ``archive_dressing`` (the live final-state rows come from the caller's
+    ``extra_rows``). The peak is the maximum over the
     phases of ``1.25 (resident + the phase's rows)``
     (:meth:`SOBondPlan.phase_total`): the closed consumers in
     canonical order, then the other phases of the rows in row order, the

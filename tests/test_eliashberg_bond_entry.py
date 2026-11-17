@@ -354,7 +354,7 @@ class TestLoadBondArchive(unittest.TestCase):
 
 class TestSOArchiveRefused(unittest.TestCase):
     """The non-spin-orbital loader refuses a spin-orbital bond archive with
-    one text, before it reaches the S_bond gate (R8)."""
+    one text, before it reaches the S_bond gate."""
 
     TEXT = ("bond archive {}: this is a spin-orbital bond archive (written by the "
             "spin-orbital FLEX with bond channels); the non-spin-orbital bond consumers "
