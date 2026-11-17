@@ -42,6 +42,15 @@ chiq, chi0q
 
   感受率の計算時に使用された\ ``coeff_tail``\ パラメータ(Matsubara 高周波数裾補正)の値です。裾補正は中程度の\ ``Nmat``\ において\ :math:`\chi_0(\mathbf{q})`\ を\ :math:`O(1)`\ で変えるため、このファイルを読み込む計算(``hwave_sc``\ など)は、自身の\ ``coeff_tail``\ 設定が記録値と異なる場合に警告を出します。事前計算した\ ``chi0q_init``\ ファイルをそのまま出力する場合には入力ファイルの値が引き継がれます。生成元がこの値を記録していない場合(旧バージョン)、および一様格子の裾補正が適用されない IR 松原基底(``matsubara_basis = "ir"``\ 、densified 出力を含む)での FLEX 出力の場合には、キー自体が省略されます。
 
+- ``block_layout``:
+
+  ボンドチャネル付きのスピン軌道 FLEX（\ ``[mode] enable_spin_orbital = true``\ と
+  ``[mode.param] longitudinal_bond_channels = true``\ ）だけが書き出します。計算の
+  レイアウト\ ``"dense"``\ または\ ``"sz_packed"``\ （0 次元の文字列）です。配列は
+  どちらでも密なオンサイトの形で、この経路のファイルにこのキーがなければスピン軌道の
+  読み込み側は拒否します（\ :ref:`flex_so_bond_tutorial`\ を参照）。他の計算はこのキーを
+  書き出しません。
+
 副格子を指定している場合は、出力されるデータは副格子を単位とした感受率の値です。波数ベクトルおよび軌道のインデックスは副格子に読み替えます。
    
 ``chi0q``\ の出力ファイルは、計算済み既約感受率データとして\ ``file.input``\ セクションの\ ``chi0q_init``\ に指定して使用できます。
@@ -295,10 +304,10 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 （INFO ログに一覧が出ます）、初期状態の\ ``sigma``\ ・\ ``green``\ ・\ ``energy``\ のみが
 書き出されます。
 
-**スピン軌道ボンドアーカイブ（スキーマ 4）** ``[mode] enable_spin_orbital = true``\ かつ
+**スピン軌道ボンドアーカイブ（スキーマ 4）。** ``[mode] enable_spin_orbital = true``\ かつ
 ``longitudinal_bond_output_full = true``\ では、同じ\ ``[file.output] longitudinal_bond``\ の
 ファイルは別のアーカイブになります。\ ``bond_archive_schema = 4``\ 、\ ``spin_orbital =
-True``\ です。追加の感受率パス1回で求めた\ **最終**\ の Green 関数（最後の写像ではない）の
+True``\ です。追加の感受率パス1回で求めた\ **最終**\ の Green 関数（最後の SCF 反復ではない）の
 :math:`\chi_B`\ である\ ``chi_w``\ と、\ ``Gamma_bond``\ を、\ ``block_layout``\ が記録する
 密（\ ``chi_w``\ 、\ ``Gamma_bond``\ ）または\ :math:`S_z`\ パック（\ ``chi_w@0``\ 、
 ``chi_w@+1``\ 、\ ``chi_w@-1``\ 、\ ``Gamma_bond``\ も同様）のレイアウトで持ちます。

@@ -800,7 +800,10 @@ that has no effect under the current settings.
   :math:`\chi_B` of the final Green function from one extra
   susceptibility pass, the bond vertex and their provenance, with
   ``green.npz`` as its companion (``[file.output] green`` is required);
-  ``IterationMax = 0`` writes no archive. See :ref:`flex_so_bond_archive`.
+  ``IterationMax = 0`` writes no archive. ``hwave_sc`` does not read this
+  archive in this version (read it with
+  ``hwave.solver.so_bond_archive.load_so_bond_archive``). See
+  :ref:`flex_so_bond_archive`.
 
 - ``longitudinal_bond_output_layout``
 
@@ -825,8 +828,10 @@ that has no effect under the current settings.
   the small-array bound :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)` (cap:
   the resolved host cap, ``longitudinal_bond_memory_cap_gb`` or, unset, 0.8
   times the available host memory; with no cap the bound is 1 GiB), then
-  ``"sidecar"`` (an explicit ``"npz"`` above the bound is refused); see
-  :ref:`flex_so_bond_archive`.
+  ``"sidecar"`` (an explicit ``"npz"`` above the bound is refused). With
+  ``longitudinal_bond_memory_cap_gb`` unset that choice depends on the
+  memory available on the host; set this key explicitly for files that do
+  not depend on the host. See :ref:`flex_so_bond_archive`.
 
 - ``longitudinal_bond_freq_batch``
 
@@ -1446,10 +1451,12 @@ to the definition files.
   appended, as for the other ``.npz`` outputs. It must not resolve to the
   same file as any other output of the run (the collision is refused
   before the calculation starts). With ``enable_spin_orbital = true`` it
-  names the spin-orbital bond archive (:ref:`flex_so_bond_archive`); the
-  ``green`` file must then be in the same directory or below it, and
-  without ``longitudinal_bond_output_full = true`` the key is ignored with
-  an INFO line.
+  names the spin-orbital bond archive (:ref:`flex_so_bond_archive`):
+  ``[file.output] green`` is then required with
+  ``longitudinal_bond_output_full = true`` (the archive names that file as
+  its companion), the ``green`` file must be in the same directory or
+  below it, and without ``longitudinal_bond_output_full = true`` the key
+  is ignored with an INFO line.
 
 - ``eliashberg_bond_singlet``, ``eliashberg_bond_triplet``,
   ``eigenvalue_bond_singlet``, ``eigenvalue_bond_triplet``,

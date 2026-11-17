@@ -3051,8 +3051,9 @@ producer:
        hwave.solver.so_bond_archive.load_so_bond_archive).``
      - A schema-4 archive given to the non-spin-orbital bond pairing
        (``hwave_sc`` with ``bond_channels = true`` and ``frequency =
-       "dynamic"``). There is no conversion.
-     - the non-spin-orbital FLEX run that writes the schema-3 archive
+       "dynamic"``). There is no conversion; rerun the non-spin-orbital FLEX
+       for the schema-3 archive.
+     - ``[eliashberg] flex_bond_archive``, ``bond_channels``
    * - ``'<file>' is not a spin-orbital bond archive (bond_archive_schema
        <schema>, spin_orbital <so>); write it with FLEX, [mode]
        enable_spin_orbital = true, [mode.param] longitudinal_bond_channels =
@@ -3060,22 +3061,58 @@ producer:
      - ``load_so_bond_archive`` was given another file (for example a
        non-spin-orbital schema-3 archive). ``absent`` stands for a missing
        member.
-     - the spin-orbital FLEX run, ``[file.output] longitudinal_bond``
+     - ``[mode] enable_spin_orbital``, ``[mode.param]
+       longitudinal_bond_channels``, ``longitudinal_bond_output_full``,
+       ``[file.output] longitudinal_bond``
+   * - ``'<path>' cannot be read as an npz archive (<error>); re-run FLEX to
+       regenerate the bond archive.``
+     - The index given to ``load_so_bond_archive`` is empty, truncated or
+       not an npz file (``<error>`` names the exception). Rerun FLEX.
+     - ``[file.output] longitudinal_bond``
    * - ``companion green file '<green>' named by '<archive>' is missing
        (keep the archive, its sidecars and the green file together, or
        re-run FLEX)``
-     - The archive was moved or copied without its ``green.npz``, or the
-       green file was removed. Move the three together
-       (:ref:`flex_so_bond_archive`) or rerun FLEX.
+     - The archive was moved or copied without its green file, or the
+       green file was removed. Move the index, any sidecars and the green
+       file together, keeping the green file at the relative path
+       ``green_file`` records (:ref:`flex_so_bond_archive`), or rerun FLEX.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``companion green file '<green>' named by '<archive>' cannot be read
+       as an npz archive (<error>); keep the archive, its sidecars and the
+       green file together, or re-run FLEX.``
+     - The green file is empty, truncated, or not an npz file (``<error>``
+       is ``a single .npy array`` for a ``.npy``). Restore the green file
+       of the same run, or rerun FLEX.
+     - ``[file.output] green``
+   * - ``'<archive>': the sidecar file '<name>' is a symbolic link; the
+       reader reads sidecars only as regular files next to the index (copy
+       the file in place of the link, or re-run FLEX).``
+     - A sidecar was replaced by a symbolic link (also one pointing into
+       the same directory). Copy the file itself.
+     - ``[file.output] longitudinal_bond``
+   * - ``'<archive>': the <what> '<name>' resolves to '<real>', outside the
+       archive directory '<dir>'; keep the index, its sidecars and the
+       companion green file in that directory (the green file may be below
+       it), or re-run FLEX.``
+     - A sidecar (``<what>`` = ``sidecar file``) or the green file
+       (``companion green file``) resolves, through a symbolic link, to a
+       place outside the archive's directory. Copy the files into that
+       directory.
      - ``[file.output] green``, ``longitudinal_bond``
    * - ``'<archive>' (written by <producer>): fp_green mismatch: the Green
        function this run loaded has digest ..., the archive records ...;
        the Green function and the susceptibility do not come from the same
        run. ...``
-     - The companion ``green.npz`` is not the Green function of the
-       archive: it was replaced, or a write failed between the commit of the
+     - The companion green file is not the Green function of the
+       archive: it was replaced, a write failed between the commit of the
        green file and that of the index and left a stale index (see
-       *When writing fails* in :ref:`flex_so_bond_archive`). Rerun FLEX.
+       *When writing fails* in :ref:`flex_so_bond_archive`), a later run
+       with ``longitudinal_bond_output_full = false`` or ``IterationMax =
+       0`` overwrote the green file and left the old index (the WARNING
+       ``spin-orbital bond archive '<path>': this run wrote the green file
+       '<green>' but no bond archive ...``), or the index is a copy in the
+       same directory as a re-run (a copy there is no backup; see *Moving
+       and re-running* in :ref:`flex_so_bond_archive`). Rerun FLEX.
      - ``[file.output] green``, ``longitudinal_bond``
    * - ``'<archive>' is malformed or truncated: sidecar member <block> has
        the wrong size (...)``, ``... sidecar member <block> file '<name>' is
@@ -3092,7 +3129,8 @@ producer:
      - An output of the spin-orbital FLEX with bond channels written before
        this version (it lacks ``block_layout``). Regenerate it with this
        version.
-     - the FLEX run's ``[file.output]`` archives
+     - ``[file.output] chi0q``, ``chiq``, ``green``, ``sigma``,
+       ``longitudinal_bond`` of the FLEX run
    * - ``<head>: longitudinal_bond_output_full = true needs [file.output]
        green ...`` (``<head>`` = ``[mode] enable_spin_orbital = true with
        [mode.param] longitudinal_bond_channels = true (FLEX)``)
@@ -3114,7 +3152,7 @@ producer:
        archive_... ... longitudinal_bond_output_full = true adds the archive
        phases (archive_bubble, archive_dressing, archive_write); setting it
        to false removes them. ...``
-     - The memory admission refused a phase of the bond archive.
+     - The pre-flight memory check refused a phase of the bond archive.
        Raise the cap, reduce ``Nmat`` or the k grid, or set
        ``longitudinal_bond_output_full = false``.
      - ``[mode.param] longitudinal_bond_memory_cap_gb``,

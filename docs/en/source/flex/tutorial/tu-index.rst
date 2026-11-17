@@ -1219,6 +1219,8 @@ Two settings are accepted with a WARNING:
 ``so_bond_layout`` set without both ``enable_spin_orbital = true`` and
 ``longitudinal_bond_channels = true`` is ignored with a WARNING.
 
+.. _flex_so_bond_layout:
+
 Layout
 """"""
 
@@ -1248,6 +1250,8 @@ only spin dependence is a longitudinal Zeeman field (via Extern) is packed.
 Both layouts give the same results to round-off. When the input conserves
 :math:`S_z` (in either layout), the Green function is also inverted sector
 by sector.
+
+.. _flex_so_bond_memory:
 
 Memory
 """"""
@@ -1465,8 +1469,9 @@ Outputs
      spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last SCF iteration; the bond archive holds chi_B of the final Green function.
 
 - ``block_layout``: green, sigma, chi0q and chiq record the layout of the
-  solve (``"dense"`` or ``"sz_packed"``, a 0-d string), also with
-  ``IterationMax = 0``; they carry no ``sz_sector_*`` member. Outputs of
+  solve (``"dense"`` or ``"sz_packed"``, a 0-d string); with
+  ``IterationMax = 0`` green and sigma record it too (chi0q and chiq are
+  not written then). They carry no ``sz_sector_*`` member. Outputs of
   this path written before this version lack ``block_layout`` and are
   refused as malformed (``member block_layout is missing``) by the
   spin-orbital readers: regenerate them with this version.
@@ -1515,9 +1520,26 @@ With ``longitudinal_bond_output_full = true`` the run writes the
 spin-orbital bond archive (``bond_archive_schema = 4``): the
 bond-resolved dressed susceptibility :math:`\chi_B` of the **final** Green
 function, the bare bond vertex :math:`\Gamma_B` and the provenance of both,
-next to the Green function it was built from.
+next to the Green function it was built from. ``hwave_sc`` does not read
+this archive in this version; it is read through the Python function
+``load_so_bond_archive`` (*Reading it* below).
 
-**Configuration.**
+**Configuration.** On top of the input of :ref:`flex_so_bond_tutorial`
+(Input above), the archive needs two settings, the flag and the green
+output:
+
+.. code-block:: toml
+
+   [mode.param]
+     longitudinal_bond_output_full = true
+     # longitudinal_bond_output_layout = "sidecar"   # optional; see below
+   [file.output]
+     path_to_output = "output"
+     green = "green"                          # required: the companion green file
+     longitudinal_bond = "longitudinal_bond"  # the default name
+
+Below, ``green.npz`` stands for the configured ``[file.output] green``
+file and ``longitudinal_bond.npz`` for the configured archive.
 
 - The archive goes to ``[file.output] longitudinal_bond`` (default
   ``longitudinal_bond.npz``; a name without ``.npz`` gets the suffix, as
@@ -1525,7 +1547,7 @@ next to the Green function it was built from.
   that key is ignored, with one INFO line: ``[file.output] longitudinal_bond
   is written only with [mode.param] longitudinal_bond_output_full = true;
   no bond archive is written by this run.``
-- ``[file.output] green`` is required: the archive names ``green.npz`` as
+- ``[file.output] green`` is required: the archive names the green file as
   its companion. The ``[file.output]`` keys are case-sensitive (a ``Green``
   key configures no green output). Without it the run is refused before
   the calculation: ``<head>: longitudinal_bond_output_full = true needs
@@ -1540,7 +1562,7 @@ next to the Green function it was built from.
 
   - unset: the single file ``"npz"``, unless the largest ``chi_w`` member
     is above the small-array bound :math:`\min(1\,\mathrm{GiB},
-    \mathrm{cap}/8)`, where cap is the resolved host cap of the admission
+    \mathrm{cap}/8)`, where cap is the resolved host cap of the pre-flight memory check
     (``longitudinal_bond_memory_cap_gb``; unset: 0.8 times the available
     host memory; with ``0``, or when no memory limit can be determined,
     there is no cap and the bound is 1 GiB); then the sidecar layout is
@@ -1549,7 +1571,11 @@ next to the Green function it was built from.
     the susceptibility is written as .npy files next to the index.``. With
     several bond channels the admitted peak is only a few times the largest
     member, so members above cap / 8 are written as sidecars even under a
-    modest cap;
+    modest cap. With ``longitudinal_bond_memory_cap_gb`` unset the choice
+    depends on the memory available on the host, so the same input can
+    give either layout on different machines; set
+    ``longitudinal_bond_output_layout`` explicitly for files that do not
+    depend on the host;
   - ``"sidecar"``: always the sidecar layout;
   - ``"npz"``: always the single file; a member above the bound is refused
     before the calculation: ``<head>: longitudinal_bond_output_layout =
@@ -1560,7 +1586,7 @@ next to the Green function it was built from.
 
   ``"sidecar"`` without ``longitudinal_bond_output_full = true`` is ignored
   with the WARNING of the non-spin-orbital bond FLEX.
-- ``IterationMax = 0`` runs no map and writes no archive: ``spin-orbital
+- ``IterationMax = 0`` runs no SCF iteration and writes no archive: ``spin-orbital
   bond archive: IterationMax = 0 runs no map, so no bond archive is
   written.`` (``green`` and ``sigma`` of the seed state are written, with
   ``block_layout``.)
@@ -1572,20 +1598,20 @@ final Green function and its dressing with :math:`\Gamma_B`, at every
 bosonic frequency; no effective interaction and no self-energy is built.
 The run logs ``spin-orbital bond archive: chi_w is chi_B of the final Green
 function (one extra susceptibility pass after the self-consistency).``
-``chi0q.npz`` and ``chiq.npz`` stay the channel-0 blocks of the **last SCF
+``chi0q.npz`` and ``chiq.npz`` are the channel-0 blocks of the **last SCF
 iteration** (*Outputs* above), so the channel-0 block of ``chi_w`` differs
 from ``chiq`` in general. The archive's ``fp_green`` equals the ``fp_green``
 of ``green.npz``.
 
-*Cost.* The pass costs about one SCF map without the effective interaction
-and the self-energy. The memory admission adds its three phases
-(``archive_bubble``, ``archive_dressing``, ``archive_write``; see *Memory*
-above); they hold the final-state arrays together with the pass's own
-rows.
+*Cost.* The pass costs about one SCF iteration without the effective
+interaction and the self-energy. The pre-flight memory check
+(:ref:`Memory <flex_so_bond_memory>` above) adds its three phases
+(``archive_bubble``, ``archive_dressing``, ``archive_write``); they hold
+the final-state arrays together with the pass's own rows.
 
 *Pole check.* The pass computes the RPA pole indicator of the
 :math:`\nu = 0` slice of the final :math:`\bar\chi_B` and logs it at INFO
-level. At or above the pole a WARNING is logged (where ``FLEX
+level. At or above the pole a WARNING is logged (location ``FLEX
 longitudinal_bond_channels (spin-orbital, bond archive of the final Green
 function)``), ending with ``The bond archive's chi_w is built on that
 susceptibility; it describes no physical state and is still written.``
@@ -1596,7 +1622,11 @@ carries the pole members ``rpa_past_pole`` (``True``),
 path carry no pole members.
 
 *A refusal in the pass.* The dressing of the pass is guarded like every
-map (``longitudinal_bond_cond_tol``). When it refuses, the run stops and
+SCF iteration (``longitudinal_bond_cond_tol``). After the pass the run
+logs the bond conditioning minimum (``cond_min``) of the dressing at INFO
+level:
+``spin-orbital bond archive: guards of the final susceptibility pass: bond
+cond_min spinful <cond> (tol <tol>)``. When the guard refuses, the run stops and
 **no output** of the run is written; the message ends with the remedy of
 the dressing guard and ``This happened in the final susceptibility pass of
 the bond archive; set longitudinal_bond_output_full = false to skip that
@@ -1604,9 +1634,14 @@ pass.`` With ``longitudinal_bond_output_full = false`` the same input
 writes the standard outputs (the self-consistency does not depend on the
 archive).
 
-**Members.** :math:`n_d = 2N` (:math:`N` = ``norb_phys``), ``ND`` =
-:math:`B n_d^2`; in the packed layout the three :math:`S_z` sectors have
-:math:`n_0 = 2BN^2` and :math:`n_{+1} = n_{-1} = BN^2` entries.
+**Members.** The dimension symbols: :math:`n_d = 2N` (:math:`N` =
+``norb_phys``), :math:`N_D = B n_d^2` (``ND``), :math:`n_{\rm vol}` =
+the product of ``cell_shape`` (the number of wave vectors), and
+:math:`n_\sigma` the size of the :math:`S_z` sector :math:`\sigma \in
+\{0, +1, -1\}` of the packed layout: :math:`n_0 = 2BN^2`, :math:`n_{+1} =
+n_{-1} = BN^2`. The sector of a slot :math:`(m; x, y)` (bond :math:`m`,
+spin-block modes :math:`x, y`, :math:`S_z = +1/2` for :math:`x < N`) is
+:math:`\sigma = S_z(x) - S_z(y)`.
 
 .. list-table::
    :header-rows: 1
@@ -1623,9 +1658,19 @@ archive).
        n_{\rm mat})\pi T`, so :math:`l = n_{\rm mat}/2` is :math:`\nu = 0`)
    * - ``block_layout``
      - ``"dense"`` or ``"sz_packed"``, the layout of the solve
-       (:ref:`Layout <flex_so_bond_tutorial>` above); a packed archive
-       also carries ``sz_sector_order``, ``sz_sector_offsets`` and
-       ``sz_sector_index``
+       (:ref:`Layout <flex_so_bond_layout>` above)
+   * - ``sz_sector_order``, ``sz_sector_offsets``, ``sz_sector_index``
+       (packed layout only)
+     - the :math:`S_z` sector layout: ``sz_sector_order`` the storage order of the
+       sectors, ``["0", "+1", "-1"]`` (string ``(3,)``);
+       ``sz_sector_offsets`` int64 ``(4,)``, the cumulative sector sizes
+       :math:`[0, n_0, n_0 + n_{+1}, N_D]`; ``sz_sector_index`` int64
+       ``(ND,)``, the dense slot :math:`I = m n_d^2 + x n_d + y` of every
+       packed position (the sectors concatenated in that order, ascending
+       within a sector): the block ``<name>@<σ>`` holds the rows and
+       columns ``sz_sector_index[sz_sector_offsets[s]:sz_sector_offsets[s +
+       1]]`` of the dense array, :math:`s` the position of :math:`\sigma`
+       in ``sz_sector_order``
    * - ``bond_archive_layout``
      - ``"npz"`` or ``"sidecar"``
    * - ``norb_phys``, ``nd``, ``nmat``, ``B``, ``cell_shape``, ``beta``,
@@ -1634,13 +1679,15 @@ archive).
        interaction types
    * - ``Gamma_bond`` (dense) or ``Gamma_bond@0``, ``Gamma_bond@+1``,
        ``Gamma_bond@-1`` (packed)
-     - :math:`\Gamma_B`, complex ``(nvol, ND, ND)`` or ``(nvol, n_σ, n_σ)``;
-       always stored in the index
+     - :math:`\Gamma_B`, complex :math:`(n_{\rm vol}, N_D, N_D)` or
+       :math:`(n_{\rm vol}, n_\sigma, n_\sigma)`; always stored in the
+       index
    * - ``chi_w`` (dense) or ``chi_w@0``, ``chi_w@+1``, ``chi_w@-1``
        (packed)
-     - :math:`\chi_B` of the final Green function, complex ``(nmat, nvol,
-       ND, ND)`` or ``(nmat, nvol, n_σ, n_σ)``; in the index (``"npz"``) or
-       as sidecar files (``"sidecar"``)
+     - :math:`\chi_B` of the final Green function, complex
+       :math:`(n_{\rm mat}, n_{\rm vol}, N_D, N_D)` or :math:`(n_{\rm mat},
+       n_{\rm vol}, n_\sigma, n_\sigma)`; in the index (``"npz"``) or as
+       sidecar files (``"sidecar"``)
    * - ``<block>_file``, ``<block>_nbytes`` (sidecar layout, one pair per
        ``chi_w`` block)
      - the sidecar's file name ``<block>.<archive_nonce>.npy`` (resolved in
@@ -1652,7 +1699,9 @@ archive).
      - the companion Green file relative to the index's directory (no
        ``..``), ``"b_f_k_o_o_v1"``
    * - ``momentum_convention``, ``wavevector_unit``, ``wavevector_index``
-     - the momentum markers
+     - the momentum markers of every chiq/chi0q file
+       (:ref:`subsec:chiq_rpa`): ``"e_plus_ikR"``, float ``(3, 3)`` and
+       int64 :math:`(n_{\rm vol}, 3)`
    * - ``scf_converged``
      - whether the self-consistency converged (bool)
    * - provenance
@@ -1667,32 +1716,71 @@ archive).
 
 ``chibar_w`` (the bare :math:`\bar\chi_B`) is not written by FLEX; the
 reader accepts it when present (``has_slot("chibar_w")``), and the log line
-``chibar_w archive: none`` stays.
+``chibar_w archive: none`` is logged as for every run of this path.
 
 **Reading it.** In this version the archive is read through the Python
 function ``hwave.solver.so_bond_archive.load_so_bond_archive(path, *,
-run_band, run_state, run_interaction, run_bond)``, where the four keyword
+run_band, run_state, run_interaction, run_bond)``. The four keyword
 arguments are the consuming run's band tables, state, compiled interaction
-and bond inputs (the inputs of the fingerprint checks); ``hwave_sc`` reads
-it in a later version. The function returns an object whose ``has_slot``
-and ``read_slot(name, want=None, l0=None, l1=None)`` give ``Gamma_bond``,
-``chi_w`` (and ``chibar_w``) in the stored layout, ``"dense"`` or
-``"sz_packed"`` (a dense archive read packed is refused when the requested
-slice has a nonzero entry outside the sectors). Before any payload array is
-read it checks, in this order:
+and bond inputs (the inputs of the fingerprint checks); they are built by
+the solver-side consumers of the archive (``hwave_sc`` reads it in a later
+version), not written by hand. The function returns an object with
 
-1. the markers ``bond_archive_schema = 4`` and ``spin_orbital = True``, the
+- ``layout`` (the stored slot layout, ``"dense"`` or ``"sz_packed"``),
+  ``bond_archive_layout``, the dimensions ``B``, ``nd``, ``nmat``, ``nvol``,
+  ``green_path`` (the companion green file), ``scf_converged`` (bool, the
+  self-consistency flag of the FLEX run) and ``rpa_past_pole`` (``True``
+  when the archive carries the pole members, that is, its final
+  susceptibility is past the static RPA pole and describes no physical
+  state; ``None`` otherwise);
+- ``has_slot(name)``: whether the payload ``name`` (``"Gamma_bond"``,
+  ``"chi_w"`` or ``"chibar_w"``) is stored;
+- ``read_slot(name, *, want=None, l0=None, l1=None)``: the payload ``name``
+  for the bosonic indices :math:`l_0 \le l < l_1` (``l0`` unset: 0;
+  ``l1`` unset: ``nmat``; ``Gamma_bond`` has no frequency axis and takes
+  neither). ``want = None`` returns the stored layout, ``"dense"`` a
+  complex128 ndarray :math:`(\dots, N_D, N_D)` and ``"sz_packed"`` a
+  ``hwave.solver.so_bond.PackedArrays`` (its ``blocks`` are the three
+  complex128 sector blocks :math:`(\dots, n_\sigma, n_\sigma)` in the order
+  ``"0"``, ``"+1"``, ``"-1"``). A packed archive read dense is filled with
+  exact zeros off the sectors; a dense archive read packed is refused when
+  the requested slice has a nonzero entry off the sectors (the message
+  gives the measured leak). Every call opens the files again and returns a
+  copy (a sidecar is memory-mapped and only the slice is read).
+
+Before any payload array is read the function checks, in this order:
+
+1. that the index is a readable npz archive (else ``'<path>' cannot be
+   read as an npz archive (<error>); re-run FLEX to regenerate the bond
+   archive.``; a single ``.npy`` array is refused as not a spin-orbital
+   bond archive);
+2. the markers ``bond_archive_schema = 4`` and ``spin_orbital = True``, the
    dimensions and their relations (``nd = 2 norb_phys``, ``B`` = the
    number of ``delta_r`` rows, ``nmat``/``beta`` equal to their
    ``state_*`` copies, ``cell_shape`` equal to ``prov_cell_shape``);
-2. the structure, once: the provenance, the npy headers of the payloads
+3. the files, before any of them is opened: no sidecar the index names is a
+   symbolic link (``'<archive>': the sidecar file '<name>' is a symbolic
+   link; the reader reads sidecars only as regular files next to the index
+   (copy the file in place of the link, or re-run FLEX).``), and every
+   sidecar and the companion green file resolve, with symbolic links
+   followed, below the archive directory (``'<archive>': the <what>
+   '<name>' resolves to '<real>', outside the archive directory '<dir>';
+   keep the index, its sidecars and the companion green file in that
+   directory (the green file may be below it), or re-run FLEX.``, with
+   ``<what>`` = ``sidecar file`` or ``companion green file``). The archive
+   directory itself may be reached through a link, and the companion may
+   be a link, or sit in a linked subdirectory, that resolves below it;
+4. the structure, once: the provenance, the npy headers of the payloads
    (in the index or in the sidecars) with dtype, rank and size, and for a
    sidecar its file name (no directory part, the archive's nonce) and its
    size (file size = ``<block>_nbytes`` = header plus data);
-3. the schema-4 members of the table;
-4. that the companion green file exists;
-5. the companion: its structure and its compatibility with the run;
-6. the archive's compatibility with the run, and its ``fp_green`` against
+5. the schema-4 members of the table;
+6. that the companion green file exists and is a readable npz archive
+   (``companion green file '<green>' named by '<archive>' cannot be read as
+   an npz archive (<error>); keep the archive, its sidecars and the green
+   file together, or re-run FLEX.``);
+7. the companion: its structure and its compatibility with the run;
+8. the archive's compatibility with the run, and its ``fp_green`` against
    the digest of the companion's Green function.
 
 The compatibility checks are those of :ref:`sc_so_archive_checks`: an
@@ -1702,26 +1790,62 @@ by the ``fp_green`` check. ``read_slot`` opens the files again on every
 call: do not rewrite or replace an archive (or its sidecars or green file)
 while a reader is using it.
 
-**Moving and re-running.** Keep the index, its sidecars and ``green.npz``
-together: ``green_file`` and the sidecar names are relative to the index's
-directory, so the three can be moved together to any directory. A missing
-companion is refused: ``companion green file '<green>' named by
-'<archive>' is missing (keep the archive, its sidecars and the green file
-together, or re-run FLEX)``.
+*Inspecting it by hand.* To look at the members without a consuming run,
+open the index with ``numpy.load``; this performs none of the checks
+above. A ``chi_w`` block is either an inline member of the index
+(``"npz"``) or the sidecar file named by its ``<block>_file`` member
+(``"sidecar"``), resolved in the index's directory:
+
+.. code-block:: python
+
+   import os
+   import numpy as np
+
+   path = "output/longitudinal_bond.npz"
+   with np.load(path, allow_pickle=False) as z:
+       print(z["archive_nonce"], z["block_layout"], z["bond_archive_layout"])
+       dense = str(z["block_layout"]) == "dense"
+       for block in ["chi_w"] if dense else ["chi_w@0", "chi_w@+1", "chi_w@-1"]:
+           if block in z.files:                   # "npz": in the index
+               a = z[block]
+           else:                                  # "sidecar": <block>_file
+               side = os.path.join(os.path.dirname(path), str(z[block + "_file"]))
+               a = np.load(side, mmap_mode="r", allow_pickle=False)
+           print(block, a.shape, a.dtype)
+
+**Moving and re-running.** Keep the index, any sidecars and the companion
+green file together: ``green_file`` and the sidecar names are relative to
+the index's directory, so these files can be moved together to any
+directory, keeping the green file at the relative path ``green_file``
+records. Copy the sidecars as regular files (a symbolic link is refused,
+see *Reading it* above). A missing companion is refused: ``companion green
+file '<green>' named by '<archive>' is missing (keep the archive, its
+sidecars and the green file together, or re-run FLEX)``. To list which
+sidecars an index names, print its nonce (every name it carries is
+``<block>.<archive_nonce>.npy``)::
+
+   python -c "import numpy as np; print(np.load('output/longitudinal_bond.npz')['archive_nonce'])"
 
 .. warning::
 
-   Never copy an index alone. The copy names the same sidecars: a re-run
-   into the copy's path keeps the shared sidecars (another index names
-   them), and a re-run into the original removes the old sidecars only when
-   no other index in the directory names them.
+   A copy in the same directory is no backup. A copied index names the
+   same sidecars and the same green file. A re-run of FLEX in that
+   directory overwrites the green file, so the copy then names a Green
+   function it was not built from and ``load_so_bond_archive`` refuses it
+   (``fp_green mismatch``); the sidecars the copy names are kept, because
+   another index names them. This holds for a hidden copy too (for example
+   ``.backup.npz``): every ``*.npz`` in the directory except the writer's
+   own temporary files counts as a candidate index. To keep an archive,
+   copy the index, its sidecars (``*.<archive_nonce>.npy``) and the green
+   file into a separate directory.
 
 A re-run into the same path replaces the index and then removes the
 sidecars of the archive it replaced, except those named by the new index,
-by another schema-4 index in the directory, or kept because a ``*.npz``
-there cannot be read or is a malformed index (then every old name is
-kept). One INFO line lists
-them: ``spin-orbital bond archive '<path>': removed <n> sidecar file(s) of
+by another schema-4 index in the directory (hidden names included), or
+kept because a ``*.npz`` there cannot be read or is a malformed index
+(then every old name is kept). Only the writer's temporary files
+(``.<stem>.<pid>-<8 hex digits>.tmp.npz`` for an index ``<stem>.npz``) are
+not inspected. One INFO line lists them: ``spin-orbital bond archive '<path>': removed <n> sidecar file(s) of
 the archive it replaced: <names>; kept <k> (named by another index, a
 malformed candidate or this one): <names>; kept by: <files>``. Sidecars of
 a non-spin-orbital bond archive at the same stem (``<stem>_chi_s_w.npy``,
@@ -1734,6 +1858,18 @@ whole, the new archive is still complete and one WARNING says so:
 ``spin-orbital bond archive '<path>': the removal of the replaced archive's
 sidecar files failed (<error>); the new archive is complete; remove stale
 sidecar files by hand if no other archive uses them.``
+
+A re-run that writes the green file but no archive
+(``longitudinal_bond_output_full = false``, or ``IterationMax = 0``)
+removes nothing. When the configured ``[file.output] longitudinal_bond``
+file is a spin-orbital index that names that green file, it is left on disk
+with its sidecars and no longer matches the green file; the run says so
+with one WARNING: ``spin-orbital bond archive '<path>': this run wrote the
+green file '<green>' but no bond archive (longitudinal_bond_output_full =
+false or IterationMax = 0); the earlier archive at '<path>' names this
+green file as its companion, so it and its sidecar files are left in place
+and load_so_bond_archive refuses them; remove them by hand or re-run with
+longitudinal_bond_output_full = true.``
 
 **When writing fails.** ``green.npz`` and the index are each written to a
 temporary name in their directory first, and then committed by a rename:
@@ -1762,12 +1898,13 @@ remove '<path>' while cleaning up after a failed write (<error>); remove it
 by hand.``).
 
 ``sigma.npz``, ``chi0q.npz`` and ``chiq.npz`` follow the behaviour of
-every FLEX run on an I/O failure (outputs written before the failure stay):
+every FLEX run on an I/O failure (outputs written before the failure are
+kept):
 after a failure before the green commit, a new sigma, chi0q or chiq can sit
 next to the previous green/archive pair. Each carries its own
 ``fp_green``, so a consumer that compares them refuses the mix. The
-all-or-nothing rule above (*A refusal in the pass*) covers the
-conditioning refusal of the pass only. Concurrent runs writing into one
+no-output rule above (*A refusal in the pass*) covers only the refusal of
+the dressing (condition-number) guard in the pass. Concurrent runs writing into one
 directory are not supported.
 
 .. note::

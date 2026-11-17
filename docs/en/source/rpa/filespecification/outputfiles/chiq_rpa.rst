@@ -45,6 +45,16 @@ The file contains several arrays bound to the following keys:
 
   The value of the ``coeff_tail`` parameter (Matsubara high-frequency tail correction) used when the susceptibility was computed. The tail correction changes :math:`\chi_0(\mathbf{q})` at :math:`O(1)` for moderate ``Nmat``, so runs that consume this file (e.g. ``hwave_sc``) warn when their own ``coeff_tail`` setting differs from the recorded value. When a pre-computed ``chi0q_init`` file is passed through, the input file's value is re-saved. The key is omitted when the producing run did not record one (older versions) and for FLEX output on the IR Matsubara basis (``matsubara_basis = "ir"``, including densified output), where the uniform-grid tail correction does not apply.
 
+- ``block_layout``:
+
+  Written only by the spin-orbital FLEX with bond channels (``[mode]
+  enable_spin_orbital = true`` with ``[mode.param]
+  longitudinal_bond_channels = true``): the layout of the solve,
+  ``"dense"`` or ``"sz_packed"`` (a 0-d string). The arrays have the dense
+  on-site shape in both cases, and the spin-orbital readers refuse a file
+  of that path without it (see :ref:`flex_so_bond_tutorial`). Other runs
+  do not write the key.
+
 When the sublattice is considered, the indices of the wave numbers and the orbitals are
 regarded as those of the sublattice.
 
@@ -313,13 +323,13 @@ enable_spin_orbital = true`` and ``longitudinal_bond_output_full = true``
 the same ``[file.output] longitudinal_bond`` file is a different archive:
 ``bond_archive_schema = 4`` and ``spin_orbital = True``. It holds
 ``chi_w``, :math:`\chi_B` of the **final** Green function from one extra
-susceptibility pass (not of the last map), and ``Gamma_bond``, in the
+susceptibility pass (not of the last SCF iteration), and ``Gamma_bond``, in the
 dense (``chi_w``, ``Gamma_bond``) or the :math:`S_z`-packed
 (``chi_w@0``, ``chi_w@+1``, ``chi_w@-1`` and the same for ``Gamma_bond``)
 layout recorded by ``block_layout``. In the ``"sidecar"`` layout the
 ``chi_w`` blocks are the files ``<block>.<archive_nonce>.npy``, named by
-``<block>_file`` with their size ``<block>_nbytes``; ``Gamma_bond`` always
-stays in the index. ``green_file`` names the companion ``green.npz``
+``<block>_file`` with their size ``<block>_nbytes``; ``Gamma_bond`` is
+always stored in the index. ``green_file`` names the companion ``green.npz``
 relative to the index's directory, and the archive's ``fp_green`` equals
 that file's. There is no ``chi_s_w``, ``chi_c_w``, ``S_bond`` or
 ``C_bond``, and the non-spin-orbital bond consumers refuse the archive.

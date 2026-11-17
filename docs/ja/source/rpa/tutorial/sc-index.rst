@@ -2852,30 +2852,65 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
        hwave.solver.so_bond_archive.load_so_bond_archive).``
      - スキーマ 4 のアーカイブを非スピン軌道のボンドのペアリング（\ ``bond_channels =
        true``\ と\ ``frequency = "dynamic"``\ の\ ``hwave_sc``\ ）に与えました。変換は
-       ありません。
-     - スキーマ 3 のアーカイブを書き出す非スピン軌道の FLEX の計算
+       ありません。スキーマ 3 のアーカイブには非スピン軌道の FLEX を実行し直してください。
+     - ``[eliashberg] flex_bond_archive``\ 、\ ``bond_channels``
    * - ``'<file>' is not a spin-orbital bond archive (bond_archive_schema
        <schema>, spin_orbital <so>); write it with FLEX, [mode]
        enable_spin_orbital = true, [mode.param] longitudinal_bond_channels =
        true and longitudinal_bond_output_full = true.``
      - ``load_so_bond_archive``\ に別のファイル（たとえば非スピン軌道のスキーマ 3 の
        アーカイブ）を与えました。\ ``absent``\ はメンバーがないことを表します。
-     - スピン軌道の FLEX の計算、\ ``[file.output] longitudinal_bond``
+     - ``[mode] enable_spin_orbital``\ 、\ ``[mode.param]
+       longitudinal_bond_channels``\ 、\ ``longitudinal_bond_output_full``\ 、
+       ``[file.output] longitudinal_bond``
+   * - ``'<path>' cannot be read as an npz archive (<error>); re-run FLEX to
+       regenerate the bond archive.``
+     - ``load_so_bond_archive``\ に与えたインデックスが空、途中で切れている、または npz
+       ファイルではありません（\ ``<error>``\ は例外を示します）。FLEX を実行し直して
+       ください。
+     - ``[file.output] longitudinal_bond``
    * - ``companion green file '<green>' named by '<archive>' is missing
        (keep the archive, its sidecars and the green file together, or
        re-run FLEX)``
-     - アーカイブを\ ``green.npz``\ なしで移動・コピーしたか、green ファイルを削除
-       しました。3つをまとめて移す（\ :ref:`flex_so_bond_archive`\ ）か、FLEX を実行し
-       直してください。
+     - アーカイブを green ファイルなしで移動・コピーしたか、green ファイルを削除
+       しました。インデックス、サイドカー（あれば）、green ファイルを、green ファイルを
+       ``green_file``\ が記録する相対パスに保ったまままとめて移す
+       （\ :ref:`flex_so_bond_archive`\ ）か、FLEX を実行し直してください。
+     - ``[file.output] green``\ 、\ ``longitudinal_bond``
+   * - ``companion green file '<green>' named by '<archive>' cannot be read
+       as an npz archive (<error>); keep the archive, its sidecars and the
+       green file together, or re-run FLEX.``
+     - green ファイルが空、途中で切れている、または npz ファイルではありません
+       （\ ``.npy``\ では\ ``<error>``\ は\ ``a single .npy array``\ ）。同じ計算の green
+       ファイルを戻すか、FLEX を実行し直してください。
+     - ``[file.output] green``
+   * - ``'<archive>': the sidecar file '<name>' is a symbolic link; the
+       reader reads sidecars only as regular files next to the index (copy
+       the file in place of the link, or re-run FLEX).``
+     - サイドカーがシンボリックリンクに置き換えられています（同じディレクトリを指す
+       リンクでも同じです）。ファイルそのものをコピーしてください。
+     - ``[file.output] longitudinal_bond``
+   * - ``'<archive>': the <what> '<name>' resolves to '<real>', outside the
+       archive directory '<dir>'; keep the index, its sidecars and the
+       companion green file in that directory (the green file may be below
+       it), or re-run FLEX.``
+     - サイドカー（\ ``<what>`` = ``sidecar file``\ ）か green ファイル
+       （\ ``companion green file``\ ）が、シンボリックリンクを通してアーカイブの
+       ディレクトリの外に解決されます。ファイルをそのディレクトリにコピーしてください。
      - ``[file.output] green``\ 、\ ``longitudinal_bond``
    * - ``'<archive>' (written by <producer>): fp_green mismatch: the Green
        function this run loaded has digest ..., the archive records ...;
        the Green function and the susceptibility do not come from the same
        run. ...``
-     - 対となる\ ``green.npz``\ がアーカイブの Green 関数ではありません。置き換えられたか、
-       green ファイルの確定とインデックスの確定の間で書き出しが失敗し、古いインデックスが
-       残りました（\ :ref:`flex_so_bond_archive`\ の「書き出しが失敗したとき」）。FLEX を
-       実行し直してください。
+     - 対となる green ファイルがアーカイブの Green 関数ではありません。置き換えられた、
+       green ファイルの確定とインデックスの確定の間で書き出しが失敗して古いインデックスが
+       残った（\ :ref:`flex_so_bond_archive`\ の「書き出しが失敗したとき」）、
+       ``longitudinal_bond_output_full = false``\ か\ ``IterationMax = 0``\ の後の計算が
+       green ファイルを上書きして古いインデックスが残った（WARNING ``spin-orbital bond
+       archive '<path>': this run wrote the green file '<green>' but no bond archive
+       ...``\ ）、またはインデックスが再実行と同じディレクトリのコピーである（そこでの
+       コピーはバックアップになりません。\ :ref:`flex_so_bond_archive`\ の「移動と
+       再実行」）のいずれかです。FLEX を実行し直してください。
      - ``[file.output] green``\ 、\ ``longitudinal_bond``
    * - ``'<archive>' is malformed or truncated: sidecar member <block> has
        the wrong size (...)``\ 、\ ``... sidecar member <block> file '<name>' is
@@ -2891,7 +2926,8 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
    * - ``... member block_layout is missing ...``
      - この版より前に書き出された、ボンドチャネル付きスピン軌道 FLEX の出力です
        （\ ``block_layout``\ がない）。この版で作り直してください。
-     - FLEX の計算の\ ``[file.output]``\ のアーカイブ
+     - FLEX の計算の\ ``[file.output] chi0q``\ 、\ ``chiq``\ 、\ ``green``\ 、
+       ``sigma``\ 、\ ``longitudinal_bond``
    * - ``<head>: longitudinal_bond_output_full = true needs [file.output]
        green ...``\ （\ ``<head>`` = ``[mode] enable_spin_orbital = true with
        [mode.param] longitudinal_bond_channels = true (FLEX)``\ ）
@@ -2913,7 +2949,7 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
        archive_... ... longitudinal_bond_output_full = true adds the archive
        phases (archive_bubble, archive_dressing, archive_write); setting it
        to false removes them. ...``
-     - メモリの受け入れ判定がボンドアーカイブのフェーズを拒否しました。上限を上げる、
+     - 計算前のメモリ検査がボンドアーカイブのフェーズを拒否しました。上限を上げる、
        ``Nmat``\ か k 格子を減らす、または\ ``longitudinal_bond_output_full = false``\ に
        してください。
      - ``[mode.param] longitudinal_bond_memory_cap_gb``\ 、

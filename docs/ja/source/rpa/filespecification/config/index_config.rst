@@ -710,8 +710,9 @@ TOML形式
   スピン軌道ボンドアーカイブ（スキーマ 4）を書き出します。追加の感受率パス1回で
   求めた最終 Green 関数の\ :math:`\chi_B`\ 、ボンドバーテックス、それらの来歴を持ち、
   ``green.npz``\ を対となるファイルとします（\ ``[file.output] green``\ が必要）。
-  ``IterationMax = 0``\ ではアーカイブは書き出されません。
-  :ref:`flex_so_bond_archive`\ を参照してください。
+  ``IterationMax = 0``\ ではアーカイブは書き出されません。この版の\ ``hwave_sc``\ は
+  このアーカイブを読みません（\ ``hwave.solver.so_bond_archive.load_so_bond_archive``\ で
+  読みます）。\ :ref:`flex_so_bond_archive`\ を参照してください。
 
 - ``longitudinal_bond_output_layout``
 
@@ -737,7 +738,9 @@ TOML形式
   ホストの上限で、\ ``longitudinal_bond_memory_cap_gb``\ 、未指定なら利用可能なホスト
   メモリの 0.8 倍。上限なしでは 1 GiB）を超えなければ
   ``"npz"``\ 、超えれば\ ``"sidecar"``\ です（上限を超えるときの明示的な\ ``"npz"``\ は
-  拒否されます）。\ :ref:`flex_so_bond_archive`\ を参照してください。
+  拒否されます）。\ ``longitudinal_bond_memory_cap_gb``\ が未指定だと、この選択はホストで
+  利用可能なメモリによります。ホストによらないファイルにするには、このキーを明示して
+  ください。\ :ref:`flex_so_bond_archive`\ を参照してください。
 
 - ``longitudinal_bond_freq_batch``
 
@@ -1233,7 +1236,7 @@ TOML形式
 
   **形式 :** str型 (デフォルトは\ ``longitudinal_bond.npz``\ 。FLEXモードのみ)
 
-  **説明 :** ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで\ ``longitudinal_bond_channels = true``\ かつ\ ``longitudinal_bond_output_full = true``\ の場合にのみ書き出されます（:ref:`flex_bond_hf`\ を参照）。\ ``.npz``\ 拡張子のない名前には他の\ ``.npz``\ 出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。\ ``enable_spin_orbital = true``\ ではスピン軌道ボンドアーカイブ（\ :ref:`flex_so_bond_archive`\ ）の名前で、\ ``green``\ ファイルは同じディレクトリかその下に置く必要があり、\ ``longitudinal_bond_output_full = true``\ がなければこのキーは INFO 付きで無視されます。
+  **説明 :** ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで\ ``longitudinal_bond_channels = true``\ かつ\ ``longitudinal_bond_output_full = true``\ の場合にのみ書き出されます（:ref:`flex_bond_hf`\ を参照）。\ ``.npz``\ 拡張子のない名前には他の\ ``.npz``\ 出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。\ ``enable_spin_orbital = true``\ ではスピン軌道ボンドアーカイブ（\ :ref:`flex_so_bond_archive`\ ）の名前です。このとき\ ``longitudinal_bond_output_full = true``\ では\ ``[file.output] green``\ が必要で（アーカイブはそのファイルを対となるファイルとして名指しします）、\ ``green``\ ファイルは同じディレクトリかその下に置く必要があり、\ ``longitudinal_bond_output_full = true``\ がなければこのキーは INFO 付きで無視されます。
 
 - ``eliashberg_bond_singlet``\ 、\ ``eliashberg_bond_triplet``\ 、
   ``eigenvalue_bond_singlet``\ 、\ ``eigenvalue_bond_triplet``\ 、
