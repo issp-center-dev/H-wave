@@ -4,7 +4,8 @@ Format version 1: one ``"{key} = {value}\\n"`` line per key, in the order of
 :data:`KEYS`. ``[file.output] scf_status`` names the file (default
 ``"scf_status.dat"``); ``""`` disables it. With ``IterationMax = 0`` the
 file is the only result written (a configured ``print_check`` file exists
-and is empty), and one WARNING says so.
+and is empty), and one WARNING says so. The key is matched exactly; a
+value that is not a string is refused before the SCF starts.
 """
 import copy
 import logging
@@ -79,7 +80,12 @@ def check_invariants(test, table):
     test.assertIn(table["converged"], ("true", "false"))
     test.assertTrue(0 <= iterations <= iteration_max)
     if iterations > 0:
-        test.assertTrue(math.isfinite(residual) and residual >= 0)
+        if table["residual"] == "nan":
+            test.assertEqual(table["note"],
+                             "residual not finite after step {}".format(iterations))
+            test.assertEqual(table["converged"], "false")
+        else:
+            test.assertTrue(math.isfinite(residual) and residual >= 0)
     if table["converged"] == "true":
         test.assertGreater(iterations, 0)
         test.assertLess(residual, eps)
@@ -328,6 +334,107 @@ class TestFileFormat(_Base):
                 self._run(inp)
                 self.assertFalse(os.path.exists(os.path.join(out, "scf_status.dat")))
                 self.assertTrue(os.path.exists(os.path.join(out, "energy.dat")))
+
+
+class TestEdgeCases(_Base):
+    """A non-finite residual, a negative ``IterationMax``, a misspelled or
+    non-string ``scf_status`` and the warnings of a zero-step run."""
+
+    def _inject(self, cls, value, from_step):
+        """Make ``cls._calc_phys`` report ``value`` as the residual from the
+        ``from_step``-th call (1-based) on; returns the restore callable."""
+        orig = cls._calc_phys
+        calls = []
+
+        def patched(this, *args, **kw):
+            result = orig(this, *args, **kw)
+            calls.append(1)
+            if len(calls) >= from_step:
+                this.physics["Rest"] = value
+            return result
+
+        cls._calc_phys = patched
+        return lambda: setattr(cls, "_calc_phys", orig)
+
+    def test_non_finite_residual(self):
+        from hwave.solver import uhfk, uhfr
+        for solver, cls, value in (("UHFk", uhfk.UHFk, float("nan")),
+                                   ("UHFr", uhfr.UHFr, float("nan")),
+                                   ("UHFk", uhfk.UHFk, float("inf"))):
+            with self.subTest(solver=solver, value=value):
+                out = self._out(solver + repr(value))
+                restore = self._inject(cls, value, from_step=3)
+                try:
+                    self._run(_input(solver, out, iteration_max=5, random_start=True))
+                finally:
+                    restore()
+                t, _ = self._status(out)
+                self.assertEqual(t["iterations"], "5")
+                self.assertEqual(t["residual"], "nan")
+                self.assertEqual(t["converged"], "false")
+                self.assertEqual(t["note"], "residual not finite after step 5")
+                # the other results are written as after any capped run
+                self.assertTrue(os.path.exists(os.path.join(out, "energy.dat")))
+
+    def test_negative_iteration_max(self):
+        """Reachable only with relaxed parameter checks."""
+        for solver in ("UHFk", "UHFr"):
+            with self.subTest(solver=solver):
+                out = self._out(solver)
+                inp = _input(solver, out, iteration_max=-3)
+                inp["mode"]["param"]["trustme_interaction_range"] = True
+                with self.assertLogs("qlms", level="WARNING") as logs:
+                    self._run(inp)
+                msgs = [r.getMessage() for r in logs.records
+                        if "no SCF step was performed" in r.getMessage()]
+                self.assertEqual(len(msgs), 1, logs.output)
+                self.assertIn("(IterationMax = -3)", msgs[0])
+                self.assertEqual(sorted(os.listdir(out)), ["scf_status.dat"])
+                t, _ = self._status(out)
+                self.assertEqual(t["iteration_max"], "0")
+                self.assertEqual(t["iterations"], "0")
+                self.assertEqual(t["residual"], "nan")
+                self.assertEqual(t["note"], "IterationMax -3 treated as 0")
+
+    def test_key_matched_exactly(self):
+        out = self._out("k")
+        inp = _input("UHFk", out)
+        inp["file"]["output"]["SCF_Status"] = "other.dat"
+        self._run(inp)
+        self.assertFalse(os.path.exists(os.path.join(out, "other.dat")))
+        self.assertEqual(self._status(out)[0]["converged"], "true")
+
+    def test_non_string_value_refused_before_solve(self):
+        from hwave.solver.base import scf_status_file_name
+        for solver in ("UHFk", "UHFr"):
+            for value in (False, 0, None):
+                with self.subTest(solver=solver, value=value):
+                    out = self._out(solver + repr(value))
+                    inp = _input(solver, out, print_check="check.dat")
+                    inp["file"]["output"]["scf_status"] = value
+                    with self.assertRaisesRegex(ValueError, "scf_status"):
+                        self._run(inp)
+                    # solve creates the print_check file first: it never ran
+                    self.assertEqual(os.listdir(out), [])
+        with self.assertRaises(ValueError):
+            scf_status_file_name({"scf_status": 1})
+        self.assertEqual(scf_status_file_name({}), "scf_status.dat")
+        self.assertEqual(scf_status_file_name({"scf_status": ""}), "")
+
+    def test_zero_steps_single_warning(self):
+        """After zero steps the one zero-step WARNING is the only warning
+        (UHFr no longer adds "calculation is failed: rest=1.0")."""
+        for solver in ("UHFk", "UHFr"):
+            with self.subTest(solver=solver):
+                out = self._out(solver)
+                inp = _input(solver, out, iteration_max=0)
+                # the committed UHFr case starts from a file and does not
+                # read RndSeed, which qlms.run reports as an unused key
+                del inp["mode"]["param"]["RndSeed"]
+                with self.assertLogs("qlms", level="WARNING") as logs:
+                    self._run(inp)
+                self.assertEqual(len(logs.records), 1, logs.output)
+                self.assertIn(_ZERO_WARNING, logs.records[0].getMessage())
 
 
 class TestInvariants(_Base):

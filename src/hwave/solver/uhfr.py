@@ -618,7 +618,8 @@ class UHFr(solver_base):
         if self.scf_converged:
             logger.info("UHFr calculation is succeeded: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
             logger.info("Total Energy = {}.".format(self.physics["Ene"]["Total"]))
-        else:
+        elif self.scf_iterations > 0:
+            # (after zero steps save_results logs the one warning there is)
             logger.warning("UHFr calculation is failed: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
 
         if print_check is not None:

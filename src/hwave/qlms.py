@@ -221,6 +221,10 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         # output-path validation before any work (a collision between two
         # artifacts is refused here, at solve entry and again before writing)
         solver.validate_output_paths(info_outputfile, path_to_output)
+    if mode in ("UHFr", "UHFk"):
+        # a bad [file.output] scf_status is refused before any work
+        from hwave.solver.base import scf_status_file_name
+        scf_status_file_name(info_outputfile)
     logger.info("Start UHF calculation")
     solver.solve(green_info, path_to_output)
     logger.info("Save calculation results.")

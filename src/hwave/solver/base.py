@@ -4,6 +4,7 @@ This module provides the base solver class that implements common functionality
 for Hartree-Fock calculations, including parameter handling and validation.
 
 """
+import math
 import os
 import sys
 from collections.abc import ItemsView, ValuesView
@@ -71,6 +72,19 @@ class _UntrackedValues(ValuesView):
     def __iter__(self):
         for _, value in self._mapping._store.values():
             yield value
+
+
+def scf_status_file_name(info_outputfile):
+    """The ``[file.output] scf_status`` file name of the UHF solvers:
+    ``"scf_status.dat"`` when the key is absent, ``""`` when disabled.
+    The key is matched exactly, as the other ``[file.output]`` keys are.
+    Raises ValueError when the value is not a string."""
+    value = info_outputfile.get("scf_status", "scf_status.dat")
+    if not isinstance(value, str):
+        raise ValueError(
+            "[file.output] scf_status must be a file name (a string), or \"\" "
+            "to disable the file; got {!r}".format(value))
+    return value
 
 
 class solver_base():
@@ -430,7 +444,8 @@ class solver_base():
 
     def _record_scf_step(self, i_step, residual, eps):
         """Record a completed SCF step ``i_step`` (0-based) with residual
-        ``residual``; returns True when it has converged (``residual < eps``)."""
+        ``residual``; returns True when it has converged (``residual < eps``).
+        A non-finite residual (NaN or infinite) never converges."""
         self.scf_iterations = i_step + 1
         self.scf_residual = float(residual)
         if self.scf_residual < eps:
@@ -443,27 +458,50 @@ class solver_base():
 
         The file name is ``[file.output] scf_status`` (default
         ``"scf_status.dat"``; ``""`` disables the file). Each line is
-        ``"{key} = {value}\\n"``. When no SCF step was performed, one
-        WARNING is logged and False is returned: there is no result to
-        write besides the status itself.
+        ``"{key} = {value}\\n"``, in the order written below. Invariants:
+
+        * ``eps`` is finite and > 0;
+        * ``0 <= iterations <= iteration_max``;
+        * ``iterations > 0`` implies ``residual`` finite and >= 0, OR
+          ``residual = nan`` with the note ``residual not finite after
+          step <iterations>`` (the last completed step produced a NaN or
+          infinite residual; ``converged`` is then ``false``);
+        * ``converged = true`` implies ``iterations > 0`` and
+          ``residual < eps``;
+        * ``iterations = 0`` implies ``converged = false`` and
+          ``residual = nan``.
+
+        A negative ``IterationMax`` (only reachable with relaxed parameter
+        checks) runs no step; it is written as ``iteration_max = 0`` with
+        the note ``IterationMax <value> treated as 0``.
+
+        When no SCF step was performed, one WARNING is logged and False is
+        returned: there is no result to write besides the status itself.
         """
-        file_name = "scf_status.dat"
-        for key, value in info_outputfile.items():
-            if key.lower() == "scf_status":
-                file_name = value
-                break
+        file_name = scf_status_file_name(info_outputfile)
         iterations = int(self.scf_iterations)
+        iteration_max = int(self.param_mod["IterationMax"])
+        residual = float(self.scf_residual)
+        note = ""
+        if iteration_max < 0:
+            note = "IterationMax {} treated as 0".format(iteration_max)
+        elif iterations == 0:
+            note = "no SCF step performed"
+        elif not math.isfinite(residual):
+            residual = float("nan")
+            note = "residual not finite after step {}".format(iterations)
+        converged = bool(self.scf_converged) and math.isfinite(residual)
         if file_name != "":
             rows = (
                 ("format_version", "1"),
                 ("solver", solver_name),
-                ("converged", "true" if self.scf_converged else "false"),
-                ("residual", repr(float(self.scf_residual))),
+                ("converged", "true" if converged else "false"),
+                ("residual", repr(residual)),
                 ("eps", repr(float(self.param_mod["eps"]))),
                 ("iterations", str(iterations)),
-                ("iteration_max", str(int(self.param_mod["IterationMax"]))),
+                ("iteration_max", str(max(iteration_max, 0))),
                 ("residual_definition", residual_definition),
-                ("note", "no SCF step performed" if iterations == 0 else ""),
+                ("note", note),
             )
             path = os.path.join(info_outputfile["path_to_output"], file_name)
             with open(path, "w") as fw:
@@ -471,12 +509,10 @@ class solver_base():
             logger.info("save_results: save convergence status in file {}".format(path))
         if iterations == 0:
             if file_name != "":
-                logger.warning(
-                    "no SCF step was performed (IterationMax = 0); no result file "
-                    "other than {} is written".format(file_name))
+                rest = "no result file other than {} is written".format(file_name)
             else:
-                logger.warning(
-                    "no SCF step was performed (IterationMax = 0); no result file "
-                    "is written")
+                rest = "no result file is written"
+            logger.warning("no SCF step was performed (IterationMax = {}); {}"
+                           .format(iteration_max, rest))
             return False
         return True
