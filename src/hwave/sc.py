@@ -5805,6 +5805,23 @@ def _validate_bond_green_nmat(nfreq, green_path, label="bond_green"):
     return nfreq
 
 
+def _require_npz(loaded, path, what):
+    """Return ``loaded`` (the result of ``np.load(path)``) when it is an npz
+    archive; a single ``.npy`` array under that name is refused with a
+    ValueError naming ``what`` and ``path``."""
+    if not hasattr(loaded, "files"):
+        raise ValueError(
+            "{} '{}' is not an npz archive (it holds a single .npy array); "
+            "point the configuration at the .npz file the FLEX run wrote.".format(
+                what, path))
+    return loaded
+
+
+#: the labels of the spin-orbital FLEX companions in the npz refusal
+_SO_FLEX_LABEL = {"green": "FLEX Green archive",
+                  "sigma": "FLEX self-energy archive"}
+
+
 def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
                      interactions=None):
     """Load the FLEX dressed Green's function, or ``None`` if absent.
@@ -5818,7 +5835,7 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
     if not os.path.exists(green_path):
         return (None, None) if allow_ir else None
     logger.info("Loading FLEX dressed Green from: {}".format(green_path))
-    data_g = np.load(green_path)
+    data_g = _require_npz(np.load(green_path), green_path, "green file")
     if interactions is not None:
         _grid_cs = input_dict.get("mode", {}).get("param", {}).get("CellShape")
         check_placement_stamp(
@@ -9999,7 +10016,8 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             sigma_path = _so_flex_sigma_path(eli, flex_dir)
             for path, kind in ((green_path, "green"), (sigma_path, "sigma")):
                 if os.path.exists(path):
-                    with np.load(path) as other:
+                    with _require_npz(np.load(path), path,
+                                      _SO_FLEX_LABEL[kind]) as other:
                         _so_check_archive(other, path, so_run, "exact", kind,
                                           _SO_FLEX_PRODUCER)
         chiq = data["chiq"]
@@ -10019,7 +10037,8 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             "FLEX Green archive '{}' not found. {}; set [eliashberg] flex_green "
             "to the file the FLEX run wrote as [file.output] green.".format(
                 green_path, hint))
-    with np.load(green_path) as gdata:
+    with _require_npz(np.load(green_path), green_path,
+                      _SO_FLEX_LABEL["green"]) as gdata:
         gtag = (str(gdata["index_convention"]) if "index_convention" in gdata
                 else None)
     if gtag != spin_orbital.INDEX_CONVENTION:
