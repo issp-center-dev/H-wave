@@ -592,6 +592,9 @@ class UHFr(solver_base):
         self._makeham_mat()
         self._detect_blocks()
         import time
+        # the convergence record (scf_status.dat), defined before the loop
+        # so that a run of zero steps has one too
+        self._reset_scf_status()
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
             self._diag()
@@ -609,10 +612,10 @@ class UHFr(solver_base):
                                                                  self.physics["Ene"]["Total"],
                                                                  self.physics["NCond"],
                                                                  self.physics["Sz"]))
-            if self.physics["Rest"] < param_mod["eps"]:
+            if self._record_scf_step(i_step, self.physics["Rest"], param_mod["eps"]):
                 break
 
-        if self.physics["Rest"] < param_mod["eps"]:
+        if self.scf_converged:
             logger.info("UHFr calculation is succeeded: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
             logger.info("Total Energy = {}.".format(self.physics["Ene"]["Total"]))
         else:
@@ -1248,6 +1251,12 @@ class UHFr(solver_base):
             Writes results to files specified in info_outputfile
         """
         path_to_output = info_outputfile["path_to_output"]
+
+        # the convergence status first; after zero SCF steps it is the only
+        # result there is
+        if not self._save_scf_status(info_outputfile, "UHFr",
+                                     "two_frobenius_over_size:uhfr_full"):
+            return
 
         if "energy" in info_outputfile.keys():
             output_str  = "Energy_total = {}\n".format(self.physics["Ene"]["Total"].real)

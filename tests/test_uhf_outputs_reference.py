@@ -38,8 +38,9 @@ import unittest
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-#: Files this tree may write that the reference revision does not.
-ALLOWED_NEW_FILES = set()
+#: Files this tree may write that the reference revision does not:
+#: ``scf_status.dat``, the convergence status, written by default.
+ALLOWED_NEW_FILES = {"scf_status.dat"}
 
 #: ``{file name: keys}``: lines this tree appends, one per key, in order,
 #: after the reference revision's last line of that file.

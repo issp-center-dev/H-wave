@@ -828,7 +828,9 @@ class UHFk(solver_base):
 
         self.Green = self._initial_green(green_info)
 
-        is_converged = False
+        # the convergence record (scf_status.dat), defined before the loop
+        # so that a run of zero steps has one too
+        self._reset_scf_status()
 
         for i_step in range(self.param_mod["IterationMax"]):
             self._make_ham()
@@ -852,11 +854,10 @@ class UHFk(solver_base):
                                   self.physics["NCond"],
                                   self.physics["Sz"]))
 
-            if self.physics["Rest"] < self.param_mod["eps"]:
-                is_converged = True
+            if self._record_scf_step(i_step, self.physics["Rest"], self.param_mod["eps"]):
                 break
 
-        if is_converged:
+        if self.scf_converged:
             logger.info("UHFk calculation succeeded: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
             logger.info("Total Energy = {}.".format(self.physics["Ene"]["Total"]))
@@ -1784,6 +1785,12 @@ class UHFk(solver_base):
         - RPA data if requested
         """
         path_to_output = info_outputfile["path_to_output"]
+
+        # the convergence status first; after zero SCF steps it is the only
+        # result there is
+        if not self._save_scf_status(info_outputfile, "UHFk",
+                                     "two_frobenius_over_size:uhfk_all_r"):
+            return
 
         if "energy" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["energy"])
