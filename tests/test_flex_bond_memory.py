@@ -120,6 +120,9 @@ def _preimport():
     from hwave.solver import (flex_bond, flex_hf, flex_mixing, hartree_fock, bubble,  # noqa: F401
                               bond_channels, offsite, matsubara, backend, vertex_table)
     from hwave.solver import _sc_matrices_myo  # noqa: F401
+    # the spin-orbital bond FLEX modules (flex.py imports flex_so_bond
+    # inside the solve): compiling them under -B is not solve memory
+    from hwave.solver import flex_so_bond, so_bond  # noqa: F401
     import hwave.sc  # noqa: F401
 
 
