@@ -1054,7 +1054,8 @@ def _check_green(path, label, data, green, green_layout, green_fp):
     return file_green
 
 
-def check_green_digest(stored: str, path: str, *, label: str, green_fp: str) -> str:
+def check_green_digest(stored: str, path: str, *, label: str, green_fp: str,
+                       green_only: bool = False) -> str:
     """The green step of :func:`check_so_compatibility`, run on its own: the
     second stage of a ``check_green = False`` call, once the caller has read
     the Green function and formed its digest ``green_fp``
@@ -1062,12 +1063,21 @@ def check_green_digest(stored: str, path: str, *, label: str, green_fp: str) -> 
     (``SOArchiveInfo.producer_fp_green`` of the first stage), ``path`` and
     ``label`` name the file and its producer in the message. Returns
     ``stored``; a different digest is refused with the text of the green
-    step (:class:`SOArchiveError`, ``check = "green"``)."""
+    step (:class:`SOArchiveError`, ``check = "green"``). ``green_only =
+    True`` is for a Green function read from the archive itself (no
+    susceptibility is consumed with it): the refusal then says that the
+    archive's ``green`` member no longer is the one its producer wrote."""
     if not isinstance(green_fp, str):
         raise TypeError("check_green_digest: green_fp must be the digest string, got {!r}"
                         .format(green_fp))
     if green_fp != stored:
         at = " (both at fingerprint_version {})".format(FINGERPRINT_VERSION)
+        if green_only:
+            raise SOArchiveError(
+                "'{}' (written by {}): fp_green mismatch: the Green function read from it "
+                "has digest {}..., the file records {}...{}; its green member is not the "
+                "one the run that wrote it recorded. Regenerate it with {}.".format(
+                    path, label, green_fp[:12], stored[:12], at, label), check="green")
         raise SOArchiveError(
             "'{}' (written by {}): fp_green mismatch: the Green function this "
             "run loaded has digest {}..., the archive records {}...{}; the Green "

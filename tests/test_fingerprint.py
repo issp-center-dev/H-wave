@@ -1491,9 +1491,26 @@ class TestDeferredGreen(unittest.TestCase):
             self.assertIs(p.default, True)
             self.assertEqual(p.kind, inspect.Parameter.KEYWORD_ONLY)
         params = inspect.signature(fp.check_green_digest).parameters
-        self.assertEqual(list(params), ["stored", "path", "label", "green_fp"])
-        self.assertEqual([params[k].kind for k in ("label", "green_fp")],
-                         [inspect.Parameter.KEYWORD_ONLY] * 2)
+        self.assertEqual(list(params), ["stored", "path", "label", "green_fp", "green_only"])
+        self.assertEqual([params[k].kind for k in ("label", "green_fp", "green_only")],
+                         [inspect.Parameter.KEYWORD_ONLY] * 3)
+        self.assertIs(params["green_only"].default, False)
+
+    def test_green_only_text(self):
+        """A Green function read from the archive itself: the refusal names
+        the archive's green member, not a susceptibility."""
+        with self.assertRaises(fp.SOArchiveError) as cm:
+            fp.check_green_digest(GREEN_FP, "green.npz", label="test producer",
+                                  green_fp="b" * 64, green_only=True)
+        self.assertEqual(
+            str(cm.exception),
+            "'green.npz' (written by test producer): fp_green mismatch: the Green function "
+            "read from it has digest bbbbbbbbbbbb..., the file records aaaaaaaaaaaa... (both "
+            "at fingerprint_version 2); its green member is not the one the run that wrote "
+            "it recorded. Regenerate it with test producer.")
+        self.assertEqual(cm.exception.check, "green")
+        self.assertEqual(fp.check_green_digest(GREEN_FP, "green.npz", label="test producer",
+                                               green_fp=GREEN_FP, green_only=True), GREEN_FP)
 
 
 class TestStepNames(unittest.TestCase):
