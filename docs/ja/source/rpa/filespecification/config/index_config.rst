@@ -733,7 +733,9 @@ TOML形式
   が false のまま\ ``"sidecar"``\ を指定した場合は警告付きで無視されます。
   ``enable_spin_orbital = true``\ では、サイドカーは\ ``<block>.<archive_nonce>.npy``\
   （\ ``chi_w``\ のブロックごとに1つ）で、未指定ならアーカイブが選びます。\ ``chi_w``\ の
-  メンバーが小配列の上限\ :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`\ を超えなければ
+  メンバーが小配列の上限\ :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`\ （cap は決まった
+  ホストの上限で、\ ``longitudinal_bond_memory_cap_gb``\ 、未指定なら利用可能なホスト
+  メモリの 0.8 倍。上限なしでは 1 GiB）を超えなければ
   ``"npz"``\ 、超えれば\ ``"sidecar"``\ です（上限を超えるときの明示的な\ ``"npz"``\ は
   拒否されます）。\ :ref:`flex_so_bond_archive`\ を参照してください。
 

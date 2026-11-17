@@ -1417,13 +1417,15 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
 - ``longitudinal_bond_output_layout``\ （大文字小文字を区別しません）:
 
   - 未指定: 単一ファイルの\ ``"npz"``\ 。ただし最大の\ ``chi_w``\ メンバーが小配列の上限
-    :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`\ （cap は
-    ``longitudinal_bond_memory_cap_gb``\ ）を超えるときはサイドカーのレイアウトが選ばれ、
-    INFO ``spin-orbital bond archive: sidecar layout (the member <member> of <size>
-    is above the small-array bound <bound>); the susceptibility is written as .npy
-    files next to the index.``\ が出ます。受け入れたピークメモリは最大のメンバーの
-    数倍なので、上限が cap / 8 となる 8 GiB 未満の cap ではまず起こりません。大きな
-    cap のもとで 1 GiB を超えるメンバーの場合です。
+    :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`\ を超えるときはサイドカーのレイアウトが
+    選ばれ、INFO ``spin-orbital bond archive: sidecar layout (the member <member> of
+    <size> is above the small-array bound <bound>); the susceptibility is written as
+    .npy files next to the index.``\ が出ます。cap は受け入れ判定で決まったホストの
+    メモリ上限です（\ ``longitudinal_bond_memory_cap_gb``\ 。未指定なら利用可能な
+    ホストメモリの 0.8 倍。\ ``0``\ のとき、またはメモリの上限が決められないときは
+    上限なしで、小配列の上限は 1 GiB）。ボンドチャネルが複数あると、受け入れたピークは
+    最大のメンバーの数倍にすぎないので、控えめな cap でも cap / 8 を超えるメンバーは
+    サイドカーとして書き出されます。
   - ``"sidecar"``\ : 常にサイドカーのレイアウト。
   - ``"npz"``\ : 常に単一ファイル。上限を超えるメンバーは計算の前に拒否されます:
     ``<head>: longitudinal_bond_output_layout = "npz" cannot hold the bond archive
@@ -1485,7 +1487,9 @@ to skip that pass.``\ で終わります。\ ``longitudinal_bond_output_full = f
      - ``4``\ （整数）、\ ``True``
    * - ``index_convention``\ 、\ ``index_order``\ 、\ ``freq_axis``
      - ``"spin_block"``\ 、\ ``"bond_major_pair_code_slot"``\ 、
-       ``"uniform_boson_centered"``\ （一様格子のボソン軸。\ ``chiq.npz``\ と同じ順序）
+       ``"uniform_boson_centered"``\ （一様なボソン格子全体。添字
+       :math:`l = 0, \dots, n_{\rm mat} - 1`\ が\ :math:`i\nu = i(2l - n_{\rm mat})\pi T`\ で、
+       :math:`l = n_{\rm mat}/2`\ が\ :math:`\nu = 0`\ ）
    * - ``block_layout``
      - ``"dense"``\ または\ ``"sz_packed"``\ 。計算のレイアウト
        （上の\ :ref:`レイアウト <flex_so_bond_tutorial>`\ ）。パックのアーカイブは
@@ -1584,7 +1588,10 @@ one): <names>; kept by: <files>``\ 。同じステムにある非スピン軌道
 示され、削除されません。異常終了した計算が残したファイル（どのインデックスも名指し
 しないサイドカー）も削除されません。削除の失敗は、フルパスを示す WARNING 1つです
 （\ ``... could not remove the old sidecar file '<path>' (<error>); remove it by hand
-if no other archive uses it.``\ ）。
+if no other archive uses it.``\ ）。削除の段階全体が失敗したときも新しいアーカイブは
+完全で、WARNING 1つがそれを示します: ``spin-orbital bond archive '<path>': the removal
+of the replaced archive's sidecar files failed (<error>); the new archive is
+complete; remove stale sidecar files by hand if no other archive uses them.``
 
 **書き出しが失敗したとき** ``green.npz``\ とインデックスは、それぞれのディレクトリで
 まず一時的な名前に書き出され、名前の変更で確定されます。先に green ファイル、次に

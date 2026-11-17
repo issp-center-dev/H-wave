@@ -822,7 +822,9 @@ that has no effect under the current settings.
   a warning. With ``enable_spin_orbital = true`` the sidecars are
   ``<block>.<archive_nonce>.npy`` (one per ``chi_w`` block), and an unset
   key lets the archive choose: ``"npz"`` unless a ``chi_w`` member is above
-  the small-array bound :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`, then
+  the small-array bound :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)` (cap:
+  the resolved host cap, ``longitudinal_bond_memory_cap_gb`` or, unset, 0.8
+  times the available host memory; with no cap the bound is 1 GiB), then
   ``"sidecar"`` (an explicit ``"npz"`` above the bound is refused); see
   :ref:`flex_so_bond_archive`.
 

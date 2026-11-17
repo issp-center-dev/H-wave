@@ -1540,14 +1540,16 @@ next to the Green function it was built from.
 
   - unset: the single file ``"npz"``, unless the largest ``chi_w`` member
     is above the small-array bound :math:`\min(1\,\mathrm{GiB},
-    \mathrm{cap}/8)` (cap = ``longitudinal_bond_memory_cap_gb``); then the
-    sidecar layout is chosen, with the INFO line ``spin-orbital bond
-    archive: sidecar layout (the member <member> of <size> is above the
-    small-array bound <bound>); the susceptibility is written as .npy files
-    next to the index.``. The admitted peak memory is several times the
-    largest member, so below a cap of 8 GiB (where the bound is cap / 8)
-    this rarely happens; it is the case of members above 1 GiB under a
-    large cap;
+    \mathrm{cap}/8)`, where cap is the resolved host cap of the admission
+    (``longitudinal_bond_memory_cap_gb``; unset: 0.8 times the available
+    host memory; with ``0``, or when no memory limit can be determined,
+    there is no cap and the bound is 1 GiB); then the sidecar layout is
+    chosen, with the INFO line ``spin-orbital bond archive: sidecar layout
+    (the member <member> of <size> is above the small-array bound <bound>);
+    the susceptibility is written as .npy files next to the index.``. With
+    several bond channels the admitted peak is only a few times the largest
+    member, so members above cap / 8 are written as sidecars even under a
+    modest cap;
   - ``"sidecar"``: always the sidecar layout;
   - ``"npz"``: always the single file; a member above the bound is refused
     before the calculation: ``<head>: longitudinal_bond_output_layout =
@@ -1616,8 +1618,9 @@ archive).
      - ``4`` (integer), ``True``
    * - ``index_convention``, ``index_order``, ``freq_axis``
      - ``"spin_block"``, ``"bond_major_pair_code_slot"``,
-       ``"uniform_boson_centered"`` (the bosonic axis of the uniform
-       grid, in the order of ``chiq.npz``)
+       ``"uniform_boson_centered"`` (the full uniform bosonic grid: index
+       :math:`l = 0, \dots, n_{\rm mat} - 1` is :math:`i\nu = i(2l -
+       n_{\rm mat})\pi T`, so :math:`l = n_{\rm mat}/2` is :math:`\nu = 0`)
    * - ``block_layout``
      - ``"dense"`` or ``"sz_packed"``, the layout of the solve
        (:ref:`Layout <flex_so_bond_tutorial>` above); a packed archive
@@ -1726,7 +1729,11 @@ a non-spin-orbital bond archive at the same stem (``<stem>_chi_s_w.npy``,
 Files left behind by a crashed run (sidecars that no index names) are not
 removed either. A removal that fails is one WARNING naming the full path
 (``... could not remove the old sidecar file '<path>' (<error>); remove it
-by hand if no other archive uses it.``).
+by hand if no other archive uses it.``). When the removal step fails as a
+whole, the new archive is still complete and one WARNING says so:
+``spin-orbital bond archive '<path>': the removal of the replaced archive's
+sidecar files failed (<error>); the new archive is complete; remove stale
+sidecar files by hand if no other archive uses them.``
 
 **When writing fails.** ``green.npz`` and the index are each written to a
 temporary name in their directory first, and then committed by a rename:
