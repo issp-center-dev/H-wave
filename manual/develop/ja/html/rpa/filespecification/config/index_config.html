@@ -127,9 +127,10 @@ Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点に�
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>に対応しています。すべての型のオフサイトの行を
 受け付け（複素数の係数は<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>のみ）、その交換をボンドチャネルの上で厳密に
 扱います。CPU で動作し（<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>は WARNING 付きで無視、<code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span>
-<span class="pre">true</span></code>と<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;device&quot;</span></code>は拒否）、ボンドアーカイブは
-書き出さず（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>と
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code>は拒否）、プロセス内のペアリングは行わず
+<span class="pre">true</span></code>と<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;device&quot;</span></code>は拒否）、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>では最終 Green 関数のスピン軌道ボンド
+アーカイブ（スキーマ 4）を書き出し（このとき<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>が必要。
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を参照）、プロセス内のペアリングは行わず
 （<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>は<code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>のみ）、すべての振動数を検査します
 （<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code>は拒否）。<code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code>が
 レイアウトを選び、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>はスピン軌道での意味を
@@ -146,8 +147,11 @@ Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点に�
 （<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>の<code class="docutils literal notranslate"><span class="pre">chiq</span></code>・<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">green</span></code>を指定してください）。
 <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照。オンサイトの動的ソルバー（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
 <span class="pre">&quot;dynamic&quot;</span></code>）もこれを読みます（<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算の出力はまだ読めません（後の版で
-ボンドアーカイブが加わります）。動的なボンド分解の経路と
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算の出力は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が拒否します。
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はそのボンドアーカイブを後の版で読みます。この版では、ソルバー側の
+読み込み処理が Python 関数<code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive</span></code>で
+読み、スクリプトでは<code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>で中身を見ます（<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を
+参照）。動的なボンド分解の経路と
 <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は引き続き
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を拒否します。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は
 <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で実行できます。</p></li>
@@ -341,7 +345,8 @@ ring、FLEX の general（バーテックスと2次）、ボンド分解しな�
 <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>・
 スピンフリー系（または<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>では
 <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>のボンドチャネル付きスピン軌道 FLEX を選び、そこでは
-以下の GPU・アーカイブ・ペアリングのオプションは使えません）・一様松原格子・
+以下の GPU・ペアリングのオプションは使えず、アーカイブは
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>のスピン軌道ボンドアーカイブです）・一様松原格子・
 副格子なし・偶数の<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>が必要。<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>（<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>が前提）かつ<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合、
 ドレッシング・有効相互作用・自己エネルギーの転送が GPU（CuPy）上で
 実行されます。ボンド配列はホストメモリに置かれ、振動数バッチを1つずつ
@@ -696,7 +701,14 @@ GPU 経路が使われます。
 1つ、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>を使う場合は2つです）。
 アーカイブのサイズは書き出し前に
 ログに出力されます。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>でない
-場合は警告付きで無視されます。</p>
+場合は警告付きで無視されます。<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>では代わりに
+スピン軌道ボンドアーカイブ（スキーマ 4）を書き出します。追加の感受率パス1回で
+求めた最終 Green 関数の<span class="math notranslate nohighlight">\(\chi_B\)</span>、ボンドバーテックス、それらの来歴を持ち、
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を対となるファイルとします（<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>が必要）。
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>ではアーカイブは書き出されません。この版の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
+このアーカイブを読みません。ソルバー側の読み込み処理は
+<code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive</span></code>で読み、スクリプトでは
+<code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>で中身を見ます。<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を参照してください。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code></p>
 <p><strong>形式 :</strong> str型 (<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>（デフォルト）または<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>。
@@ -712,7 +724,15 @@ GPU 経路が使われます。
 <code class="docutils literal notranslate"><span class="pre">.npy</span></code>ファイルをメモリマップし、振動数バッチを1つずつ読み込む
 ため、大きなチャネルメンバー全体がメモリに常駐することはありません。
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>のときにのみ意味を持ちます
-（それ以外ではアーカイブは書き出されません）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>が false のまま<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>を指定した場合は警告付きで無視されます。</p>
+（それ以外ではアーカイブは書き出されません）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>が false のまま<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>を指定した場合は警告付きで無視されます。
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>では、サイドカーは<code class="docutils literal notranslate"><span class="pre">&lt;block&gt;.&lt;archive_nonce&gt;.npy</span></code>（<code class="docutils literal notranslate"><span class="pre">chi_w</span></code>のブロックごとに1つ）で、未指定なら自動で選ばれます。<code class="docutils literal notranslate"><span class="pre">chi_w</span></code>の
+メンバーが小配列の上限<span class="math notranslate nohighlight">\(\min(1\,\mathrm{GiB}, \mathrm{cap}/8)\)</span>（cap は計算前のメモリ検査で決まった
+ホストのメモリ上限で、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>、未指定なら利用可能なホスト
+メモリの 0.8 倍。上限なしでは 1 GiB）を超えなければ
+<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>、超えれば<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>です（上限を超えるときの明示的な<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>は
+拒否されます）。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>が未指定だと、この選択はホストで
+利用可能なメモリによります。ホストによらないファイルにするには、このキーを明示して
+ください。<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を参照してください。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code></p>
 <p><strong>形式 :</strong> int型 (デフォルトは自動選択。<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>では
@@ -1123,7 +1143,7 @@ IR 基底にフィットさせた際の、成分ごとの相対残差の拒否�
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p>
 <p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>。FLEXモードのみ)</p>
-<p><strong>説明 :</strong> ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>かつ<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合にのみ書き出されます（<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">.npz</span></code>拡張子のない名前には他の<code class="docutils literal notranslate"><span class="pre">.npz</span></code>出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。</p>
+<p><strong>説明 :</strong> ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>かつ<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合にのみ書き出されます（<a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">.npz</span></code>拡張子のない名前には他の<code class="docutils literal notranslate"><span class="pre">.npz</span></code>出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>ではスピン軌道ボンドアーカイブ（<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>）の名前です。このとき<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>では<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>が必要で（アーカイブはそのファイルを対となるファイルとして記録します）、<code class="docutils literal notranslate"><span class="pre">green</span></code>ファイルは同じディレクトリかその下に置く必要があり、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>がなければこのキーは INFO 付きで無視されます。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eliashberg_bond_singlet</span></code>、<code class="docutils literal notranslate"><span class="pre">eliashberg_bond_triplet</span></code>、
 <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_singlet</span></code>、<code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_triplet</span></code>、

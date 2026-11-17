@@ -1187,10 +1187,16 @@ condition number <span class="math notranslate nohighlight">\(\sigma_{\min}/\sig
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code> only (the default)</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code></p></td>
-<td><p>refused (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span></code> is accepted)</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">true</span></code> writes the spin-orbital bond archive (schema 4) of the final
+Green function; see <a class="reference internal" href="#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a></p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> (case-insensitive); unset lets the archive
+choose (the single file unless a member is above the small-array
+bound); see <a class="reference internal" href="#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_half_grid</span></code></p></td>
 <td><p>refused, as in every spin-orbital run</p></td>
 </tr>
 </tbody>
@@ -1199,10 +1205,6 @@ condition number <span class="math notranslate nohighlight">\(\sigma_{\min}/\sig
 <code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">with</span> <span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">(FLEX)</span></code>
 (written <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span></code> below):</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> and any
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code>: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">write</span> <span class="pre">the</span> <span class="pre">bond</span>
-<span class="pre">archive</span> <span class="pre">in</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">(the</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span>
-<span class="pre">version);</span> <span class="pre">remove</span> <span class="pre">...</span></code>;</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> other than <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">run</span>
 <span class="pre">the</span> <span class="pre">in-process</span> <span class="pre">pairing</span> <span class="pre">in</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">(it</span> <span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span> <span class="pre">version);</span>
 <span class="pre">remove</span> <span class="pre">longitudinal_bond_pairing.</span></code>;</p></li>
@@ -1232,7 +1234,7 @@ its message ends with <code class="docutils literal notranslate"><span class="pr
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> is ignored with a WARNING.</p>
 </section>
 <section id="layout">
-<h4>Layout<a class="headerlink" href="#layout" title="Link to this heading">¶</a></h4>
+<span id="flex-so-bond-layout"></span><h4>Layout<a class="headerlink" href="#layout" title="Link to this heading">¶</a></h4>
 <p>The bond objects (<span class="math notranslate nohighlight">\(\Gamma_B\)</span>, <span class="math notranslate nohighlight">\(\bar\chi_B\)</span>, <span class="math notranslate nohighlight">\(W\)</span>) are
 stored in one of the two layouts of the <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> bond path
 (<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>, <em>Layout</em>): <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code> when the input
@@ -1261,7 +1263,7 @@ Both layouts give the same results to round-off. When the input conserves
 by sector.</p>
 </section>
 <section id="memory">
-<h4>Memory<a class="headerlink" href="#memory" title="Link to this heading">¶</a></h4>
+<span id="flex-so-bond-memory"></span><h4>Memory<a class="headerlink" href="#memory" title="Link to this heading">¶</a></h4>
 <p>The run is admitted once, before the Green function and any bond array are
 built; an admitted run is not refused later for memory (the dressing
 guard can still stop it). The estimate is
@@ -1427,6 +1429,12 @@ shells (shell  |dr|  max|v|):
 <span class="pre">it</span> <span class="pre">so</span> <span class="pre">that</span> <span class="pre">the</span> <span class="pre">run</span> <span class="pre">chooses,</span> <span class="pre">lowers</span> <span class="pre">the</span> <span class="pre">dressing</span> <span class="pre">rows.</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span> <span class="pre">=</span> <span class="pre">1</span> <span class="pre">is</span> <span class="pre">set</span> <span class="pre">(the</span> <span class="pre">smallest</span> <span class="pre">batch).</span></code></p></li>
 </ul>
+<p>With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> the estimate has three more
+phases, <code class="docutils literal notranslate"><span class="pre">archive_bubble</span></code>, <code class="docutils literal notranslate"><span class="pre">archive_dressing</span></code> and <code class="docutils literal notranslate"><span class="pre">archive_write</span></code> (the
+bond archive, <a class="reference internal" href="#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>). When the refused phase is one of
+them, the sentence <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">adds</span> <span class="pre">the</span> <span class="pre">archive</span>
+<span class="pre">phases</span> <span class="pre">(archive_bubble,</span> <span class="pre">archive_dressing,</span> <span class="pre">archive_write);</span> <span class="pre">setting</span> <span class="pre">it</span> <span class="pre">to</span>
+<span class="pre">false</span> <span class="pre">removes</span> <span class="pre">them.</span></code> follows <code class="docutils literal notranslate"><span class="pre">&lt;how</span> <span class="pre">the</span> <span class="pre">batch</span> <span class="pre">was</span> <span class="pre">chosen&gt;</span></code>.</p>
 <p>The row table lists every row of the estimate. The per-shell table gives,
 for every off-site shell, its bond length and the largest coupling of its
 rows; when the outer shells carry only zero couplings it ends with the
@@ -1462,12 +1470,24 @@ conventions of the on-site spin-orbital outputs (<code class="docutils literal n
 <span class="pre">nd,</span> <span class="pre">nd)</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_convention</span> <span class="pre">=</span> <span class="pre">&quot;spin_orbital&quot;</span></code>); at <span class="math notranslate nohighlight">\(B = 1\)</span> they
 equal the on-site arrays. They are written only when requested in
 <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>, and not at all with <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> (no map ran).
-No <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code> member and no bond archive is written in this
-version; when chi0q or chiq is written the run says so at INFO level:</p>
-<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last map; the bond-resolved arrays are not written in this version.
+No <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_*</span></code> member is written into them. When chi0q or
+chiq is written the run says so at INFO level, without the bond
+archive:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last SCF iteration; the bond-resolved arrays are written only with longitudinal_bond_output_full = true.
+</pre></div>
+</div>
+<p>and with it (<a class="reference internal" href="#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B and chi_B of the last SCF iteration; the bond archive holds chi_B of the final Green function.
 </pre></div>
 </div>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">block_layout</span></code>: green, sigma, chi0q and chiq record the layout of the
+solve (<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>, a 0-d string); with
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> green and sigma record it too (chi0q and chiq are
+not written then). They carry no <code class="docutils literal notranslate"><span class="pre">sz_sector_*</span></code> member. Outputs of
+this path written before this version lack <code class="docutils literal notranslate"><span class="pre">block_layout</span></code> and are
+refused as malformed (<code class="docutils literal notranslate"><span class="pre">member</span> <span class="pre">block_layout</span> <span class="pre">is</span> <span class="pre">missing</span></code>) by the
+spin-orbital readers: regenerate them with this version.</p></li>
 <li><p>Provenance: every file carries <code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;flex_so_bond&quot;</span></code>,
 <code class="docutils literal notranslate"><span class="pre">fp_capability</span> <span class="pre">=</span> <span class="pre">&quot;so_bond&quot;</span></code> and the digest of the resolved bond
 topology (<code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code>). <code class="docutils literal notranslate"><span class="pre">payload_kind</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;last_map&quot;</span></code>
@@ -1480,16 +1500,20 @@ the same rule: chi0q/chiq record the state point of the last map (its
 </ul>
 <div class="admonition important">
 <p class="admonition-title">Important</p>
-<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> cannot read these outputs yet; a later version adds the bond
-archive. The spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses a <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>
-archive written by this path (<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">was</span> <span class="pre">written</span> <span class="pre">by</span> <span class="pre">producer_stage</span>
-<span class="pre">'flex_so_bond',</span> <span class="pre">which</span> <span class="pre">this</span> <span class="pre">version</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">read</span> <span class="pre">yet</span> <span class="pre">...</span></code>). For the
-pairing of an off-site model use the static bond path of
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read the outputs of this path in this version (a
+later version reads the bond archive). The spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
+with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> (static and dynamic) refuses the chi0q,
+chiq, green and sigma of this path, at every <span class="math notranslate nohighlight">\(B\)</span>, naming the
+file:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): '&lt;file&gt;' was written by the spin-orbital FLEX with bond channels ([mode.param] longitudinal_bond_channels = true): the chi0q, chiq and green of that run describe the bond-resolved run, which [eliashberg] chi0q_mode = "flex" cannot use. Re-run FLEX with longitudinal_bond_channels = false for this mode.
+</pre></div>
+</div>
+<p>For the pairing of an off-site model use the static bond path of
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>. It builds its own bare bond bubble from the
 band (Transfer and Extern) and does not read the <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of this
 path (<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> is refused in spin-orbital mode).</p>
 </div>
-<p>Not available in this version: the bond archive, the in-process pairing,
+<p>Not available in this version: the in-process pairing,
 the GPU, the half bosonic grid, and seeds (<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>, <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>,
 <code class="docutils literal notranslate"><span class="pre">green_init</span></code>), as in the on-site spin-orbital FLEX. The other conditions
 of <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span></code> apply (uniform Matsubara grid, no sublattice, even
@@ -1498,6 +1522,422 @@ of <code class="docutils literal notranslate"><span class="pre">flex_hartree_foc
 (<code class="docutils literal notranslate"><span class="pre">[continuation]</span> <span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">false</span></code>) with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>:
 every rung starts from the bare Hartree-Fock state. <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">true</span></code>
 and <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> are refused, as for every spin-orbital run.</p>
+</section>
+<section id="the-bond-archive">
+<span id="flex-so-bond-archive"></span><h4>The bond archive<a class="headerlink" href="#the-bond-archive" title="Link to this heading">¶</a></h4>
+<p>With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> the run writes the
+spin-orbital bond archive (<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">4</span></code>): the
+bond-resolved dressed susceptibility <span class="math notranslate nohighlight">\(\chi_B\)</span> of the <strong>final</strong> Green
+function, the bare bond vertex <span class="math notranslate nohighlight">\(\Gamma_B\)</span> and the provenance of both,
+next to the Green function it was built from. <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read
+this archive in this version. Solver-side consumers read it through the
+Python function <code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code> (<em>Reading it</em> below); a script
+looks at its members with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code> (<em>Inspecting it by hand</em> below).</p>
+<p><strong>Configuration.</strong> On top of the input of <a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>
+(Input above), the archive needs two settings, the flag and the green
+output:</p>
+<div class="highlight-toml notranslate"><div class="highlight"><pre><span></span><span class="k">[mode.param]</span>
+<span class="w">  </span><span class="n">longitudinal_bond_output_full</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="c1"># longitudinal_bond_output_layout = "sidecar"   # optional; see below</span>
+<span class="k">[file.output]</span>
+<span class="w">  </span><span class="n">path_to_output</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"output"</span>
+<span class="w">  </span><span class="n">green</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"green"</span><span class="w">                          </span><span class="c1"># required: the companion green file</span>
+<span class="w">  </span><span class="n">longitudinal_bond</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"longitudinal_bond"</span><span class="w">  </span><span class="c1"># the default name</span>
+</pre></div>
+</div>
+<p>Below, <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> stands for the configured <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>
+file and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code> for the configured archive. In the
+messages, <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span></code> stands for <code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">with</span>
+<span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">(FLEX)</span></code>.</p>
+<ul>
+<li><p>The archive goes to <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code> (default
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>; a name without <code class="docutils literal notranslate"><span class="pre">.npz</span></code> gets the suffix, as
+for the other archives). Without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>
+that key is ignored, with one INFO line: <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span>
+<span class="pre">is</span> <span class="pre">written</span> <span class="pre">only</span> <span class="pre">with</span> <span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true;</span>
+<span class="pre">no</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">is</span> <span class="pre">written</span> <span class="pre">by</span> <span class="pre">this</span> <span class="pre">run.</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code> is required: the archive names the green file as
+its companion. The <code class="docutils literal notranslate"><span class="pre">[file.output]</span></code> keys are case-sensitive (a <code class="docutils literal notranslate"><span class="pre">Green</span></code>
+key configures no green output). Without it the run is refused before
+the calculation: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;:</span> <span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">needs</span>
+<span class="pre">[file.output]</span> <span class="pre">green</span> <span class="pre">(the</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">names</span> <span class="pre">the</span> <span class="pre">Green</span> <span class="pre">function</span> <span class="pre">its</span>
+<span class="pre">susceptibility</span> <span class="pre">was</span> <span class="pre">built</span> <span class="pre">from</span> <span class="pre">as</span> <span class="pre">its</span> <span class="pre">companion</span> <span class="pre">green_file;</span> <span class="pre">[file.output]</span>
+<span class="pre">keys</span> <span class="pre">are</span> <span class="pre">case-sensitive);</span> <span class="pre">add</span> <span class="pre">green</span> <span class="pre">to</span> <span class="pre">[file.output].</span></code></p></li>
+<li><p>The green file must be in the archive’s directory or below it:
+<code class="docutils literal notranslate"><span class="pre">&lt;head&gt;:</span> <span class="pre">the</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">'&lt;archive&gt;'</span> <span class="pre">and</span> <span class="pre">its</span> <span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span>
+<span class="pre">'&lt;green&gt;'</span> <span class="pre">must</span> <span class="pre">be</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">same</span> <span class="pre">directory</span> <span class="pre">or</span> <span class="pre">the</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">below</span> <span class="pre">it</span>
+<span class="pre">(green_file</span> <span class="pre">is</span> <span class="pre">stored</span> <span class="pre">as</span> <span class="pre">a</span> <span class="pre">relative</span> <span class="pre">path</span> <span class="pre">without</span> <span class="pre">'..').</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code> (case-insensitive):</p>
+<ul class="simple">
+<li><p>unset: the single file <code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>, unless the largest <code class="docutils literal notranslate"><span class="pre">chi_w</span></code> member
+is above the small-array bound <span class="math notranslate nohighlight">\(\min(1\,\mathrm{GiB},
+\mathrm{cap}/8)\)</span>, where cap is the resolved host cap of the pre-flight memory check
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code>; unset: 0.8 times the available
+host memory; with <code class="docutils literal notranslate"><span class="pre">0</span></code>, or when no memory limit can be determined,
+there is no cap and the bound is 1 GiB); then the sidecar layout is
+chosen, with the INFO line <code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive:</span> <span class="pre">sidecar</span> <span class="pre">layout</span>
+<span class="pre">(the</span> <span class="pre">member</span> <span class="pre">&lt;member&gt;</span> <span class="pre">of</span> <span class="pre">&lt;size&gt;</span> <span class="pre">is</span> <span class="pre">above</span> <span class="pre">the</span> <span class="pre">small-array</span> <span class="pre">bound</span> <span class="pre">&lt;bound&gt;);</span>
+<span class="pre">the</span> <span class="pre">susceptibility</span> <span class="pre">is</span> <span class="pre">written</span> <span class="pre">as</span> <span class="pre">.npy</span> <span class="pre">files</span> <span class="pre">next</span> <span class="pre">to</span> <span class="pre">the</span> <span class="pre">index.</span></code> With
+several bond channels the peak memory is only a few times the largest
+member, so members above cap / 8 are written as sidecars even under a
+modest cap. With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> unset the choice
+depends on the memory available on the host, so the same input can
+give either layout on different machines; set
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code> explicitly for files that do not
+depend on the host;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>: always the sidecar layout;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>: always the single file; a member above the bound is refused
+before the calculation: <code class="docutils literal notranslate"><span class="pre">&lt;head&gt;:</span> <span class="pre">longitudinal_bond_output_layout</span> <span class="pre">=</span>
+<span class="pre">&quot;npz&quot;</span> <span class="pre">cannot</span> <span class="pre">hold</span> <span class="pre">the</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">member</span> <span class="pre">&lt;member&gt;</span> <span class="pre">(&lt;size&gt;,</span> <span class="pre">above</span> <span class="pre">the</span>
+<span class="pre">small-array</span> <span class="pre">bound</span> <span class="pre">&lt;bound&gt;</span> <span class="pre">=</span> <span class="pre">min(1</span> <span class="pre">GiB,</span> <span class="pre">cap</span> <span class="pre">/</span> <span class="pre">8));</span> <span class="pre">set</span>
+<span class="pre">longitudinal_bond_output_layout</span> <span class="pre">=</span> <span class="pre">&quot;sidecar&quot;</span> <span class="pre">or</span> <span class="pre">remove</span> <span class="pre">it</span> <span class="pre">(the</span> <span class="pre">sidecar</span>
+<span class="pre">layout</span> <span class="pre">is</span> <span class="pre">then</span> <span class="pre">chosen).</span></code></p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> is ignored
+with the WARNING of the non-spin-orbital bond FLEX.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> runs no SCF iteration and writes no archive: <code class="docutils literal notranslate"><span class="pre">spin-orbital</span>
+<span class="pre">bond</span> <span class="pre">archive:</span> <span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span> <span class="pre">runs</span> <span class="pre">no</span> <span class="pre">map,</span> <span class="pre">so</span> <span class="pre">no</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">is</span>
+<span class="pre">written.</span></code> (<code class="docutils literal notranslate"><span class="pre">green</span></code> and <code class="docutils literal notranslate"><span class="pre">sigma</span></code> of the seed state are written, with
+<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>.)</p></li>
+</ul>
+<p><strong>Which Green function.</strong> <code class="docutils literal notranslate"><span class="pre">chi_w</span></code> is <span class="math notranslate nohighlight">\(\chi_B\)</span> of the final Green
+function, the one in <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>. It comes from one extra susceptibility
+pass after the self-consistency: the bond bubble <span class="math notranslate nohighlight">\(\bar\chi_B\)</span> of the
+final Green function and its dressing with <span class="math notranslate nohighlight">\(\Gamma_B\)</span>, at every
+bosonic frequency; no effective interaction and no self-energy is built.
+The run logs <code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive:</span> <span class="pre">chi_w</span> <span class="pre">is</span> <span class="pre">chi_B</span> <span class="pre">of</span> <span class="pre">the</span> <span class="pre">final</span> <span class="pre">Green</span>
+<span class="pre">function</span> <span class="pre">(one</span> <span class="pre">extra</span> <span class="pre">susceptibility</span> <span class="pre">pass</span> <span class="pre">after</span> <span class="pre">the</span> <span class="pre">self-consistency).</span></code>
+<code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> are the channel-0 blocks of the <strong>last SCF
+iteration</strong> (<em>Outputs</em> above), so the channel-0 block of <code class="docutils literal notranslate"><span class="pre">chi_w</span></code> differs
+from <code class="docutils literal notranslate"><span class="pre">chiq</span></code> in general. The archive’s <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> equals the <code class="docutils literal notranslate"><span class="pre">fp_green</span></code>
+of <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>.</p>
+<p><em>Cost.</em> The pass costs about one SCF iteration without the effective
+interaction and the self-energy. The pre-flight memory check
+(<a class="reference internal" href="#flex-so-bond-memory"><span class="std std-ref">Memory</span></a> above) adds its three phases
+(<code class="docutils literal notranslate"><span class="pre">archive_bubble</span></code>, <code class="docutils literal notranslate"><span class="pre">archive_dressing</span></code>, <code class="docutils literal notranslate"><span class="pre">archive_write</span></code>); they hold
+the final-state arrays together with the pass’s own rows.</p>
+<p><em>Pole check.</em> The pass computes the RPA pole indicator of the
+<span class="math notranslate nohighlight">\(\nu = 0\)</span> slice of the final <span class="math notranslate nohighlight">\(\bar\chi_B\)</span> and logs it at INFO
+level. At or above the pole a WARNING is logged (location <code class="docutils literal notranslate"><span class="pre">FLEX</span>
+<span class="pre">longitudinal_bond_channels</span> <span class="pre">(spin-orbital,</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">of</span> <span class="pre">the</span> <span class="pre">final</span> <span class="pre">Green</span>
+<span class="pre">function)</span></code>), ending with <code class="docutils literal notranslate"><span class="pre">The</span> <span class="pre">bond</span> <span class="pre">archive's</span> <span class="pre">chi_w</span> <span class="pre">is</span> <span class="pre">built</span> <span class="pre">on</span> <span class="pre">that</span>
+<span class="pre">susceptibility;</span> <span class="pre">it</span> <span class="pre">describes</span> <span class="pre">no</span> <span class="pre">physical</span> <span class="pre">state</span> <span class="pre">and</span> <span class="pre">is</span> <span class="pre">still</span> <span class="pre">written.</span></code>
+(see <a class="reference internal" href="#bond-rpa-pole"><span class="std std-ref">The static RPA pole of the bond-resolved paths</span></a>); the run is not stopped, and the archive then
+carries the pole members <code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code> (<code class="docutils literal notranslate"><span class="pre">True</span></code>),
+<code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_spinful</span></code> (float) and <code class="docutils literal notranslate"><span class="pre">rpa_pole_q_spinful</span></code>
+(<code class="docutils literal notranslate"><span class="pre">(3,)</span></code> float). Below the pole they are absent. chi0q and chiq of this
+path carry no pole members.</p>
+<p><em>A refusal in the pass.</em> The dressing of the pass is guarded like every
+SCF iteration (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>). After the pass the run
+logs the bond conditioning minimum (<code class="docutils literal notranslate"><span class="pre">cond_min</span></code>) of the dressing at INFO
+level:
+<code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive:</span> <span class="pre">guards</span> <span class="pre">of</span> <span class="pre">the</span> <span class="pre">final</span> <span class="pre">susceptibility</span> <span class="pre">pass:</span> <span class="pre">bond</span>
+<span class="pre">cond_min</span> <span class="pre">spinful</span> <span class="pre">&lt;cond&gt;</span> <span class="pre">(tol</span> <span class="pre">&lt;tol&gt;)</span></code>. When the guard refuses, the run stops and
+<strong>no output</strong> of the run is written; the message ends with the remedy of
+the dressing guard and <code class="docutils literal notranslate"><span class="pre">This</span> <span class="pre">happened</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">final</span> <span class="pre">susceptibility</span> <span class="pre">pass</span> <span class="pre">of</span>
+<span class="pre">the</span> <span class="pre">bond</span> <span class="pre">archive;</span> <span class="pre">set</span> <span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span> <span class="pre">to</span> <span class="pre">skip</span> <span class="pre">that</span>
+<span class="pre">pass.</span></code> With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span></code> the same input
+writes the standard outputs (the self-consistency does not depend on the
+archive).</p>
+<p><strong>Members.</strong> The dimension symbols: <span class="math notranslate nohighlight">\(n_d = 2N\)</span> (<span class="math notranslate nohighlight">\(N\)</span> =
+<code class="docutils literal notranslate"><span class="pre">norb_phys</span></code>), <span class="math notranslate nohighlight">\(N_D = B n_d^2\)</span>, <span class="math notranslate nohighlight">\(n_{\rm vol}\)</span> =
+the product of <code class="docutils literal notranslate"><span class="pre">cell_shape</span></code> (the number of wave vectors), and
+<span class="math notranslate nohighlight">\(n_\sigma\)</span> the size of the <span class="math notranslate nohighlight">\(S_z\)</span> sector <span class="math notranslate nohighlight">\(\sigma \in
+\{0, +1, -1\}\)</span> of the packed layout: <span class="math notranslate nohighlight">\(n_0 = 2BN^2\)</span>, <span class="math notranslate nohighlight">\(n_{+1} =
+n_{-1} = BN^2\)</span>. The sector of a slot <span class="math notranslate nohighlight">\((m; x, y)\)</span> (bond <span class="math notranslate nohighlight">\(m\)</span>,
+spin-block modes <span class="math notranslate nohighlight">\(x, y\)</span>, <span class="math notranslate nohighlight">\(S_z = +1/2\)</span> for <span class="math notranslate nohighlight">\(x &lt; N\)</span>) is
+<span class="math notranslate nohighlight">\(\sigma = S_z(x) - S_z(y)\)</span>.</p>
+<table class="docutils align-default">
+<colgroup>
+<col style="width: 34.0%" />
+<col style="width: 66.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>member</p></th>
+<th class="head"><p>content</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span></code>, <code class="docutils literal notranslate"><span class="pre">spin_orbital</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">4</span></code> (integer), <code class="docutils literal notranslate"><span class="pre">True</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">index_convention</span></code>, <code class="docutils literal notranslate"><span class="pre">index_order</span></code>, <code class="docutils literal notranslate"><span class="pre">freq_axis</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;spin_block&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;bond_major_pair_code_slot&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&quot;uniform_boson_centered&quot;</span></code> (the full uniform bosonic grid: index
+<span class="math notranslate nohighlight">\(l = 0, \dots, n_{\rm mat} - 1\)</span> is <span class="math notranslate nohighlight">\(i\nu = i(2l -
+n_{\rm mat})\pi T\)</span>, so <span class="math notranslate nohighlight">\(l = n_{\rm mat}/2\)</span> is <span class="math notranslate nohighlight">\(\nu = 0\)</span>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">block_layout</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>, the layout of the solve
+(<a class="reference internal" href="#flex-so-bond-layout"><span class="std std-ref">Layout</span></a> above)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sz_sector_order</span></code>, <code class="docutils literal notranslate"><span class="pre">sz_sector_offsets</span></code>, <code class="docutils literal notranslate"><span class="pre">sz_sector_index</span></code>
+(packed layout only)</p></td>
+<td><p>the <span class="math notranslate nohighlight">\(S_z\)</span> sector layout: <code class="docutils literal notranslate"><span class="pre">sz_sector_order</span></code> the storage order of the
+sectors, <code class="docutils literal notranslate"><span class="pre">[&quot;0&quot;,</span> <span class="pre">&quot;+1&quot;,</span> <span class="pre">&quot;-1&quot;]</span></code> (string <code class="docutils literal notranslate"><span class="pre">(3,)</span></code>);
+<code class="docutils literal notranslate"><span class="pre">sz_sector_offsets</span></code> int64 <code class="docutils literal notranslate"><span class="pre">(4,)</span></code>, the cumulative sector sizes
+<span class="math notranslate nohighlight">\([0, n_0, n_0 + n_{+1}, N_D]\)</span>; <code class="docutils literal notranslate"><span class="pre">sz_sector_index</span></code> int64
+<span class="math notranslate nohighlight">\((N_D,)\)</span>, the dense slot <span class="math notranslate nohighlight">\(I = m n_d^2 + x n_d + y\)</span> of every
+packed position (the sectors concatenated in that order, ascending
+within a sector): the block <code class="docutils literal notranslate"><span class="pre">&lt;name&gt;&#64;&lt;σ&gt;</span></code> holds the rows and
+columns <code class="docutils literal notranslate"><span class="pre">sz_sector_index[sz_sector_offsets[s]:sz_sector_offsets[s</span> <span class="pre">+</span>
+<span class="pre">1]]</span></code> of the dense array, <span class="math notranslate nohighlight">\(s\)</span> the position of <span class="math notranslate nohighlight">\(\sigma\)</span>
+in <code class="docutils literal notranslate"><span class="pre">sz_sector_order</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">norb_phys</span></code>, <code class="docutils literal notranslate"><span class="pre">nd</span></code>, <code class="docutils literal notranslate"><span class="pre">nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">B</span></code>, <code class="docutils literal notranslate"><span class="pre">cell_shape</span></code>, <code class="docutils literal notranslate"><span class="pre">beta</span></code>,
+<code class="docutils literal notranslate"><span class="pre">types</span></code></p></td>
+<td><p>the dimensions, the inverse temperature and the sorted distinct
+interaction types</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Gamma_bond</span></code> (dense) or <code class="docutils literal notranslate"><span class="pre">Gamma_bond&#64;0</span></code>, <code class="docutils literal notranslate"><span class="pre">Gamma_bond&#64;+1</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Gamma_bond&#64;-1</span></code> (packed)</p></td>
+<td><p><span class="math notranslate nohighlight">\(\Gamma_B\)</span>, complex <span class="math notranslate nohighlight">\((n_{\rm vol}, N_D, N_D)\)</span> or
+<span class="math notranslate nohighlight">\((n_{\rm vol}, n_\sigma, n_\sigma)\)</span>; always stored in the
+index</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">chi_w</span></code> (dense) or <code class="docutils literal notranslate"><span class="pre">chi_w&#64;0</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_w&#64;+1</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_w&#64;-1</span></code>
+(packed)</p></td>
+<td><p><span class="math notranslate nohighlight">\(\chi_B\)</span> of the final Green function, complex
+<span class="math notranslate nohighlight">\((n_{\rm mat}, n_{\rm vol}, N_D, N_D)\)</span> or <span class="math notranslate nohighlight">\((n_{\rm mat},
+n_{\rm vol}, n_\sigma, n_\sigma)\)</span>; in the index (<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>) or as
+sidecar files (<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&lt;block&gt;_file</span></code>, <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;_nbytes</span></code> (sidecar layout, one pair per
+<code class="docutils literal notranslate"><span class="pre">chi_w</span></code> block)</p></td>
+<td><p>the sidecar’s file name <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;.&lt;archive_nonce&gt;.npy</span></code> (resolved in
+the index’s directory) and its size in bytes</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">archive_nonce</span></code></p></td>
+<td><p>32 lowercase hexadecimal characters, new for every write; every
+sidecar name carries it</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">green_file</span></code>, <code class="docutils literal notranslate"><span class="pre">green_layout</span></code></p></td>
+<td><p>the companion Green file relative to the index’s directory (no
+<code class="docutils literal notranslate"><span class="pre">..</span></code>), <code class="docutils literal notranslate"><span class="pre">&quot;b_f_k_o_o_v1&quot;</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">momentum_convention</span></code>, <code class="docutils literal notranslate"><span class="pre">wavevector_unit</span></code>, <code class="docutils literal notranslate"><span class="pre">wavevector_index</span></code></p></td>
+<td><p>the momentum markers of every chiq/chi0q file
+(<a class="reference internal" href="../../rpa/filespecification/outputfiles/chiq_rpa.html#subsec-chiq-rpa"><span class="std std-ref">chiq and chi0q</span></a>): <code class="docutils literal notranslate"><span class="pre">&quot;e_plus_ikR&quot;</span></code>, float <code class="docutils literal notranslate"><span class="pre">(3,</span> <span class="pre">3)</span></code> and
+int64 <span class="math notranslate nohighlight">\((n_{\rm vol}, 3)\)</span></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">scf_converged</span></code></p></td>
+<td><p>whether the self-consistency converged (bool)</p></td>
+</tr>
+<tr class="row-odd"><td><p>provenance</p></td>
+<td><p>the version-2 members (<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>) with
+<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;flex_so_bond&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">fp_capability</span> <span class="pre">=</span>
+<span class="pre">&quot;so_bond&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">fp_resolved_topology</span></code>, <code class="docutils literal notranslate"><span class="pre">delta_r</span></code>, <code class="docutils literal notranslate"><span class="pre">reverse</span></code>,
+<code class="docutils literal notranslate"><span class="pre">slot_convention</span></code>, <code class="docutils literal notranslate"><span class="pre">max_shells</span></code>, and <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> and
+<code class="docutils literal notranslate"><span class="pre">state_*</span></code> of the final state</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code>, <code class="docutils literal notranslate"><span class="pre">rpa_pole_indicator_spinful</span></code>,
+<code class="docutils literal notranslate"><span class="pre">rpa_pole_q_spinful</span></code></p></td>
+<td><p>only past the pole (<em>Pole check</em> above)</p></td>
+</tr>
+</tbody>
+</table>
+<p><code class="docutils literal notranslate"><span class="pre">chibar_w</span></code> (the bare <span class="math notranslate nohighlight">\(\bar\chi_B\)</span>) is not written by FLEX; the
+reader accepts it when present (<code class="docutils literal notranslate"><span class="pre">has_slot(&quot;chibar_w&quot;)</span></code>), and the log line
+<code class="docutils literal notranslate"><span class="pre">chibar_w</span> <span class="pre">archive:</span> <span class="pre">none</span></code> is logged as for every run of this path.</p>
+<p><strong>Reading it.</strong> In this version the archive is read through the Python
+function <code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive(path,</span> <span class="pre">*,</span>
+<span class="pre">run_band,</span> <span class="pre">run_state,</span> <span class="pre">run_interaction,</span> <span class="pre">run_bond)</span></code>. The four keyword
+arguments are the consuming run’s band tables, state, compiled interaction
+and bond inputs (the inputs of the fingerprint checks); they are built by
+the solver-side consumers of the archive (<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads it in a later
+version), not written by hand. The function returns an object with</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">layout</span></code> (the stored slot layout, <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>),
+<code class="docutils literal notranslate"><span class="pre">bond_archive_layout</span></code>, the dimensions <code class="docutils literal notranslate"><span class="pre">B</span></code>, <code class="docutils literal notranslate"><span class="pre">nd</span></code>, <code class="docutils literal notranslate"><span class="pre">nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">nvol</span></code>,
+<code class="docutils literal notranslate"><span class="pre">green_path</span></code> (the companion green file), <code class="docutils literal notranslate"><span class="pre">scf_converged</span></code> (bool, the
+self-consistency flag of the FLEX run) and <code class="docutils literal notranslate"><span class="pre">rpa_past_pole</span></code> (<code class="docutils literal notranslate"><span class="pre">True</span></code>
+when the archive carries the pole members, that is, its final
+susceptibility is past the static RPA pole and describes no physical
+state; <code class="docutils literal notranslate"><span class="pre">None</span></code> otherwise);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">has_slot(name)</span></code>: whether the payload <code class="docutils literal notranslate"><span class="pre">name</span></code> (<code class="docutils literal notranslate"><span class="pre">&quot;Gamma_bond&quot;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&quot;chi_w&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;chibar_w&quot;</span></code>) is stored;</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">read_slot(name,</span> <span class="pre">*,</span> <span class="pre">want=None,</span> <span class="pre">l0=None,</span> <span class="pre">l1=None)</span></code>: the payload <code class="docutils literal notranslate"><span class="pre">name</span></code>
+for the bosonic indices <span class="math notranslate nohighlight">\(l_0 \le l &lt; l_1\)</span> (<code class="docutils literal notranslate"><span class="pre">l0</span></code> unset: 0;
+<code class="docutils literal notranslate"><span class="pre">l1</span></code> unset: <code class="docutils literal notranslate"><span class="pre">nmat</span></code>; <code class="docutils literal notranslate"><span class="pre">Gamma_bond</span></code> has no frequency axis and takes
+neither). <code class="docutils literal notranslate"><span class="pre">want</span> <span class="pre">=</span> <span class="pre">None</span></code> returns the stored layout, <code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> a
+complex128 ndarray <span class="math notranslate nohighlight">\((\dots, N_D, N_D)\)</span> and <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code> a
+<code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond.PackedArrays</span></code> (its <code class="docutils literal notranslate"><span class="pre">blocks</span></code> are a tuple of the
+three complex128 sector blocks <span class="math notranslate nohighlight">\((\dots, n_\sigma, n_\sigma)\)</span> in the
+order <code class="docutils literal notranslate"><span class="pre">&quot;0&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;+1&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;-1&quot;</span></code>). A packed archive read dense is filled with
+exact zeros off the sectors; a dense archive read packed is refused when
+the requested slice has a nonzero entry off the sectors (the message
+gives the measured leak). Every call opens the files again and returns a
+copy (a sidecar is memory-mapped and only the slice is read).</p></li>
+</ul>
+<p>Before any payload array is read the function checks, in this order:</p>
+<ol class="arabic simple">
+<li><p>that the index is a readable npz archive (else <code class="docutils literal notranslate"><span class="pre">'&lt;path&gt;'</span> <span class="pre">cannot</span> <span class="pre">be</span>
+<span class="pre">read</span> <span class="pre">as</span> <span class="pre">an</span> <span class="pre">npz</span> <span class="pre">archive</span> <span class="pre">(&lt;error&gt;);</span> <span class="pre">re-run</span> <span class="pre">FLEX</span> <span class="pre">to</span> <span class="pre">regenerate</span> <span class="pre">the</span> <span class="pre">bond</span>
+<span class="pre">archive.</span></code>; a single <code class="docutils literal notranslate"><span class="pre">.npy</span></code> array is refused as not a spin-orbital
+bond archive);</p></li>
+<li><p>the markers <code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">4</span></code> and <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>, the
+dimensions and their relations (<code class="docutils literal notranslate"><span class="pre">nd</span> <span class="pre">=</span> <span class="pre">2</span> <span class="pre">norb_phys</span></code>, <code class="docutils literal notranslate"><span class="pre">B</span></code> = the
+number of <code class="docutils literal notranslate"><span class="pre">delta_r</span></code> rows, <code class="docutils literal notranslate"><span class="pre">nmat</span></code>/<code class="docutils literal notranslate"><span class="pre">beta</span></code> equal to their
+<code class="docutils literal notranslate"><span class="pre">state_*</span></code> copies, <code class="docutils literal notranslate"><span class="pre">cell_shape</span></code> equal to <code class="docutils literal notranslate"><span class="pre">prov_cell_shape</span></code>);</p></li>
+<li><p>the files, before any of them is opened: no sidecar the index names is a
+symbolic link (<code class="docutils literal notranslate"><span class="pre">'&lt;archive&gt;':</span> <span class="pre">the</span> <span class="pre">sidecar</span> <span class="pre">file</span> <span class="pre">'&lt;name&gt;'</span> <span class="pre">is</span> <span class="pre">a</span> <span class="pre">symbolic</span>
+<span class="pre">link;</span> <span class="pre">the</span> <span class="pre">reader</span> <span class="pre">reads</span> <span class="pre">sidecars</span> <span class="pre">only</span> <span class="pre">as</span> <span class="pre">regular</span> <span class="pre">files</span> <span class="pre">next</span> <span class="pre">to</span> <span class="pre">the</span> <span class="pre">index</span>
+<span class="pre">(copy</span> <span class="pre">the</span> <span class="pre">file</span> <span class="pre">in</span> <span class="pre">place</span> <span class="pre">of</span> <span class="pre">the</span> <span class="pre">link,</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">FLEX).</span></code>), and every
+sidecar resolves, with symbolic links followed, in the archive directory
+and the companion green file in it or below it (<code class="docutils literal notranslate"><span class="pre">'&lt;archive&gt;':</span> <span class="pre">the</span> <span class="pre">&lt;what&gt;</span>
+<span class="pre">'&lt;name&gt;'</span> <span class="pre">resolves</span> <span class="pre">to</span> <span class="pre">'&lt;real&gt;',</span> <span class="pre">outside</span> <span class="pre">the</span> <span class="pre">archive</span> <span class="pre">directory</span> <span class="pre">'&lt;dir&gt;';</span>
+<span class="pre">keep</span> <span class="pre">the</span> <span class="pre">index,</span> <span class="pre">its</span> <span class="pre">sidecars</span> <span class="pre">and</span> <span class="pre">the</span> <span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">in</span> <span class="pre">that</span>
+<span class="pre">directory</span> <span class="pre">(the</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">may</span> <span class="pre">be</span> <span class="pre">below</span> <span class="pre">it),</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">FLEX.</span></code>, with
+<code class="docutils literal notranslate"><span class="pre">&lt;what&gt;</span></code> = <code class="docutils literal notranslate"><span class="pre">sidecar</span> <span class="pre">file</span></code> or <code class="docutils literal notranslate"><span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span></code>). The archive
+directory itself may be reached through a link, and the companion may
+be a link, or sit in a linked subdirectory, that resolves in it or below
+it;</p></li>
+<li><p>the structure, once: the provenance, the npy headers of the payloads
+(in the index or in the sidecars) with dtype, rank and size, and for a
+sidecar its file name (no directory part, the archive’s nonce) and its
+size (file size = <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;_nbytes</span></code> = header plus data);</p></li>
+<li><p>the schema-4 members of the table;</p></li>
+<li><p>that the companion green file exists and is a readable npz archive
+(<code class="docutils literal notranslate"><span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">'&lt;green&gt;'</span> <span class="pre">named</span> <span class="pre">by</span> <span class="pre">'&lt;archive&gt;'</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">read</span> <span class="pre">as</span>
+<span class="pre">an</span> <span class="pre">npz</span> <span class="pre">archive</span> <span class="pre">(&lt;error&gt;);</span> <span class="pre">keep</span> <span class="pre">the</span> <span class="pre">archive,</span> <span class="pre">its</span> <span class="pre">sidecars</span> <span class="pre">and</span> <span class="pre">the</span> <span class="pre">green</span>
+<span class="pre">file</span> <span class="pre">together,</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">FLEX.</span></code>);</p></li>
+<li><p>the companion: its structure and its compatibility with the run;</p></li>
+<li><p>the archive’s compatibility with the run, and its <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> against
+the digest of the companion’s Green function.</p></li>
+</ol>
+<p>The compatibility checks are those of <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>: an
+archive is reused only at the identical state point (<code class="docutils literal notranslate"><span class="pre">Nmat</span></code> included). An
+archive whose companion was replaced by another Green function is refused
+by the <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> check. <code class="docutils literal notranslate"><span class="pre">read_slot</span></code> opens the files again on every
+call: do not rewrite or replace an archive (or its sidecars or green file)
+while a reader is using it.</p>
+<p><em>Inspecting it by hand.</em> To look at the members without a consuming run,
+open the index with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>; this performs none of the checks
+above. A <code class="docutils literal notranslate"><span class="pre">chi_w</span></code> block is either an inline member of the index
+(<code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code>) or the sidecar file named by its <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;_file</span></code> member
+(<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>), resolved in the index’s directory:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="n">path</span> <span class="o">=</span> <span class="s2">"output/longitudinal_bond.npz"</span>
+<span class="k">with</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">allow_pickle</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="k">as</span> <span class="n">z</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">z</span><span class="p">[</span><span class="s2">"archive_nonce"</span><span class="p">],</span> <span class="n">z</span><span class="p">[</span><span class="s2">"block_layout"</span><span class="p">],</span> <span class="n">z</span><span class="p">[</span><span class="s2">"bond_archive_layout"</span><span class="p">])</span>
+    <span class="n">dense</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">z</span><span class="p">[</span><span class="s2">"block_layout"</span><span class="p">])</span> <span class="o">==</span> <span class="s2">"dense"</span>
+    <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">"chi_w"</span><span class="p">]</span> <span class="k">if</span> <span class="n">dense</span> <span class="k">else</span> <span class="p">[</span><span class="s2">"chi_w@0"</span><span class="p">,</span> <span class="s2">"chi_w@+1"</span><span class="p">,</span> <span class="s2">"chi_w@-1"</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="n">block</span> <span class="ow">in</span> <span class="n">z</span><span class="o">.</span><span class="n">files</span><span class="p">:</span>                   <span class="c1"># "npz": in the index</span>
+            <span class="n">a</span> <span class="o">=</span> <span class="n">z</span><span class="p">[</span><span class="n">block</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>                                  <span class="c1"># "sidecar": &lt;block&gt;_file</span>
+            <span class="n">side</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">z</span><span class="p">[</span><span class="n">block</span> <span class="o">+</span> <span class="s2">"_file"</span><span class="p">]))</span>
+            <span class="n">a</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">side</span><span class="p">,</span> <span class="n">mmap_mode</span><span class="o">=</span><span class="s2">"r"</span><span class="p">,</span> <span class="n">allow_pickle</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">block</span><span class="p">,</span> <span class="n">a</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">a</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><strong>Moving and re-running.</strong> Keep the index, any sidecars and the companion
+green file together: <code class="docutils literal notranslate"><span class="pre">green_file</span></code> and the sidecar names are relative to
+the index’s directory, so these files can be moved together to any
+directory, keeping the green file at the relative path <code class="docutils literal notranslate"><span class="pre">green_file</span></code>
+records. Copy the sidecars as regular files (a symbolic link is refused,
+see <em>Reading it</em> above). A missing companion is refused: <code class="docutils literal notranslate"><span class="pre">companion</span> <span class="pre">green</span>
+<span class="pre">file</span> <span class="pre">'&lt;green&gt;'</span> <span class="pre">named</span> <span class="pre">by</span> <span class="pre">'&lt;archive&gt;'</span> <span class="pre">is</span> <span class="pre">missing</span> <span class="pre">(keep</span> <span class="pre">the</span> <span class="pre">archive,</span> <span class="pre">its</span>
+<span class="pre">sidecars</span> <span class="pre">and</span> <span class="pre">the</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">together,</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">FLEX)</span></code>. To list which
+sidecars an index names, print its layout and the recorded sidecar file
+names, the <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;_file</span></code> members (an <code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code> archive has none; in the
+<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> layout every name is <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;.&lt;archive_nonce&gt;.npy</span></code>):</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span>python -c "import numpy as np; z = np.load('output/longitudinal_bond.npz'); print(z['bond_archive_layout'], [str(z[k]) for k in z.files if k.endswith('_file') and k != 'green_file'])"
+</pre></div>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>A copy in the same directory is no backup. A copied index names the
+same sidecars and the same green file. A re-run of FLEX in that
+directory overwrites the green file, so the copy then names a Green
+function it was not built from and <code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code> refuses it
+(<code class="docutils literal notranslate"><span class="pre">fp_green</span> <span class="pre">mismatch</span></code>); the sidecars the copy names are kept, because
+another index names them. This holds for a hidden copy too (for example
+<code class="docutils literal notranslate"><span class="pre">.backup.npz</span></code>): every <code class="docutils literal notranslate"><span class="pre">*.npz</span></code> in the directory except the writer’s
+own temporary files counts as a candidate index. To keep an archive,
+copy the index, any sidecars (<code class="docutils literal notranslate"><span class="pre">*.&lt;archive_nonce&gt;.npy</span></code>, in the sidecar
+layout) and the green file into a separate directory.</p>
+</div>
+<p>A re-run into the same path replaces the index and then removes the
+sidecars of the archive it replaced, except those named by the new index,
+by another schema-4 index in the directory (hidden names included), or
+kept because a <code class="docutils literal notranslate"><span class="pre">*.npz</span></code> there cannot be read or is a malformed index
+(then every old name is kept). Only the writer’s temporary files
+(<code class="docutils literal notranslate"><span class="pre">.&lt;stem&gt;.&lt;pid&gt;-&lt;8</span> <span class="pre">hex</span> <span class="pre">digits&gt;.tmp.npz</span></code> for an index <code class="docutils literal notranslate"><span class="pre">&lt;stem&gt;.npz</span></code>) are
+not inspected. One INFO line lists them: <code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">'&lt;path&gt;':</span> <span class="pre">removed</span> <span class="pre">&lt;n&gt;</span> <span class="pre">sidecar</span> <span class="pre">file(s)</span> <span class="pre">of</span>
+<span class="pre">the</span> <span class="pre">archive</span> <span class="pre">it</span> <span class="pre">replaced:</span> <span class="pre">&lt;names&gt;;</span> <span class="pre">kept</span> <span class="pre">&lt;k&gt;</span> <span class="pre">(named</span> <span class="pre">by</span> <span class="pre">another</span> <span class="pre">index,</span> <span class="pre">a</span>
+<span class="pre">malformed</span> <span class="pre">candidate</span> <span class="pre">or</span> <span class="pre">this</span> <span class="pre">one):</span> <span class="pre">&lt;names&gt;;</span> <span class="pre">kept</span> <span class="pre">by:</span> <span class="pre">&lt;files&gt;</span></code>. Sidecars of
+a non-spin-orbital bond archive at the same stem (<code class="docutils literal notranslate"><span class="pre">&lt;stem&gt;_chi_s_w.npy</span></code>,
+<code class="docutils literal notranslate"><span class="pre">&lt;stem&gt;_chi_c_w.npy</span></code>) are listed as left in place and never removed.
+Files left behind by a crashed run (sidecars that no index names) are not
+removed either. A removal that fails is one WARNING naming the full path
+(<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">could</span> <span class="pre">not</span> <span class="pre">remove</span> <span class="pre">the</span> <span class="pre">old</span> <span class="pre">sidecar</span> <span class="pre">file</span> <span class="pre">'&lt;path&gt;'</span> <span class="pre">(&lt;error&gt;);</span> <span class="pre">remove</span> <span class="pre">it</span>
+<span class="pre">by</span> <span class="pre">hand</span> <span class="pre">if</span> <span class="pre">no</span> <span class="pre">other</span> <span class="pre">archive</span> <span class="pre">uses</span> <span class="pre">it.</span></code>). When the removal step fails as a
+whole, the new archive is still complete and one WARNING says so:
+<code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">'&lt;path&gt;':</span> <span class="pre">the</span> <span class="pre">removal</span> <span class="pre">of</span> <span class="pre">the</span> <span class="pre">replaced</span> <span class="pre">archive's</span>
+<span class="pre">sidecar</span> <span class="pre">files</span> <span class="pre">failed</span> <span class="pre">(&lt;error&gt;);</span> <span class="pre">the</span> <span class="pre">new</span> <span class="pre">archive</span> <span class="pre">is</span> <span class="pre">complete;</span> <span class="pre">remove</span> <span class="pre">stale</span>
+<span class="pre">sidecar</span> <span class="pre">files</span> <span class="pre">by</span> <span class="pre">hand</span> <span class="pre">if</span> <span class="pre">no</span> <span class="pre">other</span> <span class="pre">archive</span> <span class="pre">uses</span> <span class="pre">them.</span></code></p>
+<p>A re-run that writes the green file but no archive
+(<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span></code>, or <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>)
+removes nothing. When the configured <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code>
+file is a spin-orbital index that names that green file, it is left on disk
+with its sidecars and may no longer match the green file; the run says so
+with one WARNING: <code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">'&lt;path&gt;':</span> <span class="pre">this</span> <span class="pre">run</span> <span class="pre">wrote</span> <span class="pre">the</span>
+<span class="pre">green</span> <span class="pre">file</span> <span class="pre">'&lt;green&gt;'</span> <span class="pre">but</span> <span class="pre">no</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">(longitudinal_bond_output_full</span> <span class="pre">=</span>
+<span class="pre">false</span> <span class="pre">or</span> <span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0);</span> <span class="pre">the</span> <span class="pre">earlier</span> <span class="pre">archive</span> <span class="pre">at</span> <span class="pre">'&lt;path&gt;'</span> <span class="pre">names</span> <span class="pre">this</span>
+<span class="pre">green</span> <span class="pre">file</span> <span class="pre">as</span> <span class="pre">its</span> <span class="pre">companion,</span> <span class="pre">so</span> <span class="pre">it</span> <span class="pre">and</span> <span class="pre">its</span> <span class="pre">sidecar</span> <span class="pre">files</span> <span class="pre">are</span> <span class="pre">left</span> <span class="pre">in</span> <span class="pre">place;</span>
+<span class="pre">they</span> <span class="pre">may</span> <span class="pre">be</span> <span class="pre">stale,</span> <span class="pre">and</span> <span class="pre">load_so_bond_archive</span> <span class="pre">refuses</span> <span class="pre">them</span> <span class="pre">when</span> <span class="pre">the</span> <span class="pre">new</span> <span class="pre">green</span>
+<span class="pre">file</span> <span class="pre">differs;</span> <span class="pre">remove</span> <span class="pre">them</span> <span class="pre">by</span> <span class="pre">hand</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">with</span>
+<span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true.</span></code></p>
+<p><strong>When writing fails.</strong> <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> and the index are each written to a
+temporary name in their directory first, and then committed by a rename:
+the green file first, the index second. Two renames are not one atomic
+step, so a failed write leaves one of:</p>
+<ul class="simple">
+<li><p>the previous pair, when the failure comes before the green commit (the
+new sidecars and the temporary files are removed);</p></li>
+<li><p>the new pair, when both renames succeeded (a later failure in the
+removal of old sidecars never damages it);</p></li>
+<li><p>a new <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> without an index, when the index commit failed: the
+previous index is removed (WARNING <code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">'&lt;path&gt;':</span>
+<span class="pre">writing</span> <span class="pre">the</span> <span class="pre">new</span> <span class="pre">index</span> <span class="pre">failed</span> <span class="pre">after</span> <span class="pre">the</span> <span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">'&lt;green&gt;'</span> <span class="pre">was</span>
+<span class="pre">replaced;</span> <span class="pre">the</span> <span class="pre">previous</span> <span class="pre">index</span> <span class="pre">was</span> <span class="pre">removed</span> <span class="pre">so</span> <span class="pre">that</span> <span class="pre">no</span> <span class="pre">archive</span> <span class="pre">names</span> <span class="pre">a</span>
+<span class="pre">different</span> <span class="pre">Green</span> <span class="pre">function</span> <span class="pre">(&lt;error&gt;).</span></code>); the sidecars of that removed
+index may remain as orphan files that no index names.</p></li>
+</ul>
+<p>A crash between the two renames, or a failed removal of the previous index
+(WARNING <code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">and</span> <span class="pre">the</span> <span class="pre">previous</span> <span class="pre">index</span> <span class="pre">could</span> <span class="pre">not</span> <span class="pre">be</span> <span class="pre">removed</span> <span class="pre">(&lt;error&gt;);</span> <span class="pre">it</span>
+<span class="pre">names</span> <span class="pre">a</span> <span class="pre">different</span> <span class="pre">Green</span> <span class="pre">function,</span> <span class="pre">so</span> <span class="pre">load_so_bond_archive</span> <span class="pre">refuses</span> <span class="pre">it;</span>
+<span class="pre">remove</span> <span class="pre">it</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">FLEX.</span></code>), can leave a stale index next to a green file
+of another Green function; <code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code> refuses it with the
+<code class="docutils literal notranslate"><span class="pre">fp_green</span> <span class="pre">mismatch</span></code> message. A cleanup that fails after a failed write is
+one WARNING naming the full path (<code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive:</span> <span class="pre">could</span> <span class="pre">not</span>
+<span class="pre">remove</span> <span class="pre">'&lt;path&gt;'</span> <span class="pre">while</span> <span class="pre">cleaning</span> <span class="pre">up</span> <span class="pre">after</span> <span class="pre">a</span> <span class="pre">failed</span> <span class="pre">write</span> <span class="pre">(&lt;error&gt;);</span> <span class="pre">remove</span> <span class="pre">it</span>
+<span class="pre">by</span> <span class="pre">hand.</span></code>).</p>
+<p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code> and <code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code> follow the behaviour of
+every FLEX run on an I/O failure (outputs written before the failure are
+kept):
+after a failure before the green commit, a new sigma, chi0q or chiq can sit
+next to the previous green/archive pair. Each carries its own
+<code class="docutils literal notranslate"><span class="pre">fp_green</span></code>, so a consumer that compares them refuses the mix. The
+no-output rule above (<em>A refusal in the pass</em>) covers only the refusal of
+the dressing (condition-number) guard in the pass. Concurrent runs writing into one
+directory are not supported.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Residual risk.</strong> The archive stores no hash of the sidecar payloads.
+A foreign <code class="docutils literal notranslate"><span class="pre">.npy</span></code> file with the same size and header, renamed to this
+archive’s nonce, is not detected. When archives are moved or shared,
+record checksums of the files with a file-system tool (for example
+<code class="docutils literal notranslate"><span class="pre">sha256sum</span></code>) and compare them.</p>
+</div>
+<p>The refusals of the reader and of the other consumers are listed in the
+troubleshooting table of <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-archive-checks"><span class="std std-ref">Archive checks: exact state-point reuse only</span></a>.</p>
 </section>
 </section>
 <section id="pairing-eigenvalues-with-the-bond-resolved-vertex">
@@ -2198,8 +2638,11 @@ runs, as in UHFk).</p></li>
 it is requested), both in the static solver (see <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>) and
 in the dynamic one, which uses <span class="math notranslate nohighlight">\(\chi\)</span> at every bosonic frequency (see
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>). This holds for a run without
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>: <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> cannot read the outputs of the
-spin-orbital FLEX with bond channels yet (see <a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>).</p>
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>: <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses the outputs of the
+spin-orbital FLEX with bond channels. Their bond archive is read by
+solver-side consumers through the Python function <code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>,
+and a script inspects it with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code> (see
+<a class="reference internal" href="#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>).</p>
 </section>
 <section id="spin-polarized-flex-zeeman-field">
 <h3>Spin-polarized FLEX (Zeeman field)<a class="headerlink" href="#spin-polarized-flex-zeeman-field" title="Link to this heading">¶</a></h3>

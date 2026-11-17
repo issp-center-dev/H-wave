@@ -68,6 +68,15 @@ under <span class="math notranslate nohighlight">\(q \to -q\)</span> (for which 
 <li><p><code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code>:</p>
 <p>The value of the <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> parameter (Matsubara high-frequency tail correction) used when the susceptibility was computed. The tail correction changes <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> at <span class="math notranslate nohighlight">\(O(1)\)</span> for moderate <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, so runs that consume this file (e.g. <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>) warn when their own <code class="docutils literal notranslate"><span class="pre">coeff_tail</span></code> setting differs from the recorded value. When a pre-computed <code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code> file is passed through, the input file’s value is re-saved. The key is omitted when the producing run did not record one (older versions) and for FLEX output on the IR Matsubara basis (<code class="docutils literal notranslate"><span class="pre">matsubara_basis</span> <span class="pre">=</span> <span class="pre">&quot;ir&quot;</span></code>, including densified output), where the uniform-grid tail correction does not apply.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">block_layout</span></code>:</p>
+<p>Written only by the spin-orbital FLEX with bond channels (<code class="docutils literal notranslate"><span class="pre">[mode]</span>
+<span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>): the layout of the solve,
+<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code> (a 0-d string). The arrays have the dense
+on-site shape in both cases, and the spin-orbital readers refuse a file
+of that path without it (see <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>). Other runs
+do not write the key.</p>
+</li>
 </ul>
 <p>When the sublattice is considered, the indices of the wave numbers and the orbitals are
 regarded as those of the sublattice.</p>
@@ -314,6 +323,24 @@ existed) is read as <code class="docutils literal notranslate"><span class="pre"
 With <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> no map is executed and every last-map archive is
 omitted (an INFO line lists them); only <code class="docutils literal notranslate"><span class="pre">sigma</span></code>, <code class="docutils literal notranslate"><span class="pre">green</span></code> and <code class="docutils literal notranslate"><span class="pre">energy</span></code>
 of the seed state are written.</p>
+<p><strong>Spin-orbital bond archive (schema 4).</strong> With <code class="docutils literal notranslate"><span class="pre">[mode]</span>
+<span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> and
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> (which requires <code class="docutils literal notranslate"><span class="pre">[file.output]</span>
+<span class="pre">green</span></code>, the archive’s companion) the same <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code> file is a different archive:
+<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">4</span></code> and <code class="docutils literal notranslate"><span class="pre">spin_orbital</span> <span class="pre">=</span> <span class="pre">True</span></code>. It holds
+<code class="docutils literal notranslate"><span class="pre">chi_w</span></code>, <span class="math notranslate nohighlight">\(\chi_B\)</span> of the <strong>final</strong> Green function from one extra
+susceptibility pass (not of the last SCF iteration), and <code class="docutils literal notranslate"><span class="pre">Gamma_bond</span></code>, in the
+dense (<code class="docutils literal notranslate"><span class="pre">chi_w</span></code>, <code class="docutils literal notranslate"><span class="pre">Gamma_bond</span></code>) or the <span class="math notranslate nohighlight">\(S_z\)</span>-packed
+(<code class="docutils literal notranslate"><span class="pre">chi_w&#64;0</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_w&#64;+1</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_w&#64;-1</span></code> and the same for <code class="docutils literal notranslate"><span class="pre">Gamma_bond</span></code>)
+layout recorded by <code class="docutils literal notranslate"><span class="pre">block_layout</span></code>. In the <code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> layout the
+<code class="docutils literal notranslate"><span class="pre">chi_w</span></code> blocks are the files <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;.&lt;archive_nonce&gt;.npy</span></code>, named by
+<code class="docutils literal notranslate"><span class="pre">&lt;block&gt;_file</span></code> with their size <code class="docutils literal notranslate"><span class="pre">&lt;block&gt;_nbytes</span></code>; <code class="docutils literal notranslate"><span class="pre">Gamma_bond</span></code> is
+always stored in the index. <code class="docutils literal notranslate"><span class="pre">green_file</span></code> names the companion <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>
+relative to the index’s directory, and the archive’s <code class="docutils literal notranslate"><span class="pre">fp_green</span></code> equals
+that file’s. There is no <code class="docutils literal notranslate"><span class="pre">chi_s_w</span></code>, <code class="docutils literal notranslate"><span class="pre">chi_c_w</span></code>, <code class="docutils literal notranslate"><span class="pre">S_bond</span></code> or
+<code class="docutils literal notranslate"><span class="pre">C_bond</span></code>, and the non-spin-orbital bond consumers refuse the archive.
+The full member list, the layout rule, moving and re-running, and the
+behaviour on a failed write are in <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>.</p>
 </section>
 <section id="bond-resolved-dynamic-eliashberg-pairing-outputs">
 <span id="subsec-eliashberg-bond-outputs"></span><h1>Bond-resolved dynamic Eliashberg pairing outputs<a class="headerlink" href="#bond-resolved-dynamic-eliashberg-pairing-outputs" title="Link to this heading">¶</a></h1>

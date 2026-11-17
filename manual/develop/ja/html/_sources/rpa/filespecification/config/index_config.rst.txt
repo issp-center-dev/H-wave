@@ -74,9 +74,10 @@ TOML形式
   - ``longitudinal_bond_channels = true``\ に対応しています。すべての型のオフサイトの行を
     受け付け（複素数の係数は\ ``PairHop``\ のみ）、その交換をボンドチャネルの上で厳密に
     扱います。CPU で動作し（\ ``gpu = true``\ は WARNING 付きで無視、\ ``gpu_required =
-    true``\ と\ ``longitudinal_bond_store = "device"``\ は拒否）、ボンドアーカイブは
-    書き出さず（\ ``longitudinal_bond_output_full = true``\ と
-    ``longitudinal_bond_output_layout``\ は拒否）、プロセス内のペアリングは行わず
+    true``\ と\ ``longitudinal_bond_store = "device"``\ は拒否）、
+    ``longitudinal_bond_output_full = true``\ では最終 Green 関数のスピン軌道ボンド
+    アーカイブ（スキーマ 4）を書き出し（このとき\ ``[file.output] green``\ が必要。
+    :ref:`flex_so_bond_archive`\ を参照）、プロセス内のペアリングは行わず
     （\ ``longitudinal_bond_pairing``\ は\ ``"none"``\ のみ）、すべての振動数を検査します
     （\ ``longitudinal_bond_guard_freqs = "static"``\ は拒否）。\ ``so_bond_layout``\ が
     レイアウトを選び、\ ``longitudinal_bond_memory_cap_gb``\ はスピン軌道での意味を
@@ -93,8 +94,11 @@ TOML形式
     （\ ``[file.output]``\ の\ ``chiq``\ ・\ ``chi0q``\ ・\ ``green``\ を指定してください）。
     :ref:`sc_spin_orbital`\ を参照。オンサイトの動的ソルバー（\ ``frequency =
     "dynamic"``\ ）もこれを読みます（\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
-    ``longitudinal_bond_channels = true``\ の計算の出力はまだ読めません（後の版で
-    ボンドアーカイブが加わります）。動的なボンド分解の経路と
+    ``longitudinal_bond_channels = true``\ の計算の出力は\ ``hwave_sc``\ が拒否します。
+    ``hwave_sc``\ はそのボンドアーカイブを後の版で読みます。この版では、ソルバー側の
+    読み込み処理が Python 関数\ ``hwave.solver.so_bond_archive.load_so_bond_archive``\ で
+    読み、スクリプトでは\ ``numpy.load``\ で中身を見ます（\ :ref:`flex_so_bond_archive`\ を
+    参照）。動的なボンド分解の経路と
     ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
     ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
     ``warm_start = false``\ で実行できます。
@@ -315,7 +319,8 @@ TOML形式
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
   スピンフリー系（または\ ``enable_spin_orbital = true``\ では
   :ref:`flex_so_bond_tutorial`\ のボンドチャネル付きスピン軌道 FLEX を選び、そこでは
-  以下の GPU・アーカイブ・ペアリングのオプションは使えません）・一様松原格子・
+  以下の GPU・ペアリングのオプションは使えず、アーカイブは
+  :ref:`flex_so_bond_archive`\ のスピン軌道ボンドアーカイブです）・一様松原格子・
   副格子なし・偶数の\ ``Nmat``\ が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\
   （\ ``flex_hartree_fock = true``\ が前提）かつ\ ``gpu = true``\ の場合、
   ドレッシング・有効相互作用・自己エネルギーの転送が GPU（CuPy）上で
@@ -702,7 +707,14 @@ TOML形式
   1つ、\ ``longitudinal_bond_pairing``\ を使う場合は2つです）。
   アーカイブのサイズは書き出し前に
   ログに出力されます。\ ``longitudinal_bond_channels = true``\ でない
-  場合は警告付きで無視されます。
+  場合は警告付きで無視されます。\ ``enable_spin_orbital = true``\ では代わりに
+  スピン軌道ボンドアーカイブ（スキーマ 4）を書き出します。追加の感受率パス1回で
+  求めた最終 Green 関数の\ :math:`\chi_B`\ 、ボンドバーテックス、それらの来歴を持ち、
+  ``green.npz``\ を対となるファイルとします（\ ``[file.output] green``\ が必要）。
+  ``IterationMax = 0``\ ではアーカイブは書き出されません。この版の\ ``hwave_sc``\ は
+  このアーカイブを読みません。ソルバー側の読み込み処理は
+  ``hwave.solver.so_bond_archive.load_so_bond_archive``\ で読み、スクリプトでは
+  ``numpy.load``\ で中身を見ます。\ :ref:`flex_so_bond_archive`\ を参照してください。
 
 - ``longitudinal_bond_output_layout``
 
@@ -722,6 +734,15 @@ TOML形式
   ``longitudinal_bond_output_full = true``\ のときにのみ意味を持ちます
   （それ以外ではアーカイブは書き出されません）。\ ``longitudinal_bond_output_full``\
   が false のまま\ ``"sidecar"``\ を指定した場合は警告付きで無視されます。
+  ``enable_spin_orbital = true``\ では、サイドカーは\ ``<block>.<archive_nonce>.npy``\
+  （\ ``chi_w``\ のブロックごとに1つ）で、未指定なら自動で選ばれます。\ ``chi_w``\ の
+  メンバーが小配列の上限\ :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`\ （cap は計算前のメモリ検査で決まった
+  ホストのメモリ上限で、\ ``longitudinal_bond_memory_cap_gb``\ 、未指定なら利用可能なホスト
+  メモリの 0.8 倍。上限なしでは 1 GiB）を超えなければ
+  ``"npz"``\ 、超えれば\ ``"sidecar"``\ です（上限を超えるときの明示的な\ ``"npz"``\ は
+  拒否されます）。\ ``longitudinal_bond_memory_cap_gb``\ が未指定だと、この選択はホストで
+  利用可能なメモリによります。ホストによらないファイルにするには、このキーを明示して
+  ください。\ :ref:`flex_so_bond_archive`\ を参照してください。
 
 - ``longitudinal_bond_freq_batch``
 
@@ -1217,7 +1238,7 @@ TOML形式
 
   **形式 :** str型 (デフォルトは\ ``longitudinal_bond.npz``\ 。FLEXモードのみ)
 
-  **説明 :** ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで\ ``longitudinal_bond_channels = true``\ かつ\ ``longitudinal_bond_output_full = true``\ の場合にのみ書き出されます（:ref:`flex_bond_hf`\ を参照）。\ ``.npz``\ 拡張子のない名前には他の\ ``.npz``\ 出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。
+  **説明 :** ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで\ ``longitudinal_bond_channels = true``\ かつ\ ``longitudinal_bond_output_full = true``\ の場合にのみ書き出されます（:ref:`flex_bond_hf`\ を参照）。\ ``.npz``\ 拡張子のない名前には他の\ ``.npz``\ 出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。\ ``enable_spin_orbital = true``\ ではスピン軌道ボンドアーカイブ（\ :ref:`flex_so_bond_archive`\ ）の名前です。このとき\ ``longitudinal_bond_output_full = true``\ では\ ``[file.output] green``\ が必要で（アーカイブはそのファイルを対となるファイルとして記録します）、\ ``green``\ ファイルは同じディレクトリかその下に置く必要があり、\ ``longitudinal_bond_output_full = true``\ がなければこのキーは INFO 付きで無視されます。
 
 - ``eliashberg_bond_singlet``\ 、\ ``eliashberg_bond_triplet``\ 、
   ``eigenvalue_bond_singlet``\ 、\ ``eigenvalue_bond_triplet``\ 、

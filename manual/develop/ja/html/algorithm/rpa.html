@@ -1055,9 +1055,10 @@ W = P_B\left[\Gamma_B\left(\chi_B - \tfrac{1}{2}\bar\chi_B\right)\Gamma_B\right]
 なり、SU(2) 極限では<a class="reference internal" href="#flex-bond-hf"><span class="std std-ref">Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）</span></a>の非スピン軌道のボンド FLEX を再現します
 （自己エネルギーはスピンの単位行列との積になり、感受率はその電荷・縦スピン・横スピンの
 チャネルに射影されます）。計算、キー、メモリ、出力は<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>に
-まとめています。この版では CPU で動作し、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code>を最後の写像のチャネル 0
-ブロックとして書き出し、ボンドアーカイブは書き出しません。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はその出力を
-まだ読めません。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は、上と同じく<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で
+まとめています。この版では CPU で動作し、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code>を最後の SCF 反復の
+チャネル 0 ブロックとして書き出します。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>では、
+最終 Green 関数のスピン軌道ボンドアーカイブも書き出します（<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>）。
+この版の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はその出力を読みません（後の版でボンドアーカイブを読みます）。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は、上と同じく<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で
 これを実行します。</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id8" role="doc-footnote">

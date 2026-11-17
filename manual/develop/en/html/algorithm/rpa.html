@@ -1162,9 +1162,11 @@ non-spin-orbital bond FLEX of <a class="reference internal" href="#flex-bond-hf"
 unit matrix in spin; the susceptibility projects onto its charge,
 longitudinal and transverse spin channels). The run, its keys, its memory
 and its outputs are described in <a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>; in this
-version it runs on the CPU, writes <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> as the channel-0
-blocks of the last map and no bond archive, and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read
-its outputs yet. A FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span>
+version it runs on the CPU and writes <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> as the channel-0
+blocks of the last SCF iteration; with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span>
+<span class="pre">true</span></code> it also writes the spin-orbital bond archive of the final Green
+function (<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>). <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read its
+outputs in this version (a later version reads the bond archive). A FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span>
 <span class="pre">false</span></code>, as above.</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id2" role="doc-footnote">

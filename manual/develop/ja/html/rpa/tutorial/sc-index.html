@@ -1994,7 +1994,7 @@ issue #239）と、真に非等価な2軌道の鎖に対する1次の参照構�
 <td><p>静的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>とオンサイトの動的な<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
 <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>を使わない計算の出力を<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>で
 読みます（<a class="reference internal" href="#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>と<a class="reference internal" href="#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。
-ボンドチャネル付きの計算の出力はまだ読めません（<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>を参照）</p></td>
+ボンドチャネル付きの計算の出力は拒否されます（<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を参照）</p></td>
 </tr>
 <tr class="row-odd"><td><p>保存される感受率</p></td>
 <td><p>密度‐密度成分のみ<code class="docutils literal notranslate"><span class="pre">chi_{(a,a),(b,b)}</span></code></p></td>
@@ -2347,8 +2347,9 @@ spin-block 順（<code class="docutils literal notranslate"><span class="pre">ga
 <p><code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>では、<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>、
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>で実行した
 FLEX の4つのアーカイブ（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算は拒否されます。その
-アーカイブは<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;flex_so_bond&quot;</span></code>を持ち、この版では読まないためです。
-<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>を参照）を<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>（なければ
+アーカイブは<code class="docutils literal notranslate"><span class="pre">producer_stage</span> <span class="pre">=</span> <span class="pre">&quot;flex_so_bond&quot;</span></code>を持ち、ボンド分解した計算を表すためです。
+メッセージはファイル名を示します。<a class="reference internal" href="#sc-so-archive-checks"><span class="std std-ref">アーカイブの検査: 同一の状態点でのみ再利用</span></a>のトラブルシューティングの表と
+<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を参照）を<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>（なければ
 <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">path_to_output</span></code>）から読みます。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>（既定値<code class="docutils literal notranslate"><span class="pre">&quot;chiq.npz&quot;</span></code>）: スピンフル感受率
@@ -2495,7 +2496,9 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 受け入れます。</p>
 <p>スピン軌道のアーカイブはすべて version 2 の来歴メンバーを付けて書き出されます。
 <code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code>はスピン軌道の RPA と FLEX が、
-<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>はスピン軌道の FLEX が、
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>と<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>はスピン軌道の FLEX が、スピン軌道ボンドアーカイブ
+（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>、<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>）はボンドチャネル付きの
+スピン軌道 FLEX が、
 <code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>・<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code>は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が書き出します。メンバーは次のとおりです。</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">fingerprint_version</span> <span class="pre">=</span> <span class="pre">2</span></code>、<code class="docutils literal notranslate"><span class="pre">producer_stage</span></code>、<code class="docutils literal notranslate"><span class="pre">producer_label</span></code>、
@@ -2553,7 +2556,13 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 <td><p><code class="docutils literal notranslate"><span class="pre">hwave</span> <span class="pre">&lt;input.toml&gt;</span></code>（スピン軌道の FLEX）</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">sigma</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond.npz</span></code>（スピン軌道ボンドアーカイブ）と、その対となる
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">hwave</span> <span class="pre">&lt;input.toml&gt;</span></code>（<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>と
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>のスピン軌道の FLEX）</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code>、<code class="docutils literal notranslate"><span class="pre">green</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span> <span class="pre">&lt;input.toml&gt;</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">output_gap</span></code>（アーカイブ名はギャップのファイル名の拡張子を
 <code class="docutils literal notranslate"><span class="pre">.npz</span></code>にしたもの）</p></td>
@@ -2595,35 +2604,54 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">chi0q.npz</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">chi0q</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">chiq.npz</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">chiq</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">green.npz</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">green_layout</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">sigma_static</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gap.npz</span></code>、<code class="docutils literal notranslate"><span class="pre">gap_dynamic.npz</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">sc_so_static</span></code>、<code class="docutils literal notranslate"><span class="pre">sc_so_dynamic</span></code>、<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">gap</span></code></p></td>
 </tr>
+<tr class="row-odd"><td><p>スピン軌道ボンドアーカイブ</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Gamma_bond</span></code>と<code class="docutils literal notranslate"><span class="pre">chi_w</span></code>（密）、またはその<code class="docutils literal notranslate"><span class="pre">&#64;0</span></code>、<code class="docutils literal notranslate"><span class="pre">&#64;+1</span></code>、
+<code class="docutils literal notranslate"><span class="pre">&#64;-1</span></code>のブロック（パック）。<code class="docutils literal notranslate"><span class="pre">chi_w</span></code>はインデックス内かサイドカー
+ファイル（<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>）</p></td>
+</tr>
 </tbody>
 </table>
-<p>段階<code class="docutils literal notranslate"><span class="pre">sc_so_bond_dynamic</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code>は認識されますが、まだ
-読み込めません。専用のメッセージで拒否されます（下の表を参照）。</p>
-<p><em>レイアウトのメンバー。</em>ボンド分解した段階（<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code>）の
-アーカイブは、<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>の文字列<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>を
-記録していなければなりません。オンサイトの段階のアーカイブは<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>を
-持ちません。メンバー名の接頭辞<code class="docutils literal notranslate"><span class="pre">sz_sector_</span></code>は予約されています。ギャップの
-アーカイブ（どちらのレイアウトでもギャップ全体として保存）またはオンサイトの段階の
-アーカイブが、この接頭辞で始まる名前のメンバーを持つと、不正なものとして拒否されます。</p>
+<p>サイドカーのブロックでは、ヘッダーはサイドカーファイルから読みます。その名前は
+アーカイブのディレクトリにある、ディレクトリ部分のないファイル名でアーカイブの<code class="docutils literal notranslate"><span class="pre">archive_nonce</span></code>を
+含み、その大きさは記録された<code class="docutils literal notranslate"><span class="pre">&lt;block&gt;_nbytes</span></code>とも、ヘッダーとデータの和とも
+等しくなければなりません。インデックス内とサイドカーの両方にあるブロックは拒否
+されます。</p>
+<p>段階<code class="docutils literal notranslate"><span class="pre">sc_so_bond_dynamic</span></code>は認識されますが、まだ読み込めません。専用の
+メッセージで拒否されます（下の表を参照）。<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code>の出力は
+<code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>だけが読み（ボンドアーカイブとその対となる green
+ファイル）、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>のオンサイトの読み込み側はそれを拒否します（下の表を参照）。</p>
+<p><em>レイアウトのメンバー。</em>ボンド分解した段階のアーカイブ（<code class="docutils literal notranslate"><span class="pre">sc_so_bond_static</span></code>と、
+<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code>のすべてのアーカイブ: chi0q、chiq、green、sigma、ボンドアーカイブ）は、
+<code class="docutils literal notranslate"><span class="pre">&quot;dense&quot;</span></code>または<code class="docutils literal notranslate"><span class="pre">&quot;sz_packed&quot;</span></code>の文字列<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>を記録していなければ
+なりません。オンサイトの段階のアーカイブは<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>を持ちません。メンバー名の
+接頭辞<code class="docutils literal notranslate"><span class="pre">sz_sector_</span></code>は予約されています。セクターの対応表の3つのメンバー
+<code class="docutils literal notranslate"><span class="pre">sz_sector_order</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_sector_offsets</span></code>、<code class="docutils literal notranslate"><span class="pre">sz_sector_index</span></code>を持つのはパックの
+スピン軌道ボンドアーカイブだけで、3つすべてを持たなければなりません。それ以外の
+アーカイブ（ギャップのアーカイブ（どちらのレイアウトでもギャップ全体として保存）、
+オンサイトの段階のアーカイブ、<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code>の chi0q、chiq、green、sigma の
+アーカイブ、密なボンドアーカイブ）がこの接頭辞で始まる名前のメンバーを持つとき、
+およびパックのボンドアーカイブがそれ以外のそのようなメンバーを持つときは、不正な
+ものとして拒否されます。</p>
 </li>
 <li><p><strong>この計算との整合。</strong>次の順に検査し、最初の差分を報告します。</p>
 <ol class="arabic simple">
@@ -2645,8 +2673,10 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 Green 関数はバンドから作り、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>と<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>は
 拒否するので、スピン軌道 FLEX の<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;so_onsite&quot;</span></code>）はボンドの
 経路の入力になりません。宣言されたボンドトポロジーと解決されたボンドトポロジーは
-ボンド分解を使う側だけが比較しますが、このバージョンにはアーカイブをその立場で
-読む計算はありません。</p></li>
+ボンド分解を使う側だけが比較します。このバージョンでその立場にあるのは、
+スピン軌道ボンドアーカイブの Python 関数<code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>
+（<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>）だけで、<code class="docutils literal notranslate"><span class="pre">&quot;so_bond&quot;</span></code>を使い、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>の
+一致を求めます。</p></li>
 <li><p><em>状態。</em><span class="math notranslate nohighlight">\(\beta\)</span>（相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、μ の探索の有無
 （<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
 目標値<code class="docutils literal notranslate"><span class="pre">filling</span> <span class="pre">*</span> <span class="pre">2N</span></code>（1セルあたりの電子数、相対<span class="math notranslate nohighlight">\(10^{-12}\)</span>）、その目標値に
@@ -2806,12 +2836,166 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">was</span> <span class="pre">written</span> <span class="pre">by</span> <span class="pre">producer_stage</span> <span class="pre">'sc_so_bond_dynamic',</span> <span class="pre">which</span>
 <span class="pre">this</span> <span class="pre">version</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">read</span> <span class="pre">yet</span> <span class="pre">(the</span> <span class="pre">dynamic</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">path</span>
-<span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span> <span class="pre">version).</span></code>（<code class="docutils literal notranslate"><span class="pre">'flex_so_bond'</span></code>、&quot;the
-spin-orbital bond FLEX&quot; も）</p></td>
-<td><p>ボンド分解のスピン軌道経路のアーカイブで、このバージョンは認識するだけです。
-<code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>または<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code>のアーカイブを使ってください。</p></td>
+<span class="pre">arrives</span> <span class="pre">in</span> <span class="pre">a</span> <span class="pre">later</span> <span class="pre">version).</span></code></p></td>
+<td><p>この版の計算はこの段階を書き出しません（動的なボンドの経路は
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を最初に拒否します）。したがってファイルは後の版で書き出
+されたか、変更されています。スピン軌道のアーカイブの読み込み側はどれも、構造の検査で、
+バンドと状態の検査より前にこれを拒否します。この版の計算のアーカイブを与えてください。
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>にはスピン軌道 RPA（<code class="docutils literal notranslate"><span class="pre">rpa_so</span></code>）またはオンサイトの FLEX
+（<code class="docutils literal notranslate"><span class="pre">flex_so_onsite</span></code>）の chi0q、chiq、green、sigma を、<code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>には
+ボンドチャネル付きのスピン軌道 FLEX（<code class="docutils literal notranslate"><span class="pre">flex_so_bond</span></code>）のボンドアーカイブを
+与えます。</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_green</span></code>、
-<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code></p></td>
+<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;flex&quot;</span></code>）、<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>（<code class="docutils literal notranslate"><span class="pre">&quot;load&quot;</span></code>）、
+<code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>に与えるパス</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">(hwave_sc,</span> <span class="pre">issue</span> <span class="pre">#83):</span> <span class="pre">'&lt;file&gt;'</span>
+<span class="pre">was</span> <span class="pre">written</span> <span class="pre">by</span> <span class="pre">the</span> <span class="pre">spin-orbital</span> <span class="pre">FLEX</span> <span class="pre">with</span> <span class="pre">bond</span> <span class="pre">channels</span> <span class="pre">([mode.param]</span>
+<span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true):</span> <span class="pre">the</span> <span class="pre">chi0q,</span> <span class="pre">chiq</span> <span class="pre">and</span> <span class="pre">green</span> <span class="pre">of</span> <span class="pre">that</span>
+<span class="pre">run</span> <span class="pre">describe</span> <span class="pre">the</span> <span class="pre">bond-resolved</span> <span class="pre">run,</span> <span class="pre">which</span> <span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;flex&quot;</span> <span class="pre">cannot</span> <span class="pre">use.</span> <span class="pre">Re-run</span> <span class="pre">FLEX</span> <span class="pre">with</span> <span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">false</span>
+<span class="pre">for</span> <span class="pre">this</span> <span class="pre">mode.</span></code></p></td>
+<td><p>FLEX の計算がボンドチャネルを使いました（どの<span class="math notranslate nohighlight">\(B\)</span>でも、<span class="math notranslate nohighlight">\(B = 1\)</span>でも）。
+その chi0q/chiq はボンド分解した感受率のチャネル 0 ブロックです。オンサイトの
+ソルバーには、ボンドチャネルなしで FLEX を実行し直してください。</p></td>
+<td><p>FLEX の計算の<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_channels</span></code>。この計算の
+<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>、<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_chiq</span></code>、
+<code class="docutils literal notranslate"><span class="pre">flex_chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_green</span></code>、<code class="docutils literal notranslate"><span class="pre">flex_sigma</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">&lt;file&gt;:</span> <span class="pre">this</span> <span class="pre">is</span> <span class="pre">a</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">(written</span> <span class="pre">by</span>
+<span class="pre">the</span> <span class="pre">spin-orbital</span> <span class="pre">FLEX</span> <span class="pre">with</span> <span class="pre">bond</span> <span class="pre">channels);</span> <span class="pre">the</span> <span class="pre">non-spin-orbital</span> <span class="pre">bond</span>
+<span class="pre">consumers</span> <span class="pre">cannot</span> <span class="pre">read</span> <span class="pre">it,</span> <span class="pre">and</span> <span class="pre">hwave_sc</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">read</span> <span class="pre">it</span> <span class="pre">in</span> <span class="pre">this</span>
+<span class="pre">version</span> <span class="pre">(read</span> <span class="pre">it</span> <span class="pre">with</span>
+<span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive).</span></code></p></td>
+<td><p>スキーマ 4 のアーカイブを非スピン軌道のボンドのペアリング（<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span></code>と<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>）に与えました。変換は
+ありません。スキーマ 3 のアーカイブを得るには、非スピン軌道の FLEX を実行し直してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">flex_bond_archive</span></code>、<code class="docutils literal notranslate"><span class="pre">bond_channels</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;file&gt;'</span> <span class="pre">is</span> <span class="pre">not</span> <span class="pre">a</span> <span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">(bond_archive_schema</span>
+<span class="pre">&lt;schema&gt;,</span> <span class="pre">spin_orbital</span> <span class="pre">&lt;so&gt;);</span> <span class="pre">write</span> <span class="pre">it</span> <span class="pre">with</span> <span class="pre">FLEX,</span> <span class="pre">[mode]</span>
+<span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true,</span> <span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span>
+<span class="pre">true</span> <span class="pre">and</span> <span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true.</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>に別のファイル（たとえば非スピン軌道のスキーマ 3 の
+アーカイブ）を与えました。<code class="docutils literal notranslate"><span class="pre">absent</span></code>はメンバーがないことを表します。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span></code>、<code class="docutils literal notranslate"><span class="pre">[mode.param]</span>
+<span class="pre">longitudinal_bond_channels</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code>、
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;path&gt;'</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">read</span> <span class="pre">as</span> <span class="pre">an</span> <span class="pre">npz</span> <span class="pre">archive</span> <span class="pre">(&lt;error&gt;);</span> <span class="pre">re-run</span> <span class="pre">FLEX</span> <span class="pre">to</span>
+<span class="pre">regenerate</span> <span class="pre">the</span> <span class="pre">bond</span> <span class="pre">archive.</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>に与えたインデックスが空、途中で切れている、または npz
+ファイルではありません（<code class="docutils literal notranslate"><span class="pre">&lt;error&gt;</span></code>は例外を示します）。FLEX を実行し直して
+ください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">'&lt;green&gt;'</span> <span class="pre">named</span> <span class="pre">by</span> <span class="pre">'&lt;archive&gt;'</span> <span class="pre">is</span> <span class="pre">missing</span>
+<span class="pre">(keep</span> <span class="pre">the</span> <span class="pre">archive,</span> <span class="pre">its</span> <span class="pre">sidecars</span> <span class="pre">and</span> <span class="pre">the</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">together,</span> <span class="pre">or</span>
+<span class="pre">re-run</span> <span class="pre">FLEX)</span></code></p></td>
+<td><p>アーカイブを green ファイルなしで移動・コピーしたか、green ファイルを削除
+しました。インデックス、サイドカー（あれば）、green ファイルを、green ファイルの位置を
+<code class="docutils literal notranslate"><span class="pre">green_file</span></code>が記録する相対パスに保ったまままとめて移す
+（<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>）か、FLEX を実行し直してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">'&lt;green&gt;'</span> <span class="pre">named</span> <span class="pre">by</span> <span class="pre">'&lt;archive&gt;'</span> <span class="pre">cannot</span> <span class="pre">be</span> <span class="pre">read</span>
+<span class="pre">as</span> <span class="pre">an</span> <span class="pre">npz</span> <span class="pre">archive</span> <span class="pre">(&lt;error&gt;);</span> <span class="pre">keep</span> <span class="pre">the</span> <span class="pre">archive,</span> <span class="pre">its</span> <span class="pre">sidecars</span> <span class="pre">and</span> <span class="pre">the</span>
+<span class="pre">green</span> <span class="pre">file</span> <span class="pre">together,</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">FLEX.</span></code></p></td>
+<td><p>green ファイルが空、途中で切れている、または npz ファイルではありません
+（<code class="docutils literal notranslate"><span class="pre">.npy</span></code>では<code class="docutils literal notranslate"><span class="pre">&lt;error&gt;</span></code>は<code class="docutils literal notranslate"><span class="pre">a</span> <span class="pre">single</span> <span class="pre">.npy</span> <span class="pre">array</span></code>）。同じ計算の green
+ファイルを戻すか、FLEX を実行し直してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;archive&gt;':</span> <span class="pre">the</span> <span class="pre">sidecar</span> <span class="pre">file</span> <span class="pre">'&lt;name&gt;'</span> <span class="pre">is</span> <span class="pre">a</span> <span class="pre">symbolic</span> <span class="pre">link;</span> <span class="pre">the</span>
+<span class="pre">reader</span> <span class="pre">reads</span> <span class="pre">sidecars</span> <span class="pre">only</span> <span class="pre">as</span> <span class="pre">regular</span> <span class="pre">files</span> <span class="pre">next</span> <span class="pre">to</span> <span class="pre">the</span> <span class="pre">index</span> <span class="pre">(copy</span>
+<span class="pre">the</span> <span class="pre">file</span> <span class="pre">in</span> <span class="pre">place</span> <span class="pre">of</span> <span class="pre">the</span> <span class="pre">link,</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">FLEX).</span></code></p></td>
+<td><p>サイドカーがシンボリックリンクに置き換えられています（同じディレクトリを指す
+リンクでも同じです）。ファイルそのものをコピーしてください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;archive&gt;':</span> <span class="pre">the</span> <span class="pre">&lt;what&gt;</span> <span class="pre">'&lt;name&gt;'</span> <span class="pre">resolves</span> <span class="pre">to</span> <span class="pre">'&lt;real&gt;',</span> <span class="pre">outside</span> <span class="pre">the</span>
+<span class="pre">archive</span> <span class="pre">directory</span> <span class="pre">'&lt;dir&gt;';</span> <span class="pre">keep</span> <span class="pre">the</span> <span class="pre">index,</span> <span class="pre">its</span> <span class="pre">sidecars</span> <span class="pre">and</span> <span class="pre">the</span>
+<span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">in</span> <span class="pre">that</span> <span class="pre">directory</span> <span class="pre">(the</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">may</span> <span class="pre">be</span> <span class="pre">below</span>
+<span class="pre">it),</span> <span class="pre">or</span> <span class="pre">re-run</span> <span class="pre">FLEX.</span></code></p></td>
+<td><p>サイドカー（<code class="docutils literal notranslate"><span class="pre">&lt;what&gt;</span></code> = <code class="docutils literal notranslate"><span class="pre">sidecar</span> <span class="pre">file</span></code>）か green ファイル
+（<code class="docutils literal notranslate"><span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span></code>）が、シンボリックリンクを通してアーカイブの
+ディレクトリの外に解決されます。ファイルを<code class="docutils literal notranslate"><span class="pre">&lt;name&gt;</span></code>としてそのディレクトリ
+（green ファイルではその下でもかまいません）にコピーしてください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;archive&gt;'</span> <span class="pre">(written</span> <span class="pre">by</span> <span class="pre">&lt;producer&gt;):</span> <span class="pre">fp_green</span> <span class="pre">mismatch:</span> <span class="pre">the</span> <span class="pre">Green</span>
+<span class="pre">function</span> <span class="pre">this</span> <span class="pre">run</span> <span class="pre">loaded</span> <span class="pre">has</span> <span class="pre">digest</span> <span class="pre">...,</span> <span class="pre">the</span> <span class="pre">archive</span> <span class="pre">records</span> <span class="pre">...;</span>
+<span class="pre">the</span> <span class="pre">Green</span> <span class="pre">function</span> <span class="pre">and</span> <span class="pre">the</span> <span class="pre">susceptibility</span> <span class="pre">do</span> <span class="pre">not</span> <span class="pre">come</span> <span class="pre">from</span> <span class="pre">the</span> <span class="pre">same</span>
+<span class="pre">run.</span> <span class="pre">...</span></code></p></td>
+<td><p>対となる green ファイルがアーカイブの Green 関数ではありません。置き換えられた、
+green ファイルの確定とインデックスの確定の間で書き出しが失敗して古いインデックスが
+残った（<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>の「書き出しが失敗したとき」）、
+その後に<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span></code>または<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>で
+実行した計算が green ファイルを上書きして古いインデックスが残った（WARNING
+<code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">'&lt;path&gt;':</span> <span class="pre">this</span> <span class="pre">run</span> <span class="pre">wrote</span> <span class="pre">the</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">'&lt;green&gt;'</span> <span class="pre">but</span>
+<span class="pre">no</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">...</span></code>）、またはインデックスが再実行したのと同じディレクトリ内の
+コピーである（そこでの
+コピーはバックアップになりません。<a class="reference internal" href="../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>の「移動と
+再実行」）のいずれかです。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>（と
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">&gt;</span> <span class="pre">0</span></code>）で FLEX を実行し直すか、古いアーカイブを削除してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">'&lt;archive&gt;'</span> <span class="pre">is</span> <span class="pre">malformed</span> <span class="pre">or</span> <span class="pre">truncated:</span> <span class="pre">sidecar</span> <span class="pre">member</span> <span class="pre">&lt;block&gt;</span> <span class="pre">has</span>
+<span class="pre">the</span> <span class="pre">wrong</span> <span class="pre">size</span> <span class="pre">(...)</span></code>、<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">sidecar</span> <span class="pre">member</span> <span class="pre">&lt;block&gt;</span> <span class="pre">file</span> <span class="pre">'&lt;name&gt;'</span> <span class="pre">is</span>
+<span class="pre">missing</span> <span class="pre">...</span></code>、<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">sidecar</span> <span class="pre">file</span> <span class="pre">name</span> <span class="pre">of</span> <span class="pre">&lt;block&gt;</span> <span class="pre">does</span> <span class="pre">not</span> <span class="pre">carry</span> <span class="pre">the</span>
+<span class="pre">archive_nonce</span> <span class="pre">...</span></code>、<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">payload</span> <span class="pre">member</span> <span class="pre">&lt;block&gt;</span> <span class="pre">has</span> <span class="pre">an</span> <span class="pre">unreadable</span>
+<span class="pre">npy</span> <span class="pre">header</span> <span class="pre">...</span></code>（dtype、階数、スロットの形状の誤り、<code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">is</span> <span class="pre">stored</span> <span class="pre">both</span>
+<span class="pre">inline</span> <span class="pre">and</span> <span class="pre">as</span> <span class="pre">a</span> <span class="pre">sidecar</span> <span class="pre">...</span></code>も）</p></td>
+<td><p>サイドカーが途中で切れている、ない、別のアーカイブのサイドカーに置き換えられて
+いる、または壊れています。どの検査もヘッダーとファイルの大きさだけを読みます。
+FLEX を実行し直してください（同じパスへの再実行は、置き換えたアーカイブの
+サイドカーを削除します）。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">member</span> <span class="pre">block_layout</span> <span class="pre">is</span> <span class="pre">missing</span> <span class="pre">...</span></code></p></td>
+<td><p>この版より前に書き出された、ボンドチャネル付きスピン軌道 FLEX の出力です
+（<code class="docutils literal notranslate"><span class="pre">block_layout</span></code>がない）。この版で作り直してください。</p></td>
+<td><p>FLEX の計算の<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chi0q</span></code>、<code class="docutils literal notranslate"><span class="pre">chiq</span></code>、<code class="docutils literal notranslate"><span class="pre">green</span></code>、
+<code class="docutils literal notranslate"><span class="pre">sigma</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&lt;head&gt;:</span> <span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">needs</span> <span class="pre">[file.output]</span>
+<span class="pre">green</span> <span class="pre">...</span></code>（<code class="docutils literal notranslate"><span class="pre">&lt;head&gt;</span></code> = <code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">with</span>
+<span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">(FLEX)</span></code>）</p></td>
+<td><p>ボンドアーカイブには対となる green ファイルが必要です。<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>の
+キーは大文字小文字を区別します。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&lt;head&gt;:</span> <span class="pre">the</span> <span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">'&lt;archive&gt;'</span> <span class="pre">and</span> <span class="pre">its</span> <span class="pre">companion</span> <span class="pre">green</span> <span class="pre">file</span>
+<span class="pre">'&lt;green&gt;'</span> <span class="pre">must</span> <span class="pre">be</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">same</span> <span class="pre">directory</span> <span class="pre">or</span> <span class="pre">the</span> <span class="pre">green</span> <span class="pre">file</span> <span class="pre">below</span> <span class="pre">it</span>
+<span class="pre">...</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">green_file</span></code>は<code class="docutils literal notranslate"><span class="pre">..</span></code>を含まない相対パスで保存されます。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&lt;head&gt;:</span> <span class="pre">longitudinal_bond_output_layout</span> <span class="pre">=</span> <span class="pre">&quot;npz&quot;</span> <span class="pre">cannot</span> <span class="pre">hold</span> <span class="pre">the</span>
+<span class="pre">bond</span> <span class="pre">archive</span> <span class="pre">member</span> <span class="pre">&lt;member&gt;</span> <span class="pre">(&lt;size&gt;,</span> <span class="pre">above</span> <span class="pre">the</span> <span class="pre">small-array</span> <span class="pre">bound</span>
+<span class="pre">&lt;bound&gt;</span> <span class="pre">=</span> <span class="pre">min(1</span> <span class="pre">GiB,</span> <span class="pre">cap</span> <span class="pre">/</span> <span class="pre">8));</span> <span class="pre">...</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">chi_w</span></code>のメンバーが単一ファイルには大きすぎます。<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code>を指定するか、
+キーを外してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_output_layout</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">spin-orbital</span> <span class="pre">bond</span> <span class="pre">FLEX</span> <span class="pre">needs</span> <span class="pre">an</span> <span class="pre">estimated</span> <span class="pre">peak</span> <span class="pre">of</span> <span class="pre">...</span> <span class="pre">in</span> <span class="pre">phase</span>
+<span class="pre">archive_...</span> <span class="pre">...</span> <span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span> <span class="pre">adds</span> <span class="pre">the</span> <span class="pre">archive</span>
+<span class="pre">phases</span> <span class="pre">(archive_bubble,</span> <span class="pre">archive_dressing,</span> <span class="pre">archive_write);</span> <span class="pre">setting</span> <span class="pre">it</span>
+<span class="pre">to</span> <span class="pre">false</span> <span class="pre">removes</span> <span class="pre">them.</span> <span class="pre">...</span></code></p></td>
+<td><p>計算前のメモリ検査がボンドアーカイブのフェーズを拒否しました。上限を上げる、
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>か k 格子を減らす、または<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span></code>に
+してください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_memory_cap_gb</span></code>、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">This</span> <span class="pre">happened</span> <span class="pre">in</span> <span class="pre">the</span> <span class="pre">final</span> <span class="pre">susceptibility</span> <span class="pre">pass</span> <span class="pre">of</span> <span class="pre">the</span> <span class="pre">bond</span>
+<span class="pre">archive;</span> <span class="pre">set</span> <span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span> <span class="pre">to</span> <span class="pre">skip</span> <span class="pre">that</span>
+<span class="pre">pass.</span></code></p></td>
+<td><p>ボンドアーカイブのパスでドレッシングのガードが拒否しました。計算の出力は
+書き出されません。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_cond_tol</span></code>を下げるか、標準の出力を
+得るには<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">false</span></code>にしてください。</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_cond_tol</span></code>、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">...</span> <span class="pre">needs</span> <span class="pre">the</span> <span class="pre">general</span> <span class="pre">(4-index)</span> <span class="pre">spinful</span> <span class="pre">chi0q</span> <span class="pre">...</span></code>（load モード、
 スピン混成のホッピングのない Zeeman 場）</p></td>

@@ -1161,9 +1161,10 @@ reduced スキームはスピン軌道入力を拒否します。Eliashberg ソ�
 なり、SU(2) 極限では\ :ref:`flex_bond_hf`\ の非スピン軌道のボンド FLEX を再現します
 （自己エネルギーはスピンの単位行列との積になり、感受率はその電荷・縦スピン・横スピンの
 チャネルに射影されます）。計算、キー、メモリ、出力は\ :ref:`flex_so_bond_tutorial`\ に
-まとめています。この版では CPU で動作し、\ ``chi0q``\ /\ ``chiq``\ を最後の写像のチャネル 0
-ブロックとして書き出し、ボンドアーカイブは書き出しません。\ ``hwave_sc``\ はその出力を
-まだ読めません。FLEX のみの\ ``hwave_tsweep``\ は、上と同じく\ ``warm_start = false``\ で
+まとめています。この版では CPU で動作し、\ ``chi0q``\ /\ ``chiq``\ を最後の SCF 反復の
+チャネル 0 ブロックとして書き出します。\ ``longitudinal_bond_output_full = true``\ では、
+最終 Green 関数のスピン軌道ボンドアーカイブも書き出します（\ :ref:`flex_so_bond_archive`\ ）。
+この版の\ ``hwave_sc``\ はその出力を読みません（後の版でボンドアーカイブを読みます）。FLEX のみの\ ``hwave_tsweep``\ は、上と同じく\ ``warm_start = false``\ で
 これを実行します。
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

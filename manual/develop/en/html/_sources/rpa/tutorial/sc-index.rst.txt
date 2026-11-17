@@ -2176,7 +2176,7 @@ was checked by running the combination.
        a run without ``longitudinal_bond_channels`` with ``chi0q_mode =
        "flex"`` (see :ref:`sc_spin_orbital` and
        :ref:`sc_spin_orbital_dynamic`); the outputs of a run with bond
-       channels are not read yet (see :ref:`flex_so_bond_tutorial`)
+       channels are refused (see :ref:`flex_so_bond_archive`)
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
      - full orbital-pair
@@ -2535,8 +2535,9 @@ With ``chi0q_mode = "flex"`` the solver reads four archives of a FLEX run
 with ``enable_spin_orbital = true``, ``calc_scheme = "general"`` and
 ``[mode.param] flex_hartree_fock = true`` (a run with
 ``longitudinal_bond_channels = true`` is refused: its archives carry
-``producer_stage = "flex_so_bond"``, which this version does not read; see
-:ref:`flex_so_bond_tutorial`), from ``[file.input]
+``producer_stage = "flex_so_bond"`` and describe the bond-resolved run; the
+message names the file, see the troubleshooting table of
+:ref:`sc_so_archive_checks` and :ref:`flex_so_bond_archive`), from ``[file.input]
 path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
 
 - ``[eliashberg] flex_chiq`` (default ``"chiq.npz"``): the spinful
@@ -2701,7 +2702,9 @@ producer has to be rerun with this input. The one exception is ``Nmat`` in
 
 Every spin-orbital archive is written with version-2 provenance members:
 ``chi0q.npz`` and ``chiq.npz`` by the spin-orbital RPA and FLEX runs,
-``green.npz`` and ``sigma.npz`` by the spin-orbital FLEX run, and
+``green.npz`` and ``sigma.npz`` by the spin-orbital FLEX run, the
+spin-orbital bond archive (``longitudinal_bond.npz``,
+:ref:`flex_so_bond_archive`) by the spin-orbital FLEX with bond channels, and
 ``gap.npz`` / ``gap_dynamic.npz`` by ``hwave_sc``. The members are
 
 - ``fingerprint_version = 2``, ``producer_stage``, ``producer_label`` and
@@ -2758,6 +2761,12 @@ writes the file:
    * - ``green.npz``, ``sigma.npz``
      - ``hwave <input.toml>``, a spin-orbital FLEX run
      - ``[file.output] green``, ``sigma``
+   * - ``longitudinal_bond.npz`` (spin-orbital bond archive) and its
+       companion ``green.npz``
+     - ``hwave <input.toml>``, a spin-orbital FLEX run with
+       ``longitudinal_bond_channels = true`` and
+       ``longitudinal_bond_output_full = true``
+     - ``[file.output] longitudinal_bond``, ``green``
    * - ``gap.npz``, ``gap_dynamic.npz``
      - ``hwave_sc <input.toml>``
      - ``[eliashberg] output_gap`` (the archive name is the gap file name
@@ -2796,32 +2805,51 @@ The check then runs in two steps.
         - ``producer_stage`` that writes it
         - Payload members
       * - ``chi0q.npz``
-        - ``rpa_so``, ``flex_so_onsite``
+        - ``rpa_so``, ``flex_so_onsite``, ``flex_so_bond``
         - ``chi0q``
       * - ``chiq.npz``
-        - ``rpa_so``, ``flex_so_onsite``
+        - ``rpa_so``, ``flex_so_onsite``, ``flex_so_bond``
         - ``chiq``
       * - ``green.npz``
-        - ``flex_so_onsite``
+        - ``flex_so_onsite``, ``flex_so_bond``
         - ``green``, ``green_layout``
       * - ``sigma.npz``
-        - ``flex_so_onsite``
+        - ``flex_so_onsite``, ``flex_so_bond``
         - ``sigma_static``
       * - ``gap.npz``, ``gap_dynamic.npz``
         - ``sc_so_static``, ``sc_so_dynamic``, ``sc_so_bond_static``
         - ``gap``
+      * - spin-orbital bond archive
+        - ``flex_so_bond``
+        - ``Gamma_bond`` and ``chi_w`` (dense) or their ``@0``, ``@+1``,
+          ``@-1`` blocks (packed); ``chi_w`` in the index or as sidecar
+          files (:ref:`flex_so_bond_archive`)
 
-   The stages ``sc_so_bond_dynamic`` and ``flex_so_bond`` are recognised
-   but not read yet; they are refused with their own message (see the
-   table below).
+   For a sidecar block the header is read from the sidecar file, whose
+   name must be a file name without a directory part, in the archive's
+   directory, carrying the archive's ``archive_nonce``, and whose size must equal both the recorded
+   ``<block>_nbytes`` and the header plus the data; a block stored both in
+   the index and as a sidecar is refused.
+
+   The stage ``sc_so_bond_dynamic`` is recognised but not read yet; it is
+   refused with its own message (see the table below). The outputs of
+   ``flex_so_bond`` are read by ``load_so_bond_archive`` only (the bond
+   archive and its companion green file); the on-site consumers of
+   ``hwave_sc`` refuse them (see the table below).
 
    *Layout members.* An archive of a bond-resolved stage
-   (``sc_so_bond_static``) must record ``block_layout``, a string that is
-   ``"dense"`` or ``"sz_packed"``; an archive of an on-site stage carries
-   no ``block_layout``. The member-name prefix ``sz_sector_`` is reserved:
-   a gap archive (stored as the full gap in either layout) or an archive
-   of an on-site stage with a member whose name starts with it is refused
-   as malformed.
+   (``sc_so_bond_static``, and every archive of ``flex_so_bond``: chi0q,
+   chiq, green, sigma and the bond archive) must record ``block_layout``,
+   a string that is ``"dense"`` or ``"sz_packed"``; an archive of an
+   on-site stage carries no ``block_layout``. The member-name prefix
+   ``sz_sector_`` is reserved: only a packed spin-orbital bond archive
+   carries the three sector-map members ``sz_sector_order``,
+   ``sz_sector_offsets`` and ``sz_sector_index`` (and must carry all
+   three); any other archive with a member whose name starts with it (a gap
+   archive, stored as the full gap in either layout, an archive of an
+   on-site stage, a chi0q, chiq, green or sigma archive of
+   ``flex_so_bond``, or a dense bond archive), and a packed bond archive
+   with any other such member, is refused as malformed.
 
 2. **Compatibility with this run**, in this order; the first difference is
    reported.
@@ -2847,8 +2875,10 @@ The check then runs in two steps.
       function from the band and refuses ``bond_green`` and ``chi0q_mode =
       "flex"``, so a spin-orbital FLEX ``green.npz`` (``"so_onsite"``) is
       not a bond-path input. The declared and resolved bond topologies are
-      compared only by a bond-resolved consumer, and no run of this version
-      reads an archive as one.
+      compared only by a bond-resolved consumer; in this version the only
+      one is the Python function ``load_so_bond_archive`` of the
+      spin-orbital bond archive (:ref:`flex_so_bond_archive`), which
+      consumes ``"so_bond"`` and requires ``Nmat`` to be identical.
    4. *State.* :math:`\beta` (relative :math:`10^{-12}`); the μ-search mode
       (``hwave_sc`` always searches μ, so a fixed-μ archive is refused);
       the target ``filling * 2N`` electrons per cell (relative
@@ -3000,13 +3030,157 @@ producer:
      - ``[eliashberg] flex_green``, ``flex_sigma``, ``flex_chiq``
    * - ``'<file>' was written by producer_stage 'sc_so_bond_dynamic', which
        this version does not read yet (the dynamic spin-orbital bond path
-       arrives in a later version).`` (also ``'flex_so_bond'``, "the
-       spin-orbital bond FLEX")
-     - The archive comes from a bond-resolved spin-orbital path that this
-       version only recognises. Use an archive of ``rpa_so`` or
-       ``flex_so_onsite``.
+       arrives in a later version).``
+     - No run of this version writes this stage (the dynamic bond path
+       refuses ``enable_spin_orbital`` up front), so the file comes from a
+       later version or was modified. Every spin-orbital archive reader
+       refuses it in the structure check, before the band and state checks.
+       Give the reader the archives of
+       a run of this version: for ``hwave_sc``, the chi0q, chiq, green and
+       sigma of a spin-orbital RPA (``rpa_so``) or on-site FLEX
+       (``flex_so_onsite``) run; for ``load_so_bond_archive``, the bond
+       archive of the spin-orbital FLEX with bond channels
+       (``flex_so_bond``).
      - ``[eliashberg] flex_chiq``, ``flex_chi0q``, ``flex_green``,
-       ``flex_sigma``
+       ``flex_sigma`` (``"flex"``); ``[file.output] chi0q`` (``"load"``);
+       the path given to ``load_so_bond_archive``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83): '<file>'
+       was written by the spin-orbital FLEX with bond channels ([mode.param]
+       longitudinal_bond_channels = true): the chi0q, chiq and green of that
+       run describe the bond-resolved run, which [eliashberg] chi0q_mode =
+       "flex" cannot use. Re-run FLEX with longitudinal_bond_channels = false
+       for this mode.``
+     - The FLEX run used the bond channels (any :math:`B`, also
+       :math:`B = 1`); its chi0q/chiq are channel-0 blocks of the
+       bond-resolved susceptibility. Rerun FLEX without the bond channels
+       for the on-site solver.
+     - ``[mode.param] longitudinal_bond_channels`` of the FLEX run;
+       ``[file.input] path_to_flex_output``, ``[eliashberg] flex_chiq``,
+       ``flex_chi0q``, ``flex_green``, ``flex_sigma`` of this run
+   * - ``bond archive <file>: this is a spin-orbital bond archive (written by
+       the spin-orbital FLEX with bond channels); the non-spin-orbital bond
+       consumers cannot read it, and hwave_sc does not read it in this
+       version (read it with
+       hwave.solver.so_bond_archive.load_so_bond_archive).``
+     - A schema-4 archive given to the non-spin-orbital bond pairing
+       (``hwave_sc`` with ``bond_channels = true`` and ``frequency =
+       "dynamic"``). There is no conversion; rerun the non-spin-orbital FLEX
+       for the schema-3 archive.
+     - ``[eliashberg] flex_bond_archive``, ``bond_channels``
+   * - ``'<file>' is not a spin-orbital bond archive (bond_archive_schema
+       <schema>, spin_orbital <so>); write it with FLEX, [mode]
+       enable_spin_orbital = true, [mode.param] longitudinal_bond_channels =
+       true and longitudinal_bond_output_full = true.``
+     - ``load_so_bond_archive`` was given another file (for example a
+       non-spin-orbital schema-3 archive). ``absent`` stands for a missing
+       member.
+     - ``[mode] enable_spin_orbital``, ``[mode.param]
+       longitudinal_bond_channels``, ``longitudinal_bond_output_full``,
+       ``[file.output] longitudinal_bond``
+   * - ``'<path>' cannot be read as an npz archive (<error>); re-run FLEX to
+       regenerate the bond archive.``
+     - The index given to ``load_so_bond_archive`` is empty, truncated or
+       not an npz file (``<error>`` names the exception). Rerun FLEX.
+     - ``[file.output] longitudinal_bond``
+   * - ``companion green file '<green>' named by '<archive>' is missing
+       (keep the archive, its sidecars and the green file together, or
+       re-run FLEX)``
+     - The archive was moved or copied without its green file, or the
+       green file was removed. Move the index, any sidecars and the green
+       file together, keeping the green file at the relative path
+       ``green_file`` records (:ref:`flex_so_bond_archive`), or rerun FLEX.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``companion green file '<green>' named by '<archive>' cannot be read
+       as an npz archive (<error>); keep the archive, its sidecars and the
+       green file together, or re-run FLEX.``
+     - The green file is empty, truncated, or not an npz file (``<error>``
+       is ``a single .npy array`` for a ``.npy``). Restore the green file
+       of the same run, or rerun FLEX.
+     - ``[file.output] green``
+   * - ``'<archive>': the sidecar file '<name>' is a symbolic link; the
+       reader reads sidecars only as regular files next to the index (copy
+       the file in place of the link, or re-run FLEX).``
+     - A sidecar was replaced by a symbolic link (also one pointing into
+       the same directory). Copy the file itself.
+     - ``[file.output] longitudinal_bond``
+   * - ``'<archive>': the <what> '<name>' resolves to '<real>', outside the
+       archive directory '<dir>'; keep the index, its sidecars and the
+       companion green file in that directory (the green file may be below
+       it), or re-run FLEX.``
+     - A sidecar (``<what>`` = ``sidecar file``) or the green file
+       (``companion green file``) resolves, through a symbolic link, to a
+       place outside the archive's directory. Copy the file to ``<name>``
+       in (or, for the green file, below) that directory.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``'<archive>' (written by <producer>): fp_green mismatch: the Green
+       function this run loaded has digest ..., the archive records ...;
+       the Green function and the susceptibility do not come from the same
+       run. ...``
+     - The companion green file is not the Green function of the
+       archive: it was replaced, a write failed between the commit of the
+       green file and that of the index and left a stale index (see
+       *When writing fails* in :ref:`flex_so_bond_archive`), a later run
+       with ``longitudinal_bond_output_full = false`` or ``IterationMax =
+       0`` overwrote the green file and left the old index (the WARNING
+       ``spin-orbital bond archive '<path>': this run wrote the green file
+       '<green>' but no bond archive ...``), or the index is a copy in the
+       same directory as a re-run (a copy there is no backup; see *Moving
+       and re-running* in :ref:`flex_so_bond_archive`). Rerun FLEX with
+       ``longitudinal_bond_output_full = true`` (and ``IterationMax > 0``),
+       or remove the stale archive.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``'<archive>' is malformed or truncated: sidecar member <block> has
+       the wrong size (...)``, ``... sidecar member <block> file '<name>' is
+       missing ...``, ``... sidecar file name of <block> does not carry the
+       archive_nonce ...``, ``... payload member <block> has an unreadable
+       npy header ...`` (also wrong dtype, rank or slot shape, and ``...
+       is stored both inline and as a sidecar ...``)
+     - A sidecar is truncated, missing, replaced by the sidecar of another
+       archive, or damaged. Every check reads the header and the file size
+       only. Rerun FLEX (a re-run into the same path removes the replaced
+       archive's sidecars).
+     - ``[file.output] longitudinal_bond``
+   * - ``... member block_layout is missing ...``
+     - An output of the spin-orbital FLEX with bond channels written before
+       this version (it lacks ``block_layout``). Regenerate it with this
+       version.
+     - ``[file.output] chi0q``, ``chiq``, ``green``, ``sigma``,
+       ``longitudinal_bond`` of the FLEX run
+   * - ``<head>: longitudinal_bond_output_full = true needs [file.output]
+       green ...`` (``<head>`` = ``[mode] enable_spin_orbital = true with
+       [mode.param] longitudinal_bond_channels = true (FLEX)``)
+     - The bond archive needs its companion green file; the ``[file.output]``
+       keys are case-sensitive.
+     - ``[file.output] green``
+   * - ``<head>: the bond archive '<archive>' and its companion green file
+       '<green>' must be in the same directory or the green file below it
+       ...``
+     - ``green_file`` is stored as a relative path without ``..``.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``<head>: longitudinal_bond_output_layout = "npz" cannot hold the
+       bond archive member <member> (<size>, above the small-array bound
+       <bound> = min(1 GiB, cap / 8)); ...``
+     - A ``chi_w`` member is too large for the single file. Set
+       ``"sidecar"`` or remove the key.
+     - ``[mode.param] longitudinal_bond_output_layout``
+   * - ``spin-orbital bond FLEX needs an estimated peak of ... in phase
+       archive_... ... longitudinal_bond_output_full = true adds the archive
+       phases (archive_bubble, archive_dressing, archive_write); setting it
+       to false removes them. ...``
+     - The pre-flight memory check refused a phase of the bond archive.
+       Raise the cap, reduce ``Nmat`` or the k grid, or set
+       ``longitudinal_bond_output_full = false``.
+     - ``[mode.param] longitudinal_bond_memory_cap_gb``,
+       ``longitudinal_bond_output_full``
+   * - ``... This happened in the final susceptibility pass of the bond
+       archive; set longitudinal_bond_output_full = false to skip that
+       pass.``
+     - The dressing guard refused in the pass of the bond archive; no
+       output of the run is written. Lower ``longitudinal_bond_cond_tol``,
+       or set ``longitudinal_bond_output_full = false`` to get the
+       standard outputs.
+     - ``[mode.param] longitudinal_bond_cond_tol``,
+       ``longitudinal_bond_output_full``
    * - ``... needs the general (4-index) spinful chi0q ...`` (load mode,
        Zeeman field without spin-mixing hopping)
      - The spin-orbital RPA reduces a Zeeman-only model to the spin-diagonal

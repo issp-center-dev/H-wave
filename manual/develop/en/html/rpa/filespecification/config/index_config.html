@@ -139,9 +139,10 @@ interactions only (an off-site declaration is refused);</p></li>
 every type are accepted (a complex coefficient on <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> only) and
 their exchange is resolved exactly on the bond channels. It runs on the
 CPU (<code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code> is ignored with a WARNING; <code class="docutils literal notranslate"><span class="pre">gpu_required</span> <span class="pre">=</span> <span class="pre">true</span></code>
-and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;device&quot;</span></code> are refused), writes no bond
-archive (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> and
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code> are refused), takes no in-process
+and <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_store</span> <span class="pre">=</span> <span class="pre">&quot;device&quot;</span></code> are refused), writes the
+spin-orbital bond archive (schema 4) of the final Green function with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> (<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code> is
+then required; see <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>), takes no in-process
 pairing (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code> must be <code class="docutils literal notranslate"><span class="pre">&quot;none&quot;</span></code>) and guards
 every frequency (<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_guard_freqs</span> <span class="pre">=</span> <span class="pre">&quot;static&quot;</span></code> is
 refused); <code class="docutils literal notranslate"><span class="pre">so_bond_layout</span></code> selects the layout and
@@ -159,8 +160,12 @@ without <code class="docutils literal notranslate"><span class="pre">longitudina
 <span class="pre">&quot;flex&quot;</span></code> (write <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code>); see
 <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. The on-site dynamic solver (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
 <span class="pre">&quot;dynamic&quot;</span></code>) reads them too (see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>). The
-outputs of a run with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> are not read
-yet (a later version adds the bond archive). The dynamic bond path and
+outputs of a run with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> are refused
+by <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, which reads its bond archive in a later version. In
+this version solver-side consumers read the bond archive through the
+Python function <code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive</span></code>,
+and a script inspects it with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code> (see
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>). The dynamic bond path and
 <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> with <code class="docutils literal notranslate"><span class="pre">run_eliashberg</span> <span class="pre">=</span> <span class="pre">true</span></code> still refuse
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>; a FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with
 <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>.</p></li>
@@ -400,8 +405,9 @@ its second order built exactly and a warning when a bond’s spin part is
 not SU(2) symmetric; requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>,
 <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>, a spin-free system (or, with
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>, the spin-orbital FLEX with bond channels
-of <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>, where the GPU, the archive and pairing
-options below are not available), the uniform Matsubara grid, no
+of <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>, where the GPU and pairing options below
+are not available and the archive is the spin-orbital bond archive of
+<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>), the uniform Matsubara grid, no
 sublattice and an even <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>; see <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>).
 With <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 (which requires <code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>) and <code class="docutils literal notranslate"><span class="pre">gpu</span> <span class="pre">=</span> <span class="pre">true</span></code>,
@@ -787,7 +793,15 @@ memory of the bond-resolved solve, which otherwise holds one such buffer
 (the bubble, overwritten in place by the effective interaction) or two
 with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_pairing</span></code>; the archive size is logged before
 writing. Ignored with a warning unless
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>.</p>
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. With <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span>
+<span class="pre">true</span></code> it writes instead the spin-orbital bond archive (schema 4):
+<span class="math notranslate nohighlight">\(\chi_B\)</span> of the final Green function from one extra
+susceptibility pass, the bond vertex and their provenance, with
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code> as its companion (<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code> is required);
+<code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> writes no archive. <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read this
+archive in this version: solver-side consumers read it with
+<code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive</span></code>, and a script
+inspects it with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>. See <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_layout</span></code></p>
 <p><strong>Type :</strong>
@@ -804,7 +818,16 @@ memory-maps those <code class="docutils literal notranslate"><span class="pre">.
 time, so a large channel member is never fully resident. Meaningful
 only with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> (no archive is
 written otherwise); a <code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> request without it is ignored with
-a warning.</p>
+a warning. With <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> the sidecars are
+<code class="docutils literal notranslate"><span class="pre">&lt;block&gt;.&lt;archive_nonce&gt;.npy</span></code> (one per <code class="docutils literal notranslate"><span class="pre">chi_w</span></code> block), and an unset
+key lets the archive choose: <code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code> unless a <code class="docutils literal notranslate"><span class="pre">chi_w</span></code> member is above
+the small-array bound <span class="math notranslate nohighlight">\(\min(1\,\mathrm{GiB}, \mathrm{cap}/8)\)</span> (cap:
+the resolved host cap, <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> or, unset, 0.8
+times the available host memory; with no cap the bound is 1 GiB), then
+<code class="docutils literal notranslate"><span class="pre">&quot;sidecar&quot;</span></code> (an explicit <code class="docutils literal notranslate"><span class="pre">&quot;npz&quot;</span></code> above the bound is refused). With
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_memory_cap_gb</span></code> unset that choice depends on the
+memory available on the host; set this key explicitly for files that do
+not depend on the host. See <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">longitudinal_bond_freq_batch</span></code></p>
 <p><strong>Type :</strong>
@@ -1342,7 +1365,13 @@ susceptibilities, written only when <code class="docutils literal notranslate"><
 <a class="reference internal" href="../../../algorithm/rpa.html#flex-bond-hf"><span class="std std-ref">Bond-resolved FLEX with Hartree-Fock renormalisation (experimental)</span></a>). A name without the <code class="docutils literal notranslate"><span class="pre">.npz</span></code> suffix gets it
 appended, as for the other <code class="docutils literal notranslate"><span class="pre">.npz</span></code> outputs. It must not resolve to the
 same file as any other output of the run (the collision is refused
-before the calculation starts).</p>
+before the calculation starts). With <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code> it
+names the spin-orbital bond archive (<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>):
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code> is then required with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> (the archive names that file as
+its companion), the <code class="docutils literal notranslate"><span class="pre">green</span></code> file must be in the same directory or
+below it, and without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code> the key
+is ignored with an INFO line.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">eliashberg_bond_singlet</span></code>, <code class="docutils literal notranslate"><span class="pre">eliashberg_bond_triplet</span></code>,
 <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_singlet</span></code>, <code class="docutils literal notranslate"><span class="pre">eigenvalue_bond_triplet</span></code>,
