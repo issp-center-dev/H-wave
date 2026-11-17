@@ -356,6 +356,30 @@ class TestRows(unittest.TestCase):
                                                                 k, 1000))
                             self.assertTrue(all(type(b) is int for _, _, b in got))
 
+    def test_green_source_rows(self):
+        """A Green function read from bond_green adds the green_static
+        file_read row (256 KiB) to the band rows; "band" (the default) is
+        the band rows; any other value is refused."""
+        kw = dict(nmat=8, nvol=16, B=5, nd=2, layout="sz_packed", solver_mode="eigenvalue",
+                  num_eigenvalues=2, max_iter=1000, spatial_shape=(4, 4, 1))
+        band = so_bond.static_so_bond_rows(**kw)
+        self.assertEqual(band, _literal_rows(8, (4, 4, 1), 5, 2, "sz_packed", "eigenvalue",
+                                             2, 1000))
+        self.assertEqual(so_bond.static_so_bond_rows(green_source="band", **kw), band)
+        for layout in ("dense", "sz_packed"):
+            with self.subTest(layout=layout):
+                kw_l = dict(kw, layout=layout)
+                self.assertEqual(so_bond.static_so_bond_rows(green_source="file", **kw_l),
+                                 so_bond.static_so_bond_rows(**kw_l)
+                                 + (("green_static", "file_read", 262144),))
+        for bad in ("internal", "File", None):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError) as cm:
+                    so_bond.static_so_bond_rows(green_source=bad, **kw)
+                self.assertEqual(str(cm.exception),
+                                 "static_so_bond_rows: green_source must be 'band' or 'file', "
+                                 "got {!r}".format(bad))
+
     def test_dense_solver_row_branches(self):
         dense = so_bond.estimate_dense_layout_solver_bytes
         tail = lambda d, k, n: 16 * k * n + 16 * k * d + 24 * n + OV  # noqa: E731

@@ -76,7 +76,7 @@ from .so_records import CompiledInteraction, _displacements
 
 __all__ = ["SlotConvention", "SLOT_CONVENTION", "BondSlotGeometry", "slot_geometry",
            "so_bond_topology", "parse_layout_key", "BandSzCheck", "band_conserves_sz",
-           "records_conserve_sz", "select_layout", "canonical_band_eigen", "green_leak",
+           "records_conserve_sz", "InputSzCheck", "input_conserves_sz", "select_layout", "canonical_band_eigen", "green_leak",
            "project_green_sectors", "project_borrowed_green", "SECTOR_ORDER", "SectorCross",
            "PPGather",
            "SectorMap", "sz_sector_map", "PackedArrays", "SOBondCaps", "SOBondPlan",
@@ -534,6 +534,32 @@ def records_conserve_sz(compiled):
     return None
 
 
+class InputSzCheck(NamedTuple):
+    """Whether the input of a spin-orbital run conserves S_z
+    (:func:`input_conserves_sz`): ``band`` is the :class:`BandSzCheck` of its
+    Transfer table, ``record`` the first S_z-changing interaction record
+    (:func:`records_conserve_sz`; ``None`` when every record conserves S_z,
+    and not looked up when the band already breaks it)."""
+    conserving: bool
+    band: BandSzCheck
+    record: Optional[dict]
+
+
+def input_conserves_sz(transfer, extern, compiled, norb_phys):
+    """Whether the whole input of a spin-orbital run conserves S_z: its band
+    (:func:`band_conserves_sz` of ``transfer``, ``extern``) and every record
+    of its compiled interaction ``compiled`` (:func:`records_conserve_sz`).
+    The records are read only when the band conserves S_z. Returns
+    :class:`InputSzCheck`. The one S_z rule of the input: the layout
+    selection (:func:`select_layout`), the sector Dyson of the bond FLEX and
+    the projection of a borrowed Green function all take it from here."""
+    band = band_conserves_sz(transfer, extern, norb_phys)
+    if not band.conserving:
+        return InputSzCheck(False, band, None)
+    record = records_conserve_sz(compiled)
+    return InputSzCheck(record is None, band, record)
+
+
 def select_layout(compiled, transfer_table, *, override):
     """The layout of the spin-orbital bond objects and its reason line.
 
@@ -552,12 +578,12 @@ def select_layout(compiled, transfer_table, *, override):
                              type(compiled).__name__))
     if forced:
         return "dense", 'so bond layout: dense (reason: forced by so_bond_layout = "dense")'
-    band = band_conserves_sz(transfer_table, None, compiled.norb_phys)
-    if not band.conserving:
-        R, (i, j), v = band.entry
+    check = input_conserves_sz(transfer_table, None, compiled, compiled.norb_phys)
+    if not check.band.conserving:
+        R, (i, j), v = check.band.entry
         return "dense", ("so bond layout: dense (reason: spin-flip transfer entry R=({}, {}, {}) "
                          "({}, {}) = {!r})".format(R[0], R[1], R[2], i + 1, j + 1, complex(v)))
-    rec = records_conserve_sz(compiled)
+    rec = check.record
     if rec is not None:
         typ = str(rec["type"])
         if typ == "PairLift":
@@ -2662,8 +2688,15 @@ def _green_static_transient(nmat, nvol, nd):
     return max(build, digest)
 
 
+#: the ``green_static`` row of a Green function read from a file
+#: (``static_so_bond_rows(..., green_source="file")``): the fixed zip and
+#: validator overhead of the read step, over its ``3G`` peak (inside
+#: ``carrier_build``)
+_FILE_READ_BYTES = 262144
+
+
 def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalues, max_iter,
-                        spatial_shape, spectral_shift=None):
+                        spatial_shape, spectral_shift=None, green_source="band"):
     """The admission rows ``(phase, name, bytes)`` of the static
     spin-orbital bond path beyond the consumers' rows (pass them to
     :func:`plan_so_bond` as ``extra_rows``).
@@ -2713,8 +2746,18 @@ def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalu
     positive finite number; it sets the outputs the ARPACK branch keeps
     alive, see :func:`estimate_dense_layout_solver_bytes`) (``ValueError``
     naming the
-    argument)."""
+    argument).
+
+    ``green_source`` is ``"band"`` (the default: the Green function is built
+    from the run's band; the rows above) or ``"file"`` (it is read from
+    ``[eliashberg] bond_green``): the rows above and ``green_static``
+    ``file_read = 262144`` (256 KiB), the fixed zip and validator overhead
+    of the read step, measured at most 145 KB on top of its ``3G`` peak
+    (which ``carrier_build`` covers)."""
     name = "static_so_bond_rows"
+    if not (isinstance(green_source, str) and green_source in ("band", "file")):
+        raise ValueError("{}: green_source must be 'band' or 'file', got {!r}".format(
+            name, green_source))
     _shift_kind(name, spectral_shift)
     nmat = _even_at_least_2(name, "nmat", nmat)
     nvol = _int_at_least(name, "nvol", nvol, 1)
@@ -2771,6 +2814,8 @@ def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalu
             ("kernel_static", "g2", T4),
             ("kernel_static", "kernel_workspace", workspace),
             ("kernel_static", "eigensolver", eigensolver))
+    if green_source == "file":
+        rows += (("green_static", "file_read", _FILE_READ_BYTES),)
     return tuple((ph, nm, int(b)) for ph, nm, b in rows)
 
 
