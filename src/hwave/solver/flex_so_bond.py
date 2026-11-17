@@ -25,7 +25,8 @@ _SOLVER_BOOKKEEPING = 64 * 2 ** 10
 _EINSUM_BUFSIZE = 8192
 
 
-def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=False):
+def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=False,
+                      archive=None):
     """The FLEX SCF rows of a spin-orbital bond plan: ``(resident_rows,
     extra_rows)`` for :func:`hwave.solver.so_bond.plan_so_bond`
     (``resident_rows=`` and ``extra_rows=``).
@@ -69,8 +70,18 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
       2 KB, over nmat 2..128, nvol 16..256, nd 2 and 4).
 
     ``split_seed`` is False on the spin-orbital path (its seeds are
-    refused), so ``seed_envelope`` is 0 by default. Every byte count is an
-    ``int``."""
+    refused), so ``seed_envelope`` is 0 by default.
+
+    ``archive = (output_layout, inline_max_bytes)`` adds the rows of the
+    archive's final susceptibility pass and write, with ``H = 16 nvol
+    nd^2`` (one static field): ``final_state_live = 4 G + 2 H`` in the
+    phases ``archive_bubble`` and ``archive_dressing`` (the Green function
+    of the solve and its copy, the self-energy, the fluctuation
+    self-energy, plus ``sigma_static`` and the density), and in
+    ``archive_write``: ``archive_write = min(inline_max_bytes, 16 MiB) +
+    1 MiB`` (the zip writer's chunk), ``archive_index = 65536`` and
+    ``final_state_live = 3 G + 2 H``. ``inline_max_bytes`` is the largest
+    member the archive stores inline. Every byte count is an ``int``."""
     nmat, nvol, nd = int(nmat), int(nvol), int(nd)
     persistent, phase = flex_bond.flex_scf_rows(nmat=nmat, nvol=nvol, nmodes=nd, depth=depth,
                                                 mixing=mixing, n_types=n_types,
@@ -88,6 +99,24 @@ def flex_so_bond_rows(*, nmat, nvol, nd, depth, mixing, n_types, split_seed=Fals
         ("transport", "transport_einsum_workspace", int(transport_ws)),
         ("post_scf", "post_scf", int(G + C)),
         ("post_scf", "density_einsum_workspace", int(density_ws)))
+    if archive is not None:
+        # the writer's zip chunk (numpy's zip writer copies one of this size)
+        from .so_bond_archive import _ZIP_CHUNK
+        layout, inline_max = archive
+        if layout not in ("npz", "sidecar"):
+            raise ValueError("flex_so_bond_rows: archive[0] must be 'npz' or 'sidecar', got {!r}"
+                             .format(layout))
+        if isinstance(inline_max, bool) or not isinstance(inline_max, (int, np.integer)) \
+                or int(inline_max) < 0:
+            raise ValueError("flex_so_bond_rows: archive[1] must be an integer >= 0, got {!r}"
+                             .format(inline_max))
+        H = _ENTRY * nvol * nd * nd
+        extra += (("archive_bubble", "final_state_live", int(4 * G + 2 * H)),
+                  ("archive_dressing", "final_state_live", int(4 * G + 2 * H)),
+                  ("archive_write", "archive_write",
+                   int(min(int(inline_max), _ZIP_CHUNK) + 2 ** 20)),
+                  ("archive_write", "archive_index", 65536),
+                  ("archive_write", "final_state_live", int(3 * G + 2 * H)))
     return resident, extra
 
 
@@ -257,6 +286,121 @@ def so_bond_flex_map(store, gamma_b, green_kw, green_scf, green0_tail, beta, geo
 
 
 # ---------------------------------------------------------------------------
+# The susceptibility pass of the bond archive
+# ---------------------------------------------------------------------------
+
+class SOBondArchivePass(NamedTuple):
+    """The result of :func:`so_bond_archive_pass`.
+
+    Fields
+    ------
+    cond_min : float
+        The smallest conditioning score of the dressing guard over the
+        pass; ``nan`` when the guard is off (``cond_tol = None``).
+    pole : tuple
+        :func:`hwave.solver.so_bond.static_pole_indicator` of the ``nu =
+        0`` slice of ``chibar_B`` of the final Green function: ``(entry,
+        per_sector, worst)``.
+    """
+
+    cond_min: float
+    pole: tuple
+
+
+def so_bond_archive_pass(store, gamma_b, green_scf, green0_tail, beta, geom, *, plan, cond_tol,
+                         trace=None):
+    """The susceptibility ``chi_B`` of the final Green function, written over
+    the store slot ``chibar`` (the bond archive's ``chi_w``).
+
+    The kernels and arguments are those of :func:`so_bond_flex_map`, without
+    the W conversion and the transport:
+
+    * bubble (phase ``archive_bubble``): ``chibar_B`` of ``green_scf`` with
+      its tail ``green0_tail`` on every bosonic slice into the slot
+      ``chibar`` (:func:`hwave.solver.so_bond.so_bond_bubble`);
+    * per frequency batch ``[l0, l1)`` of ``plan.nb`` slices (phase
+      ``archive_dressing``): the static pole indicator of the ``nu = 0``
+      slice (``l = nmat // 2``) before that batch is dressed, the dressing
+      ``chi_B = [1 + chibar_B Gamma_B]^{-1} chibar_B``
+      (:func:`hwave.solver.so_bond.so_bond_dress` with ``cond_tol``), and
+      ``chi_B`` put over the batch of ``chibar`` once it is complete.
+
+    Parameters
+    ----------
+    store : the block store of ``plan`` (:func:`hwave.solver.so_bond.open_store`)
+    gamma_b : the vertex ``Gamma_B`` in the plan's layout.
+    green_scf : ndarray (1, nmat, nvol, nd, nd)
+        The final Green function with its tail subtracted (or the Green
+        function itself without a tail); ``green0_tail`` its tail (same
+        shape) or ``None``.
+    beta : float
+    geom : hwave.solver.so_bond.BondSlotGeometry
+    plan : SOBondPlan
+        A plan with the consumer ``flex_scf`` built with ``keep_chi = True``
+        (its archive rows).
+    cond_tol : float or None
+        The conditioning guard of the dressing (``None`` disables it); a
+        refusal (:class:`hwave.solver.bond_channels.BondConditioningError`)
+        propagates.
+    trace : callable, optional
+        ``trace(phase)`` returns a context manager entered around each
+        phase; ``None`` is a null context.
+
+    Every module function is looked up at call time. Returns
+    :class:`SOBondArchivePass`."""
+    if not isinstance(plan, so_bond.SOBondPlan):
+        raise ValueError("so_bond_archive_pass: plan must be a SOBondPlan (plan_so_bond), got {}"
+                         .format(type(plan).__name__))
+    if "flex_scf" not in plan.consumers:
+        raise ValueError("so_bond_archive_pass: the plan needs the consumer flex_scf (closed "
+                         "consumers: {})".format(", ".join(plan.consumers)))
+    if not plan.keep_chi:
+        raise ValueError("so_bond_archive_pass: the plan must be built with keep_chi = True "
+                         "(plan_so_bond(..., keep_chi=True))")
+    nmat, nvol, nd, nb = plan.nmat, plan.nvol, plan.nd, plan.nb
+    gshape = (1, nmat, nvol, nd, nd)
+    for name, g in (("green_scf", green_scf), ("green0_tail", green0_tail)):
+        if g is None and name == "green0_tail":
+            continue
+        if tuple(np.shape(g)) != gshape:
+            raise ValueError("so_bond_archive_pass: {} must have shape {}, got {}".format(
+                name, gshape, tuple(np.shape(g))))
+    traced = _null_trace if trace is None else trace
+    shape = tuple(geom.spatial_shape)
+    dense = plan.layout == "dense"
+
+    with traced("archive_bubble"):
+        so_bond.so_bond_bubble(green_scf, green0_tail, beta, geom, shape, plan=plan, freq="all",
+                               sink=store)
+
+    cond_min = math.inf
+    pole = None
+    l_static = nmat // 2
+    for l0 in range(0, nmat, nb):
+        l1 = min(l0 + nb, nmat)
+        diag = {}
+        with traced("archive_dressing"):
+            X = store.get_freq_batch("chibar", l0, l1)
+            if l0 <= l_static < l1:
+                i = l_static - l0
+                static = X[i] if dense else so_bond.PackedArrays(
+                    X.sector_map, tuple(b[i] for b in X.blocks))
+                pole = so_bond.static_pole_indicator(static, gamma_b, shape)
+                del static
+            Y = so_bond.so_bond_dress(X, gamma_b, plan=plan, l0=l0, spatial_shape=shape,
+                                      cond_tol=cond_tol, diagnostics=diag)
+            del X
+            store.put_freq_batch("chibar", l0, l1, Y)
+            del Y
+        c = diag.get("cond_min")
+        if c is not None and c < cond_min:
+            cond_min = float(c)
+    if cond_tol is None or not math.isfinite(cond_min):
+        cond_min = float("nan")
+    return SOBondArchivePass(cond_min, pole)
+
+
+# ---------------------------------------------------------------------------
 # The admission of the spin-orbital bond FLEX
 # ---------------------------------------------------------------------------
 
@@ -300,7 +444,12 @@ class SOBondFlexAdmission(NamedTuple):
         The frequency batch of the plan.
     sector_dyson : bool
         Whether the Dyson step inverts per S_z sector (the band and every
-        interaction record conserve S_z)."""
+        interaction record conserve S_z).
+    archive : so_bond_archive.ArchiveLayout or None
+        The output layout of the bond archive when the run writes one
+        (``longitudinal_bond_output_full = true`` and ``IterationMax >
+        0``; the plan then carries the archive phases); ``None``
+        otherwise."""
     topo: object
     geom: object
     layout: str
@@ -311,10 +460,12 @@ class SOBondFlexAdmission(NamedTuple):
     bond_inputs: object
     nb: int
     sector_dyson: bool
+    archive: object = None
 
 
 def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_shells,
-                       layout_request, cap_raw, freq_batch, depth, mixing, n_types, log):
+                       layout_request, cap_raw, freq_batch, depth, mixing, n_types, log,
+                       output_full=False, output_layout=None, max_iter=1):
     """The :class:`SOBondFlexAdmission` of a spin-orbital bond FLEX run.
 
     ``compiled`` is the run's compiled interaction, ``transfer`` / ``extern``
@@ -329,10 +480,24 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
     cap), ``depth`` / ``mixing`` / ``n_types`` the SCF rows' parameters
     (:func:`flex_so_bond_rows`).
 
-    Logs (on ``log``) the B = 1 notice, the layout's reason line, the cap
-    and the auto-selected batch. An over-cap run is refused with
-    :func:`hwave.solver.so_bond.plan_so_bond`'s text, which names how the
-    batch was chosen; no other exception of a candidate plan is caught."""
+    ``output_full`` is ``longitudinal_bond_output_full``, ``output_layout``
+    the ``longitudinal_bond_output_layout`` request (``None`` when unset)
+    and ``max_iter`` the ``IterationMax`` of the run. With ``output_full``
+    and ``max_iter > 0`` the run writes the bond archive: its output layout
+    is chosen once the cap is resolved
+    (:func:`hwave.solver.so_bond_archive.archive_layout`; an explicit
+    ``"npz"`` above the small-array bound is refused here, before any bond
+    array exists), and every plan is built with ``keep_chi = True`` and the
+    archive rows (:func:`flex_so_bond_rows` ``archive=``); an over-cap
+    refusal in an archive phase names the key that adds them. With
+    ``output_full`` and ``max_iter = 0`` no archive is written (one INFO).
+
+    Logs (on ``log``) the B = 1 notice, the layout's reason line, the cap,
+    the auto-selected batch, the forced sidecar layout of the archive and
+    the no-archive notice of ``max_iter = 0``. An over-cap run is refused
+    with :func:`hwave.solver.so_bond.plan_so_bond`'s text, which names how
+    the batch was chosen; no other exception of a candidate plan is
+    caught."""
     nd = 2 * int(compiled.norb_phys)
     topo, bond_inputs, _ = so_bond.bond_run(compiled, cell, max_shells)
     shape = tuple(int(x) for x in shape)
@@ -347,12 +512,32 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
     caps = so_bond.resolve_host_cap(cap_raw, key=CAP_KEY, log=log)
     nmat = int(nmat)
     nvol = int(np.prod(shape))
+    arch = rows_archive = None
+    if output_full and int(max_iter) > 0:
+        from . import so_bond_archive
+        arch = so_bond_archive.archive_layout(
+            member_bytes=so_bond_archive.slot_member_bytes(nmat=nmat, nvol=nvol, B=B, nd=nd,
+                                                           layout=layout),
+            small_array_bytes=so_bond.small_array_bound(caps), request=output_layout)
+        inline_max = so_bond_archive.inline_max_bytes(
+            nmat=nmat, nvol=nvol, B=B, nd=nd, block_layout=layout, output_layout=arch.layout,
+            n_transfer=len(transfer), n_extern=0 if extern is None else len(extern),
+            n_rec=len(compiled.records),
+            n_topology=int(np.asarray(compiled.declared_topology).reshape(-1, 3).shape[0]))
+        rows_archive = (arch.layout, inline_max)
+    elif output_full:
+        from . import so_bond_archive
+        log.info(so_bond_archive.T_NO_ARCHIVE_ITER0)
     resident, extra = flex_so_bond_rows(nmat=nmat, nvol=nvol, nd=nd, depth=depth,
-                                        mixing=mixing, n_types=n_types)
+                                        mixing=mixing, n_types=n_types, archive=rows_archive)
     common = dict(nmat=nmat, nvol=nvol, B=B, nd=nd, consumers=("flex_scf",), layout=layout,
                   layout_reason=reason, cap_key=CAP_KEY,
                   shell_rows=so_bond.shell_rows(compiled, topo, cell),
                   max_shells_key=MAX_SHELLS_KEY, resident_rows=resident, extra_rows=extra)
+    if arch is not None:
+        # the archive's final susceptibility pass dresses chibar in place
+        # (keep_chi); its phases are named in an over-cap refusal
+        common.update(keep_chi=True, archive_remedy=so_bond_archive.T_REMEDY_ARCHIVE)
     if freq_batch is None:
         candidates = [n for n in FREQ_BATCH_CANDIDATES if n <= nmat]
         nb = candidates[-1]
@@ -371,7 +556,11 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
     plan = so_bond.plan_so_bond(caps=caps, nb=nb, remedy_note=note, **common)
     if freq_batch is None:
         log.info(_NB_INFO.format(nb=plan.nb))
+    if arch is not None and arch.forced:
+        log.info(so_bond_archive.T_FORCED.format(
+            member=arch.member, size=so_bond_archive.format_bytes(arch.member_bytes),
+            bound=so_bond_archive.format_bytes(arch.bound)))
     sector_dyson = bool(so_bond.band_conserves_sz(transfer, extern, compiled.norb_phys).conserving
                         and so_bond.records_conserve_sz(compiled) is None)
     return SOBondFlexAdmission(topo, geom, layout, reason, sector_map, plan, caps, bond_inputs,
-                               int(plan.nb), sector_dyson)
+                               int(plan.nb), sector_dyson, arch)

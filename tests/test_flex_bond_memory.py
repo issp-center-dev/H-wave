@@ -120,6 +120,13 @@ def _preimport():
     from hwave.solver import (flex_bond, flex_hf, flex_mixing, hartree_fock, bubble,  # noqa: F401
                               bond_channels, offsite, matsubara, backend, vertex_table)
     from hwave.solver import _sc_matrices_myo  # noqa: F401
+    # the spin-orbital bond FLEX modules (flex.py imports flex_so_bond
+    # inside the solve): compiling them under -B is not solve memory
+    from hwave.solver import flex_so_bond, so_bond  # noqa: F401
+    # the spin-orbital bond archive and its writer's imports (the archive
+    # phases are traced; their first use is not archive memory)
+    from hwave.solver import so_bond_archive, eliashberg_bond_io, fingerprint  # noqa: F401
+    import secrets, zipfile  # noqa: F401
     import hwave.sc  # noqa: F401
 
 
@@ -756,6 +763,190 @@ def _so_ratio_report(label, res):
             ph, v["peak"], v["bound"], ratio))
     logging.getLogger("qlms").info("%s (%s, nb = %d, resident %d):\n%s", label, res["layout"],
                                    res["nb"], res["resident_total"], "\n".join(lines))
+
+
+#: the traced phases of the spin-orbital bond archive (#270): the final
+#: susceptibility pass after the self-consistency (bubble, dressing) and the
+#: writer call of ``save_results``
+_SO_ARCHIVE_PHASES = ("archive_bubble", "archive_dressing", "archive_write")
+#: the outputs of the archive runs (green.npz is the archive's companion)
+_SO_ARCHIVE_OUTPUTS = {"green": "green", "sigma": "sigma", "chi0q": "chi0q", "chiq": "chiq"}
+#: name -> (fixture, extra [mode.param], block layout, output layout)
+_SO_ARCHIVE_CASES = {
+    "dense_npz": ("SOC_ALL_TYPES", {}, "dense", "npz"),
+    "packed_sidecar": ("ZEEMAN_SZ_ALL", {"longitudinal_bond_output_layout": "sidecar"},
+                       "sz_packed", "sidecar"),
+}
+
+
+def _so_archive_traced_solve(case, nmat, drops=(None,)):
+    """The traced spin-orbital bond FLEX solves and saves behind
+    :class:`TestSOBondArchiveRows` (4 x 4 mesh, ``Nmat = nmat``, two maps,
+    ``longitudinal_bond_output_full = true``); runs in a fresh process
+    (:func:`tests.isolated_trace.run_isolated`, issue #266). After one
+    untraced solve and save, one traced solve and save per entry of
+    ``drops``, in order; returns one result per entry. The peaks are
+    measured from the traced memory at SOLVE entry, through ``save_results``
+    (whose writer call is the ``archive_write`` phase). An entry ``[phase,
+    name]`` leaves that row out of ``so_bond._plan_rows`` for its run (a
+    mutation of the admitted plan); ``None`` runs the plan unchanged."""
+    from unittest import mock
+    from hwave.solver import so_bond
+    from tests import so_bond_flex_fixtures as X
+    fixture, extra, _bl, _ol = _SO_ARCHIVE_CASES[case]
+    fx = _so_fixture(fixture)
+    param = dict({"Nmat": int(nmat), "IterationMax": 2, "Mix": 0.5,
+                  "longitudinal_bond_output_full": True}, **extra)
+    plan_rows = so_bond._plan_rows
+
+    def _patch(drop):
+        if drop is None:
+            return contextlib.nullcontext()
+
+        def _rows(*a, **kw):
+            return tuple(r for r in plan_rows(*a, **kw) if [r[0], r[1]] != list(drop))
+        return mock.patch.object(so_bond, "_plan_rows", _rows)
+
+    def _run(d, tracer=None):
+        inp = X.write_flex_case(d, fx, param=param, output=dict(_SO_ARCHIVE_OUTPUTS))
+        info = inp["file"]["output"]
+        out = info["path_to_output"]
+        os.makedirs(out, exist_ok=True)
+        s, gi = X.build_solver(inp)
+        s.validate_output_paths(info, out)
+        if tracer is None:
+            s.solve(gi, out)
+            s.save_results(info, gi)
+            return s
+        s._phase_tracer = tracer
+        tracemalloc.start()
+        try:
+            tracer.base = tracemalloc.get_traced_memory()[0]
+            s.solve(gi, out)
+            s.save_results(info, gi)
+        finally:
+            tracemalloc.stop()
+        return s
+
+    def _result(s, tracer, out_dir):
+        plan = s._so_admission.plan
+        resident = sum(b for ph, _, b in plan.rows if ph == "resident")
+        phases = {}
+        for ph in _SO_ARCHIVE_PHASES:
+            if ph in tracer.peaks:
+                phases[ph] = {"peak": tracer.peaks[ph], "bound": plan.phase_total(ph),
+                              "rows": sum(b for q, _, b in plan.rows if q == ph)}
+        return {"phases": phases, "resident_total": resident, "layout": plan.layout,
+                "nb": plan.nb, "output_layout": s._so_admission.archive.layout,
+                "rows": [[ph, nm, b] for ph, nm, b in plan.rows],
+                "maps": int(s.map_iteration), "written": sorted(os.listdir(out_dir))}
+
+    _preimport()
+    results = []
+    with tempfile.TemporaryDirectory() as dw, _coverage_paused():
+        # an identical untraced solve and save first, into its own
+        # directory (see _traced_solve): the first use of the archive
+        # writer (zip, secrets, the npy header code) is not archive memory
+        _run(dw)
+        for drop in drops:
+            with tempfile.TemporaryDirectory() as d, _patch(drop):
+                tracer = _Tracer()
+                s = _run(d, tracer)
+                results.append(_result(s, tracer, os.path.join(d, "out")))
+            del s, tracer
+    return results
+
+
+def _so_archive_ratio_report(label, res):
+    """The per-phase ratios ``peak / phase_total`` and ``(peak -
+    resident_total) / rows(phase)``, logged (reported, not asserted)."""
+    lines = []
+    for ph in _SO_ARCHIVE_PHASES:
+        v = res["phases"][ph]
+        lines.append("  {:<16s} peak {:>10d}  bound {:>10d}  peak/bound {:.3f}  "
+                     "(peak - resident)/rows {:.3f}".format(
+                         ph, v["peak"], v["bound"], v["peak"] / v["bound"],
+                         (v["peak"] - res["resident_total"]) / v["rows"]))
+    logging.getLogger("qlms").info("%s (%s, %s, nb = %d, resident %d):\n%s", label,
+                                   res["layout"], res["output_layout"], res["nb"],
+                                   res["resident_total"], "\n".join(lines))
+
+
+#: the row the break of :class:`TestSOBondArchiveRows` leaves out of the plan
+_SO_ARCHIVE_DROP = ["archive_dressing", "dress_batch"]
+
+
+class TestSOBondArchiveRows(unittest.TestCase):
+    """Host memory of the spin-orbital bond archive (#270): each traced
+    archive phase (the final susceptibility pass and the writer call of
+    ``save_results``) stays within the admitted plan's phase total, measured
+    from solve entry in a fresh process.
+
+    The break (the plan without the archive's ``dress_batch`` row) runs in
+    the same fresh process as the unchanged dense run, after it: measured
+    on macOS (numpy 2.4.6 and 1.26.4), the traced ``archive_dressing`` peak
+    then exceeds the broken bound by about 24 % of the dropped row, and the
+    three phases of repeated runs in one process agree to about 1 KB.
+
+    The ``archive_write`` row is a bound, not a copy detector: at these
+    sizes its headroom (about 1.1 MB, dominated by the zip-chunk term) is
+    larger than ``chi_w`` itself (819 KB dense, 307 KB packed), so a full
+    copy of ``chi_w`` in the writer would still pass it. The writer's
+    no-copy property is covered by ``TestNoCopy`` of
+    ``tests/test_so_bond_archive.py`` (64 MiB) and by
+    ``TestWiring.test_no_store_copy`` of
+    ``tests/test_so_bond_archive_flex.py`` (the store's own slot)."""
+
+    _cache = {}
+
+    @classmethod
+    def _measure(cls, case):
+        """The isolated results of ``case``: ``[unchanged]``, or for
+        ``dense_npz`` ``[unchanged, without _SO_ARCHIVE_DROP]`` (one process,
+        shared by the two tests that read it)."""
+        if case not in cls._cache:
+            drops = [None, _SO_ARCHIVE_DROP] if case == "dense_npz" else [None]
+            cls._cache[case] = run_isolated(_THIS, "_so_archive_traced_solve", case, 8, drops)
+        return cls._cache[case]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cache.clear()
+
+    def _check(self, case):
+        _fx, _extra, layout, output_layout = _SO_ARCHIVE_CASES[case]
+        res = self._measure(case)[0]
+        self.assertEqual((res["layout"], res["output_layout"]), (layout, output_layout))
+        self.assertEqual(res["maps"], 2)
+        self.assertIn("longitudinal_bond.npz", res["written"])
+        self.assertIn("green.npz", res["written"])
+        self.assertIn(_SO_ARCHIVE_DROP, [r[:2] for r in res["rows"]])
+        self.assertEqual(sorted(res["phases"]), sorted(_SO_ARCHIVE_PHASES))
+        _so_archive_ratio_report(case, res)
+        for ph in _SO_ARCHIVE_PHASES:
+            v = res["phases"][ph]
+            self.assertLessEqual(v["peak"], v["bound"],
+                                 "{}: phase {} peak since solve entry {} > plan phase total {}"
+                                 .format(case, ph, v["peak"], v["bound"]))
+
+    def test_dense_npz(self):
+        self._check("dense_npz")
+
+    def test_packed_sidecar(self):
+        self._check("packed_sidecar")
+
+    def test_dropping_dress_batch_fails(self):
+        ref, res = self._measure("dense_npz")
+        # the mutation applied: the admitted plan lost exactly the archive's
+        # dress_batch row (the SCF dressing keeps its own)
+        self.assertNotIn(_SO_ARCHIVE_DROP, [r[:2] for r in res["rows"]])
+        self.assertEqual(res["rows"], [r for r in ref["rows"] if r[:2] != _SO_ARCHIVE_DROP])
+        self.assertIn(["dressing", "dress_batch"], [r[:2] for r in res["rows"]])
+        self.assertEqual(sorted(res["phases"]), sorted(_SO_ARCHIVE_PHASES))
+        v = res["phases"]["archive_dressing"]
+        self.assertGreater(v["peak"], v["bound"],
+                           "the archive_dressing peak {} stays within the bound {} of the plan "
+                           "without its dress_batch row".format(v["peak"], v["bound"]))
 
 
 class TestSOBondPlanRows(unittest.TestCase):

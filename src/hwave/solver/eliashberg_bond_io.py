@@ -293,6 +293,21 @@ def _archive_schema(member, path):
     return int(val.real)
 
 
+def _marks_spin_orbital(d, files):
+    """True when the archive has a ``spin_orbital`` member whose value is
+    true. A marker that is not a one-element numeric or boolean array counts
+    as present and true."""
+    if "spin_orbital" not in files:
+        return False
+    try:
+        m = np.asarray(d["spin_orbital"])
+        if m.size == 1 and m.dtype.kind in "biufc":
+            return bool(m.reshape(-1)[0])
+    except (TypeError, ValueError, OSError, EOFError, zipfile.BadZipFile):
+        pass
+    return True
+
+
 def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_expected,
                       interactions=None):
     from hwave.solver.rpa import check_momentum_marker
@@ -307,6 +322,12 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
         files = set(d.files)
         schema = (_archive_schema(_require(d, "bond_archive_schema", path), path)
                   if "bond_archive_schema" in files else 0)
+        if schema == 4 or _marks_spin_orbital(d, files):
+            raise ValueError(
+                "bond archive {}: this is a spin-orbital bond archive (written by the "
+                "spin-orbital FLEX with bond channels); the non-spin-orbital bond consumers "
+                "cannot read it, and hwave_sc does not read it in this version (read it with "
+                "hwave.solver.so_bond_archive.load_so_bond_archive).".format(path))
         if schema == 1 or "S_bond" not in files:
             raise ValueError(
                 "bond archive {}: schema {} was written by a version without the bond vertices S and C; "

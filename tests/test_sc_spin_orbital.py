@@ -1707,6 +1707,40 @@ class TestFlexMode(unittest.TestCase):
                 self._refused(pattern, _flex_input(
                     self.d, self.files, bad, out=self._out("out_bad_" + tag)))
 
+    def test_green_npy_refused(self):
+        """A green companion that is a single ``.npy`` array under the
+        configured name is refused with a ValueError naming the file, on the
+        path with the run's provenance (the public entry) and on the one
+        without (a direct ``_load_flex_so`` call), with valid chiq, chi0q
+        and sigma alongside."""
+        bad = os.path.join(self.d, "flex_green_npy")
+        self.addCleanup(shutil.rmtree, bad, True)
+        shutil.copytree(self.flex, bad)
+        gpath = os.path.join(bad, "green.npz")
+        with np.load(os.path.join(self.flex, "green.npz")) as z:
+            green = np.array(z["green"])
+        with open(gpath, "wb") as f:
+            np.save(f, green)
+        self.assertFalse(hasattr(np.load(gpath), "files"))
+        pattern = (r"^FLEX Green archive '" + re.escape(gpath)
+                   + r"' is not an npz archive \(it holds a single \.npy "
+                   r"array\); point the configuration at the \.npz file the "
+                   r"FLEX run wrote\.$")
+        with self.subTest(path="public entry"), mock.patch.object(
+                sc, "_so_rpa_vertex",
+                side_effect=AssertionError("vertex built before the check")):
+            self._refused(pattern, _flex_input(
+                self.d, self.files, bad, out=self._out("out_green_npy")))
+        with np.load(os.path.join(self.flex, "chiq.npz")) as z:
+            nd = z["chiq"].shape[2]
+        with self.subTest(path="direct, no provenance"):
+            with self.assertRaisesRegex(ValueError, pattern):
+                with _quiet():
+                    sc._load_flex_so(
+                        _flex_input(self.d, self.files, bad,
+                                    out=self._out("out_green_npy_direct")),
+                        nd, *CELL)
+
     def test_unconverged_flex_warns(self):
         """A chiq archive recording ``scf_converged = false`` is used, with a
         WARNING naming the archive."""

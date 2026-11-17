@@ -62,10 +62,8 @@ POLE_CONSEQUENCE = ("The final FLEX state (its effective interaction W and self-
                     "built on that susceptibility; it describes no physical state and is "
                     "still reported.")
 OUTPUT_INFO = ("spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks of chibar_B "
-               "and chi_B of the last map; the bond-resolved arrays are not written in this "
-               "version.")
-DEFERRED = ("was written by producer_stage 'flex_so_bond', which this version does not read "
-            "yet (the spin-orbital bond FLEX arrives in a later version).")
+               "and chi_B of the last SCF iteration; the bond-resolved arrays are written only "
+               "with longitudinal_bond_output_full = true.")
 SO_BOND_FLEX_REFUSAL = (
     "[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "
     "\"flex\" with bond_channels = true is not available yet: the spin-orbital bond path "
@@ -422,11 +420,11 @@ class TestCrossPathB1(unittest.TestCase):
 # Outputs and provenance
 # --------------------------------------------------------------------------
 
-def _write_run(d, fixture, param):
+def _write_run(d, fixture, param, gate=True):
     """Solve and save the FLEX run of ``fixture`` into ``<d>/out`` (green,
     sigma, chi0q, chiq), as ``hwave.qlms.run`` does; returns ``(solver,
     out, records)``."""
-    inp = X.write_flex_case(d, fixture, param=param)
+    inp = X.write_flex_case(d, fixture, param=param, gate=gate)
     info = inp["file"]["output"]
     info.update({"green": "green", "sigma": "sigma", "chi0q": "chi0q", "chiq": "chiq"})
     out = info["path_to_output"]
@@ -539,6 +537,36 @@ class TestOutputs(unittest.TestCase):
                     else:
                         self.assertEqual(str(cm.exception), text)
 
+    def test_block_layout_member(self):
+        """Every spin-orbital bond FLEX output records the bond block layout
+        of the run as a 0-d '<U16' member and nothing else of the layout
+        (no sz_sector_* member); IterationMax = 0 writes it on green and
+        sigma too."""
+        names = ("green", "sigma", "chi0q", "chiq")
+        for fx, layout in ((X.ZEEMAN_SZ_ALL, "sz_packed"), (F.SOC_ALL_TYPES, "dense")):
+            for it, written in ((3, names), (0, names[:2])):
+                with self.subTest(layout=layout, iteration_max=it):
+                    with tempfile.TemporaryDirectory() as d:
+                        _, out, _ = _write_run(d, fx, {"IterationMax": it, "Mix": 0.5})
+                        files = {n: _load(out, n) for n in written}
+                        for n in names[len(written):]:
+                            self.assertFalse(os.path.exists(os.path.join(out, n + ".npz")))
+                    for n, z in files.items():
+                        self.assertEqual(str(z["block_layout"]), layout)
+                        self.assertEqual(z["block_layout"].shape, ())
+                        self.assertEqual(z["block_layout"].dtype, np.dtype("<U16"))
+                        self.assertFalse([k for k in z if k.startswith("sz_sector_")])
+                        self.assertEqual(len(z), {"green": 67, "sigma": 69,
+                                                  "chi0q": 70, "chiq": 71}[n])
+
+    def test_block_layout_absent_on_onsite(self):
+        """The spin-orbital on-site outputs do not carry block_layout."""
+        with tempfile.TemporaryDirectory() as d:
+            solver, out, _ = _write_run(d, X.ZEEMAN_EXTERN_ONSITE, {"IterationMax": 1}, gate=False)
+            self.assertFalse(getattr(solver, "_so_bond", False))
+            for n in ("green", "sigma", "chi0q", "chiq"):
+                self.assertNotIn("block_layout", _load(out, n))
+
     def test_no_map_no_output_info(self):
         """IterationMax = 0 with chi0q / chiq requested: no map ran, only
         green / sigma are written, and the channel-0 notice is not logged."""
@@ -598,21 +626,120 @@ class TestOutputs(unittest.TestCase):
                     self.assertEqual(z[k], final[k])
         self.assertEqual(float(files["sigma"]["state_mu"]), float(final["state_mu"]))
 
-    def test_onsite_hwave_sc_deferred(self):
-        """SO on-site hwave_sc with chi0q_mode = "flex" on the outputs of a
-        B = 1 spin-orbital bond FLEX run: the deferred-stage refusal."""
+    def test_bond_stage_is_read_by_the_fingerprint_check(self):
+        """The bond stage is no longer deferred (only the dynamic bond stage
+        is), and every output of a bond FLEX run, in both block layouts,
+        passes the structure check of its kind."""
+        from hwave.solver import fingerprint
+        self.assertEqual(set(fingerprint.DEFERRED_STAGES), {"sc_so_bond_dynamic"})
+        for fx in (X.ZEEMAN_SZ_ALL, F.SOC_ALL_TYPES):
+            with tempfile.TemporaryDirectory() as d:
+                _, out, _ = _write_run(d, fx, {"IterationMax": 1})
+                for kind in ("green", "sigma", "chi0q", "chiq"):
+                    with self.subTest(fixture=fx.name, kind=kind):
+                        path = os.path.join(out, kind + ".npz")
+                        with np.load(path, allow_pickle=False) as z:
+                            self.assertEqual(
+                                fingerprint.validate_structure(z, path, kind=kind),
+                                (kind, "flex_so_bond", 2))
+
+
+ONSITE_BOND_TEXT = (
+    "[mode] enable_spin_orbital = true (hwave_sc, issue #83): '{path}' was written by the "
+    "spin-orbital FLEX with bond channels ([mode.param] longitudinal_bond_channels = true): "
+    "the chi0q, chiq and green of that run describe the bond-resolved run, which [eliashberg] "
+    "chi0q_mode = \"flex\" cannot use. Re-run FLEX with longitudinal_bond_channels = false "
+    "for this mode.")
+
+
+class TestOnsiteRefusesBond(unittest.TestCase):
+    """The on-site spin-orbital hwave_sc (chi0q_mode = "flex") refuses the
+    outputs of the bond FLEX with a message naming the file, whichever of the
+    four archives is the bond one."""
+
+    NAMES = ("chiq", "chi0q", "green", "sigma")
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = cls._tmp.name
+        cls.dirs = {}
+        for key, fx, gate in (("bond_b1", X.ZEEMAN_EXTERN_ONSITE, True),
+                              ("bond_b2", X.ZEEMAN_SZ_ALL, True),
+                              ("onsite", X.ZEEMAN_EXTERN_ONSITE, False)):
+            d = os.path.join(root, key + "_case")
+            os.makedirs(d)
+            _, out, _ = _write_run(d, fx, {"IterationMax": 1}, gate=gate)
+            cls.dirs[key] = out
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def _mixed(self, bond_names, bond="bond_b1"):
+        """A directory of the on-site archives with ``bond_names`` taken from
+        the bond run."""
+        import shutil
+        d = tempfile.mkdtemp(dir=self._tmp.name)
+        for n in self.NAMES:
+            src = self.dirs[bond if n in bond_names else "onsite"]
+            shutil.copy(os.path.join(src, n + ".npz"), os.path.join(d, n + ".npz"))
+        return d
+
+    def _refusal(self, out, frequency):
+        import hwave.sc as sc
+        with tempfile.TemporaryDirectory() as d2:
+            inp = _sc_input(d2, X.ZEEMAN_EXTERN_ONSITE, out,
+                            {"Bond_Channels": False, "Chi0q_Mode": "flex",
+                             "Frequency": frequency})
+            with self.assertRaises(ValueError) as cm:
+                sc.calc_eliashberg(inp)
+        return str(cm.exception)
+
+    def test_onsite_hwave_sc_refuses_bond_outputs(self):
+        for key in ("bond_b1", "bond_b2"):
+            for frequency in ("static", "dynamic"):
+                with self.subTest(run=key, frequency=frequency):
+                    out = self.dirs[key]
+                    self.assertEqual(
+                        self._refusal(out, frequency),
+                        ONSITE_BOND_TEXT.format(path=os.path.join(out, "chiq.npz")))
+
+    def test_each_bond_archive_is_named(self):
+        for name in self.NAMES:
+            out = self._mixed((name,))
+            for frequency in ("static", "dynamic"):
+                with self.subTest(archive=name, frequency=frequency):
+                    self.assertEqual(
+                        self._refusal(out, frequency),
+                        ONSITE_BOND_TEXT.format(path=os.path.join(out, name + ".npz")))
+
+    def test_onsite_outputs_pass_the_peek(self):
+        """A directory without any bond archive is not refused by the bond
+        text: the existing state-point check decides (the FLEX run fixed mu,
+        the hwave_sc input asks for a filling)."""
         import hwave.sc as sc
         from hwave.solver import fingerprint
-        fx = X.ZEEMAN_EXTERN_ONSITE
-        with tempfile.TemporaryDirectory() as d:
-            _, out, _ = _write_run(d, fx, {"IterationMax": 2})
-            with tempfile.TemporaryDirectory() as d2:
-                inp = _sc_input(d2, fx, out, {"Bond_Channels": False, "Chi0q_Mode": "flex"})
-                with self.assertRaises(fingerprint.SOArchiveError) as cm:
-                    sc.calc_eliashberg(inp)
-        self.assertRegex(str(cm.exception), r"^'.*\.npz' " + DEFERRED.replace(
-            "(", r"\(").replace(")", r"\)").replace(".", r"\.") + "$")
-        self.assertIn("flex_so_bond", fingerprint.DEFERRED_STAGES)
+        with tempfile.TemporaryDirectory() as d2:
+            inp = _sc_input(d2, X.ZEEMAN_EXTERN_ONSITE, self.dirs["onsite"],
+                            {"Bond_Channels": False, "Chi0q_Mode": "flex",
+                             "Frequency": "static"})
+            with self.assertRaises(fingerprint.SOArchiveError) as cm:
+                sc.calc_eliashberg(inp)
+        self.assertIn("state differs", str(cm.exception))
+        self.assertNotIn("bond channels", str(cm.exception))
+
+    def test_archive_without_producer_stage_falls_through(self):
+        """An archive with no producer_stage member is not the bond refusal:
+        the existing checks decide."""
+        out = self._mixed(())
+        for name in self.NAMES:
+            with np.load(os.path.join(out, name + ".npz"), allow_pickle=False) as z:
+                members = {k: z[k] for k in z.files if k != "producer_stage"}
+            np.savez(os.path.join(out, name + ".npz"), **members)
+        msg = self._refusal(out, "static")
+        self.assertNotIn("bond channels", msg)
+        self.assertIn("member producer_stage is missing", msg)
 
 
 # --------------------------------------------------------------------------

@@ -505,18 +505,139 @@ class TestRows(unittest.TestCase):
                                  "cannot be combined with chi_dynamic (both own the store "
                                  "slot chibar)")
 
-    def test_flex_scf_with_keep_chi_or_write_chibar_refused(self):
-        for keep, write in ((True, False), (False, True), (True, True)):
-            with self.subTest(keep_chi=keep, write_chibar=write):
+    def test_write_chibar_refused_text(self):
+        for keep in (False, True):
+            with self.subTest(keep_chi=keep):
                 with self.assertRaises(ValueError) as cm:
-                    _flex_plan(8, 4, 1, 2, keep_chi=keep, write_chibar=write)
+                    _flex_plan(8, 4, 1, 2, keep_chi=keep, write_chibar=True)
                 self.assertEqual(str(cm.exception), (
-                    "plan_so_bond: the consumer flex_scf takes neither keep_chi nor "
-                    "write_chibar (its store keeps no chi slot and writes no chibar archive), "
-                    "got keep_chi = {!r}, write_chibar = {!r}").format(keep, write))
+                    "plan_so_bond: the consumer flex_scf takes no write_chibar (its store "
+                    "writes no chibar archive), got write_chibar = True"))
         # the defaults (and explicit False) are accepted
         self.assertEqual(_flex_plan(8, 4, 1, 2, keep_chi=False, write_chibar=False).rows,
                          _flex_plan(8, 4, 1, 2).rows)
+
+    def test_chi_dynamic_still_refused(self):
+        for keep in (False, True):
+            with self.subTest(keep_chi=keep):
+                with self.assertRaises(ValueError) as cm:
+                    plan_so_bond(nmat=8, nvol=4, B=1, nd=2, caps=NOCAP, keep_chi=keep,
+                                 consumers=("flex_scf", "chi_dynamic"))
+                self.assertEqual(str(cm.exception), "plan_so_bond: the consumer flex_scf "
+                                 "cannot be combined with chi_dynamic (both own the store "
+                                 "slot chibar)")
+
+    def test_keep_chi_default_unchanged(self):
+        for (nmat, nvol, B, nd, layout), want in _FLEX_ROWS.items():
+            with self.subTest(size=(nmat, nvol, B, nd), layout=layout):
+                plain = _flex_plan(nmat, nvol, B, nd, layout)
+                self.assertEqual(plain.rows, want)
+                self.assertEqual(plain.peak_phase, "dressing")
+                self.assertFalse(plain.keep_chi)
+                kept = _flex_plan(nmat, nvol, B, nd, layout, keep_chi=True)
+                # slots, aliases and the rows before the archive are unchanged
+                self.assertEqual((kept.slots, kept.aliases), (plain.slots, plain.aliases))
+                self.assertEqual(kept.rows[:len(want)], want)
+                self.assertTrue(kept.keep_chi)
+
+    def test_small_array_bound_bitwise(self):
+        for host in (None, 0.0, 1.0, 1.0e3, 2.0 ** 30, 8.0 * 2 ** 30, 8.0 * 2 ** 30 + 8,
+                     1.0e15, 12345678):
+            with self.subTest(host=host):
+                caps = SOBondCaps(host, None, None)
+                want = 2.0 ** 30 if host is None else min(2.0 ** 30, float(host) / 8.0)
+                got = so_bond.small_array_bound(caps)
+                self.assertEqual(got, want)
+                self.assertEqual(type(got), type(want))
+                if host is not None and host < 1.0e6:
+                    continue                        # the plan itself would be refused
+                plan = _flex_plan(8, 4, 1, 2, caps=caps)
+                self.assertEqual(plan.small_array_bytes, want)
+                self.assertEqual(type(plan.small_array_bytes), type(want))
+
+    def test_archive_rows_literal(self):
+        # pair block, dress batch and pole slice are those of the flex rows
+        # above (same nb, same layout); the live rows follow G, H
+        for (nmat, nvol, B, nd, layout), want in _FLEX_ROWS.items():
+            G = 16 * nmat * nvol * nd * nd
+            H = 16 * nvol * nd * nd
+            by = {n: b for ph, n, b in want}
+            for out_layout in ("npz", "sidecar"):
+                for inline_max in (123456, 40 * 2 ** 20):
+                    with self.subTest(size=(nmat, nvol, B, nd), layout=layout,
+                                      out=out_layout, inline_max=inline_max):
+                        resident, extra = _so_rows()(
+                            nmat=nmat, nvol=nvol, nd=nd, depth=4, mixing="anderson",
+                            n_types=1, archive=(out_layout, inline_max))
+                        plain_res, plain_extra = _so_rows()(
+                            nmat=nmat, nvol=nvol, nd=nd, depth=4, mixing="anderson",
+                            n_types=1)
+                        self.assertEqual(resident, plain_res)
+                        added = extra[len(plain_extra):]
+                        self.assertEqual(extra[:len(plain_extra)], plain_extra)
+                        self.assertEqual(added, (
+                            ("archive_bubble", "final_state_live", 4 * G + 2 * H),
+                            ("archive_dressing", "final_state_live", 4 * G + 2 * H),
+                            ("archive_write", "archive_write",
+                             min(inline_max, 16 * 2 ** 20) + 2 ** 20),
+                            ("archive_write", "archive_index", 65536),
+                            ("archive_write", "final_state_live", 3 * G + 2 * H)))
+                        plan = _flex_plan(nmat, nvol, B, nd, layout, keep_chi=True,
+                                          resident_rows=resident, extra_rows=extra)
+                        arch = tuple(r for r in plan.rows if r[0].startswith("archive_"))
+                        self.assertEqual(arch, (
+                            ("archive_bubble", "bubble_pair_block", by["bubble_pair_block"]),
+                            ("archive_dressing", "dress_batch", by["dress_batch"]),
+                            ("archive_dressing", "pole_slice", by["pole_slice"])) + added)
+                        for ph in ("archive_bubble", "archive_dressing", "archive_write"):
+                            self.assertEqual(
+                                plan.phase_total(ph),
+                                sum(b for p, _, b in plan.rows if p in ("resident", ph)))
+
+    def test_archive_rows_bad_arguments(self):
+        for bad in (("zip", 10), ("npz", -1), ("npz", 1.5), ("npz", True)):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    _so_rows()(nmat=8, nvol=4, nd=2, depth=4, mixing="anderson", n_types=1,
+                               archive=bad)
+
+    def test_archive_remedy_only_in_archive_phase(self):
+        remedy = "Test remedy sentence."
+        kw = dict(depth=4, mixing="anderson", n_types=1)
+
+        def build(nmat, nvol, archive, **more):
+            resident, extra = _so_rows()(nmat=nmat, nvol=nvol, nd=2, archive=archive, **kw)
+            return dict(nmat=nmat, nvol=nvol, B=5, nd=2, keep_chi=archive is not None,
+                        resident_rows=resident, extra_rows=extra, consumers=("flex_scf",),
+                        **more)
+
+        def refusal(args, note, rem):
+            peak = plan_so_bond(caps=NOCAP, **args).peak_host
+            with self.assertRaises(ValueError) as cm:
+                plan_so_bond(caps=SOBondCaps(peak * 0.9, None, None), remedy_note=note,
+                             archive_remedy=rem, **args)
+            return str(cm.exception)
+
+        arch = build(16, 16, ("npz", 5 * 2 ** 20))
+        self.assertEqual(plan_so_bond(caps=NOCAP, **arch).peak_phase, "archive_dressing")
+        plain_msg = refusal(arch, "N.", None)
+        with_msg = refusal(arch, "N.", remedy)
+        self.assertIn(" N. Memory grows as ", plain_msg)
+        self.assertEqual(with_msg, plain_msg.replace(" N. Memory", " N. " + remedy + " Memory",
+                                                     1))
+        self.assertNotEqual(with_msg, plain_msg)
+        # no remedy_note: the sentence follows the head sentence directly
+        self.assertIn("(caps.host_bytes). " + remedy + " Memory grows",
+                      refusal(arch, None, remedy))
+        # a refusal outside the archive phases never carries it
+        trans = build(1024, 4, None)
+        self.assertEqual(plan_so_bond(caps=NOCAP, **trans).peak_phase, "transport")
+        self.assertEqual(refusal(trans, "N.", remedy), refusal(trans, "N.", None))
+        self.assertNotIn(remedy, refusal(trans, "N.", remedy))
+        with self.assertRaisesRegex(ValueError, r"^plan_so_bond: archive_remedy must be None "
+                                    r"or a non-empty string"):
+            _flex_plan(8, 16, 5, 2, archive_remedy="")
+
 
     def test_resident_rows(self):
         base = _flex_plan(8, 9, 5, 4)
