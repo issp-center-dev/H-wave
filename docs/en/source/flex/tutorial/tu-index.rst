@@ -1525,8 +1525,9 @@ bond-resolved dressed susceptibility :math:`\chi_B` of the **final** Green
 function, the bare bond vertex :math:`\Gamma_B` and the provenance of both,
 next to the Green function it was built from. ``hwave_sc`` does not read
 this archive in this version (it reads the companion ``green.npz``
-through ``[eliashberg] bond_green``, :ref:`sc_so_bond_green`). Solver-side consumers read it through the
-Python function ``load_so_bond_archive`` (*Reading it* below); a script
+through ``[eliashberg] bond_green``, :ref:`sc_so_bond_green`).
+Solver-side consumers read it through the Python function
+``load_so_bond_archive`` (*Reading it* below); a script
 looks at its members with ``numpy.load`` (*Inspecting it by hand* below).
 
 **Configuration.** On top of the input of :ref:`flex_so_bond_tutorial`

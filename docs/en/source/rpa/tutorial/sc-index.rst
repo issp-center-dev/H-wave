@@ -3017,11 +3017,11 @@ producer:
    * - ``<file> was produced by <producer> (so_bond), but this run needs a
        so_onsite artifact``
      - The archive resolves bond channels, which this run does not use.
-       Of the archives this version writes, only the gap archive of a
-       bond-resolved run (``sc_so_bond_static``) is ``so_bond``, and a gap
-       archive given as a chi0q, chiq, green or sigma input is refused by
-       the stage check before this step, so this message does not occur
-       with archives written by this version.
+       The gap archive of a bond-resolved run (``sc_so_bond_static``) and
+       every output of ``flex_so_bond`` are ``so_bond``; the stage check
+       refuses the former and the on-site FLEX loader's own message refuses
+       the latter before this step, so this message does not occur with
+       archives written by this version.
      - the producer's ``[file.output]`` archives
    * - ``state differs: calc_mu: file False, run True``
      - The producer ran at a fixed μ (fixed-μ mismatch); ``hwave_sc`` always
