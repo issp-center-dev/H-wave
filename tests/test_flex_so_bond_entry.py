@@ -66,12 +66,11 @@ OUTPUT_INFO = ("spin-orbital bond FLEX: chi0q and chiq are the channel-0 blocks 
                "with longitudinal_bond_output_full = true.")
 SO_BOND_FLEX_REFUSAL = (
     "[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "
-    "\"flex\" with bond_channels = true is not available yet: the spin-orbital bond path "
-    "builds its bond bubble from the band's Green function and reads no FLEX output. Remove "
-    "chi0q_mode (or leave it unset); it is not used on this path.")
-SO_BOND_GREEN_PREFIX = (
-    "[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_green is not "
-    "available with bond_channels in spin-orbital mode")
+    "\"flex\" with bond_channels = true is not available: the spin-orbital bond path builds "
+    "its bond bubble from a Green function (the band's, or the file named by bond_green) and "
+    "reads no FLEX susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green "
+    "function, set bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] "
+    "longitudinal_bond_channels = true.")
 PAIRHOP_NOTICE = "PairHop declares 4 off-site term(s)"
 STONER_LABEL = "RPA pole indicator max_q eig[-chibar_B Gamma_B] (spinful) (q, i nu = 0)"
 
@@ -522,20 +521,24 @@ class TestOutputs(unittest.TestCase):
             self.assertEqual(files["chiq"]["chiq"].ndim, 6)
             self.assertEqual(_messages(records).count(OUTPUT_INFO), 1)
 
-            # the hwave_sc readers: the bond path refuses the FLEX outputs by
-            # configuration; the on-site path needs an on-site model
+            # the hwave_sc readers: the bond path refuses chi0q_mode = "flex" by
+            # configuration; its bond_green reads this green.npz and refuses it
+            # at the state step: this FLEX run fixed mu (T and Nmat are equal)
             import hwave.sc as sc
+            green = os.path.join(out, "green.npz")
             for eli, text in (
                     ({"Bond_Channels": True, "Chi0q_Mode": "flex"}, SO_BOND_FLEX_REFUSAL),
-                    ({"Bond_Channels": True, "Bond_Green": "green.npz"}, None)):
+                    ({"Bond_Channels": True, "Bond_Green": green},
+                     "'{}' (written by hwave FLEX (spin-orbital, bond channels)) does not "
+                     "match this run: state differs: calc_mu: file False, run True. Archives "
+                     "are reused only at the identical state point; re-run hwave FLEX "
+                     "(spin-orbital, bond channels) at this filling and temperature."
+                     .format(green))):
                 with self.subTest(hwave_sc=eli):
                     with tempfile.TemporaryDirectory() as d2:
                         with self.assertRaises(ValueError) as cm:
                             sc.calc_eliashberg(_sc_input(d2, fx, out, eli))
-                    if text is None:
-                        self.assertTrue(str(cm.exception).startswith(SO_BOND_GREEN_PREFIX))
-                    else:
-                        self.assertEqual(str(cm.exception), text)
+                    self.assertEqual(str(cm.exception), text)
 
     def test_block_layout_member(self):
         """Every spin-orbital bond FLEX output records the bond block layout

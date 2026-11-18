@@ -821,14 +821,30 @@ NMAT_RULES = ("exact", "load")
 
 class SOArchiveError(ValueError):
     """A consumed spin-orbital archive refused by :func:`check_so_archive`
-    (a ValueError; callers that rewrap layout errors let it through)."""
+    (a ValueError; callers that rewrap layout errors let it through).
+
+    ``check`` names the compatibility step that refused the archive: one of
+    ``"residual"``, ``"band"``, ``"interaction"``, ``"capability"``,
+    ``"topology"`` (declared), ``"resolved_topology"``, ``"state"`` and
+    ``"green"`` (:func:`check_so_compatibility`,
+    :func:`check_green_digest`); ``None`` for every other refusal (the
+    structure check among them). It is a keyword of the constructor and
+    leaves the message (``str`` and ``args``) unchanged."""
+
+    def __init__(self, *args, check: Optional[str] = None):
+        super().__init__(*args)
+        self.check = check
 
 
 class SOArchiveInfo(NamedTuple):
     """What :func:`check_so_archive` learned about a consumed archive.
 
-    Validation and message data only: the hwave_sc writers record their own
-    state and never copy these fields."""
+    Validation and message data only. The hwave_sc writers record the state
+    of the Green function they consumed: their own state, except for a
+    borrowed bond Green function, whose state is the producer's recorded
+    state of that same Green function (``producer_state``). With
+    ``check_green = False`` ``producer_fp_green`` is the archive's stored
+    digest, not yet verified (:func:`check_green_digest`)."""
     producer_state: SOState
     producer_fp_green: str
     producer_label: str
@@ -942,7 +958,8 @@ def _check_residual(path, label, state):
             "'{}' cannot be reused: the producer did not reach its filling "
             "(residual {:.3e} electrons per cell > 1e-8·max(1,|t|) = {:.3e}). "
             "Regenerate it with {} so that its density closes to that "
-            "tolerance.".format(path, state.mu_tol, RESIDUAL_CAP * scale, label))
+            "tolerance.".format(path, state.mu_tol, RESIDUAL_CAP * scale, label),
+            check="residual")
 
 
 def _check_band(path, label, file_fps, run_fps, file_band, run_band, point):
@@ -980,7 +997,7 @@ def _check_band(path, label, file_fps, run_fps, file_band, run_band, point):
             "'{}' (written by {}) does not match this run: band differs: {}. "
             "Archives are reused only at {} (not a warm start across a sweep); "
             "re-run {} with this input (the same Transfer/Extern/coeff_extern)."
-            .format(path, label, "; ".join(diffs), point, label))
+            .format(path, label, "; ".join(diffs), point, label), check="band")
 
 
 def _check_state(path, label, state, run_state, nmat_rule, point):
@@ -1016,7 +1033,7 @@ def _check_state(path, label, state, run_state, nmat_rule, point):
         raise SOArchiveError(
             "'{}' (written by {}) does not match this run: state differs: {}. "
             "Archives are reused only at {}; {}.".format(
-                path, label, "; ".join(diffs), point, fix))
+                path, label, "; ".join(diffs), point, fix), check="state")
     if nmat_rule == "load" and state.nmat != int(run_state.nmat):
         check_logger.warning(
             "'%s' (written by %s) was summed on another Matsubara grid: "
@@ -1031,17 +1048,43 @@ def _check_green(path, label, data, green, green_layout, green_fp):
     if green_fp is None and green is not None:
         green_fp = green_digest(green, green_layout)
     if green_fp is not None:
-        if green_fp != file_green:
-            at = " (both at fingerprint_version {})".format(FINGERPRINT_VERSION)
-            raise SOArchiveError(
-                "'{}' (written by {}): fp_green mismatch: the Green function this "
-                "run loaded has digest {}..., the archive records {}...{}; the Green "
-                "function and the susceptibility do not come from the same run. "
-                "Regenerate both with {}.".format(path, label, green_fp[:12],
-                                                 file_green[:12], at, label))
+        check_green_digest(file_green, path, label=label, green_fp=green_fp)
     else:
         check_logger.info("fp_green: producer assertion (%s)", path)
     return file_green
+
+
+def check_green_digest(stored: str, path: str, *, label: str, green_fp: str,
+                       green_only: bool = False) -> str:
+    """The green step of :func:`check_so_compatibility`, run on its own: the
+    second stage of a ``check_green = False`` call, once the caller has read
+    the Green function and formed its digest ``green_fp``
+    (:func:`green_digest`). ``stored`` is the archive's ``fp_green``
+    (``SOArchiveInfo.producer_fp_green`` of the first stage), ``path`` and
+    ``label`` name the file and its producer in the message. Returns
+    ``stored``; a different digest is refused with the text of the green
+    step (:class:`SOArchiveError`, ``check = "green"``). ``green_only =
+    True`` is for a Green function read from the archive itself (no
+    susceptibility is consumed with it): the refusal then says that the
+    archive's ``green`` member no longer is the one its producer wrote."""
+    if not isinstance(green_fp, str):
+        raise TypeError("check_green_digest: green_fp must be the digest string, got {!r}"
+                        .format(green_fp))
+    if green_fp != stored:
+        at = " (both at fingerprint_version {})".format(FINGERPRINT_VERSION)
+        if green_only:
+            raise SOArchiveError(
+                "'{}' (written by {}): fp_green mismatch: the Green function read from it "
+                "has digest {}..., the file records {}...{}; its green member is not the "
+                "one the run that wrote it recorded. Regenerate it with {}.".format(
+                    path, label, green_fp[:12], stored[:12], at, label), check="green")
+        raise SOArchiveError(
+            "'{}' (written by {}): fp_green mismatch: the Green function this "
+            "run loaded has digest {}..., the archive records {}...{}; the Green "
+            "function and the susceptibility do not come from the same run. "
+            "Regenerate both with {}.".format(path, label, green_fp[:12],
+                                             stored[:12], at, label), check="green")
+    return stored
 
 
 # --------------------------------------------------------- structure (step 1)
@@ -1688,7 +1731,8 @@ def check_so_archive(data, path: str, *, kind: str, run_band: BandInputs,
                      need: str, expected_producer: Optional[str] = None,
                      run_bond: Optional[BondInputs] = None, green=None,
                      green_layout: Optional[str] = None,
-                     green_fp: Optional[str] = None) -> SOArchiveInfo:
+                     green_fp: Optional[str] = None,
+                     check_green: bool = True) -> SOArchiveInfo:
     """Validate the provenance of a spin-orbital archive against this run.
 
     ``data`` is the open npz (or a mapping of its members), ``path`` its
@@ -1706,7 +1750,11 @@ def check_so_archive(data, path: str, *, kind: str, run_band: BandInputs,
     label is unreadable). With ``green`` (in ``green_layout``) or
     ``green_fp`` (its digest, already computed by the caller) the archive's
     ``fp_green`` is verified; otherwise it is a producer assertion, logged
-    at INFO.
+    at INFO. ``check_green = False`` skips the green step (no comparison,
+    no INFO line): the returned ``producer_fp_green`` is the stored digest,
+    which the caller compares with :func:`check_green_digest` after reading
+    the Green function; ``green`` and ``green_fp`` are then refused
+    (ValueError).
 
     The checks: (1) :func:`validate_structure`; (2) band (this run's digests
     recomputed from its own tables; no digest is recomputed from the
@@ -1715,7 +1763,8 @@ def check_so_archive(data, path: str, *, kind: str, run_band: BandInputs,
     against ``run_bond``), state, green. Step 2 is
     :func:`check_so_compatibility`.
 
-    Every refusal is a single-line ValueError (:class:`SOArchiveError`)."""
+    Every refusal is a single-line ValueError (:class:`SOArchiveError`);
+    the refusals of step 2 name their step in ``SOArchiveError.check``."""
     _check_caller_arguments("check_so_archive", nmat_rule, run_interaction, need)
     label = _readable_label(data, _members(data))
     if label == UNKNOWN_PRODUCER and expected_producer:
@@ -1725,7 +1774,7 @@ def check_so_archive(data, path: str, *, kind: str, run_band: BandInputs,
         data, path, validated=(kind, stage, version, label), run_band=run_band,
         run_state=run_state, nmat_rule=nmat_rule, run_interaction=run_interaction, need=need,
         expected_producer=expected_producer, run_bond=run_bond, green=green,
-        green_layout=green_layout, green_fp=green_fp)
+        green_layout=green_layout, green_fp=green_fp, check_green=check_green)
 
 
 def _check_caller_arguments(who, nmat_rule, run_interaction, need):
@@ -1743,7 +1792,8 @@ def check_so_compatibility(data, path: str, *, validated, run_band: BandInputs,
                            expected_producer: Optional[str] = None,
                            run_bond: Optional[BondInputs] = None, green=None,
                            green_layout: Optional[str] = None,
-                           green_fp: Optional[str] = None) -> SOArchiveInfo:
+                           green_fp: Optional[str] = None,
+                           check_green: bool = True) -> SOArchiveInfo:
     """Step 2 of :func:`check_so_archive` on an archive whose structure is
     already validated: ``validated = (kind, stage, version, label)``, the
     result of :func:`validate_structure` plus the producer label it named
@@ -1754,8 +1804,16 @@ def check_so_compatibility(data, path: str, *, validated, run_band: BandInputs,
     instead of :func:`check_so_archive`. The other arguments, the checks
     and the texts are those of :func:`check_so_archive`: residual, band,
     interaction, capability, declared and resolved topology
-    (``need = "so_bond"``), state, green."""
+    (``need = "so_bond"``), state, green. Each refusal names its step in
+    ``SOArchiveError.check`` (``"residual"``, ``"band"``,
+    ``"interaction"``, ``"capability"``, ``"topology"``,
+    ``"resolved_topology"``, ``"state"``, ``"green"``). With
+    ``check_green = False`` the green step is left to
+    :func:`check_green_digest` (see :func:`check_so_archive`)."""
     _check_caller_arguments("check_so_compatibility", nmat_rule, run_interaction, need)
+    if not check_green and (green is not None or green_fp is not None):
+        raise ValueError("check_so_compatibility: green and green_fp are not read with "
+                         "check_green = False")
     if not (isinstance(validated, tuple) and len(validated) == 4):
         raise ValueError("check_so_compatibility: validated must be (kind, stage, version, "
                          "label), got {!r}".format(validated))
@@ -1779,13 +1837,14 @@ def check_so_compatibility(data, path: str, *, validated, run_band: BandInputs,
             "'{}' (written by {}) does not match this run: interaction differs: {}. "
             "Archives are reused only at {} (not a warm start across a sweep); re-run {} "
             "with this input (the same interaction definitions).".format(
-                path, label, _interaction_diff(data, run_interaction.records), point, label))
+                path, label, _interaction_diff(data, run_interaction.records), point, label),
+            check="interaction")
 
     # capability
     cap = str(_scalar(data, "fp_capability"))
     if cap != need:
         raise SOArchiveError("{} was produced by {} ({}), but this run needs a {} artifact"
-                             .format(path, label, cap, need))
+                             .format(path, label, cap, need), check="capability")
 
     # topology: bond consumers only
     if need == "so_bond":
@@ -1799,7 +1858,7 @@ def check_so_compatibility(data, path: str, *, validated, run_band: BandInputs,
                 "interaction definitions).".format(
                     path, label, len(np.asarray(data["prov_topology"])),
                     len(np.asarray(run_interaction.declared_topology).reshape(-1, 3)),
-                    point, label))
+                    point, label), check="topology")
         run_rt = resolved_topology_digest(run_bond.delta_r, run_bond.reverse,
                                           run_bond.slot_convention)
         if str(_scalar(data, "fp_resolved_topology")) != run_rt:
@@ -1812,8 +1871,11 @@ def check_so_compatibility(data, path: str, *, validated, run_band: BandInputs,
                     np.asarray(data["reverse"]).tolist(), int(_scalar(data, "max_shells")),
                     np.asarray(run_bond.delta_r).tolist(),
                     np.asarray(run_bond.reverse).tolist(), int(run_bond.max_shells),
-                    point, label))
+                    point, label), check="resolved_topology")
 
     _check_state(path, label, state, run_state, nmat_rule, point)
-    file_green = _check_green(path, label, data, green, green_layout, green_fp)
+    if check_green:
+        file_green = _check_green(path, label, data, green, green_layout, green_fp)
+    else:
+        file_green = str(_scalar(data, "fp_green"))
     return SOArchiveInfo(state, file_green, label, version)

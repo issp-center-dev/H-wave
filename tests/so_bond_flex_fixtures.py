@@ -49,7 +49,7 @@ __all__ = ["V_CPH", "ZEEMAN_SZ_ALL", "SOC_ALL_TYPES_CPH", "ZEEMAN_EXTERN_ONSITE"
            "write_flex_case", "build_solver", "run_inputs", "RunResult", "run_input",
            "run_flex",
            "one_map", "converge",
-           "CONVERGE_PARAM"]
+           "CONVERGE_PARAM", "write_sc_green"]
 
 
 def _nn_c(v):
@@ -333,3 +333,37 @@ def converge(fixture, *, gate=True, param=None):
         raise RuntimeError("converge: {} (gate {}) did not converge in {} iterations".format(
             fixture.name, gate, res.solver.scf_iterations))
     return res
+
+
+def write_sc_green(tmpdir, fixture, *, param=None, sigma=False):
+    """The path of the ``green.npz`` a converged spin-orbital bond FLEX run of
+    ``fixture`` writes into ``tmpdir/out``, in filling mode at the state point
+    of an hwave_sc static bond run of :func:`tests.so_bond_entry_fixtures.write_case`
+    (``T = 0.5``, ``Nmat = 32``, the fixture's ``filling``; ``IterationMax =
+    60``, Anderson mixing). ``param`` overrides those ``[mode.param]``
+    values; ``sigma = True`` also writes ``sigma.npz`` beside it. The fixed
+    ``mu`` of :func:`write_flex_case` is removed (keys matched
+    case-insensitively), so the run determines mu from the filling. Refuses
+    (``RuntimeError``) a file whose ``scf_converged`` is false."""
+    import numpy as np
+    overrides = {"T": 0.5, "Nmat": 32, "filling": fixture.filling, "IterationMax": 60,
+                 "mixing_scheme": "anderson"}
+    overrides.update(param or {})
+    output = {"green": "green.npz"}
+    if sigma:
+        output["sigma"] = "sigma.npz"
+    input_dict = write_flex_case(tmpdir, fixture, param=overrides, output=output)
+    par = input_dict["mode"]["param"]
+    for key in [k for k in par if k.lower() == "mu"]:
+        del par[key]
+    out = input_dict["file"]["output"]
+    os.makedirs(out["path_to_output"], exist_ok=True)
+    res = run_input(input_dict)
+    res.solver.save_results(out, res.green_info)
+    path = os.path.join(out["path_to_output"], "green.npz")
+    with np.load(path, allow_pickle=False) as z:
+        converged = bool(np.asarray(z["scf_converged"]))
+    if not converged:
+        raise RuntimeError("write_sc_green: the FLEX run of {} did not converge ({})".format(
+            fixture.name, path))
+    return path

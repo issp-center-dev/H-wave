@@ -316,10 +316,12 @@ def check_so_config(input_dict):
 
     ``bond_channels = true`` (issue #270) is supported with ``frequency =
     "static"``: the static spin-orbital bond path builds its bond bubble
-    from the band's Green function, so ``chi0q_tensor`` and ``flex_chi_s`` /
-    ``flex_chi_c`` are not checked here (they are not used there and get a
-    WARNING from the entry); the ``chi0q_mode`` value is checked as for
-    every run. With ``frequency = "dynamic"`` it is refused.
+    from a Green function (the band's, or the green.npz of a spin-orbital
+    bond FLEX run named by ``bond_green``) and reads no susceptibility, so
+    ``chi0q_tensor`` and ``flex_chi_s`` / ``flex_chi_c`` are not checked
+    here (they are not used there and get a WARNING from the entry); the
+    ``chi0q_mode`` value is checked as for every run. With ``frequency =
+    "dynamic"`` it is refused.
 
     Supported: ``frequency = "static"`` or ``"dynamic"``, ``bond_channels = false``
     (or true with ``frequency = "static"``),

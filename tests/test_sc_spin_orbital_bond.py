@@ -27,7 +27,7 @@ from hwave.solver import (backend, bond_channels, eliashberg_bond, fingerprint, 
 from hwave.sc import (_SO_BOND_CHI0Q_UNUSED, _SO_BOND_DIAGNOSTICS_REFUSAL,
                       _SO_BOND_FLEX_KEYS_UNUSED, _SO_BOND_FLEX_REFUSAL,
                       _SO_BOND_GPU_IGNORED, _SO_BOND_GPU_REQUIRED_REFUSAL,
-                      _SO_BOND_GREEN_REFUSAL, _SO_BOND_LAYOUT_IGNORED,
+                      _SO_BOND_LAYOUT_IGNORED,
                       _SO_BOND_PRECONDITION_REFUSAL)
 from tests import so_bond_entry_fixtures as F
 from tests import so_bond_flex_fixtures as _flex_fixtures
@@ -93,12 +93,6 @@ class TestConfigParsing(unittest.TestCase):
                          "[eliashberg] so_bond_layout set but bond_channels=false; it only "
                          "applies to the spin-orbital bond path and is ignored here.")
         self.assertEqual(
-            _SO_BOND_GREEN_REFUSAL,
-            _W + ": [eliashberg] bond_green is not available with bond_channels in "
-            "spin-orbital mode: no run writes a spin-orbital bond-resolved Green function "
-            "yet (it arrives with the spin-orbital bond FLEX). Remove bond_green; the Green "
-            "function is built from the Transfer (and Extern) input.")
-        self.assertEqual(
             _SO_BOND_DIAGNOSTICS_REFUSAL,
             _W + ": [eliashberg] bond_diagnostics is not available in spin-orbital mode "
             "(its character analysis is the singlet/triplet one of the non-spin-orbital "
@@ -112,9 +106,11 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(
             _SO_BOND_FLEX_REFUSAL,
             _W + ": [eliashberg] chi0q_mode = \"flex\" with bond_channels = true is not "
-            "available yet: the spin-orbital bond path builds its bond bubble from the "
-            "band's Green function and reads no FLEX output. Remove chi0q_mode (or leave "
-            "it unset); it is not used on this path.")
+            "available: the spin-orbital bond path builds its bond bubble from a Green "
+            "function (the band's, or the file named by bond_green) and reads no FLEX "
+            "susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green "
+            "function, set bond_green to the green.npz of a spin-orbital FLEX run with "
+            "[mode.param] longitudinal_bond_channels = true.")
         self.assertEqual(
             _SO_BOND_GPU_REQUIRED_REFUSAL,
             _W + ": [eliashberg] gpu_required = true is not available with bond_channels "
@@ -134,12 +130,11 @@ class TestConfigParsing(unittest.TestCase):
         self.assertEqual(
             _SO_BOND_FLEX_KEYS_UNUSED,
             "[eliashberg] %s: not used for bond_channels=true in spin-orbital mode (the "
-            "spin-orbital bond path reads no FLEX output).")
+            "spin-orbital bond path reads no FLEX susceptibility).")
 
     def test_each_refusal(self):
         on = {"bond_channels": True}
         rows = [
-            ("bond_green", {"bond_green": "g.npz"}, _SO_BOND_GREEN_REFUSAL),
             ("bond_diagnostics true", {"bond_diagnostics": True},
              _SO_BOND_DIAGNOSTICS_REFUSAL),
             ("bond_diagnostics false", {"bond_diagnostics": False},
@@ -169,8 +164,6 @@ class TestConfigParsing(unittest.TestCase):
 
     def test_refusal_order(self):
         on = {"bond_channels": True}
-        self.assertEqual(self._refusal(dict(on, bond_green="g.npz", bond_diagnostics=True)),
-                         _SO_BOND_GREEN_REFUSAL)
         self.assertEqual(
             self._refusal(dict(on, Bond_Precondition_RTOL=1e-3, bond_precondition_atol=0.0)),
             _SO_BOND_PRECONDITION_REFUSAL.format(key="bond_precondition_atol"))
@@ -182,8 +175,6 @@ class TestConfigParsing(unittest.TestCase):
                          _SO_BOND_GPU_REQUIRED_REFUSAL)
 
     def test_case_insensitive_keys(self):
-        self.assertEqual(self._refusal({"Bond_Channels": True, "Bond_Green": "g.npz"}),
-                         _SO_BOND_GREEN_REFUSAL)
         self.assertEqual(self._refusal({"Bond_Channels": "on", "Bond_Diagnostics": False}),
                          _SO_BOND_DIAGNOSTICS_REFUSAL)
         self.assertEqual(self._refusal({"BOND_CHANNELS": True, "Chi0q_Mode": "flex"}),
@@ -2101,9 +2092,10 @@ def _solve_leg(p, static, mode):
     return None
 
 
-def traced_phases(p, mode):
+def traced_phases(p, mode, green_fn=None):
     """``(admission, measured, selection)`` of the static chain of the
-    prepared run ``p`` traced phase by phase.
+    prepared run ``p`` traced phase by phase. ``green_fn(p)`` builds the
+    Green function record (default :func:`_green_of`, the band's).
 
     The admission runs untraced; then ONE tracemalloc session covers the
     phase functions in production order (the Green function, the vertex,
@@ -2124,7 +2116,7 @@ def traced_phases(p, mode):
     tracemalloc.start()
     try:
         tracemalloc.reset_peak()
-        so_green = _green_of(p)
+        so_green = (_green_of if green_fn is None else green_fn)(p)
         measured["green_static"] = tracemalloc.get_traced_memory()[1]
         tracemalloc.reset_peak()
         gamma_b, V = sc._so_bond_static_vertex(p.so_run, adm, so_green, beta=p.beta,
@@ -2146,11 +2138,11 @@ def traced_phases(p, mode):
     return adm, measured, selection
 
 
-def check_phase_rows(test, p, mode):
+def check_phase_rows(test, p, mode, green_fn=None):
     """Every traced phase of ``p`` within its ``phase_total`` (no margin);
     the ratios and the peak phase are printed on failure. Returns the
-    admission."""
-    adm, measured, selection = traced_phases(p, mode)
+    admission. ``green_fn`` is forwarded to :func:`traced_phases`."""
+    adm, measured, selection = traced_phases(p, mode, green_fn=green_fn)
     plan = adm.plan
     peak = max(plan_phases(plan), key=plan.phase_total)
     rows = {key: plan.phase_total(key.split("/")[0]) for key in measured}
@@ -3908,8 +3900,6 @@ def _refusal_rows():
         ("bond_precondition_atol", F.SOC_ALL_TYPES, {"Bond_Precondition_ATOL": 1e-12},
          _SO_BOND_PRECONDITION_REFUSAL.format(key="Bond_Precondition_ATOL"),
          "_read_interaction_files"),
-        ("bond_green", F.SOC_ALL_TYPES, {"Bond_Green": "green.npz"}, _SO_BOND_GREEN_REFUSAL,
-         "_read_interaction_files"),
         ("gpu_required", F.SOC_ALL_TYPES, {"GPU_Required": True, "Gpu": True},
          _SO_BOND_GPU_REQUIRED_REFUSAL, "_read_interaction_files"),
         ("off-site rows, bond_channels = false", F.SOC_ALL_TYPES, {"Bond_Channels": False},
@@ -4003,14 +3993,16 @@ class TestRefusalMatrix(unittest.TestCase):
         """The chi0q_mode = "flex" refusal, written out (the rows compare
         with the constant)."""
         self.assertEqual(_SO_BOND_FLEX_REFUSAL, (
-            _SO_CONFIG + "chi0q_mode = \"flex\" with bond_channels = true is not available "
-            "yet: the spin-orbital bond path builds its bond bubble from the band's Green "
-            "function and reads no FLEX output. Remove chi0q_mode (or leave it unset); it is "
-            "not used on this path."))
+            _SO_CONFIG + "chi0q_mode = \"flex\" with bond_channels = true is not available: "
+            "the spin-orbital bond path builds its bond bubble from a Green function (the "
+            "band's, or the file named by bond_green) and reads no FLEX susceptibility. "
+            "Remove chi0q_mode (or leave it unset); to use a FLEX Green function, set "
+            "bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] "
+            "longitudinal_bond_channels = true."))
 
     def test_rows(self):
         rows = _refusal_rows()
-        self.assertEqual(len(rows), 24)
+        self.assertEqual(len(rows), 23)
         for label, fixture, eli, text, first_skipped in rows:
             with self.subTest(row=label):
                 got, entered = self._refuse(fixture, eli)

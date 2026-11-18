@@ -76,7 +76,8 @@ from .so_records import CompiledInteraction, _displacements
 
 __all__ = ["SlotConvention", "SLOT_CONVENTION", "BondSlotGeometry", "slot_geometry",
            "so_bond_topology", "parse_layout_key", "BandSzCheck", "band_conserves_sz",
-           "records_conserve_sz", "select_layout", "canonical_band_eigen", "green_leak",
+           "records_conserve_sz", "InputSzCheck", "input_conserves_sz", "select_layout",
+           "canonical_band_eigen", "green_leak",
            "project_green_sectors", "project_borrowed_green", "SECTOR_ORDER", "SectorCross",
            "PPGather",
            "SectorMap", "sz_sector_map", "PackedArrays", "SOBondCaps", "SOBondPlan",
@@ -534,6 +535,32 @@ def records_conserve_sz(compiled):
     return None
 
 
+class InputSzCheck(NamedTuple):
+    """Whether the input of a spin-orbital run conserves S_z
+    (:func:`input_conserves_sz`): ``band`` is the :class:`BandSzCheck` of its
+    Transfer table, ``record`` the first S_z-changing interaction record
+    (:func:`records_conserve_sz`; ``None`` when every record conserves S_z,
+    and not looked up when the band already breaks it)."""
+    conserving: bool
+    band: BandSzCheck
+    record: Optional[dict]
+
+
+def input_conserves_sz(transfer, extern, compiled, norb_phys):
+    """Whether the whole input of a spin-orbital run conserves S_z: its band
+    (:func:`band_conserves_sz` of ``transfer``, ``extern``) and every record
+    of its compiled interaction ``compiled`` (:func:`records_conserve_sz`).
+    The records are read only when the band conserves S_z. Returns
+    :class:`InputSzCheck`. The one S_z rule of the input: the layout
+    selection (:func:`select_layout`), the sector Dyson of the bond FLEX and
+    the projection of a borrowed Green function all take it from here."""
+    band = band_conserves_sz(transfer, extern, norb_phys)
+    if not band.conserving:
+        return InputSzCheck(False, band, None)
+    record = records_conserve_sz(compiled)
+    return InputSzCheck(record is None, band, record)
+
+
 def select_layout(compiled, transfer_table, *, override):
     """The layout of the spin-orbital bond objects and its reason line.
 
@@ -552,12 +579,12 @@ def select_layout(compiled, transfer_table, *, override):
                              type(compiled).__name__))
     if forced:
         return "dense", 'so bond layout: dense (reason: forced by so_bond_layout = "dense")'
-    band = band_conserves_sz(transfer_table, None, compiled.norb_phys)
-    if not band.conserving:
-        R, (i, j), v = band.entry
+    check = input_conserves_sz(transfer_table, None, compiled, compiled.norb_phys)
+    if not check.band.conserving:
+        R, (i, j), v = check.band.entry
         return "dense", ("so bond layout: dense (reason: spin-flip transfer entry R=({}, {}, {}) "
                          "({}, {}) = {!r})".format(R[0], R[1], R[2], i + 1, j + 1, complex(v)))
-    rec = records_conserve_sz(compiled)
+    rec = check.record
     if rec is not None:
         typ = str(rec["type"])
         if typ == "PairLift":
@@ -2662,6 +2689,19 @@ def _green_static_transient(nmat, nvol, nd):
     return max(build, digest)
 
 
+#: the fixed part of the resident row of a Green function read from a file
+#: (:func:`static_so_bond_resident_rows`): the zip and validator overhead of
+#: the read step that does not scale with the file, over its ``3G`` peak
+#: (inside ``carrier_build``); resident, because part of it is
+#: reference-cycle garbage that stays alive until the next cyclic collection
+_FILE_READ_BYTES = 262144
+#: the factor of the part of that row that scales with the file: the bytes of
+#: the members other than ``green`` (each is materialised once by the checks,
+#: and a check forms at most a few temporaries of a member's size; measured at
+#: most 2.3 times the member bytes, on ``wavevector_index``)
+_FILE_READ_MEMBER_FACTOR = 4
+
+
 def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalues, max_iter,
                         spatial_shape, spectral_shift=None):
     """The admission rows ``(phase, name, bytes)`` of the static
@@ -2713,7 +2753,10 @@ def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalu
     positive finite number; it sets the outputs the ARPACK branch keeps
     alive, see :func:`estimate_dense_layout_solver_bytes`) (``ValueError``
     naming the
-    argument)."""
+    argument).
+
+    A Green function read from ``[eliashberg] bond_green`` adds the resident
+    row of :func:`static_so_bond_resident_rows`; the rows above are unchanged."""
     name = "static_so_bond_rows"
     _shift_kind(name, spectral_shift)
     nmat = _even_at_least_2(name, "nmat", nmat)
@@ -2772,6 +2815,46 @@ def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalu
             ("kernel_static", "kernel_workspace", workspace),
             ("kernel_static", "eigensolver", eigensolver))
     return tuple((ph, nm, int(b)) for ph, nm, b in rows)
+
+
+def static_so_bond_resident_rows(*, green_source="band", member_bytes=None):
+    """The resident rows ``(name, bytes)`` (``plan_so_bond(...,
+    resident_rows=)``) the Green function source adds to the static
+    spin-orbital bond plan. ``green_source`` is ``"band"`` (the default: the
+    Green function is built from the run's band; no row, and
+    ``member_bytes`` must be ``None``) or ``"file"`` (it is read from
+    ``[eliashberg] bond_green``; ``member_bytes`` is then required).
+
+    ``file_read = 262144 + 4 * member_bytes``. The fixed 262144 bytes (256
+    KiB) are the zip and validator overhead of the read step that does not
+    scale with the file, measured at most 145 KB on top of its ``3G`` peak
+    (which ``carrier_build`` covers). ``member_bytes`` is the size of the
+    file's members other than ``green``, which the checks materialise (the
+    provenance tables among them, whose size scales with the input). The
+    caller takes it from the members' npy headers and zip records without
+    reading any member (``sc._so_bond_green_member_bytes``). The factor 4
+    bounds the member read plus the temporaries a check forms from it,
+    measured at most 2.3 times the member bytes. The row is resident, alive
+    in every phase from ``green_static`` on: part of that overhead (numpy's
+    npy-header parse of each member the validator reads) is reference-cycle
+    garbage that stays alive until the next cyclic collection, which may
+    come after the read's phase. ``ValueError`` for another
+    ``green_source``, or for ``member_bytes`` that is not a non-negative
+    integer with ``"file"`` or not ``None`` with ``"band"``."""
+    name = "static_so_bond_resident_rows"
+    if not (isinstance(green_source, str) and green_source in ("band", "file")):
+        raise ValueError("{}: green_source must be 'band' or 'file', got {!r}"
+                         .format(name, green_source))
+    if green_source == "band":
+        if member_bytes is not None:
+            raise ValueError("{}: member_bytes is read only with green_source = 'file', "
+                             "got {!r}".format(name, member_bytes))
+        return ()
+    if (isinstance(member_bytes, (bool, np.bool_))
+            or not isinstance(member_bytes, (int, np.integer)) or member_bytes < 0):
+        raise ValueError("{}: member_bytes must be a non-negative integer with green_source "
+                         "= 'file', got {!r}".format(name, member_bytes))
+    return (("file_read", _FILE_READ_BYTES + _FILE_READ_MEMBER_FACTOR * int(member_bytes)),)
 
 
 # ---------------------------------------------------------------------------
