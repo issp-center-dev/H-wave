@@ -1214,6 +1214,13 @@ class UHFr(solver_base):
         N = self.Nsize
         diag = np.diag(self.Green).real
         self.physics["Sz"] = 0.5 * (np.sum(diag[:N]) - np.sum(diag[N:]))
+        # transverse spin from the on-site spin-off-diagonal elements
+        # (spin-up index i, spin-down index i + N), before the mixing below
+        idx = np.arange(N)
+        ud = self.Green[idx, idx + N]   # <c^dag_{i up} c_{i down}>
+        du = self.Green[idx + N, idx]   # <c^dag_{i down} c_{i up}>
+        self.physics["Sx"] = 0.5 * np.sum(ud + du).real
+        self.physics["Sy"] = 0.5 * np.sum(-1j * (ud - du)).real
 
         diff = self.Green - self.Green_old
         rest = np.sum(np.abs(diff) ** 2)
@@ -1277,6 +1284,10 @@ class UHFr(solver_base):
             elif len(mus) > 1:
                 for k, mu in mus:
                     output_str += "ChemicalPotential_{} = {}\n".format(k, mu)
+            # transverse spin, as the last two lines (the mean-field state can
+            # point along any spin axis)
+            output_str += "Sx = {}\n".format(self.physics["Sx"])
+            output_str += "Sy = {}\n".format(self.physics["Sy"])
             with open(os.path.join(path_to_output, info_outputfile["energy"]), "w") as fw:
                 fw.write(output_str)
 

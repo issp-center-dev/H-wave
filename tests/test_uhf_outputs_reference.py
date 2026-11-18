@@ -43,8 +43,9 @@ _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALLOWED_NEW_FILES = {"scf_status.dat"}
 
 #: ``{file name: keys}``: lines this tree appends, one per key, in order,
-#: after the reference revision's last line of that file.
-APPENDED_LINES = {}
+#: after the reference revision's last line of that file: the transverse
+#: spin, written by both UHF solvers.
+APPENDED_LINES = {"energy.dat": ("Sx", "Sy")}
 
 #: ``{test name suffix: input directory relative to the repository root}``
 CASES = {

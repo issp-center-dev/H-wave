@@ -1610,9 +1610,17 @@ class UHFk(solver_base):
             sigma_z = np.array(np.array([[1,0],[0,-1]]))
             sz = np.sum(np.diagonal(np.einsum('satb,st->ab', gab_r[0], sigma_z))) * nvol
             self.physics["Sz"] = 0.5 * sz.real
-            # collinear normal mode: the transverse spin vanishes by construction
-            self.physics["Sx"] = 0.0
-            self.physics["Sy"] = 0.0
+            # The mean-field state can point along any spin axis, so Sx and Sy
+            # can be nonzero also without spin-orbit coupling. G[0] is already
+            # the (s, a, t, b) frame the spin-orbital branch reads above:
+            # Sx = (1/2)(ud + du), Sy = -(i/2)(ud - du).
+            m = gab_r[0]
+            ud = np.diagonal(m[0, :, 1, :])      # <c^dag_up c_down> = <S^+>
+            du = np.diagonal(m[1, :, 0, :])      # <c^dag_down c_up> = <S^->
+            sx = np.sum(ud + du) * nvol
+            sy = np.sum(-1j * (ud - du)) * nvol
+            self.physics["Sx"] = 0.5 * sx.real
+            self.physics["Sy"] = 0.5 * sy.real
 
         logger.debug("sz = {}".format(sz))
 
@@ -1827,12 +1835,11 @@ class UHFk(solver_base):
                     else:
                         for g, mu in enumerate(mu_arr):
                             fw.write("ChemicalPotential_{} = {}\n".format(g, float(mu)))
-                # Transverse spin (Sx, Sy) is only meaningful with spin mixing;
-                # emit it only in spin-orbital mode to keep the normal-mode
-                # energy.dat format backward-compatible.
-                if self.enable_spin_orbital:
-                    fw.write("Sx      = {}\n".format(self.physics["Sx"]))
-                    fw.write("Sy      = {}\n".format(self.physics["Sy"]))
+                # Transverse spin, in both modes, as the last two lines: the
+                # mean-field state can point along any spin axis, so Sx and
+                # Sy can be nonzero also without spin-orbit coupling.
+                fw.write("Sx      = {}\n".format(self.physics["Sx"]))
+                fw.write("Sy      = {}\n".format(self.physics["Sy"]))
 
             logger.info("save_results: save energy in file {}".format(file_name))
 
