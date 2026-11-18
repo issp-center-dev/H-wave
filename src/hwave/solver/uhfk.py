@@ -1587,40 +1587,30 @@ class UHFk(solver_base):
         logger.debug("ncond = {}".format(n))
 
         # expectation value of the spin vector (Sx, Sy, Sz)
+        #   S_alpha = (1/2) sum_a sum_{st} (sigma_alpha)_{st} <c^dag_{as} c_{at}>,
+        # read in the spin-block frame m[s, a, t, b] of the on-site Green
+        # function G_{ij} = <c^dag_i c_j> (issue #350). The mean-field state
+        # can point along any spin axis, so Sx and Sy can be nonzero also
+        # without spin-orbit coupling.
         if self.enable_spin_orbital:
-            # The on-site Green function G_{ij} = <c^dag_i c_j> has spin
-            # structure, so the full spin vector is meaningful (Sx, Sy nonzero
-            # under spin mixing / SOC).
-            #   S_alpha = (1/2) sum_a sum_{st} (sigma_alpha)_{st} <c^dag_{as} c_{at}>
-            # read in the virtual spin-block frame m[s, a, t, b] (issue #350):
-            # Sx = (1/2)(ud + du), Sy = -(i/2)(ud - du).
+            # the virtual spin-block form of the interleaved index
             m = self._so_to_virtual_green(self.Green)[0]
             g0 = np.diagonal(gab_r[0])           # rho_{ii}, interleaved
             sz_diag = np.where(spin_orbital.spin_of(np.arange(nd)) == 0, 1.0, -1.0)
-            ud = np.diagonal(m[0, :, 1, :])      # <c^dag_up c_down> = <S^+>
-            du = np.diagonal(m[1, :, 0, :])      # <c^dag_down c_up> = <S^->
             sz = np.sum(g0 * sz_diag) * nvol
-            sx = np.sum(ud + du) * nvol
-            sy = np.sum(-1j * (ud - du)) * nvol
-            self.physics["Sz"] = 0.5 * sz.real
-            self.physics["Sx"] = 0.5 * sx.real
-            self.physics["Sy"] = 0.5 * sy.real
         else:
-            gab_r = self.Green
+            # normal mode: G[0] is already in the (s, a, t, b) frame
+            m = self.Green[0]
             sigma_z = np.array(np.array([[1,0],[0,-1]]))
-            sz = np.sum(np.diagonal(np.einsum('satb,st->ab', gab_r[0], sigma_z))) * nvol
-            self.physics["Sz"] = 0.5 * sz.real
-            # The mean-field state can point along any spin axis, so Sx and Sy
-            # can be nonzero also without spin-orbit coupling. G[0] is already
-            # the (s, a, t, b) frame the spin-orbital branch reads above:
-            # Sx = (1/2)(ud + du), Sy = -(i/2)(ud - du).
-            m = gab_r[0]
-            ud = np.diagonal(m[0, :, 1, :])      # <c^dag_up c_down> = <S^+>
-            du = np.diagonal(m[1, :, 0, :])      # <c^dag_down c_up> = <S^->
-            sx = np.sum(ud + du) * nvol
-            sy = np.sum(-1j * (ud - du)) * nvol
-            self.physics["Sx"] = 0.5 * sx.real
-            self.physics["Sy"] = 0.5 * sy.real
+            sz = np.sum(np.diagonal(np.einsum('satb,st->ab', m, sigma_z))) * nvol
+        # Sx = (1/2)(ud + du), Sy = -(i/2)(ud - du)
+        ud = np.diagonal(m[0, :, 1, :])          # <c^dag_up c_down> = <S^+>
+        du = np.diagonal(m[1, :, 0, :])          # <c^dag_down c_up> = <S^->
+        sx = np.sum(ud + du) * nvol
+        sy = np.sum(-1j * (ud - du)) * nvol
+        self.physics["Sz"] = 0.5 * sz.real
+        self.physics["Sx"] = 0.5 * sx.real
+        self.physics["Sy"] = 0.5 * sy.real
 
         logger.debug("sz = {}".format(sz))
 
