@@ -14,12 +14,14 @@ on-site row, whose run record has no band, calls ``sc._so_borrowed_green``.
 """
 
 import contextlib
+import gc
 import io
 import logging
 import os
 import shutil
 import tempfile
 import unittest
+import zipfile
 from unittest import mock
 
 import numpy as np
@@ -352,7 +354,15 @@ class TestBorrowedRefusals(unittest.TestCase):
                          "than this build requires. Regenerate it with {label}.")
         self.assertEqual(sc.T_BG_KGRID,
                          "'{path}' is malformed or truncated: wavevector_index is not the k "
-                         "grid of CellShape {shape}. Regenerate it with {label}.")
+                         "grid {shape} of this run (CellShape / SubShape). Regenerate it with "
+                         "{label}.")
+        self.assertEqual(sc.T_BG_SCF,
+                         "'{path}' is malformed or truncated: scf_converged is not a 0-d "
+                         "boolean. Regenerate it with {label}.")
+        self.assertEqual(sc._SO_BOND_GREEN_IS_FLEX_OUTPUT,
+                         _W + ": [eliashberg] bond_green = '{path}' is the {kind} file of a "
+                         "FLEX run, not a Green function; set bond_green to the green.npz "
+                         "written by that run ([file.output] green).")
         self.assertEqual(sc._SO_BOND_GREEN_ONSITE_REMEDY,
                          "[eliashberg] bond_green needs the green.npz of a spin-orbital FLEX "
                          "run with [mode.param] longitudinal_bond_channels = true (the "
@@ -400,8 +410,17 @@ class TestBorrowedRefusals(unittest.TestCase):
         index = os.path.join(d, "longitudinal_bond.npz")
         so_bond_archive.write_so_bond_archive(index, output_layout="npz", log=_LOG,
                                               **inputs.kwargs)
-        self._row(p, index, sc._SO_BOND_GREEN_IS_ARCHIVE.format(
-            path=index, green=os.path.join(d, "sub", "green.npz")), cls=ValueError)
+        companion = os.path.join(d, "sub", "green.npz")
+        # the companion is named only when it is a readable regular file
+        self._row(p, index, sc._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=index),
+                  cls=ValueError)
+        os.makedirs(companion)
+        self._row(p, index, sc._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=index),
+                  cls=ValueError)
+        os.rmdir(companion)
+        shutil.copyfile(_GREENS["ZEEMAN_SZ_ALL"], companion)
+        self._row(p, index, sc._SO_BOND_GREEN_IS_ARCHIVE.format(path=index, green=companion),
+                  cls=ValueError)
         self.assertIn("/sub/green.npz'.", str(self._refuse(p, index, ValueError)[0]))
         no_file = _edited(self, index, green_file=_DROP)
         empty = _edited(self, index, green_file=np.str_(""))
@@ -412,6 +431,27 @@ class TestBorrowedRefusals(unittest.TestCase):
         nonso = os.path.join(d, "bond_archive.npz")
         np.savez(nonso, bond_archive_schema=np.int64(3))
         self._row(p, nonso, sc._SO_BOND_GREEN_NONSO_ARCHIVE.format(path=nonso), cls=ValueError)
+
+    def test_flex_output_file(self):
+        """sigma.npz, chi0q.npz or chiq*.npz named as bond_green: the hint
+        names the file's kind instead of the structure step's "malformed"
+        text; a file that also has a green member goes on to the checks."""
+        p = _base("ZEEMAN_SZ_ALL")
+        sigma = os.path.join(os.path.dirname(_GREENS["ZEEMAN_SZ_ALL"]), "sigma.npz")
+        self.assertTrue(os.path.isfile(sigma))
+        self._row(p, sigma, sc._SO_BOND_GREEN_IS_FLEX_OUTPUT.format(path=sigma, kind="sigma"),
+                  cls=ValueError)
+        d = _scratch(self)
+        for kind in ("chi0q", "chiq", "chiq_s", "chiq_c"):
+            with self.subTest(kind=kind):
+                path = os.path.join(d, kind + ".npz")
+                np.savez(path, **{kind: np.zeros(2)}, spin_orbital=True)
+                self._row(p, path, sc._SO_BOND_GREEN_IS_FLEX_OUTPUT.format(path=path,
+                                                                            kind=kind),
+                          cls=ValueError)
+        # a green member present: no hint (the green archive goes on to its checks)
+        path = _edited(self, _GREENS["ZEEMAN_SZ_ALL"], sigma=np.zeros(2))
+        self.assertEqual(_borrow(p, path).carrier.source, "external_npz")
 
     def test_onsite_green(self):
         ctx = T._context()
@@ -496,7 +536,27 @@ class TestBorrowedRefusals(unittest.TestCase):
         index = _members(src)["wavevector_index"]
         path = _edited(self, src, wavevector_index=index[::-1].copy())
         self._row(p, path, "'{}' is malformed or truncated: wavevector_index is not the k grid "
-                  "of CellShape [4, 4, 1]. Regenerate it with {}.".format(path, _LABEL))
+                  "[4, 4, 1] of this run (CellShape / SubShape). Regenerate it with {}."
+                  .format(path, _LABEL))
+
+    def test_scf_converged_marker(self):
+        """scf_converged must be a 0-d boolean when present (checked before
+        the payload read); absent, the record has None."""
+        p = _base("ZEEMAN_SZ_ALL")
+        src = _GREENS["ZEEMAN_SZ_ALL"]
+        bad = (("string", np.str_("true")), ("int", np.int64(1)),
+               ("1-d singleton", np.array([True])), ("empty", np.array([], dtype=bool)),
+               ("multi-element", np.array([True, True])))
+        for label, value in bad:
+            with self.subTest(value=label):
+                path = _edited(self, src, scf_converged=value)
+                e = self._row(p, path, sc.T_BG_SCF.format(path=path, label=_LABEL))
+                self.assertIsNone(e.check)
+        path = _edited(self, src, scf_converged=_DROP)
+        with _records() as rec:
+            g = _borrow(p, path)
+        self.assertIsNone(g.scf_converged)
+        self.assertEqual(_warnings(rec), [])
 
     def test_unconverged(self):
         p = _base("ZEEMAN_SZ_ALL")
@@ -543,9 +603,10 @@ class TestTailPolicy(unittest.TestCase):
     def test_tail_policy(self):
         self.assertEqual(sc._SO_BOND_TAIL_NOT_APPLIED,
                          "[eliashberg] bond_coeff_tail = %r is not applied with bond_green = "
-                         "'%s': the tail correction needs the analytic asymptote of the band "
-                         "Green function, which a Green function read from a file does not "
-                         "provide (bond_coeff_tail_applied = 0).")
+                         "'%s': the tail correction is implemented for the band Green function "
+                         "only (bond_coeff_tail_applied = 0), so the bond bubble carries the "
+                         "Matsubara truncation error, which decreases only about as 1/Nmat; "
+                         "check the eigenvalue against Nmat.")
         self.assertEqual(sc._SO_BOND_TAIL_DEFAULT_INFO,
                          "[eliashberg] bond_coeff_tail: the default 1.0 applies to the band "
                          "Green function only; the Green function read from bond_green is "
@@ -566,9 +627,10 @@ class TestTailPolicy(unittest.TestCase):
                 else:
                     self.assertEqual(tail, [
                         "[eliashberg] bond_coeff_tail = {} is not applied with bond_green = "
-                        "'{}': the tail correction needs the analytic asymptote of the band "
-                        "Green function, which a Green function read from a file does not "
-                        "provide (bond_coeff_tail_applied = 0).".format(shown, path)])
+                        "'{}': the tail correction is implemented for the band Green "
+                        "function only (bond_coeff_tail_applied = 0), so the bond bubble "
+                        "carries the Matsubara truncation error, which decreases only about "
+                        "as 1/Nmat; check the eigenvalue against Nmat.".format(shown, path)])
 
 
 # ------------------------------------------------------------ S_z leakage (C1b-PG)
@@ -1019,10 +1081,58 @@ class TestBorrowedContent(unittest.TestCase):
 
 
 # ------------------------------------------------------------ memory (C1b-Mem)
-#: the resident row of a Green function read from a file (alive in every
-#: phase: the read leaves reference-cycle garbage until the next cyclic
-#: collection)
-_FILE_READ_ROW = ("resident", "file_read", 262144)
+#: the fixed part and the member factor of the resident row of a Green
+#: function read from a file (alive in every phase: the read leaves
+#: reference-cycle garbage until the next cyclic collection)
+_FILE_READ_FIXED = 262144
+_FILE_READ_FACTOR = 4
+
+
+def _member_bytes(path):
+    """The bytes of the members other than ``green`` of the npz ``path``,
+    each the larger of its zip record size and the bytes of the array
+    ``np.load`` materialises (independent of the production header read)."""
+    with zipfile.ZipFile(path) as zf:
+        sizes = {i.filename[:-4]: i.file_size for i in zf.infolist()}
+    with np.load(path, allow_pickle=False) as z:
+        return sum(max(sizes[k], z[k].nbytes) for k in z.files if k != "green")
+
+
+def _file_read_row(path):
+    """The resident ``file_read`` row the admission of ``path`` carries."""
+    return ("resident", "file_read", _FILE_READ_FIXED + _FILE_READ_FACTOR * _member_bytes(path))
+
+
+def _fixed_only(*args, **kw):
+    """Break: the ``file_read`` row without its member part (the fixed
+    256 KiB alone)."""
+    return (("file_read", _FILE_READ_FIXED),)
+
+
+def _inflated(test, path, reps):
+    """A copy of ``path`` whose provenance interaction records
+    (``prov_rec_*``) are repeated ``reps`` times: a large provenance table
+    that the checks still accept (the digests are not recomputed from these
+    members)."""
+    m = _members(path)
+    names = ("prov_rec_types", "prov_rec_modes", "prov_rec_cells", "prov_rec_v")
+    return _edited(test, path, **{k: np.concatenate([m[k]] * reps, axis=0) for k in names})
+
+
+@contextlib.contextmanager
+def _gc_held():
+    """The cyclic garbage collector held off, after one full collection: the
+    traced phases then keep their reference-cycle garbage alive throughout,
+    the worst case for every row, independent of when a collection would
+    otherwise run."""
+    gc.collect()
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
 
 
 def _borrowed_green_fn(p):
@@ -1087,7 +1197,8 @@ def _memory_gate(p, *, seen):
     def gate(check):
         rec = _PhaseChecks(check)
         seen["values"] = rec.values
-        seen["adm"] = T.check_phase_rows(rec, p, "eigenvalue", green_fn=_borrowed_green_fn)
+        with _gc_held():
+            seen["adm"] = T.check_phase_rows(rec, p, "eigenvalue", green_fn=_borrowed_green_fn)
     return _gate_failures(gate)
 
 
@@ -1109,12 +1220,16 @@ def _no_resident(*args, **kw):
 class TestBorrowedAdmission(unittest.TestCase):
     """Gate C1b-Mem of a borrowed Green function: the admission of a run with
     ``bond_green`` carries the resident ``file_read`` row (a band run does
-    not), and every traced phase, the read included, stays within its rows:
-    packed (projected file) and dense (clean file) at Nmat 32, packed
-    (projected file) at Nmat 8, where the band rows alone are below the read
-    peak. Breaks: (m1) without ``carrier_build``, ``transient`` and
-    ``file_read`` every row fails; (m2) without ``file_read`` the Nmat 8 row
-    fails."""
+    not), sized from the file's member headers, and every traced phase, the
+    read included, stays within its rows (the cyclic collector held off,
+    :func:`_gc_held`): packed (projected file) and dense (clean file) at
+    Nmat 32, packed (projected file) at Nmat 8, where the band rows alone
+    are below the read peak, and a file with a large provenance table.
+    Breaks: (m1) without ``carrier_build``, ``transient`` and ``file_read``
+    every row fails; (m2) without ``file_read`` the Nmat 8 row fails; (m3)
+    the large-provenance row fails with the fixed 256 KiB alone. A cap
+    between the fixed and the sized estimate refuses the large-provenance
+    run at admission, before any member of the file is read."""
 
     def _rows(self, labels=None):
         """``(label, p, layout)`` of the memory rows (all, or those named in
@@ -1136,11 +1251,65 @@ class TestBorrowedAdmission(unittest.TestCase):
             with self.subTest(nmat=nmat):
                 path = _GREENS["ZEEMAN_SZ_ALL" if nmat == 32 else _N8]
                 rows = T._admit(_memory_consumer(path, nmat)).plan.rows
-                self.assertIn(_FILE_READ_ROW, rows)
+                row = _file_read_row(path)
+                self.assertGreater(row[2], _FILE_READ_FIXED)
+                self.assertIn(row, rows)
                 band = T._admit(T._prepare_admission(X.ZEEMAN_SZ_ALL,
                                                      param={"T": 0.5, "Nmat": nmat})).plan.rows
                 self.assertEqual([r for r in band if r[1] == "file_read"], [])
-                self.assertEqual(set(rows) - set(band), {_FILE_READ_ROW})
+                self.assertEqual(set(rows) - set(band), {row})
+
+    def test_member_bytes_headers_only(self):
+        """The admission sizes the row from the zip records and npy headers
+        alone: no member is materialised (``np.load`` is never called), and
+        the sum is the independent one of :func:`_member_bytes`."""
+        path = _inflated(self, _GREENS["ZEEMAN_SZ_ALL"], 100)
+        with mock.patch.object(np, "load", side_effect=AssertionError("np.load")) as load, \
+                _PayloadReads() as spy:
+            got = sc._so_bond_green_member_bytes(path)
+        self.assertEqual(load.call_count, 0)
+        self.assertEqual(spy.reads, [])
+        self.assertEqual(got, _member_bytes(path))
+        self.assertGreater(got, 1_000_000)
+        d = _scratch(self)
+        self.assertEqual(sc._so_bond_green_member_bytes(os.path.join(d, "absent.npz")), 0)
+        npy = os.path.join(d, "green.npy")
+        np.save(npy, np.zeros(3))
+        self.assertEqual(sc._so_bond_green_member_bytes(npy), 0)
+
+    def test_large_provenance(self):
+        """A file whose provenance table is about 1 MB: its read stays
+        within the sized row (m3: not within the fixed 256 KiB), and a cap
+        between the two estimates refuses the run at admission, before the
+        file is read."""
+        path = _inflated(self, _GREENS["ZEEMAN_SZ_ALL"], 100)
+        p = _memory_consumer(path, 32)
+        _warm(p)
+        seen = {}
+        self.assertEqual(_memory_gate(p, seen=seen), [])
+        self.assertIn(_file_read_row(path), seen["adm"].plan.rows)
+        seen = {}
+        with mock.patch.object(so_bond, "static_so_bond_resident_rows",
+                               side_effect=_fixed_only) as brk:
+            failures = _memory_gate(p, seen=seen)
+        self.assertEqual(brk.call_count, 1)
+        self.assertIn(("resident", "file_read", _FILE_READ_FIXED), seen["adm"].plan.rows)
+        self.assertTrue(_has(failures, "green_static traced <= rows"), failures)
+        # the cap: the sized estimate is refused, the fixed one would pass
+        sized = T._admit(p).plan.peak_host
+        extra = 1.25 * _FILE_READ_FACTOR * _member_bytes(path)
+        cap_gb = (sized - extra / 2) / 2.0 ** 30
+        small = _memory_consumer(_GREENS["ZEEMAN_SZ_ALL"], 32, {"bond_memory_cap_gb": cap_gb})
+        self.assertLess(T._admit(small).plan.peak_host, sized - extra / 2)
+        capped = _memory_consumer(path, 32, {"bond_memory_cap_gb": cap_gb})
+        real = sc._so_borrowed_green
+        with mock.patch.object(sc, "_so_borrowed_green", side_effect=real) as read, \
+                mock.patch.object(np, "load", side_effect=AssertionError("np.load")) as load:
+            with self.assertRaises(ValueError) as cm:
+                T._admit(capped)
+        self.assertEqual((read.call_count, load.call_count), (0, 0))
+        self.assertIn("but the cap is", str(cm.exception))
+        self.assertIn("file_read", str(cm.exception))
 
     def test_phase_rows(self):
         for label, p, layout in self._rows():
@@ -1148,9 +1317,10 @@ class TestBorrowedAdmission(unittest.TestCase):
                 seen = {}
                 self.assertEqual(_memory_gate(p, seen=seen), [])
                 self.assertEqual(seen["adm"].layout, layout)
-                self.assertIn(_FILE_READ_ROW, seen["adm"].plan.rows)
+                row = _file_read_row(p.cfg.green)
+                self.assertIn(row, seen["adm"].plan.rows)
                 peak, total = seen["values"]["green_static"]
-                band = total - _FILE_READ_ROW[2]
+                band = total - row[2]
                 _LOG.info("%s: green_static traced %d, rows %d (%.3f), band rows %d (%.3f)",
                           label, peak, total, peak / total, band, peak / band)
                 if label.endswith("Nmat 8"):
@@ -1184,9 +1354,10 @@ class TestBorrowedAdmission(unittest.TestCase):
             failures = _memory_gate(p, seen=seen)
         self.assertEqual(brk.call_count, 1)
         self.assertNotIn("file_read", {r[1] for r in seen["adm"].plan.rows})
-        # only green_static is asserted: whether g2_static also fails depends on
-        # when the cyclic garbage collector runs
+        # with the collector held off (_gc_held) the read's cycle garbage stays
+        # alive into g2_static, so both phases fail, deterministically
         self.assertTrue(_has(failures, "green_static traced <= rows"), failures)
+        self.assertTrue(_has(failures, "g2_static traced <= rows"), failures)
 
 
 # ------------------------------------------------------------ public entry
@@ -1234,6 +1405,15 @@ class TestBorrowedEntry(unittest.TestCase):
         self.assertEqual(keys["bond_coeff_tail"], "1.0")
         self.assertEqual(keys["approximation"],
                          "static RPA-ladder bond dressing on a borrowed Green function")
+        # the gap archive records the file's Green function and its state, not
+        # the run's own (the band's mu differs: the state check would not see it)
+        gap, green = r.gap_npz, _members(path)
+        for k in ("fp_green", "state_beta", "state_nmat", "state_mu", "state_density",
+                  "state_calc_mu", "state_target", "state_mu_tol"):
+            self.assertEqual(np.asarray(gap[k]).tolist(), np.asarray(green[k]).tolist(), k)
+        self.assertNotIn("fp_green_source", gap)
+        band = F.run_case(X.ZEEMAN_SZ_ALL).gap_npz
+        self.assertNotEqual(float(band["state_mu"]), float(green["state_mu"]))
         warns = [x.getMessage() for x in r.records if x.levelno == logging.WARNING]
         infos = [x.getMessage() for x in r.records]
         self.assertEqual(warns.count(_LADDER_BORROWED % path), 1)

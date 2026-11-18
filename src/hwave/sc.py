@@ -12,6 +12,7 @@ eigenvalue analysis.
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 import logging
@@ -3453,8 +3454,10 @@ T_BG_NONFINITE = ("'{path}' is malformed or truncated: green has non-finite valu
                   "frequency index {n}. Regenerate it with {label}.")
 T_BG_MARKER = ("'{path}' is malformed or truncated: {member} is missing or older than this "
                "build requires. Regenerate it with {label}.")
-T_BG_KGRID = ("'{path}' is malformed or truncated: wavevector_index is not the k grid of "
-              "CellShape {shape}. Regenerate it with {label}.")
+T_BG_KGRID = ("'{path}' is malformed or truncated: wavevector_index is not the k grid {shape} "
+              "of this run (CellShape / SubShape). Regenerate it with {label}.")
+T_BG_SCF = ("'{path}' is malformed or truncated: scf_converged is not a 0-d boolean. "
+            "Regenerate it with {label}.")
 _SO_BOND_GREEN_ONSITE_REMEDY = (
     "[eliashberg] bond_green needs the green.npz of a spin-orbital FLEX run with "
     "[mode.param] longitudinal_bond_channels = true (the bond-resolved run); re-run FLEX "
@@ -3466,6 +3469,13 @@ _SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN = (
     _SO_WHAT + ": [eliashberg] bond_green = '{path}' is the bond archive of a spin-orbital "
     "FLEX run, not a Green function, and it records no readable companion green file; set "
     "bond_green to the green.npz written by that FLEX run ([file.output] green).")
+_SO_BOND_GREEN_IS_FLEX_OUTPUT = (
+    _SO_WHAT + ": [eliashberg] bond_green = '{path}' is the {kind} file of a FLEX run, not a "
+    "Green function; set bond_green to the green.npz written by that run ([file.output] "
+    "green).")
+#: the payload members of the other FLEX output files, in the order they are
+#: named by :data:`_SO_BOND_GREEN_IS_FLEX_OUTPUT`
+_FLEX_OUTPUT_PAYLOADS = ("sigma", "chi0q", "chiq", "chiq_s", "chiq_c")
 _SO_BOND_GREEN_NONSO_ARCHIVE = (
     _SO_WHAT + ": [eliashberg] bond_green = '{path}' is a bond archive, not a Green "
     "function; set bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] "
@@ -3482,8 +3492,9 @@ _SO_BOND_GREEN_UNCONVERGED = (
 #: WARNING (``%r`` the configured bond_coeff_tail, ``%s`` path)
 _SO_BOND_TAIL_NOT_APPLIED = (
     "[eliashberg] bond_coeff_tail = %r is not applied with bond_green = '%s': the tail "
-    "correction needs the analytic asymptote of the band Green function, which a Green "
-    "function read from a file does not provide (bond_coeff_tail_applied = 0).")
+    "correction is implemented for the band Green function only (bond_coeff_tail_applied = "
+    "0), so the bond bubble carries the Matsubara truncation error, which decreases only "
+    "about as 1/Nmat; check the eigenvalue against Nmat.")
 #: INFO
 _SO_BOND_TAIL_DEFAULT_INFO = (
     "[eliashberg] bond_coeff_tail: the default 1.0 applies to the band Green function only; "
@@ -3524,14 +3535,21 @@ class _SOBorrowed(NamedTuple):
 
 
 def _so_bond_green_archive_hint(z, path):
-    """Refuse (ValueError) a ``bond_green`` that names a bond archive index
-    instead of a Green function: a schema-4 spin-orbital index (naming its
-    companion green file when it records a readable one) or any other bond
-    archive. The decode is the archive reader's own
-    (``so_bond_archive._schema_four`` / ``_zero_d_string``)."""
+    """Refuse (ValueError) a ``bond_green`` that names another output file
+    instead of a Green function: a bond archive index (a schema-4
+    spin-orbital index, naming its companion green file when that resolves
+    to a readable regular file, or any other bond archive), or a FLEX
+    output file without a ``green`` member whose payload is one of
+    :data:`_FLEX_OUTPUT_PAYLOADS` (sigma.npz, chi0q.npz, chiq*.npz). The
+    decode is the archive reader's own (``so_bond_archive._schema_four`` /
+    ``_zero_d_string``); only member names and 0-d markers are read."""
     from hwave.solver import so_bond_archive
     files = set(z.files)
     if "bond_archive_schema" not in files:
+        if "green" not in files:
+            kind = next((k for k in _FLEX_OUTPUT_PAYLOADS if k in files), None)
+            if kind is not None:
+                raise ValueError(_SO_BOND_GREEN_IS_FLEX_OUTPUT.format(path=path, kind=kind))
         return
     so = None
     if "spin_orbital" in files:
@@ -3540,10 +3558,44 @@ def _so_bond_green_archive_hint(z, path):
             and so.dtype.kind == "b" and bool(so[()])):
         green = so_bond_archive._zero_d_string(z, "green_file", files)
         if green:
-            raise ValueError(_SO_BOND_GREEN_IS_ARCHIVE.format(
-                path=path, green=os.path.join(os.path.dirname(path), green)))
+            companion = os.path.join(os.path.dirname(path), green)
+            if os.path.isfile(companion) and os.access(companion, os.R_OK):
+                raise ValueError(_SO_BOND_GREEN_IS_ARCHIVE.format(path=path, green=companion))
         raise ValueError(_SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=path))
     raise ValueError(_SO_BOND_GREEN_NONSO_ARCHIVE.format(path=path))
+
+
+def _so_bond_green_member_bytes(path):
+    """The bytes of the members other than ``green`` of the npz file
+    ``path`` (``[eliashberg] bond_green``), which the checks of
+    :func:`_so_borrowed_green` materialise: for each member, the larger of
+    the array bytes its npy header declares (``shape`` and ``dtype``) and
+    its uncompressed size in the zip record (the header included). Only the
+    zip directory and the member headers are read; no member is
+    materialised, so the admission can size its ``file_read`` row before
+    any allocation (:func:`hwave.solver.so_bond.static_so_bond_resident_rows`).
+    A member whose header cannot be read counts its zip record size. A path
+    that is missing or not a zip archive gives 0: the read step refuses it
+    before any member is materialised."""
+    try:
+        zf = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile):
+        return 0
+    total = 0
+    with zf:
+        for info in zf.infolist():
+            if info.filename == "green.npy":
+                continue
+            size = int(info.file_size)
+            try:
+                with zf.open(info) as fh:
+                    head = _npy_header.read_npy_header(fh)
+                size = max(size, math.prod(int(x) for x in head.shape)
+                           * int(head.dtype.itemsize))
+            except Exception:  # an unreadable header: the zip record bounds it
+                pass
+            total += size
+    return total
 
 
 def _so_borrowed_green(path, so_run, *, norb_phys, nmat, shape, conserving_input):
@@ -3554,13 +3606,15 @@ def _so_borrowed_green(path, so_run, *, norb_phys, nmat, shape, conserving_input
 
     The checks, in this order, every one before the payload is read: the
     file exists (FileNotFoundError) and is an npz; it is not a bond archive
-    index (:func:`_so_bond_green_archive_hint`); its structure
+    index nor another FLEX output file (:func:`_so_bond_green_archive_hint`);
+    its structure
     (:func:`hwave.solver.fingerprint.validate_structure`, a ``green``
     archive); its compatibility with this run
     (:func:`hwave.solver.fingerprint.check_so_compatibility` with the green
     step deferred: residual, band, interaction, capability ``so_bond``, the
     declared and resolved bond topology, the state point at the same Nmat);
-    the ``momentum_convention``, ``wavevector_index`` (the C-order k grid of
+    the ``scf_converged`` marker (optional; when present a 0-d boolean); the
+    ``momentum_convention``, ``wavevector_index`` (the C-order k grid of
     ``shape``) and ``sc_vertex_version`` (``>= PLACEMENT_VERSION``) markers;
     the ``green`` header shape ``(1, nmat, nvol, nd, nd)``. An on-site
     spin-orbital FLEX Green function is refused on capability with a remedy
@@ -3605,8 +3659,12 @@ def _so_borrowed_green(path, so_run, *, norb_phys, nmat, shape, conserving_input
         files = set(z.files)
         # the markers: scf_converged is remembered (logged once the file is
         # accepted); the others are required
-        scf_converged = (bool(np.asarray(z["scf_converged"])) if "scf_converged" in files
-                         else None)
+        scf_converged = None
+        if "scf_converged" in files:
+            flag = np.asarray(z["scf_converged"])
+            if not (flag.ndim == 0 and flag.dtype.kind == "b"):
+                raise fingerprint.SOArchiveError(T_BG_SCF.format(path=path, label=label))
+            scf_converged = bool(flag[()])
         if not _rpa.check_momentum_marker(z, path):
             raise fingerprint.SOArchiveError(T_BG_MARKER.format(
                 path=path, member="momentum_convention", label=label))
@@ -3791,7 +3849,8 @@ def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
     phase of the static path (``spectral_shift`` is the run's raw
     ``[eliashberg] spectral_shift``: the eigensolver rows keep the outputs it
     implies; a Green function read from ``bond_green`` adds its resident read
-    row).
+    row, sized from the zip records and npy headers of the file's members,
+    :func:`_so_bond_green_member_bytes`, without reading a member).
     An over-cap run is refused here, before any bond array is allocated."""
     from hwave.solver import so_bond
     info = {}
@@ -3817,8 +3876,10 @@ def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
             nmat=nmat, nvol=nvol, B=geom.B, nd=nd, layout=layout, solver_mode=solver_mode,
             num_eigenvalues=num_eigenvalues, max_iter=max_iter, spatial_shape=shape,
             spectral_shift=spectral_shift),
-        resident_rows=so_bond.static_so_bond_resident_rows(
-            green_source="band" if cfg.green is None else "file"))
+        resident_rows=(so_bond.static_so_bond_resident_rows() if cfg.green is None
+                       else so_bond.static_so_bond_resident_rows(
+                           green_source="file",
+                           member_bytes=_so_bond_green_member_bytes(cfg.green))))
     sector_map = so_bond.sz_sector_map(geom, nd) if layout == "sz_packed" else None
     return _SOBondAdmission(caps, cap_summary, geom, layout, reason, sector_map, plan)
 

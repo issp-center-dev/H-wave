@@ -2689,12 +2689,17 @@ def _green_static_transient(nmat, nvol, nd):
     return max(build, digest)
 
 
-#: the resident row of a Green function read from a file
-#: (:func:`static_so_bond_resident_rows`): the fixed zip and validator
-#: overhead of the read step, over its ``3G`` peak (inside
-#: ``carrier_build``); resident, because part of it is reference-cycle
-#: garbage that stays alive until the next cyclic collection
+#: the fixed part of the resident row of a Green function read from a file
+#: (:func:`static_so_bond_resident_rows`): the zip and validator overhead of
+#: the read step that does not scale with the file, over its ``3G`` peak
+#: (inside ``carrier_build``); resident, because part of it is
+#: reference-cycle garbage that stays alive until the next cyclic collection
 _FILE_READ_BYTES = 262144
+#: the factor of the part of that row that scales with the file: the bytes of
+#: the members other than ``green`` (each is materialised once by the checks,
+#: and a check forms at most a few temporaries of a member's size; measured at
+#: most 2.3 times the member bytes, on ``wavevector_index``)
+_FILE_READ_MEMBER_FACTOR = 4
 
 
 def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalues, max_iter,
@@ -2812,23 +2817,44 @@ def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalu
     return tuple((ph, nm, int(b)) for ph, nm, b in rows)
 
 
-def static_so_bond_resident_rows(*, green_source="band"):
+def static_so_bond_resident_rows(*, green_source="band", member_bytes=None):
     """The resident rows ``(name, bytes)`` (``plan_so_bond(...,
     resident_rows=)``) the Green function source adds to the static
     spin-orbital bond plan. ``green_source`` is ``"band"`` (the default: the
-    Green function is built from the run's band; no row) or ``"file"`` (it is
-    read from ``[eliashberg] bond_green``): ``file_read = 262144`` (256 KiB),
-    the fixed zip and validator overhead of the read step, measured at most
-    145 KB on top of its ``3G`` peak (which ``carrier_build`` covers). The
-    row is resident, alive in every phase from ``green_static`` on: part of
-    that overhead (numpy's npy-header parse of each member the validator
-    reads) is reference-cycle garbage that stays alive until the next cyclic
-    collection, which may come after the read's phase (``ValueError`` for
-    another ``green_source``)."""
+    Green function is built from the run's band; no row, and
+    ``member_bytes`` must be ``None``) or ``"file"`` (it is read from
+    ``[eliashberg] bond_green``; ``member_bytes`` is then required).
+
+    ``file_read = 262144 + 4 * member_bytes``. The fixed 262144 bytes (256
+    KiB) are the zip and validator overhead of the read step that does not
+    scale with the file, measured at most 145 KB on top of its ``3G`` peak
+    (which ``carrier_build`` covers). ``member_bytes`` is the size of the
+    file's members other than ``green``, which the checks materialise (the
+    provenance tables among them, whose size scales with the input). The
+    caller takes it from the members' npy headers and zip records without
+    reading any member (``sc._so_bond_green_member_bytes``). The factor 4
+    bounds the member read plus the temporaries a check forms from it,
+    measured at most 2.3 times the member bytes. The row is resident, alive
+    in every phase from ``green_static`` on: part of that overhead (numpy's
+    npy-header parse of each member the validator reads) is reference-cycle
+    garbage that stays alive until the next cyclic collection, which may
+    come after the read's phase. ``ValueError`` for another
+    ``green_source``, or for ``member_bytes`` that is not a non-negative
+    integer with ``"file"`` or not ``None`` with ``"band"``."""
+    name = "static_so_bond_resident_rows"
     if not (isinstance(green_source, str) and green_source in ("band", "file")):
-        raise ValueError("static_so_bond_resident_rows: green_source must be 'band' or "
-                         "'file', got {!r}".format(green_source))
-    return (("file_read", _FILE_READ_BYTES),) if green_source == "file" else ()
+        raise ValueError("{}: green_source must be 'band' or 'file', got {!r}"
+                         .format(name, green_source))
+    if green_source == "band":
+        if member_bytes is not None:
+            raise ValueError("{}: member_bytes is read only with green_source = 'file', "
+                             "got {!r}".format(name, member_bytes))
+        return ()
+    if (isinstance(member_bytes, (bool, np.bool_))
+            or not isinstance(member_bytes, (int, np.integer)) or member_bytes < 0):
+        raise ValueError("{}: member_bytes must be a non-negative integer with green_source "
+                         "= 'file', got {!r}".format(name, member_bytes))
+    return (("file_read", _FILE_READ_BYTES + _FILE_READ_MEMBER_FACTOR * int(member_bytes)),)
 
 
 # ---------------------------------------------------------------------------
