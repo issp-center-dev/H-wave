@@ -2,8 +2,9 @@
 function read from ``[eliashberg] bond_green`` (issue #270): the
 configuration, the Green function built from the green.npz of a
 spin-orbital bond FLEX run, the refusals of that file, the tail policy and
-the S_z-leakage gates of a borrowed Green function (with their
-deliberate-break rows).
+the S_z-leakage gates, the content and k/frequency-axis gates and the
+memory admission of a borrowed Green function (with their deliberate-break
+rows).
 
 The producer files are written once (:func:`setUpModule`, converged
 spin-orbital bond FLEX runs at the consumer's state point) and removed in
@@ -31,6 +32,8 @@ from tests import so_bond_entry_fixtures as F
 from tests import so_bond_flex_fixtures as X
 from tests import test_sc_spin_orbital_bond as T
 from tests.so_bond_oracles import CELL
+from tests.test_sc_spin_orbital_bond import (_gaps, _miss, _reference_kernel_of,
+                                             _reference_vertex)
 from tests.test_so_entry_rules import _PayloadReads
 
 _W = "[mode] enable_spin_orbital = true (hwave_sc, issue #83)"
@@ -43,6 +46,8 @@ ZPL = F.ZEEMAN_EXTERN._replace(name="ZPL", interactions=F._ALL_TYPES)
 _PRODUCERS = {"ZEEMAN_SZ_ALL": X.ZEEMAN_SZ_ALL, "SOC_ALL_TYPES": F.SOC_ALL_TYPES, "ZPL": ZPL}
 #: the producers that also write sigma.npz
 _SIGMA = ("ZEEMAN_SZ_ALL", "SOC_ALL_TYPES")
+#: the producer of the Nmat 8 memory row (ZEEMAN_SZ_ALL at T 0.5, Nmat 8)
+_N8 = "ZEEMAN_SZ_ALL_N8"
 _GREENS = {}
 _ROOT = []
 _DROP = object()
@@ -51,7 +56,7 @@ _DROP = object()
 def setUpModule():
     """The green.npz (and, for :data:`_SIGMA`, sigma.npz) of a converged
     spin-orbital bond FLEX run of each producer, at T 0.5, Nmat 32 and the
-    fixture's filling."""
+    fixture's filling; and :data:`_N8`, ZEEMAN_SZ_ALL at Nmat 8."""
     root = tempfile.mkdtemp(prefix="sc_so_bond_green_")
     _ROOT.append(root)
     with contextlib.redirect_stdout(io.StringIO()):
@@ -59,6 +64,9 @@ def setUpModule():
             d = os.path.join(root, name)
             os.makedirs(d)
             _GREENS[name] = X.write_sc_green(d, fx, sigma=name in _SIGMA)
+        d = os.path.join(root, _N8)
+        os.makedirs(d)
+        _GREENS[_N8] = X.write_sc_green(d, X.ZEEMAN_SZ_ALL, param={"Nmat": 8})
 
 
 def tearDownModule():
@@ -859,6 +867,309 @@ class TestBorrowedLeakBreaks(unittest.TestCase):
         self.assertEqual(brk.call_count, 1)
         self.assertTrue(_has(failures, "raised ValueError: " + _LEAK_REFUSAL % (
             path, _leak(_members(path)["green"]))), failures)
+
+
+# ------------------------------------------------------------ content and axes (C1b-BG)
+_BREAK_MISS = 1e-3
+#: the content rows: (producer, layout, [eliashberg] overrides)
+_CONTENT_ROWS = (("ZEEMAN_SZ_ALL", "sz_packed", None), ("ZEEMAN_SZ_ALL", "dense", _DENSE),
+                 ("SOC_ALL_TYPES", "dense", None))
+_KERNELS = {}
+
+
+def _sc_layout(G, shape):
+    """A canonical ``(nmat, nvol, nd, nd)`` G in the ``(nd, nd, Nx, Ny, Nz,
+    nmat)`` layout, reshaped here (not by ``sc._green_canonical_to_sc``)."""
+    nmat, nd = G.shape[0], G.shape[-1]
+    return G.reshape((nmat,) + tuple(shape) + (nd, nd)).transpose(4, 5, 1, 2, 3, 0)
+
+
+def _file_kernel(name, p):
+    """The reference kernel of the module green of ``name``: the validated
+    array functions on the file's G (reshaped here), with no tail (a file
+    carries none) and the run's ``g2_tail``. Built before any patch; one per
+    producer (the reference kernel is always dense)."""
+    if name not in _KERNELS:
+        G = _sc_layout(_members(_GREENS[name])["green"][0], p.shape)
+        v_bare, v_fluct, geom = _reference_vertex(p, G, coeff_tail=0.0)
+        _KERNELS[name] = _reference_kernel_of(p, v_bare + v_fluct, G, geom,
+                                              g2_tail=p.cfg.g2_tail)
+    return _KERNELS[name]
+
+
+def _content_gate(p, path, *, K, layout, seen):
+    """Gate C1b-BG content: the production operator of the run ``p`` on the
+    borrowed green at ``path`` equals the reference kernel ``K``."""
+    def gate(check):
+        g = _borrow(p, path)
+        adm = T._admit(p)
+        static = T._operator(p, g, adm)
+        check("layout " + layout, static.layout == layout, static.layout)
+        miss = _miss(lambda v: T._apply(static, v), K.matvec, _gaps(p.fixture))
+        seen["miss"] = miss
+        _bounded(check, "operator miss vs the reference kernel", miss, _GATE_TOL)
+    return _gate_failures(gate)
+
+
+def _axis_gate(name, p, *, seen):
+    """Gate C1b-BG axis oracle: the carrier ``full_sc`` of the borrowed green
+    of ``name`` equals ``G_ind(k, i w_n) = [(i w_n + mu) 1 - eps_k -
+    Sigma(k, i w_n)]^-1`` with ``w_n = (2n + 1 - nmat) pi / beta``, hwave_sc's
+    own ``eps_k``, the file's ``state_mu`` and the producer's sigma.npz."""
+    path = _GREENS[name]
+    green = _members(path)
+    sigma = _members(os.path.join(os.path.dirname(path), "sigma.npz"))
+    nd, nmat, shape = 2 * p.norb_phys, p.nmat, tuple(p.shape)
+    nvol = int(np.prod(shape))
+    n = np.arange(nmat)
+    iw = 1j * (2.0 * n + 1.0 - nmat) * np.pi / p.beta
+    h0 = np.moveaxis(np.asarray(p.epsilon_k).reshape(nd, nd, nvol), -1, 0)
+    mu = float(green["state_mu"])
+    S = sigma["sigma"]
+
+    def gate(check):
+        check("sigma.npz fp_green == green.npz fp_green",
+              str(sigma["fp_green"]) == str(green["fp_green"]),
+              "%s != %s" % (sigma["fp_green"], green["fp_green"]))
+        check("sigma shape (1, nmat, nvol, nd, nd)", S.shape == (1, nmat, nvol, nd, nd),
+              repr(S.shape))
+        G_ind = np.linalg.inv((iw[:, None, None, None] + mu) * np.eye(nd)
+                              - h0[None] - S[0])
+        g = _borrow(p, path)
+        err = rel_or_abs(g.carrier.full_sc, _sc_layout(G_ind, shape))
+        seen["err"] = err
+        _bounded(check, "full_sc vs G_ind", err, _GATE_TOL)
+    return _gate_failures(gate)
+
+
+def _scaled_bubble(real):
+    """Break: the bond bubble's first argument (the Green function) x1.01."""
+    def bubble(G, *args, **kw):
+        return real(1.01 * G, *args, **kw)
+    return bubble
+
+
+def _scaled_to_sc(real):
+    """Break: the carrier ``full_sc`` (the pair propagator's G) x1.01."""
+    def to_sc(*args, **kw):
+        return 1.01 * real(*args, **kw)
+    return to_sc
+
+
+class TestBorrowedContent(unittest.TestCase):
+    """Gate C1b-BG content and axis oracle: the operator built on a borrowed
+    Green function is the reference kernel of the file's G (and not the
+    band's), and the file's G is the Dyson inverse of hwave_sc's band and the
+    producer's self-energy on hwave_sc's k and frequency axes. Each break
+    scales one input of the operator by 1.01 and must miss by >= 1e-3."""
+
+    def _row(self, name, eli):
+        return _consumer(_PRODUCERS[name], eliashberg=eli)
+
+    def test_content(self):
+        for name, layout, eli in _CONTENT_ROWS:
+            with self.subTest(producer=name, layout=layout):
+                p = self._row(name, eli)
+                K = _file_kernel(name, p)
+                seen = {}
+                self.assertEqual(_content_gate(p, _GREENS[name], K=K, layout=layout,
+                                               seen=seen), [])
+                # non-vacuity: the band's operator is not the file's
+                band = T._operator(p, T._green_of(p), T._admit(p))
+                nv = _miss(lambda v: T._apply(band, v), K.matvec, _gaps(p.fixture))
+                self.assertTrue(np.isfinite(nv))
+                self.assertGreaterEqual(nv, _BREAK_MISS)
+
+    def _break(self, target, attr, wrap):
+        for name, layout, eli in _CONTENT_ROWS:
+            with self.subTest(producer=name, layout=layout):
+                p = self._row(name, eli)
+                K = _file_kernel(name, p)
+                seen = {}
+                real = getattr(target, attr)
+                with mock.patch.object(target, attr, side_effect=wrap(real)) as brk:
+                    failures = _content_gate(p, _GREENS[name], K=K, layout=layout, seen=seen)
+                self.assertEqual(brk.call_count, 1)
+                self.assertTrue(_has(failures, "operator miss vs the reference kernel"),
+                                failures)
+                self.assertGreaterEqual(seen["miss"], _BREAK_MISS)
+
+    def test_break_bubble_input(self):
+        self._break(so_bond, "so_bond_bubble", _scaled_bubble)
+
+    def test_break_pair_propagator(self):
+        self._break(sc, "_green_canonical_to_sc", _scaled_to_sc)
+
+    def test_axis_oracle(self):
+        for name in _SIGMA:
+            with self.subTest(producer=name):
+                seen = {}
+                self.assertEqual(_axis_gate(name, _base(name), seen=seen), [])
+
+
+# ------------------------------------------------------------ memory (C1b-Mem)
+#: the resident row of a Green function read from a file (alive in every
+#: phase: the read leaves reference-cycle garbage until the next cyclic
+#: collection)
+_FILE_READ_ROW = ("resident", "file_read", 262144)
+
+
+def _borrowed_green_fn(p):
+    """The Green function record of the run ``p`` from its own
+    ``[eliashberg] bond_green``."""
+    return sc._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys, filling=p.filling,
+                             beta=p.beta, nmat=p.nmat, coeff_tail=p.cfg.coeff_tail,
+                             bond_green=p.cfg.green,
+                             coeff_tail_source=p.cfg.coeff_tail_source)
+
+
+def _memory_consumer(path, nmat, eli=None):
+    """The admission run of ZEEMAN_SZ_ALL at T 0.5, ``nmat``, reading
+    ``path`` through ``Bond_Green`` (``eli`` on top)."""
+    return T._prepare_admission(X.ZEEMAN_SZ_ALL, eliashberg=dict({"Bond_Green": path},
+                                                                  **(eli or {})),
+                                param={"T": 0.5, "Nmat": nmat})
+
+
+def _warm(p):
+    """One untraced run of the borrowed chain of ``p`` (the reader, the
+    operator and the eigenvalue solve), so that no first-call import or
+    cache lands inside a traced phase."""
+    g = _borrowed_green_fn(p)
+    static = T._operator(p, g, T._admit(p))
+    T._solve_leg(p, static, "eigenvalue")
+
+
+class _PhaseChecks:
+    """The assertions ``T.check_phase_rows`` makes, reported to a gate's
+    ``check`` instead of raised; the traced peak and the rows of each phase
+    are kept in ``values``."""
+
+    def __init__(self, check):
+        self.check = check
+        self.phase = None
+        self.values = {}
+
+    @contextlib.contextmanager
+    def subTest(self, **kw):
+        self.phase = kw.get("phase")
+        try:
+            yield
+        finally:
+            self.phase = None
+
+    def assertEqual(self, a, b, msg=None):
+        self.check("equal", a == b, "%r != %r" % (a, b))
+
+    def assertNotEqual(self, a, b, msg=None):
+        self.check("not equal", a != b, "%r == %r" % (a, b))
+
+    def assertLessEqual(self, a, b, msg=None):
+        self.values[self.phase] = (a, b)
+        self.check("%s traced <= rows" % self.phase, a <= b, "%d > %d" % (a, b))
+
+
+def _memory_gate(p, *, seen):
+    """Gate C1b-Mem on a borrowed Green function: every traced phase of the
+    run ``p`` (eigenvalue solve) within its rows, through
+    ``T.check_phase_rows`` with the borrowed ``green_fn``."""
+    def gate(check):
+        rec = _PhaseChecks(check)
+        seen["values"] = rec.values
+        seen["adm"] = T.check_phase_rows(rec, p, "eigenvalue", green_fn=_borrowed_green_fn)
+    return _gate_failures(gate)
+
+
+def _dropping(real, names):
+    """Break: ``static_so_bond_rows`` without the ``green_static`` rows
+    ``names``."""
+    def rows(*args, **kw):
+        return tuple(r for r in real(*args, **kw)
+                     if not (r[0] == "green_static" and r[1] in names))
+    return rows
+
+
+def _no_resident(*args, **kw):
+    """Break: ``static_so_bond_resident_rows`` without the ``file_read``
+    row."""
+    return ()
+
+
+class TestBorrowedAdmission(unittest.TestCase):
+    """Gate C1b-Mem of a borrowed Green function: the admission of a run with
+    ``bond_green`` carries the resident ``file_read`` row (a band run does
+    not), and every traced phase, the read included, stays within its rows:
+    packed (projected file) and dense (clean file) at Nmat 32, packed
+    (projected file) at Nmat 8, where the band rows alone are below the read
+    peak. Breaks: (m1) without ``carrier_build`` and ``file_read`` every row
+    fails; (m2) without ``file_read`` the Nmat 8 row fails."""
+
+    def _rows(self, labels=None):
+        """``(label, p, layout)`` of the memory rows (all, or those named in
+        ``labels``), each warmed up."""
+        def packed(name, nmat):
+            return _memory_consumer(_perturbed(self, _GREENS[name], 1e-14, restamp=True), nmat)
+        make = (("packed projected Nmat 32", lambda: packed("ZEEMAN_SZ_ALL", 32), "sz_packed"),
+                ("dense clean Nmat 32",
+                 lambda: _memory_consumer(_GREENS["ZEEMAN_SZ_ALL"], 32, _DENSE), "dense"),
+                ("packed projected Nmat 8", lambda: packed(_N8, 8), "sz_packed"))
+        rows = [(label, build(), layout) for label, build, layout in make
+                if labels is None or label in labels]
+        for _, p, _ in rows:
+            _warm(p)
+        return rows
+
+    def test_file_read_row(self):
+        for nmat in (32, 8):
+            with self.subTest(nmat=nmat):
+                path = _GREENS["ZEEMAN_SZ_ALL" if nmat == 32 else _N8]
+                rows = T._admit(_memory_consumer(path, nmat)).plan.rows
+                self.assertIn(_FILE_READ_ROW, rows)
+                band = T._admit(T._prepare_admission(X.ZEEMAN_SZ_ALL,
+                                                     param={"T": 0.5, "Nmat": nmat})).plan.rows
+                self.assertEqual([r for r in band if r[1] == "file_read"], [])
+                self.assertEqual(set(rows) - set(band), {_FILE_READ_ROW})
+
+    def test_phase_rows(self):
+        for label, p, layout in self._rows():
+            with self.subTest(row=label):
+                seen = {}
+                self.assertEqual(_memory_gate(p, seen=seen), [])
+                self.assertEqual(seen["adm"].layout, layout)
+                self.assertIn(_FILE_READ_ROW, seen["adm"].plan.rows)
+                peak, total = seen["values"]["green_static"]
+                band = total - _FILE_READ_ROW[2]
+                _LOG.info("%s: green_static traced %d, rows %d (%.3f), band rows %d (%.3f)",
+                          label, peak, total, peak / total, band, peak / band)
+                if label.endswith("Nmat 8"):
+                    # the file_read row is needed here: the band rows alone are below the peak
+                    self.assertGreater(peak, band)
+
+    def test_m1_no_carrier_build_no_file_read(self):
+        for label, p, _ in self._rows():
+            with self.subTest(row=label):
+                seen = {}
+                real = so_bond.static_so_bond_rows
+                with mock.patch.object(so_bond, "static_so_bond_rows",
+                                       side_effect=_dropping(real, ("carrier_build",))) as brk, \
+                        mock.patch.object(so_bond, "static_so_bond_resident_rows",
+                                          side_effect=_no_resident) as brk2:
+                    failures = _memory_gate(p, seen=seen)
+                self.assertEqual((brk.call_count, brk2.call_count), (1, 1))
+                names = {r[1] for r in seen["adm"].plan.rows}
+                self.assertNotIn("carrier_build", names)
+                self.assertNotIn("file_read", names)
+                self.assertTrue(_has(failures, "green_static traced <= rows"), failures)
+
+    def test_m2_no_file_read(self):
+        [(label, p, _)] = self._rows(("packed projected Nmat 8",))
+        seen = {}
+        with mock.patch.object(so_bond, "static_so_bond_resident_rows",
+                               side_effect=_no_resident) as brk:
+            failures = _memory_gate(p, seen=seen)
+        self.assertEqual(brk.call_count, 1)
+        self.assertNotIn("file_read", {r[1] for r in seen["adm"].plan.rows})
+        self.assertTrue(_has(failures, "green_static traced <= rows"), failures)
 
 
 # ------------------------------------------------------------ public entry

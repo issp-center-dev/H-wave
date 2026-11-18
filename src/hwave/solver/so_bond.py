@@ -2688,15 +2688,16 @@ def _green_static_transient(nmat, nvol, nd):
     return max(build, digest)
 
 
-#: the ``green_static`` row of a Green function read from a file
-#: (``static_so_bond_rows(..., green_source="file")``): the fixed zip and
-#: validator overhead of the read step, over its ``3G`` peak (inside
-#: ``carrier_build``)
+#: the resident row of a Green function read from a file
+#: (:func:`static_so_bond_resident_rows`): the fixed zip and validator
+#: overhead of the read step, over its ``3G`` peak (inside
+#: ``carrier_build``); resident, because part of it is reference-cycle
+#: garbage that stays alive until the next cyclic collection
 _FILE_READ_BYTES = 262144
 
 
 def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalues, max_iter,
-                        spatial_shape, spectral_shift=None, green_source="band"):
+                        spatial_shape, spectral_shift=None):
     """The admission rows ``(phase, name, bytes)`` of the static
     spin-orbital bond path beyond the consumers' rows (pass them to
     :func:`plan_so_bond` as ``extra_rows``).
@@ -2748,16 +2749,9 @@ def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalu
     naming the
     argument).
 
-    ``green_source`` is ``"band"`` (the default: the Green function is built
-    from the run's band; the rows above) or ``"file"`` (it is read from
-    ``[eliashberg] bond_green``): the rows above and ``green_static``
-    ``file_read = 262144`` (256 KiB), the fixed zip and validator overhead
-    of the read step, measured at most 145 KB on top of its ``3G`` peak
-    (which ``carrier_build`` covers)."""
+    A Green function read from ``[eliashberg] bond_green`` adds the resident
+    row of :func:`static_so_bond_resident_rows`; these rows are the same."""
     name = "static_so_bond_rows"
-    if not (isinstance(green_source, str) and green_source in ("band", "file")):
-        raise ValueError("{}: green_source must be 'band' or 'file', got {!r}".format(
-            name, green_source))
     _shift_kind(name, spectral_shift)
     nmat = _even_at_least_2(name, "nmat", nmat)
     nvol = _int_at_least(name, "nvol", nvol, 1)
@@ -2814,9 +2808,26 @@ def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalu
             ("kernel_static", "g2", T4),
             ("kernel_static", "kernel_workspace", workspace),
             ("kernel_static", "eigensolver", eigensolver))
-    if green_source == "file":
-        rows += (("green_static", "file_read", _FILE_READ_BYTES),)
     return tuple((ph, nm, int(b)) for ph, nm, b in rows)
+
+
+def static_so_bond_resident_rows(*, green_source="band"):
+    """The resident rows ``(name, bytes)`` (``plan_so_bond(...,
+    resident_rows=)``) the Green function source adds to the static
+    spin-orbital bond plan. ``green_source`` is ``"band"`` (the default: the
+    Green function is built from the run's band; no row) or ``"file"`` (it is
+    read from ``[eliashberg] bond_green``): ``file_read = 262144`` (256 KiB),
+    the fixed zip and validator overhead of the read step, measured at most
+    145 KB on top of its ``3G`` peak (which ``carrier_build`` covers). The
+    row is resident, alive in every phase from ``green_static`` on: part of
+    that overhead (numpy's npy-header parse of each member the validator
+    reads) is reference-cycle garbage that stays alive until the next cyclic
+    collection, which may come after the read's phase (``ValueError`` for
+    another ``green_source``)."""
+    if not (isinstance(green_source, str) and green_source in ("band", "file")):
+        raise ValueError("static_so_bond_resident_rows: green_source must be 'band' or "
+                         "'file', got {!r}".format(green_source))
+    return (("file_read", _FILE_READ_BYTES),) if green_source == "file" else ()
 
 
 # ---------------------------------------------------------------------------

@@ -2092,9 +2092,10 @@ def _solve_leg(p, static, mode):
     return None
 
 
-def traced_phases(p, mode):
+def traced_phases(p, mode, green_fn=None):
     """``(admission, measured, selection)`` of the static chain of the
-    prepared run ``p`` traced phase by phase.
+    prepared run ``p`` traced phase by phase. ``green_fn(p)`` builds the
+    Green function record (default :func:`_green_of`, the band's).
 
     The admission runs untraced; then ONE tracemalloc session covers the
     phase functions in production order (the Green function, the vertex,
@@ -2115,7 +2116,7 @@ def traced_phases(p, mode):
     tracemalloc.start()
     try:
         tracemalloc.reset_peak()
-        so_green = _green_of(p)
+        so_green = (_green_of if green_fn is None else green_fn)(p)
         measured["green_static"] = tracemalloc.get_traced_memory()[1]
         tracemalloc.reset_peak()
         gamma_b, V = sc._so_bond_static_vertex(p.so_run, adm, so_green, beta=p.beta,
@@ -2137,11 +2138,11 @@ def traced_phases(p, mode):
     return adm, measured, selection
 
 
-def check_phase_rows(test, p, mode):
+def check_phase_rows(test, p, mode, green_fn=None):
     """Every traced phase of ``p`` within its ``phase_total`` (no margin);
     the ratios and the peak phase are printed on failure. Returns the
-    admission."""
-    adm, measured, selection = traced_phases(p, mode)
+    admission. ``green_fn`` is forwarded to :func:`traced_phases`."""
+    adm, measured, selection = traced_phases(p, mode, green_fn=green_fn)
     plan = adm.plan
     peak = max(plan_phases(plan), key=plan.phase_total)
     rows = {key: plan.phase_total(key.split("/")[0]) for key in measured}

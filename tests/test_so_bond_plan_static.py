@@ -357,28 +357,36 @@ class TestRows(unittest.TestCase):
                             self.assertTrue(all(type(b) is int for _, _, b in got))
 
     def test_green_source_rows(self):
-        """A Green function read from bond_green adds the green_static
-        file_read row (256 KiB) to the band rows; "band" (the default) is
-        the band rows; any other value is refused."""
-        kw = dict(nmat=8, nvol=16, B=5, nd=2, layout="sz_packed", solver_mode="eigenvalue",
-                  num_eigenvalues=2, max_iter=1000, spatial_shape=(4, 4, 1))
-        band = so_bond.static_so_bond_rows(**kw)
-        self.assertEqual(band, _literal_rows(8, (4, 4, 1), 5, 2, "sz_packed", "eigenvalue",
-                                             2, 1000))
-        self.assertEqual(so_bond.static_so_bond_rows(green_source="band", **kw), band)
-        for layout in ("dense", "sz_packed"):
-            with self.subTest(layout=layout):
-                kw_l = dict(kw, layout=layout)
-                self.assertEqual(so_bond.static_so_bond_rows(green_source="file", **kw_l),
-                                 so_bond.static_so_bond_rows(**kw_l)
-                                 + (("green_static", "file_read", 262144),))
+        """A Green function read from bond_green adds the resident file_read
+        row (256 KiB), alive in every phase; "band" (the default) adds no
+        row; any other value is refused."""
+        self.assertEqual(so_bond.static_so_bond_resident_rows(), ())
+        self.assertEqual(so_bond.static_so_bond_resident_rows(green_source="band"), ())
+        self.assertEqual(so_bond.static_so_bond_resident_rows(green_source="file"),
+                         (("file_read", 262144),))
         for bad in ("internal", "File", None):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError) as cm:
-                    so_bond.static_so_bond_rows(green_source=bad, **kw)
+                    so_bond.static_so_bond_resident_rows(green_source=bad)
                 self.assertEqual(str(cm.exception),
-                                 "static_so_bond_rows: green_source must be 'band' or 'file', "
-                                 "got {!r}".format(bad))
+                                 "static_so_bond_resident_rows: green_source must be 'band' or "
+                                 "'file', got {!r}".format(bad))
+        # in the plan: every phase total grows by the row
+        kw = dict(nmat=8, nvol=16, B=5, nd=2, layout="sz_packed", solver_mode="eigenvalue",
+                  num_eigenvalues=2, max_iter=1000, spatial_shape=(4, 4, 1))
+        extra = so_bond.static_so_bond_rows(**kw)
+        self.assertEqual(extra, _literal_rows(8, (4, 4, 1), 5, 2, "sz_packed", "eigenvalue",
+                                              2, 1000))
+        common = dict(nmat=8, nvol=16, B=5, nd=2, consumers=("pairing_static",), caps=NOCAP,
+                      layout="sz_packed", layout_reason="so bond layout: sz_packed (test)",
+                      extra_rows=extra)
+        band = so_bond.plan_so_bond(**common)
+        read = so_bond.plan_so_bond(**common, resident_rows=so_bond.static_so_bond_resident_rows(
+            green_source="file"))
+        self.assertEqual(set(read.rows) - set(band.rows), {("resident", "file_read", 262144)})
+        for phase in {ph for ph, _, _ in band.rows if ph != "resident"}:
+            with self.subTest(phase=phase):
+                self.assertEqual(read.phase_total(phase), band.phase_total(phase) + 262144)
 
     def test_dense_solver_row_branches(self):
         dense = so_bond.estimate_dense_layout_solver_bytes

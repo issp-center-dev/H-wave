@@ -3790,7 +3790,8 @@ def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
     refused in either layout, and the plan is built with the rows of every
     phase of the static path (``spectral_shift`` is the run's raw
     ``[eliashberg] spectral_shift``: the eigensolver rows keep the outputs it
-    implies; a Green function read from ``bond_green`` adds its read row).
+    implies; a Green function read from ``bond_green`` adds its resident read
+    row).
     An over-cap run is refused here, before any bond array is allocated."""
     from hwave.solver import so_bond
     info = {}
@@ -3815,7 +3816,8 @@ def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
         extra_rows=so_bond.static_so_bond_rows(
             nmat=nmat, nvol=nvol, B=geom.B, nd=nd, layout=layout, solver_mode=solver_mode,
             num_eigenvalues=num_eigenvalues, max_iter=max_iter, spatial_shape=shape,
-            spectral_shift=spectral_shift,
+            spectral_shift=spectral_shift),
+        resident_rows=so_bond.static_so_bond_resident_rows(
             green_source="band" if cfg.green is None else "file"))
     sector_map = so_bond.sz_sector_map(geom, nd) if layout == "sz_packed" else None
     return _SOBondAdmission(caps, cap_summary, geom, layout, reason, sector_map, plan)
