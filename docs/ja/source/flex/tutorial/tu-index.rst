@@ -1370,7 +1370,7 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
 .. important::
 
    ``hwave_sc``\ はこの経路の\ ``green.npz``\ を\ ``[eliashberg] bond_green``\ で読みます
-   （下記）。この版ではボンドアーカイブは読みません（後の版で読みます）。
+   （\ :ref:`sc_so_bond_green`\ ）。この版ではボンドアーカイブは読みません（後の版で読みます）。
    ``chi0q_mode = "flex"``\ のスピン軌道\ ``hwave_sc``\ （静的・動的）は、
    この経路の chi0q、chiq、green、sigma を、すべての\ :math:`B`\ で、ファイル名を
    示して拒否します::
@@ -1380,7 +1380,7 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
    オフサイトのある模型のペアリングには、
    :ref:`sc_so_bond_static`\ の静的なボンド経路を使ってください。この経路はボンドの
    バブルを裸のバンド（Transfer と Extern）から、または\ ``[eliashberg] bond_green``\ を
-   指定すればこの経路の\ ``green.npz``\ から作ります（\ :ref:`sc_so_bond_green`\ ）。
+   指定すればこの FLEX の\ ``green.npz``\ から作ります（\ :ref:`sc_so_bond_green`\ ）。
    この FLEX はフィリング指定（\ ``filling``\ を指定し、\ ``mu``\ は指定しない）で、
    ``[file.output] green``\ を指定し、\ ``hwave_sc``\ の計算と同じ\ ``T``\ 、
    ``filling``\ 、\ ``Nmat``\ で実行してください。
@@ -2368,8 +2368,8 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 - ``sc_vertex_version``: 上の\ ``sigma.npz``\ と同じです。同じ条件のもとで、
   ``hwave_sc``\ はより古い\ ``green.npz``\ を拒否します。
 
-``hwave_sc``\ はこのファイルを静的なボンドの経路で\ ``[eliashberg] bond_green``\ により
-読みます（\ :ref:`sc_bond_channels_static`\ ）。スピン軌道モードでは、\ ``bond_green``\ の
+``hwave_sc``\ は静的なボンドの経路で、このファイルを\ ``[eliashberg] bond_green``\ により
+読むこともできます（\ :ref:`sc_bond_channels_static`\ ）。スピン軌道モードでは、\ ``bond_green``\ の
 入力は\ ``longitudinal_bond_channels = true``\ のスピン軌道 FLEX の\ ``green.npz``\ です
 （\ :ref:`sc_so_bond_green`\ ）。
 
@@ -2438,8 +2438,9 @@ FLEX は指定されたアーカイブだけを出力します）を読みます
 動的なソルバー（\ :ref:`sc_spin_orbital_dynamic`\ を参照）でも使えます。
 これは\ ``longitudinal_bond_channels``\ を使わない計算についてです。\ ``chi0q_mode =
 "flex"``\ では、ボンドチャネル付きのスピン軌道 FLEX の出力は\ ``hwave_sc``\ が拒否します。
-そのような計算をフィリング指定で実行した\ ``green.npz``\ は、\ ``hwave_sc``\ の静的な
-スピン軌道のボンドの経路の\ ``bond_green``\ の入力になります（\ :ref:`sc_so_bond_green`\ ）。
+そのような計算をフィリング指定で実行して得た\ ``green.npz``\ は、スピン軌道モードの
+``hwave_sc``\ の静的なボンド経路で\ ``bond_green``\ に指定して使います
+（\ :ref:`sc_so_bond_green`\ ）。
 そのボンドアーカイブは\ ``hwave_sc``\ では読まず、ソルバー側の
 読み込み処理が Python 関数\ ``load_so_bond_archive``\ で読み、スクリプトでは\ ``numpy.load``\ で
 中身を見ます（\ :ref:`flex_so_bond_archive`\ を参照）。

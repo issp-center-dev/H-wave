@@ -1489,8 +1489,8 @@ Outputs
 .. important::
 
    ``hwave_sc`` reads the ``green.npz`` of this path through
-   ``[eliashberg] bond_green`` (below); it does not read the bond archive
-   in this version (a later version reads it). The spin-orbital ``hwave_sc``
+   ``[eliashberg] bond_green`` (:ref:`sc_so_bond_green`); it does not read
+   the bond archive in this version (a later version reads it). The spin-orbital ``hwave_sc``
    with ``chi0q_mode = "flex"`` (static and dynamic) refuses the chi0q,
    chiq, green and sigma of this path, at every :math:`B`, naming the
    file::
@@ -2516,8 +2516,8 @@ The FLEX solver produces NumPy ``.npz`` files with the following contents:
 - ``sc_vertex_version``: as for ``sigma.npz`` above; ``hwave_sc`` refuses an
   older ``green.npz`` under the same condition.
 
-``hwave_sc`` reads this file through ``[eliashberg] bond_green`` on the
-static bond path (:ref:`sc_bond_channels_static`). In spin-orbital mode
+``hwave_sc`` also reads this file through ``[eliashberg] bond_green`` on
+the static bond path (:ref:`sc_bond_channels_static`). In spin-orbital mode
 the ``bond_green`` input is the ``green.npz`` of a spin-orbital FLEX run
 with ``longitudinal_bond_channels = true`` (:ref:`sc_so_bond_green`).
 
@@ -2594,7 +2594,7 @@ in the dynamic one, which uses :math:`\chi` at every bosonic frequency (see
 ``hwave_sc`` refuses the outputs of the spin-orbital FLEX with bond
 channels. The ``green.npz`` of such a run, written in filling mode, is
 the ``bond_green`` input of the static spin-orbital bond path of
-``hwave_sc`` (:ref:`sc_so_bond_green`). Their bond archive is not read by
+``hwave_sc`` (:ref:`sc_so_bond_green`). Its bond archive is not read by
 ``hwave_sc``; it is read by
 solver-side consumers through the Python function ``load_so_bond_archive``,
 and a script inspects it with ``numpy.load`` (see

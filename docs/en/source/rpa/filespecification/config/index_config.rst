@@ -1184,9 +1184,12 @@ memory of the dynamic path is checked against ``[eliashberg] mem_limit_gb``
 
   In spin-orbital mode (``[mode] enable_spin_orbital = true``)
   ``bond_green`` names the ``green.npz`` of a spin-orbital FLEX run with
-  ``[mode.param] longitudinal_bond_channels = true``, written in filling
-  mode (``filling`` set, no ``mu``: the Green function of a fixed-μ run is
-  refused by the state check) at the identical state point of this run:
+  ``[mode.param] longitudinal_bond_channels = true``. The path is used as
+  given, relative to the working directory (neither ``path_to_input`` nor
+  ``path_to_flex_output`` is prepended). The file must be written in
+  filling mode (``filling`` set, no ``mu``: the Green function of a fixed-μ
+  run is refused because its recorded state differs from this run's) at
+  the identical state point of this run:
   the same ``Nmat``, ``T``, ``filling``, band, interaction rows and
   declared bond topology (a row declared with a zero coupling counts).
   ``bond_max_shells`` may differ from the FLEX run's
@@ -1194,9 +1197,11 @@ memory of the dynamic path is checked against ``[eliashberg] mem_limit_gb``
   agree. When the input conserves :math:`S_z`, a spin-off-diagonal part
   of the file's Green function up to :math:`10^{-12}` (relative to its
   largest entry) is projected out with a WARNING, and a larger one is
-  refused. ``bond_coeff_tail`` is not applied to that Green function
-  (``bond_coeff_tail_applied = 0.0``; an explicit nonzero value gives a
-  WARNING). ``bond_channels = true`` with ``frequency = "dynamic"`` is
+  refused. The file's Green function replaces the band's in the bond bubble
+  and in the pair propagator of the gap equation. ``bond_coeff_tail`` is not
+  applied to that Green function (``bond_coeff_tail_applied = 0.0``; an
+  explicit nonzero value gives a WARNING), so check the eigenvalue against
+  ``Nmat``. ``bond_channels = true`` with ``frequency = "dynamic"`` is
   refused in spin-orbital mode, with or without ``bond_green``. See
   :ref:`sc_so_bond_green`.
 
@@ -1358,7 +1363,7 @@ The keys ``chi0q_init``, ``trans_mod``, ``green_init`` and ``sigma_init`` (FLEX 
   **Description :**
   This parameter specifies the filename of the initial configuration exported from UHFk by the parameter ``file.output.rpa``. It contains the one-body interaction term involving the approximated two-body interaction terms via UHF method.
 
-  The Eliashberg solver ``hwave_sc`` uses the same band for :math:`\chi_0(\mathbf{q})`, the chemical potential and the Green function of the pairing kernel. It accepts only a spin-independent assembled band (absolute tolerance :math:`10^{-10}` in energy units, adjustable with ``[eliashberg] spin_free_tol``, in which case a band within that tolerance is spin-averaged, but only when ``hwave_sc`` computes :math:`\chi_0(\mathbf{q})` itself, i.e. with ``chi0q_mode = "calc"`` or on the bond path; with ``chi0q_mode = "load"`` no spin averaging is applied) and refuses a spin-dependent one (issue #88). With an external ``bond_green`` the band is not used for the Green function. The same rules apply when the band is built from ``green_init`` or includes an ``Extern`` field. In spin-orbital mode (:ref:`sc_so_bond_green`) the band still decides the archive checks of the ``bond_green`` file and whether the input (band and interaction rows) conserves :math:`S_z`. See the ``chi0q_mode`` notes in the Eliashberg tutorial.
+  The Eliashberg solver ``hwave_sc`` uses the same band for :math:`\chi_0(\mathbf{q})`, the chemical potential and the Green function of the pairing kernel. It accepts only a spin-independent assembled band (absolute tolerance :math:`10^{-10}` in energy units, adjustable with ``[eliashberg] spin_free_tol``, in which case a band within that tolerance is spin-averaged, but only when ``hwave_sc`` computes :math:`\chi_0(\mathbf{q})` itself, i.e. with ``chi0q_mode = "calc"`` or on the bond path; with ``chi0q_mode = "load"`` no spin averaging is applied) and refuses a spin-dependent one (issue #88). With an external ``bond_green`` the band is not used for the Green function. The same rules apply when the band is built from ``green_init`` or includes an ``Extern`` field. In spin-orbital mode (:ref:`sc_so_bond_green`) the band is still compared with the band recorded in the ``bond_green`` file, and it decides, with the interaction rows, whether the input conserves :math:`S_z`. See the ``chi0q_mode`` notes in the Eliashberg tutorial.
 
 - ``green_init``
 

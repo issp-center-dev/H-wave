@@ -95,9 +95,9 @@ TOML形式
     :ref:`sc_spin_orbital`\ を参照。オンサイトの動的ソルバー（\ ``frequency =
     "dynamic"``\ ）もこれを読みます（\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
     ``chi0q_mode = "flex"``\ では、\ ``longitudinal_bond_channels = true``\ の計算の出力は
-    ``hwave_sc``\ が拒否します。そのような計算をフィリング指定で実行した\ ``green.npz``\ は、
-    静的なスピン軌道のボンドの経路の\ ``[eliashberg] bond_green``\ の入力になります
-    （\ :ref:`sc_so_bond_green`\ を参照）。\ ``hwave_sc``\ はそのボンドアーカイブを後の版で
+    ``hwave_sc``\ が拒否します。そのような計算をフィリング指定で実行して得た
+    ``green.npz``\ は、スピン軌道モードの静的なボンド経路で\ ``[eliashberg] bond_green``\ に
+    指定して使います（\ :ref:`sc_so_bond_green`\ を参照）。\ ``hwave_sc``\ はそのボンドアーカイブを後の版で
     読みます。この版では、ソルバー側の
     読み込み処理が Python 関数\ ``hwave.solver.so_bond_archive.load_so_bond_archive``\ で
     読み、スクリプトでは\ ``numpy.load``\ で中身を見ます（\ :ref:`flex_so_bond_archive`\ を
@@ -1021,17 +1021,21 @@ TOML形式
 
   スピン軌道モード（\ ``[mode] enable_spin_orbital = true``\ ）では、\ ``bond_green``\ は
   ``[mode.param] longitudinal_bond_channels = true``\ のスピン軌道 FLEX の
-  ``green.npz``\ を指定します。その FLEX はフィリング指定（\ ``filling``\ を指定し、
-  ``mu``\ は指定しない。μ 固定の計算の Green 関数は状態の検査で拒否されます）で、
-  この計算と同一の状態点で実行したものでなければなりません。\ ``Nmat``\ 、\ ``T``\ 、
+  ``green.npz``\ を指定します。パスは\ ``path_to_input``\ とも\ ``path_to_flex_output``\ とも
+  結合されず、そのまま使われます。相対パスは作業ディレクトリ基準です。その FLEX は
+  フィリング指定（\ ``filling``\ を指定し、\ ``mu``\ は指定しない。μ 固定の計算の
+  Green 関数は、記録された状態がこの計算と異なるため拒否されます）で、この計算と
+  同一の状態点で実行したものでなければなりません。\ ``Nmat``\ 、\ ``T``\ 、
   ``filling``\ 、バンド、相互作用の行、宣言されたボンドトポロジー（結合ゼロで宣言した
   行も数えます）が同じであることが必要です。\ ``bond_max_shells``\ は、解決された
   ボンドチャネルが一致する限り、FLEX の\ ``longitudinal_bond_max_shells``\ と異なっても
   かまいません。入力が\ :math:`S_z`\ を保存するとき、ファイルの Green 関数のスピン
   非対角の部分は、最大要素に対して\ :math:`10^{-12}`\ までなら WARNING を出して
-  射影で取り除き、それより大きければ拒否します。\ ``bond_coeff_tail``\ はその Green
-  関数には適用しません（\ ``bond_coeff_tail_applied = 0.0``\ 。ゼロでない値を明示すると
-  WARNING）。スピン軌道モードでは、\ ``frequency = "dynamic"``\ の
+  射影で取り除き、それより大きければ拒否します。ファイルの Green 関数は、ボンドの
+  バブルとギャップ方程式の対の伝播関数の両方でバンドの Green 関数を置き換えます。
+  ``bond_coeff_tail``\ はその Green 関数には適用しません（\ ``bond_coeff_tail_applied =
+  0.0``\ 。ゼロでない値を明示すると WARNING）。そのため固有値を\ ``Nmat``\ に対して
+  確かめてください。スピン軌道モードでは、\ ``frequency = "dynamic"``\ の
   ``bond_channels = true``\ は\ ``bond_green``\ の有無によらず拒否されます。
   :ref:`sc_so_bond_green`\ を参照してください。
 
@@ -1053,8 +1057,8 @@ TOML形式
   ``bond_channels = true``\ の動的経路が読み込むボンドアーカイブの
   ファイル名です。相対パスは\ ``[file.input] path_to_flex_output``
   と結合されます。絶対パスはそのまま使われます
-  （これに対し\ ``bond_green``\ はつねにそのまま、作業ディレクトリからの相対パスとして
-  使われます）。
+  （これに対し\ ``bond_green``\ は\ ``path_to_flex_output``\ とは結合されず、
+  そのまま使われます。相対パスは作業ディレクトリ基準です）。
   ``[file.input.interaction]``\ の相互作用ファイルは、アーカイブを書き出した
   FLEX 計算のものでなければなりません。それらがアーカイブのチャネル上で与える
   ボンドバーテックスをアーカイブのものと照合し、異なる場合は拒否します
@@ -1185,7 +1189,7 @@ TOML形式
 
   **説明 :** UHF法で近似した相互作用項を含む一体項を RPA の初期値として利用します。UHFk の\ ``file.output.rpa``\ に指定した出力ファイルのファイル名を指定します。
 
-  Eliashberg ソルバー\ ``hwave_sc``\ は、同じバンドを\ :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しない組み立て後のバンド（エネルギーの単位で絶対許容誤差\ :math:`10^{-10}`\ 。``[eliashberg] spin_free_tol``\ で変更でき、その範囲内のバンドはスピン平均されます。ただしスピン平均は\ ``hwave_sc``\ 自身が\ :math:`\chi_0(\mathbf{q})`\ を計算する場合、すなわち\ ``chi0q_mode = "calc"``\ またはボンド経路に限られ、\ ``chi0q_mode = "load"``\ ではスピン平均は行われません）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の\ ``bond_green``\ を指定した場合、このバンドは Green 関数には使われません。``green_init``\ からバンドを作る場合や\ ``Extern``\ 場を含む場合も同様です。スピン軌道モード（\ :ref:`sc_so_bond_green`\ ）では、このバンドが\ ``bond_green``\ のファイルのアーカイブの検査と、入力（バンドと相互作用の行）が\ :math:`S_z`\ を保存するかどうかを引き続き決めます。Eliashberg チュートリアルの\ ``chi0q_mode``\ の注を参照してください。
+  Eliashberg ソルバー\ ``hwave_sc``\ は、同じバンドを\ :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しない組み立て後のバンド（エネルギーの単位で絶対許容誤差\ :math:`10^{-10}`\ 。\ ``[eliashberg] spin_free_tol``\ で変更でき、その範囲内のバンドはスピン平均されます。ただしスピン平均は\ ``hwave_sc``\ 自身が\ :math:`\chi_0(\mathbf{q})`\ を計算する場合、すなわち\ ``chi0q_mode = "calc"``\ またはボンド経路に限られ、\ ``chi0q_mode = "load"``\ ではスピン平均は行われません）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の\ ``bond_green``\ を指定した場合、このバンドは Green 関数には使われません。\ ``green_init``\ からバンドを作る場合や\ ``Extern``\ 場を含む場合も同様です。スピン軌道モード（\ :ref:`sc_so_bond_green`\ ）では、このバンドは引き続き、\ ``bond_green``\ のファイルに記録されたバンドとの照合と、相互作用の行とあわせて入力が\ :math:`S_z`\ を保存するかどうかの判定に使われます。Eliashberg チュートリアルの\ ``chi0q_mode``\ の注を参照してください。
 
 
 - ``green_init``
