@@ -442,25 +442,102 @@ class TestEdgeCases(_Base):
                                   if "calculation" in r.getMessage()
                                   and "failed" in r.getMessage()], logs.output)
 
+    def _clash(self, solver, output=None, log=None, drop=()):
+        """``qlms.run`` with ``output``/``log`` overrides must refuse the
+        status name before the SCF starts (no file is written at all)."""
+        out = self._out("{}{}".format(solver, len(os.listdir(self.d))))
+        inp = _input(solver, out)
+        inp["file"]["output"].update(output or {})
+        inp["log"].update(log or {})
+        for key in drop:
+            del inp["file"]["output"][key]
+        with self.assertRaisesRegex(ValueError, "scf_status .* is the same file as"):
+            self._run(inp)
+        self.assertEqual(os.listdir(out), [])
+
     def test_name_clash_refused_before_solve(self):
-        """An scf_status name equal to another configured output file, or to
-        the print_check file, is refused before the SCF starts."""
+        """A status name that is the same file as another output of the run
+        is refused before the SCF starts; files are compared as written."""
         for solver in ("UHFk", "UHFr"):
-            for key in ("energy", "green", "eigen", "print_check"):
-                with self.subTest(solver=solver, key=key):
-                    out = self._out(solver + key)
-                    inp = _input(solver, out, print_check="check.dat")
-                    if key == "print_check":
-                        inp["file"]["output"]["scf_status"] = "check.dat"
-                    else:
-                        inp["file"]["output"]["scf_status"] = inp["file"]["output"][key]
-                    with self.assertRaisesRegex(ValueError, "scf_status.*" + key):
+            with self.subTest(solver=solver):
+                self._clash(solver, {"scf_status": "energy.dat"})
+                self._clash(solver, {"scf_status": "check.dat"},
+                            {"print_check": "check.dat"})
+                # the same file under another spelling
+                self._clash(solver, {"scf_status": "./check.dat"},
+                            {"print_check": "check.dat"})
+                self._clash(solver, {"scf_status": "sub/../energy.dat"})
+        # UHFr writes green as given
+        self._clash("UHFr", {"scf_status": "green.dat"})
+
+    def test_name_clash_implicit_suffix_and_default(self):
+        """UHFk writes green, eigen and rpa with numpy.savez, which appends
+        .npz; green is written as "green" when the key is absent."""
+        self._clash("UHFk", {"scf_status": "green.dat.npz"})
+        self._clash("UHFk", {"scf_status": "eigen.dat.npz"})
+        self._clash("UHFk", {"scf_status": "green.npz"}, drop=("green",))
+        self._clash("UHFk", {"scf_status": "green.npz", "green": "green"})
+        self._clash("UHFk", {"scf_status": "tm.npz", "rpa": "tm"})
+        self._clash("UHFk", {"scf_status": "ham_Transfer.dat",
+                             "export_hamiltonian": "ham_"})
+        # the name as configured is not what is written, so no clash
+        out = self._out("k_ok")
+        inp = _input("UHFk", out)
+        inp["file"]["output"]["scf_status"] = "green.dat"
+        self.assertEqual(qlms.run(input_dict=copy.deepcopy(inp)), {})
+        self.assertIn("green.dat.npz", os.listdir(out))
+        self.assertEqual(read_status(os.path.join(out, "green.dat"))[0]["solver"], "UHFk")
+
+    def test_name_clash_uhfr_generated_names(self):
+        """UHFr prefixes eigen and fij files with the block name."""
+        # tests/uhfr/coulombintra leaves 2Sz unset: one "sz-free" block
+        self._clash("UHFr", {"scf_status": "sz-free_eigen.dat.npz"})
+        self._clash("UHFr", {"scf_status": "sz-free_fij.dat", "fij": "fij.dat"})
+        self._clash("UHFr", {"scf_status": "init.dat", "initial": "init.dat"})
+
+    def test_name_clash_direct_api(self):
+        """save_results refuses the clash itself, before writing anything,
+        for a program that drives the solver without qlms.run."""
+        from hwave.qlmsio.read_input_k import QLMSkInput
+        from hwave.solver.base import ParamDict
+        from hwave.solver.uhfk import UHFk
+        out = self._out("direct")
+        os.makedirs(out)
+        inp = _input("UHFk", out)
+        info_mode = dict(inp["mode"])
+        info_mode["param"] = ParamDict(info_mode["param"])
+        read_io = QLMSkInput(inp["file"]["input"])
+        green_info = read_io.get_param("green")
+        sol = UHFk(read_io.get_param("ham"), dict(inp["log"], print_step=1), info_mode)
+        sol.solve(green_info, out)
+        output = dict(inp["file"]["output"], scf_status="green.dat.npz")
+        with self.assertRaisesRegex(ValueError, "is the same file as"):
+            sol.save_results(output, green_info)
+        self.assertEqual(os.listdir(out), [])
+
+    def test_run_still_returns_empty_dict(self):
+        for solver in ("UHFk", "UHFr"):
+            with self.subTest(solver=solver):
+                out = self._out(solver + "_ret")
+                self.assertEqual(qlms.run(input_dict=copy.deepcopy(_input(solver, out))), {})
+                self.assertIn("scf_status.dat", os.listdir(out))
+
+    def test_unusable_eps_refused(self):
+        """EPS must give a finite threshold 10^(-EPS) > 0: NaN and infinite
+        values and a large EPS that underflows are refused before the SCF
+        loop (even with relaxed parameter checks)."""
+        for solver in ("UHFk", "UHFr"):
+            for value in (float("nan"), float("inf"), 400, -400):
+                with self.subTest(solver=solver, EPS=value):
+                    out = self._out("{}eps{}".format(solver, value))
+                    inp = _input(solver, out)
+                    inp["mode"]["param"]["EPS"] = value
+                    inp["mode"]["param"]["trustme_interaction_range"] = True
+                    with self.assertLogs("qlms", level="ERROR") as logs, \
+                            self.assertRaises(SystemExit):
                         self._run(inp)
+                    self.assertIn("EPS", "\n".join(logs.output))
                     self.assertEqual(os.listdir(out), [])
-        # a distinct name, and the disabled file, are accepted
-        from hwave.solver.base import check_scf_status_name
-        check_scf_status_name({"scf_status": "s.dat", "energy": "e.dat"}, "c.dat")
-        check_scf_status_name({"scf_status": "", "energy": ""}, None)
 
 
 class TestInvariants(_Base):

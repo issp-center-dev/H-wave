@@ -1785,8 +1785,10 @@ class UHFk(solver_base):
         """
         path_to_output = info_outputfile["path_to_output"]
 
-        # the convergence status first; after zero SCF steps it is the only
-        # result there is
+        # refuse a status file that would overwrite another output, then
+        # write the convergence status first; after zero SCF steps it is the
+        # only result there is
+        self.check_output_paths(info_outputfile)
         if not self._save_scf_status(info_outputfile, "UHFk",
                                      "two_frobenius_over_size:uhfk_all_r"):
             return
@@ -1893,6 +1895,35 @@ class UHFk(solver_base):
 
         if "export_hamiltonian" in info_outputfile.keys():
             self._export_hamiltonian(path_to_output, info_outputfile["export_hamiltonian"])
+
+    def _output_artifacts(self, info_outputfile):
+        """The files :meth:`save_results` writes besides the status file."""
+        from hwave.solver.base import npz_path
+        path = info_outputfile.get("path_to_output", "output")
+        out = []
+
+        def name(key, default=None):
+            value = info_outputfile.get(key, default)
+            return value if isinstance(value, str) else None
+
+        if name("energy") is not None:
+            out.append(("energy", os.path.join(path, name("energy"))))
+        if name("eigen") is not None:
+            out.append(("eigen", npz_path(os.path.join(path, name("eigen")))))
+        green = name("green", "green")
+        if green:
+            out.append(("green", npz_path(os.path.join(path, green))))
+        if name("onebodyg") is not None:
+            out.append(("onebodyg", os.path.join(path, name("onebodyg"))))
+        if name("rpa") is not None:
+            out.append(("rpa", npz_path(os.path.join(path, name("rpa")))))
+        prefix = name("export_hamiltonian")
+        if prefix is not None:
+            for type in self.param_ham.keys():
+                if type != "Initial":
+                    out.append(("export_hamiltonian",
+                                os.path.join(path, prefix + type + ".dat")))
+        return out
 
     @do_profile
     def _read_green(self, file_name):

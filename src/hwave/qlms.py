@@ -222,10 +222,9 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
         # artifacts is refused here, at solve entry and again before writing)
         solver.validate_output_paths(info_outputfile, path_to_output)
     if mode in ("UHFr", "UHFk"):
-        # a bad [file.output] scf_status (not a string, or the name of
-        # another output file) is refused before any work
-        from hwave.solver.base import check_scf_status_name
-        check_scf_status_name(info_outputfile, info_log.get("print_check"))
+        # a bad [file.output] scf_status (not a string, or the same file as
+        # another output of the run) is refused before any work
+        solver.check_output_paths(info_outputfile, info_log.get("print_check"))
     logger.info("Start UHF calculation")
     solver.solve(green_info, path_to_output)
     logger.info("Save calculation results.")

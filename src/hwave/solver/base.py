@@ -87,25 +87,16 @@ def scf_status_file_name(info_outputfile):
     return value
 
 
-def check_scf_status_name(info_outputfile, print_check=None):
-    """Refuse a ``[file.output] scf_status`` that is not a string
-    (:func:`scf_status_file_name`) or that names the same file as another
-    configured output key of ``[file.output]`` or the ``[log] print_check``
-    file: the status file would overwrite it, or be overwritten. Raises
-    ValueError; ``scf_status = ""`` (disabled) never clashes."""
-    name = scf_status_file_name(info_outputfile)
-    if name == "":
-        return
-    others = [(key, value) for key, value in info_outputfile.items()
-              if key not in ("scf_status", "path_to_output")]
-    if print_check is not None:
-        others.append(("[log] print_check", print_check))
-    for key, value in others:
-        if isinstance(value, str) and value == name:
-            raise ValueError(
-                "[file.output] scf_status = {!r} names the same file as {}; "
-                "choose another name, or \"\" to disable the status "
-                "file".format(name, key))
+def npz_path(path):
+    """The file ``numpy.savez`` writes for ``path``: ``.npz`` is appended
+    unless the name already ends with it."""
+    return path if path.endswith(".npz") else path + ".npz"
+
+
+def _same_file_key(path):
+    """A comparable form of ``path``: absolute, symbolic links and ``.``/``..``
+    resolved, and case-folded where the file system is case-insensitive."""
+    return os.path.normcase(os.path.realpath(path))
 
 
 class solver_base():
@@ -239,8 +230,21 @@ class solver_base():
                 logger.error(msg)
                 sys.exit(1)
 
-        # canonicalize
-        self.param_mod["EPS"] = pow(10, -self.param_mod["EPS"])
+        # canonicalize; the threshold must be a finite positive number even
+        # when the range checks are relaxed (a NaN EPS passes them, and a
+        # large EPS underflows to 0, so that no run could ever converge)
+        eps_exponent = self.param_mod["EPS"]
+        try:
+            eps = float(pow(10, -eps_exponent))
+            usable = math.isfinite(float(eps_exponent)) and math.isfinite(eps) and eps > 0
+        except (OverflowError, TypeError, ValueError):
+            usable = False
+        if not usable:
+            logger.error("EPS = {!r} gives no usable convergence threshold "
+                         "10^(-EPS) (it must be finite and greater than 0)"
+                         .format(eps_exponent))
+            sys.exit(1)
+        self.param_mod["EPS"] = pow(10, -eps_exponent)
 
     def _check_info_mode(self, info_mode):
         """Check validity of info_mode parameters.
@@ -472,6 +476,39 @@ class solver_base():
         if self.scf_residual < eps:
             self.scf_converged = True
         return self.scf_converged
+
+    def _output_artifacts(self, info_outputfile):
+        """``[(label, path)]`` of the result files ``save_results`` writes
+        for ``info_outputfile``, besides the status file; the UHF solvers
+        override it."""
+        return []
+
+    def check_output_paths(self, info_outputfile, print_check=None):
+        """Refuse an unusable ``[file.output] scf_status`` without writing
+        anything: a value that is not a string, or a status file that would
+        be the same file as another result file of this run (as written:
+        defaults, the ``.npz`` that ``numpy.savez`` appends, generated
+        prefixes) or as the ``[log] print_check`` file. Raises ValueError.
+
+        Called by ``qlms.run`` before the SCF starts and again at the start
+        of ``save_results``, so direct callers of the solver are covered."""
+        name = scf_status_file_name(info_outputfile)
+        if name == "":
+            return
+        if print_check is None:
+            print_check = getattr(self, "info_log", {}).get("print_check")
+        path_to_output = info_outputfile.get("path_to_output", "output")
+        target = _same_file_key(os.path.join(path_to_output, name))
+        artifacts = list(self._output_artifacts(info_outputfile))
+        if isinstance(print_check, str):
+            artifacts.append(("[log] print_check",
+                              os.path.join(path_to_output, print_check)))
+        for label, path in artifacts:
+            if _same_file_key(path) == target:
+                raise ValueError(
+                    "[file.output] scf_status = {!r} is the same file as the "
+                    "output of {} ({}); choose another name, or \"\" to "
+                    "disable the status file".format(name, label, path))
 
     def _save_scf_status(self, info_outputfile, solver_name, residual_definition):
         """Write the convergence status file (format version 1) and report

@@ -1260,8 +1260,10 @@ class UHFr(solver_base):
         """
         path_to_output = info_outputfile["path_to_output"]
 
-        # the convergence status first; after zero SCF steps it is the only
-        # result there is
+        # refuse a status file that would overwrite another output, then
+        # write the convergence status first; after zero SCF steps it is the
+        # only result there is
+        self.check_output_paths(info_outputfile)
         if not self._save_scf_status(info_outputfile, "UHFr",
                                      "two_frobenius_over_size:uhfr_full"):
             return
@@ -1371,6 +1373,31 @@ class UHFr(solver_base):
                         fw.write(output_str)
                 else:
                     logger.warning("NOT IMPLEMENTED: Sz even and Sz != 0: this case will be implemented in near future")
+
+    def _output_artifacts(self, info_outputfile):
+        """The files :meth:`save_results` writes besides the status file,
+        with the generated block prefixes."""
+        from hwave.solver.base import npz_path
+        path = info_outputfile.get("path_to_output", "output")
+        out = []
+
+        def name(key):
+            value = info_outputfile.get(key)
+            return value if isinstance(value, str) else None
+
+        for key in ("energy", "green", "initial"):
+            if name(key) is not None:
+                out.append((key, os.path.join(path, name(key))))
+        if name("eigen") is not None:
+            for block in self.green_list:
+                out.append(("eigen", npz_path(
+                    os.path.join(path, block + "_" + name("eigen")))))
+        if name("fij") is not None:
+            two_sz = self.param_mod["2Sz"]
+            prefix = "sz-free_" if two_sz is None else ("Sz0_" if two_sz == 0 else None)
+            if prefix is not None:
+                out.append(("fij", os.path.join(path, prefix + name("fij"))))
+        return out
 
     @do_profile
     def get_Ham(self):

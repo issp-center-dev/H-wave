@@ -84,10 +84,11 @@ Parameters
    and both spins, so :math:`R = \sqrt{\sum|\Delta G|^2}/(2N^2)`. UHFk uses
    the same formula on its array over all translation vectors.
 
-   Because :math:`R` divides a norm by the number of elements, it does not
-   scale with the system size: the same ``EPS`` is a different criterion for
-   a larger or a smaller system. Compare residuals only between runs of the
-   same size.
+   :math:`R` divides a norm by the number of elements, so for comparable
+   element-wise changes it decreases as the system grows (the Frobenius norm
+   grows only like the square root of the number of elements). Residuals,
+   and therefore ``EPS``, are comparable only between runs whose :math:`G`
+   arrays have the same size.
 
    ``nan`` when no step was performed, or when the residual of the last
    step was not finite (see ``[note]``).
@@ -172,10 +173,15 @@ The ``print_check`` log of ``log`` section (step, residual, energy,
 
    The key name ``scf_status`` is matched exactly, like the other keys of
    ``file.output``: ``SCF_Status`` is not the same key. Its value must be a
-   string, and it must not name the same file as another output key of
-   ``file.output`` or the ``print_check`` file. When the calculation is run
-   through ``hwave`` (``hwave.qlms.run``), such a value (for example
-   ``false``, ``0`` or ``"energy.dat"`` next to ``energy = "energy.dat"``)
-   is refused before the calculation starts. A program that calls the solver
-   classes directly gets the error for a non-string value only when the
-   results are saved.
+   string, and the status file must not be the same file as another result
+   file of the run or the ``print_check`` file. Files are compared as they
+   are written: after resolving the path (``./check.dat`` is ``check.dat``),
+   with the ``.npz`` that NumPy appends (UHFk ``green``, ``eigen``, ``rpa``),
+   with the defaults (UHFk ``green = "green"``) and with generated names
+   (UHFr ``sz-free_``/``spin-up_``/``spin-down_`` eigen files and
+   ``sz-free_``/``Sz0_`` fij files, UHFk ``export_hamiltonian`` files). When
+   the calculation is run through ``hwave`` (``hwave.qlms.run``), such a
+   value (for example ``false``, ``0``, or ``"green.npz"`` while ``green``
+   is not set in UHFk) is refused before the calculation starts. A program
+   that calls the solver classes directly gets the same error at the start
+   of ``save_results``, before any file is written.
