@@ -426,3 +426,14 @@ while the latter on output files, as described below.
   **Description :**
   This parameter specifies the output file for pair-orbital factor :math:`f_{ij}`.
   If it is not given, the output is not exported.
+
+- ``scf_status``
+
+  **Type :**
+  String (default value is ``"scf_status.dat"``)
+
+  **Description :**
+  This parameter specifies the output file for the convergence status of
+  the SCF loop (see :ref:`subsec:scf_status.dat`). Unlike the other keys of
+  this section, it is exported by default; set it to ``""`` to disable the
+  output. The value must be a string. The key is matched exactly.
