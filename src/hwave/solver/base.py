@@ -4,6 +4,8 @@ This module provides the base solver class that implements common functionality
 for Hartree-Fock calculations, including parameter handling and validation.
 
 """
+import math
+import os
 import sys
 from collections.abc import ItemsView, ValuesView
 from requests.structures import CaseInsensitiveDict
@@ -70,6 +72,35 @@ class _UntrackedValues(ValuesView):
     def __iter__(self):
         for _, value in self._mapping._store.values():
             yield value
+
+
+def scf_status_file_name(info_outputfile):
+    """The ``[file.output] scf_status`` file name of the UHF solvers:
+    ``"scf_status.dat"`` when the key is absent, ``""`` when disabled.
+    The key is matched exactly, as the other ``[file.output]`` keys are.
+    Raises ValueError when the value is not a string."""
+    value = info_outputfile.get("scf_status", "scf_status.dat")
+    if not isinstance(value, str):
+        raise ValueError(
+            "[file.output] scf_status must be a file name (a string), or \"\" "
+            "to disable the file; got {!r}".format(value))
+    return value
+
+
+def npz_path(path):
+    """The file ``numpy.savez`` writes for ``path``: ``.npz`` is appended
+    unless the name already ends with it."""
+    return path if path.endswith(".npz") else path + ".npz"
+
+
+def _same_file_key(path):
+    """A comparable form of ``path``: absolute, symbolic links and ``.``/``..``
+    resolved, and case-folded on EVERY platform. ``os.path.normcase`` folds
+    case only on Windows, but the default file systems of macOS are
+    case-insensitive too, so two names that differ only in case are treated
+    as the same file everywhere (conservative on a case-sensitive file
+    system)."""
+    return os.path.realpath(path).casefold()
 
 
 class solver_base():
@@ -203,8 +234,23 @@ class solver_base():
                 logger.error(msg)
                 sys.exit(1)
 
-        # canonicalize
-        self.param_mod["EPS"] = pow(10, -self.param_mod["EPS"])
+        # canonicalize; the threshold must be a finite positive number even
+        # when the range checks are relaxed (a NaN EPS passes them, and a
+        # large EPS underflows to 0, so that no run could ever converge)
+        eps_exponent = self.param_mod["EPS"]
+        canonical = None
+        try:
+            canonical = pow(10, -eps_exponent)
+            eps = float(canonical)
+            usable = math.isfinite(float(eps_exponent)) and math.isfinite(eps) and eps > 0
+        except (OverflowError, TypeError, ValueError):
+            usable = False
+        if not usable:
+            logger.error("EPS = {!r} gives no usable convergence threshold "
+                         "10^(-EPS) (it must be finite and greater than 0)"
+                         .format(eps_exponent))
+            sys.exit(1)
+        self.param_mod["EPS"] = canonical
 
     def _check_info_mode(self, info_mode):
         """Check validity of info_mode parameters.
@@ -408,7 +454,7 @@ class solver_base():
 
     def save_results(self, info_outputfile, green_info):
         """Save calculation results.
-        
+
         Parameters
         ----------
         info_outputfile : dict
@@ -417,3 +463,125 @@ class solver_base():
             Green's function information
         """
         pass
+
+    def _reset_scf_status(self):
+        """Set the convergence record to "no step performed yet".
+
+        Called by the UHF solvers before their SCF loop, so the record is
+        defined even when the loop runs no step (``IterationMax = 0``)."""
+        self.scf_converged = False
+        self.scf_iterations = 0
+        self.scf_residual = float("nan")
+
+    def _record_scf_step(self, i_step, residual, eps):
+        """Record a completed SCF step ``i_step`` (0-based) with residual
+        ``residual``; returns True when it has converged (``residual < eps``).
+        A non-finite residual (NaN or infinite) never converges."""
+        self.scf_iterations = i_step + 1
+        self.scf_residual = float(residual)
+        if self.scf_residual < eps:
+            self.scf_converged = True
+        return self.scf_converged
+
+    def _output_artifacts(self, info_outputfile):
+        """``[(label, path)]`` of the result files ``save_results`` writes
+        for ``info_outputfile``, besides the status file; the UHF solvers
+        override it."""
+        return []
+
+    def check_output_paths(self, info_outputfile, print_check=None):
+        """Refuse an unusable ``[file.output] scf_status`` without writing
+        anything: a value that is not a string, or a status file that would
+        be the same file as another result file of this run (as written:
+        defaults, the ``.npz`` that ``numpy.savez`` appends, generated
+        prefixes; names that differ only in case count as the same file) or
+        as the ``[log] print_check`` file. Raises ValueError.
+
+        Every name the solver can write is checked, also outputs that a
+        given configuration does not produce (for example after zero SCF
+        steps, or a UHFr fij file that an odd Ncond skips).
+
+        Called by ``qlms.run`` before the SCF starts and again at the start
+        of ``save_results``, so direct callers of the solver are covered."""
+        name = scf_status_file_name(info_outputfile)
+        if name == "":
+            return
+        if print_check is None:
+            print_check = getattr(self, "info_log", {}).get("print_check")
+        path_to_output = info_outputfile.get("path_to_output", "output")
+        target = _same_file_key(os.path.join(path_to_output, name))
+        artifacts = list(self._output_artifacts(info_outputfile))
+        if isinstance(print_check, str):
+            artifacts.append(("[log] print_check",
+                              os.path.join(path_to_output, print_check)))
+        for label, path in artifacts:
+            if _same_file_key(path) == target:
+                raise ValueError(
+                    "[file.output] scf_status = {!r} is the same file as the "
+                    "output of {} ({}); choose another name, or \"\" to "
+                    "disable the status file".format(name, label, path))
+
+    def _save_scf_status(self, info_outputfile, solver_name, residual_definition):
+        """Write the convergence status file (format version 1) and report
+        whether the other result files are to be written.
+
+        The file name is ``[file.output] scf_status`` (default
+        ``"scf_status.dat"``; ``""`` disables the file). Each line is
+        ``"{key} = {value}\\n"``, in the order written below. Invariants:
+
+        * ``eps`` is finite and > 0;
+        * ``0 <= iterations <= iteration_max``;
+        * ``iterations > 0`` implies ``residual`` finite and >= 0, OR
+          ``residual = nan`` with the note ``residual not finite after
+          step <iterations>`` (the last completed step produced a NaN or
+          infinite residual; ``converged`` is then ``false``);
+        * ``converged = true`` implies ``iterations > 0`` and
+          ``residual < eps``;
+        * ``iterations = 0`` implies ``converged = false`` and
+          ``residual = nan``.
+
+        A negative ``IterationMax`` (only reachable with relaxed parameter
+        checks) runs no step; it is written as ``iteration_max = 0`` with
+        the note ``IterationMax <value> treated as 0``.
+
+        When no SCF step was performed, one WARNING is logged and False is
+        returned: there is no result to write besides the status itself.
+        """
+        file_name = scf_status_file_name(info_outputfile)
+        iterations = int(self.scf_iterations)
+        iteration_max = int(self.param_mod["IterationMax"])
+        residual = float(self.scf_residual)
+        note = ""
+        if iteration_max < 0:
+            note = "IterationMax {} treated as 0".format(iteration_max)
+        elif iterations == 0:
+            note = "no SCF step performed"
+        elif not math.isfinite(residual):
+            residual = float("nan")
+            note = "residual not finite after step {}".format(iterations)
+        converged = bool(self.scf_converged) and math.isfinite(residual)
+        if file_name != "":
+            rows = (
+                ("format_version", "1"),
+                ("solver", solver_name),
+                ("converged", "true" if converged else "false"),
+                ("residual", repr(residual)),
+                ("eps", repr(float(self.param_mod["eps"]))),
+                ("iterations", str(iterations)),
+                ("iteration_max", str(max(iteration_max, 0))),
+                ("residual_definition", residual_definition),
+                ("note", note),
+            )
+            path = os.path.join(info_outputfile["path_to_output"], file_name)
+            with open(path, "w") as fw:
+                fw.write("".join("{} = {}\n".format(k, v) for k, v in rows))
+            logger.info("save_results: save convergence status in file {}".format(path))
+        if iterations == 0:
+            if file_name != "":
+                rest = "no result file other than {} is written".format(file_name)
+            else:
+                rest = "no result file is written"
+            logger.warning("no SCF step was performed (IterationMax = {}); {}"
+                           .format(iteration_max, rest))
+            return False
+        return True

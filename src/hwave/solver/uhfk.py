@@ -828,7 +828,9 @@ class UHFk(solver_base):
 
         self.Green = self._initial_green(green_info)
 
-        is_converged = False
+        # the convergence record (scf_status.dat), defined before the loop
+        # so that a run of zero steps has one too
+        self._reset_scf_status()
 
         for i_step in range(self.param_mod["IterationMax"]):
             self._make_ham()
@@ -852,15 +854,15 @@ class UHFk(solver_base):
                                   self.physics["NCond"],
                                   self.physics["Sz"]))
 
-            if self.physics["Rest"] < self.param_mod["eps"]:
-                is_converged = True
+            if self._record_scf_step(i_step, self.physics["Rest"], self.param_mod["eps"]):
                 break
 
-        if is_converged:
+        if self.scf_converged:
             logger.info("UHFk calculation succeeded: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
             logger.info("Total Energy = {}.".format(self.physics["Ene"]["Total"]))
-        else:
+        elif self.scf_iterations > 0:
+            # (after zero steps save_results logs the one warning there is)
             logger.info("UHFk calculation failed: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
         if print_check is not None:
@@ -1586,32 +1588,30 @@ class UHFk(solver_base):
         logger.debug("ncond = {}".format(n))
 
         # expectation value of the spin vector (Sx, Sy, Sz)
+        #   S_alpha = (1/2) sum_a sum_{st} (sigma_alpha)_{st} <c^dag_{as} c_{at}>,
+        # read in the spin-block frame m[s, a, t, b] of the on-site Green
+        # function G_{ij} = <c^dag_i c_j> (issue #350). The mean-field state
+        # can point along any spin axis, so Sx and Sy can be nonzero also
+        # without spin-orbit coupling.
         if self.enable_spin_orbital:
-            # The on-site Green function G_{ij} = <c^dag_i c_j> has spin
-            # structure, so the full spin vector is meaningful (Sx, Sy nonzero
-            # under spin mixing / SOC).
-            #   S_alpha = (1/2) sum_a sum_{st} (sigma_alpha)_{st} <c^dag_{as} c_{at}>
-            # read in the virtual spin-block frame m[s, a, t, b] (issue #350):
-            # Sx = (1/2)(ud + du), Sy = -(i/2)(ud - du).
+            # the virtual spin-block form of the interleaved index
             m = self._so_to_virtual_green(self.Green)[0]
             g0 = np.diagonal(gab_r[0])           # rho_{ii}, interleaved
             sz_diag = np.where(spin_orbital.spin_of(np.arange(nd)) == 0, 1.0, -1.0)
-            ud = np.diagonal(m[0, :, 1, :])      # <c^dag_up c_down> = <S^+>
-            du = np.diagonal(m[1, :, 0, :])      # <c^dag_down c_up> = <S^->
             sz = np.sum(g0 * sz_diag) * nvol
-            sx = np.sum(ud + du) * nvol
-            sy = np.sum(-1j * (ud - du)) * nvol
-            self.physics["Sz"] = 0.5 * sz.real
-            self.physics["Sx"] = 0.5 * sx.real
-            self.physics["Sy"] = 0.5 * sy.real
         else:
-            gab_r = self.Green
+            # normal mode: G[0] is already in the (s, a, t, b) frame
+            m = self.Green[0]
             sigma_z = np.array(np.array([[1,0],[0,-1]]))
-            sz = np.sum(np.diagonal(np.einsum('satb,st->ab', gab_r[0], sigma_z))) * nvol
-            self.physics["Sz"] = 0.5 * sz.real
-            # collinear normal mode: the transverse spin vanishes by construction
-            self.physics["Sx"] = 0.0
-            self.physics["Sy"] = 0.0
+            sz = np.sum(np.diagonal(np.einsum('satb,st->ab', m, sigma_z))) * nvol
+        # Sx = (1/2)(ud + du), Sy = -(i/2)(ud - du)
+        ud = np.diagonal(m[0, :, 1, :])          # <c^dag_up c_down> = <S^+>
+        du = np.diagonal(m[1, :, 0, :])          # <c^dag_down c_up> = <S^->
+        sx = np.sum(ud + du) * nvol
+        sy = np.sum(-1j * (ud - du)) * nvol
+        self.physics["Sz"] = 0.5 * sz.real
+        self.physics["Sx"] = 0.5 * sx.real
+        self.physics["Sy"] = 0.5 * sy.real
 
         logger.debug("sz = {}".format(sz))
 
@@ -1785,6 +1785,14 @@ class UHFk(solver_base):
         """
         path_to_output = info_outputfile["path_to_output"]
 
+        # refuse a status file that would overwrite another output, then
+        # write the convergence status first; after zero SCF steps it is the
+        # only result there is
+        self.check_output_paths(info_outputfile)
+        if not self._save_scf_status(info_outputfile, "UHFk",
+                                     "two_frobenius_over_size:uhfk_all_r"):
+            return
+
         if "energy" in info_outputfile.keys():
             file_name = os.path.join(path_to_output, info_outputfile["energy"])
 
@@ -1820,12 +1828,11 @@ class UHFk(solver_base):
                     else:
                         for g, mu in enumerate(mu_arr):
                             fw.write("ChemicalPotential_{} = {}\n".format(g, float(mu)))
-                # Transverse spin (Sx, Sy) is only meaningful with spin mixing;
-                # emit it only in spin-orbital mode to keep the normal-mode
-                # energy.dat format backward-compatible.
-                if self.enable_spin_orbital:
-                    fw.write("Sx      = {}\n".format(self.physics["Sx"]))
-                    fw.write("Sy      = {}\n".format(self.physics["Sy"]))
+                # Transverse spin, in both modes, as the last two lines: the
+                # mean-field state can point along any spin axis, so Sx and
+                # Sy can be nonzero also without spin-orbit coupling.
+                fw.write("Sx      = {}\n".format(self.physics["Sx"]))
+                fw.write("Sy      = {}\n".format(self.physics["Sy"]))
 
             logger.info("save_results: save energy in file {}".format(file_name))
 
@@ -1888,6 +1895,35 @@ class UHFk(solver_base):
 
         if "export_hamiltonian" in info_outputfile.keys():
             self._export_hamiltonian(path_to_output, info_outputfile["export_hamiltonian"])
+
+    def _output_artifacts(self, info_outputfile):
+        """The files :meth:`save_results` writes besides the status file."""
+        from hwave.solver.base import npz_path
+        path = info_outputfile.get("path_to_output", "output")
+        out = []
+
+        def name(key, default=None):
+            value = info_outputfile.get(key, default)
+            return value if isinstance(value, str) else None
+
+        if name("energy") is not None:
+            out.append(("energy", os.path.join(path, name("energy"))))
+        if name("eigen") is not None:
+            out.append(("eigen", npz_path(os.path.join(path, name("eigen")))))
+        green = name("green", "green")
+        if green:
+            out.append(("green", npz_path(os.path.join(path, green))))
+        if name("onebodyg") is not None:
+            out.append(("onebodyg", os.path.join(path, name("onebodyg"))))
+        if name("rpa") is not None:
+            out.append(("rpa", npz_path(os.path.join(path, name("rpa")))))
+        prefix = name("export_hamiltonian")
+        if prefix is not None:
+            for type in self.param_ham.keys():
+                if type != "Initial":
+                    out.append(("export_hamiltonian",
+                                os.path.join(path, prefix + type + ".dat")))
+        return out
 
     @do_profile
     def _read_green(self, file_name):

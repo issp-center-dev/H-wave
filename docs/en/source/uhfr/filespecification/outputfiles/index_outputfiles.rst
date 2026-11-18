@@ -15,4 +15,5 @@ In this section, the file formats of these outputs are described.
    energy
    eigen
    green
+   scf_status
 
