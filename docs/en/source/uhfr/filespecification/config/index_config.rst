@@ -438,4 +438,4 @@ while the latter on output files, as described below.
   this section, it is exported by default; set it to ``""`` to disable the
   output. The value must be a string, and the file must not be the same file as
   another result file of the run (as written, including the ``.npz`` suffix
-  and generated names) or the ``print_check`` file. The key is matched exactly.
+  and generated names, ignoring case) or the ``print_check`` file. The key is matched exactly.

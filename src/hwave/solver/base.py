@@ -95,8 +95,12 @@ def npz_path(path):
 
 def _same_file_key(path):
     """A comparable form of ``path``: absolute, symbolic links and ``.``/``..``
-    resolved, and case-folded where the file system is case-insensitive."""
-    return os.path.normcase(os.path.realpath(path))
+    resolved, and case-folded on EVERY platform. ``os.path.normcase`` folds
+    case only on Windows, but the default file systems of macOS are
+    case-insensitive too, so two names that differ only in case are treated
+    as the same file everywhere (conservative on a case-sensitive file
+    system)."""
+    return os.path.realpath(path).casefold()
 
 
 class solver_base():
@@ -234,8 +238,10 @@ class solver_base():
         # when the range checks are relaxed (a NaN EPS passes them, and a
         # large EPS underflows to 0, so that no run could ever converge)
         eps_exponent = self.param_mod["EPS"]
+        canonical = None
         try:
-            eps = float(pow(10, -eps_exponent))
+            canonical = pow(10, -eps_exponent)
+            eps = float(canonical)
             usable = math.isfinite(float(eps_exponent)) and math.isfinite(eps) and eps > 0
         except (OverflowError, TypeError, ValueError):
             usable = False
@@ -244,7 +250,7 @@ class solver_base():
                          "10^(-EPS) (it must be finite and greater than 0)"
                          .format(eps_exponent))
             sys.exit(1)
-        self.param_mod["EPS"] = pow(10, -eps_exponent)
+        self.param_mod["EPS"] = canonical
 
     def _check_info_mode(self, info_mode):
         """Check validity of info_mode parameters.
@@ -488,7 +494,12 @@ class solver_base():
         anything: a value that is not a string, or a status file that would
         be the same file as another result file of this run (as written:
         defaults, the ``.npz`` that ``numpy.savez`` appends, generated
-        prefixes) or as the ``[log] print_check`` file. Raises ValueError.
+        prefixes; names that differ only in case count as the same file) or
+        as the ``[log] print_check`` file. Raises ValueError.
+
+        Every name the solver can write is checked, also outputs that a
+        given configuration does not produce (for example after zero SCF
+        steps, or a UHFr fij file that an odd Ncond skips).
 
         Called by ``qlms.run`` before the SCF starts and again at the start
         of ``save_results``, so direct callers of the solver are covered."""

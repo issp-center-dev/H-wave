@@ -470,6 +470,18 @@ class TestEdgeCases(_Base):
         # UHFr writes green as given
         self._clash("UHFr", {"scf_status": "green.dat"})
 
+    def test_name_clash_case_only(self):
+        """Names that differ only in case are refused on every platform: on
+        a case-insensitive file system (macOS, Windows) they are one file."""
+        for solver in ("UHFk", "UHFr"):
+            with self.subTest(solver=solver):
+                self._clash(solver, {"scf_status": "Energy.dat"})
+                self._clash(solver, {"scf_status": "CHECK.dat"},
+                            {"print_check": "check.dat"})
+        self._clash("UHFk", {"scf_status": "HAM_transfer.dat",
+                             "export_hamiltonian": "ham_"})
+        self._clash("UHFr", {"scf_status": "SZ-FREE_eigen.dat.NPZ"})
+
     def test_name_clash_implicit_suffix_and_default(self):
         """UHFk writes green, eigen and rpa with numpy.savez, which appends
         .npz; green is written as "green" when the key is absent."""

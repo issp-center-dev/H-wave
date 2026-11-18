@@ -175,7 +175,9 @@ The ``print_check`` log of ``log`` section (step, residual, energy,
    ``file.output``: ``SCF_Status`` is not the same key. Its value must be a
    string, and the status file must not be the same file as another result
    file of the run or the ``print_check`` file. Files are compared as they
-   are written: after resolving the path (``./check.dat`` is ``check.dat``),
+   are written: after resolving the path (``./check.dat`` is ``check.dat``)
+   and ignoring case on every platform (``Energy.dat`` is ``energy.dat``,
+   as on the case-insensitive file systems of macOS and Windows),
    with the ``.npz`` that NumPy appends (UHFk ``green``, ``eigen``, ``rpa``),
    with the defaults (UHFk ``green = "green"``) and with generated names
    (UHFr ``sz-free_``/``spin-up_``/``spin-down_`` eigen files and
@@ -184,4 +186,6 @@ The ``print_check`` log of ``log`` section (step, residual, energy,
    value (for example ``false``, ``0``, or ``"green.npz"`` while ``green``
    is not set in UHFk) is refused before the calculation starts. A program
    that calls the solver classes directly gets the same error at the start
-   of ``save_results``, before any file is written.
+   of ``save_results``, before any file is written. The check uses every
+   name the solver can write, also outputs that a given configuration does
+   not produce.

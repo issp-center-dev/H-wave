@@ -375,7 +375,7 @@ to the definition files.
   written by default; if it is set to an empty string, no output will be
   generated. The value must be a string, and the file must not be the same file as
   another result file of the run (as written, including the ``.npz`` suffix
-  and generated names) or the ``print_check`` file. The key is matched exactly.
+  and generated names, ignoring case) or the ``print_check`` file. The key is matched exactly.
 
 - ``rpa``
 
