@@ -3868,7 +3868,7 @@ resident row ``file_read`` for the read of the file: 256 KiB plus four
 times the bytes of the file's members other than ``green`` (the provenance
 tables among them, whose size grows with the input). These bytes are taken
 from the zip records and array headers of the file without reading a
-member, so a run over the cap is refused before the file is read. The
+member, so a run over the cap is refused before any member of the file is read. The
 Green function rows are those of the bare-band path.
 
 **Troubleshooting.** The table groups the common mistakes; it is not in
