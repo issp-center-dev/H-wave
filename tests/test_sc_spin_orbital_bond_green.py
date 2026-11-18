@@ -1101,8 +1101,9 @@ class TestBorrowedAdmission(unittest.TestCase):
     not), and every traced phase, the read included, stays within its rows:
     packed (projected file) and dense (clean file) at Nmat 32, packed
     (projected file) at Nmat 8, where the band rows alone are below the read
-    peak. Breaks: (m1) without ``carrier_build`` and ``file_read`` every row
-    fails; (m2) without ``file_read`` the Nmat 8 row fails."""
+    peak. Breaks: (m1) without ``carrier_build``, ``transient`` and
+    ``file_read`` every row fails; (m2) without ``file_read`` the Nmat 8 row
+    fails."""
 
     def _rows(self, labels=None):
         """``(label, p, layout)`` of the memory rows (all, or those named in
@@ -1150,14 +1151,17 @@ class TestBorrowedAdmission(unittest.TestCase):
             with self.subTest(row=label):
                 seen = {}
                 real = so_bond.static_so_bond_rows
+                # transient is the band-build/digest temporary the file read replaces
+                drop = ("carrier_build", "transient")
                 with mock.patch.object(so_bond, "static_so_bond_rows",
-                                       side_effect=_dropping(real, ("carrier_build",))) as brk, \
+                                       side_effect=_dropping(real, drop)) as brk, \
                         mock.patch.object(so_bond, "static_so_bond_resident_rows",
                                           side_effect=_no_resident) as brk2:
                     failures = _memory_gate(p, seen=seen)
                 self.assertEqual((brk.call_count, brk2.call_count), (1, 1))
                 names = {r[1] for r in seen["adm"].plan.rows}
                 self.assertNotIn("carrier_build", names)
+                self.assertNotIn("transient", names)
                 self.assertNotIn("file_read", names)
                 self.assertTrue(_has(failures, "green_static traced <= rows"), failures)
 
@@ -1169,6 +1173,8 @@ class TestBorrowedAdmission(unittest.TestCase):
             failures = _memory_gate(p, seen=seen)
         self.assertEqual(brk.call_count, 1)
         self.assertNotIn("file_read", {r[1] for r in seen["adm"].plan.rows})
+        # only green_static is asserted: whether g2_static also fails depends on
+        # when the cyclic garbage collector runs
         self.assertTrue(_has(failures, "green_static traced <= rows"), failures)
 
 

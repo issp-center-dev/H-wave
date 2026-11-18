@@ -2750,7 +2750,7 @@ def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalu
     argument).
 
     A Green function read from ``[eliashberg] bond_green`` adds the resident
-    row of :func:`static_so_bond_resident_rows`; these rows are the same."""
+    row of :func:`static_so_bond_resident_rows`; the rows above are unchanged."""
     name = "static_so_bond_rows"
     _shift_kind(name, spectral_shift)
     nmat = _even_at_least_2(name, "nmat", nmat)
