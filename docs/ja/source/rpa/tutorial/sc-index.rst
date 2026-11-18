@@ -2816,11 +2816,16 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
    * - ``<file> was produced by <producer> (so_bond), but this run needs a
        so_onsite artifact``
      - アーカイブはボンド分解チャネルを含みますが、この計算は使いません。
-       ボンド分解した計算のギャップのアーカイブ（\ ``sc_so_bond_static``\ ）と
-       ``flex_so_bond``\ のすべての出力は\ ``so_bond``\ です。前者は段階の検査が、
-       後者はオンサイトの FLEX の読み込み側の専用のメッセージが、この段階より前に
-       拒否するので、このバージョンで書かれたアーカイブではこのメッセージは出ません。
-     - 出力側の\ ``[file.output]``\ のアーカイブ
+       ボンド分解した計算のギャップのアーカイブ（\ ``sc_so_bond_static``\ ）は、この
+       段階より前に段階の検査で拒否されます。\ ``chi0q_mode = "flex"``\ では、
+       オンサイトの FLEX の読み込み側が\ ``flex_so_bond``\ の出力を先に専用の
+       メッセージで拒否します（下記）。\ ``chi0q_mode = "load"``\ では、ボンドチャネル
+       付きのスピン軌道 FLEX が書いた\ ``chi0q.npz``\ に対してこのメッセージが出ます。
+       スピン軌道 RPA（\ ``rpa_so``\ ）またはオンサイトのスピン軌道 FLEX
+       （\ ``flex_so_onsite``\ ）の chi0q を与えるか、ボンド分解の経路ではその FLEX の
+       ``green.npz``\ を\ ``bond_green``\ で使ってください（\ :ref:`sc_so_bond_green`\ ）。
+     - ``[file.output] chi0q``\ （\ ``"load"``\ ）。\ ``[eliashberg] bond_channels``\ 、
+       ``bond_green``
    * - ``state differs: calc_mu: file False, run True``
      - 出力側は μ 固定で実行されています（固定 μ の不一致）。\ ``hwave_sc``\ は
        つねに\ ``filling``\ から μ を探索します。\ ``mu``\ の代わりに\ ``filling``\ で

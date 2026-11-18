@@ -3017,12 +3017,18 @@ producer:
    * - ``<file> was produced by <producer> (so_bond), but this run needs a
        so_onsite artifact``
      - The archive resolves bond channels, which this run does not use.
-       The gap archive of a bond-resolved run (``sc_so_bond_static``) and
-       every output of ``flex_so_bond`` are ``so_bond``; the stage check
-       refuses the former and the on-site FLEX loader's own message refuses
-       the latter before this step, so this message does not occur with
-       archives written by this version.
-     - the producer's ``[file.output]`` archives
+       The gap archive of a bond-resolved run (``sc_so_bond_static``) is
+       refused by the stage check before this step. With ``chi0q_mode =
+       "flex"`` the on-site FLEX loader refuses the outputs of
+       ``flex_so_bond`` first, with its own message (below). With
+       ``chi0q_mode = "load"`` this message appears for a ``chi0q.npz``
+       written by the spin-orbital FLEX with bond channels. Give a chi0q
+       written by a spin-orbital RPA (``rpa_so``) or an on-site
+       spin-orbital FLEX (``flex_so_onsite``) run, or, for the bond-resolved
+       path, use the ``green.npz`` of that FLEX run through ``bond_green``
+       (:ref:`sc_so_bond_green`).
+     - ``[file.output] chi0q`` (``"load"``); ``[eliashberg] bond_channels``,
+       ``bond_green``
    * - ``state differs: calc_mu: file False, run True``
      - The producer ran at a fixed μ (fixed-μ mismatch); ``hwave_sc`` always
        searches μ from ``filling``. Rerun the producer with ``filling``
