@@ -1369,17 +1369,21 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
 
 .. important::
 
-   この版の\ ``hwave_sc``\ はこの経路の出力を読みません（後の版でボンドアーカイブを
-   読みます）。\ ``chi0q_mode = "flex"``\ のスピン軌道\ ``hwave_sc``\ （静的・動的）は、
+   ``hwave_sc``\ はこの経路の\ ``green.npz``\ を\ ``[eliashberg] bond_green``\ で読みます
+   （下記）。この版ではボンドアーカイブは読みません（後の版で読みます）。
+   ``chi0q_mode = "flex"``\ のスピン軌道\ ``hwave_sc``\ （静的・動的）は、
    この経路の chi0q、chiq、green、sigma を、すべての\ :math:`B`\ で、ファイル名を
    示して拒否します::
 
       [mode] enable_spin_orbital = true (hwave_sc, issue #83): '<file>' was written by the spin-orbital FLEX with bond channels ([mode.param] longitudinal_bond_channels = true): the chi0q, chiq and green of that run describe the bond-resolved run, which [eliashberg] chi0q_mode = "flex" cannot use. Re-run FLEX with longitudinal_bond_channels = false for this mode.
 
    オフサイトのある模型のペアリングには、
-   :ref:`sc_so_bond_static`\ の静的なボンド経路を使ってください。この経路はバンド
-   （Transfer と Extern）から自分で裸のボンドバブルを作り、この経路の\ ``green.npz``\ は
-   読みません（スピン軌道モードでは\ ``bond_green``\ は拒否されます）。
+   :ref:`sc_so_bond_static`\ の静的なボンド経路を使ってください。この経路はボンドの
+   バブルを裸のバンド（Transfer と Extern）から、または\ ``[eliashberg] bond_green``\ を
+   指定すればこの経路の\ ``green.npz``\ から作ります（\ :ref:`sc_so_bond_green`\ ）。
+   この FLEX はフィリング指定（\ ``filling``\ を指定し、\ ``mu``\ は指定しない）で、
+   ``[file.output] green``\ を指定し、\ ``hwave_sc``\ の計算と同じ\ ``T``\ 、
+   ``filling``\ 、\ ``Nmat``\ で実行してください。
 
 この版で使えないもの: プロセス内のペアリング、GPU、半分のボソン
 格子、初期値（\ ``sigma_init``\ 、\ ``trans_mod``\ 、\ ``green_init``\ 。オンサイトの
@@ -1399,7 +1403,8 @@ in place (no later reader of chibar; chibar_w archive: none)``\ も記録しま�
 （\ ``bond_archive_schema = 4``\ ）を書き出します。中身は\ **最終**\ の Green 関数の
 ボンド分解したドレスド感受率\ :math:`\chi_B`\ 、裸のボンドバーテックス\ :math:`\Gamma_B`\ 、
 およびその両方の来歴で、それを作った Green 関数の隣に置かれます。この版の\ ``hwave_sc``\ は
-このアーカイブを読みません。ソルバー側の読み込み処理は Python 関数\ ``load_so_bond_archive``\ で
+このアーカイブを読みません（対となる\ ``green.npz``\ は\ ``[eliashberg] bond_green``\ で
+読みます。\ :ref:`sc_so_bond_green`\ ）。ソルバー側の読み込み処理は Python 関数\ ``load_so_bond_archive``\ で
 読み（下の「読み込み」）、スクリプトでは\ ``numpy.load``\ でメンバーを見ます（下の
 「手で中身を見る」）。
 
@@ -2363,6 +2368,11 @@ FLEXソルバーは以下の内容を持つNumPy ``.npz``\ ファイルを生成
 - ``sc_vertex_version``: 上の\ ``sigma.npz``\ と同じです。同じ条件のもとで、
   ``hwave_sc``\ はより古い\ ``green.npz``\ を拒否します。
 
+``hwave_sc``\ はこのファイルを静的なボンドの経路で\ ``[eliashberg] bond_green``\ により
+読みます（\ :ref:`sc_bond_channels_static`\ ）。スピン軌道モードでは、\ ``bond_green``\ の
+入力は\ ``longitudinal_bond_channels = true``\ のスピン軌道 FLEX の\ ``green.npz``\ です
+（\ :ref:`sc_so_bond_green`\ ）。
+
 .. _flex_so_output_files:
 
 スピン軌道計算
@@ -2426,8 +2436,11 @@ chi0q/chiq のチャネル 0 の内容は\ :ref:`flex_so_bond_tutorial`\ （「�
 FLEX は指定されたアーカイブだけを出力します）を読みます。静的なソルバー
 （\ :ref:`sc_spin_orbital`\ を参照）でも、すべてのボソン振動数の\ :math:`\chi`\ を使う
 動的なソルバー（\ :ref:`sc_spin_orbital_dynamic`\ を参照）でも使えます。
-これは\ ``longitudinal_bond_channels``\ を使わない計算についてです。ボンドチャネル付きの
-スピン軌道 FLEX の出力は\ ``hwave_sc``\ が拒否します。そのボンドアーカイブは、ソルバー側の
+これは\ ``longitudinal_bond_channels``\ を使わない計算についてです。\ ``chi0q_mode =
+"flex"``\ では、ボンドチャネル付きのスピン軌道 FLEX の出力は\ ``hwave_sc``\ が拒否します。
+そのような計算をフィリング指定で実行した\ ``green.npz``\ は、\ ``hwave_sc``\ の静的な
+スピン軌道のボンドの経路の\ ``bond_green``\ の入力になります（\ :ref:`sc_so_bond_green`\ ）。
+そのボンドアーカイブは\ ``hwave_sc``\ では読まず、ソルバー側の
 読み込み処理が Python 関数\ ``load_so_bond_archive``\ で読み、スクリプトでは\ ``numpy.load``\ で
 中身を見ます（\ :ref:`flex_so_bond_archive`\ を参照）。
 
@@ -3010,7 +3023,9 @@ Tips
      ファイルを読み込みません。FLEX でdressされた Green 関数をボンドパスへ
      渡す場合は、FLEX を収束まで実行し、その\ ``green.npz``\ 出力を
      ``[eliashberg] bond_green``\ に指定してください。詳細は
-     :ref:`sc_bond_channels_static`\ を参照してください。
+     :ref:`sc_bond_channels_static`\ を参照してください。スピン軌道モードでは、
+     ``longitudinal_bond_channels = true``\ のスピン軌道 FLEX をフィリング指定で
+     実行した\ ``green.npz``\ を使います。\ :ref:`sc_so_bond_green`\ を参照してください。
 
 
 実装の詳細と制限事項

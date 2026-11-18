@@ -2060,7 +2060,9 @@ each off-site row acts on the bond it was declared on.
   static path is their zero-bosonic-frequency member.
 - **The bubble.** ``hwave_sc`` builds the bond-resolved bubble itself from a
   Green function: the bare one built from the transfer integrals, or the
-  file named by ``bond_green`` (for example a FLEX ``green.npz``).
+  file named by ``bond_green`` (for example a FLEX ``green.npz``; in
+  spin-orbital mode the ``green.npz`` of a spin-orbital FLEX run with bond
+  channels, see :ref:`sc_so_bond_green`).
   ``chi0q_mode`` and ``chi0q_tensor`` are not used, and
   ``chi0q_mode = "flex"`` is refused. ``bond_coeff_tail`` (default ``1.0``)
   is the Matsubara tail coefficient of that bubble.
@@ -2268,7 +2270,10 @@ Interaction rows in spin-orbital mode (``enable_spin_orbital = true``)
 
 Spin-orbital FLEX accepts the bond-resolved channels
 (``longitudinal_bond_channels = true``, :ref:`flex_so_bond_tutorial`);
-``hwave_sc`` does not read the outputs of that run yet. Spin-orbital
+``hwave_sc`` reads its ``green.npz`` through ``[eliashberg] bond_green`` on
+the static bond path (:ref:`sc_so_bond_green`); it does not read the bond
+archive (``longitudinal_bond.npz``) or the susceptibilities of that run.
+Spin-orbital
 ``hwave_sc`` accepts ``bond_channels = true`` with ``frequency = "static"``
 (:ref:`sc_so_bond_static`) and refuses it with ``frequency = "dynamic"``.
 
@@ -2727,7 +2732,8 @@ bond channels, and adds the members ``delta_r``, ``reverse``,
 ``bond_max_shells`` cutoff) and ``block_layout`` (``"dense"`` or
 ``"sz_packed"``).
 
-In ``chi0q_mode = "load"`` and ``"flex"`` the spin-orbital ``hwave_sc``
+In ``chi0q_mode = "load"`` and ``"flex"``, and with ``bond_green`` on the
+bond path, the spin-orbital ``hwave_sc``
 checks each archive it reads against its own input, before any large array
 is read. The ``prov_*`` copies only word the difference in a message: no
 digest is recomputed from them. The stored digests are compared with the
@@ -2832,10 +2838,13 @@ The check then runs in two steps.
    the index and as a sidecar is refused.
 
    The stage ``sc_so_bond_dynamic`` is recognised but not read yet; it is
-   refused with its own message (see the table below). The outputs of
-   ``flex_so_bond`` are read by ``load_so_bond_archive`` only (the bond
-   archive and its companion green file); the on-site consumers of
-   ``hwave_sc`` refuse them (see the table below).
+   refused with its own message (see the table below). The bond archive
+   of ``flex_so_bond`` is read by ``load_so_bond_archive`` only, with its
+   companion green file; ``hwave_sc`` does not read it. The ``green.npz``
+   of ``flex_so_bond`` is also the ``bond_green`` input of the static bond
+   path of ``hwave_sc`` (:ref:`sc_so_bond_green`); the on-site consumers of
+   ``hwave_sc`` refuse every output of ``flex_so_bond`` (see the table
+   below).
 
    *Layout members.* An archive of a bond-resolved stage
    (``sc_so_bond_static``, and every archive of ``flex_so_bond``: chi0q,
@@ -2871,21 +2880,25 @@ The check then runs in two steps.
       ``"load"`` and ``"flex"`` inputs above) consume ``"so_onsite"``
       artifacts; an archive that resolves bond channels (``"so_bond"``) is
       refused. The bond-resolved path (:ref:`sc_so_bond_static`) writes a
-      ``"so_bond"`` gap archive but reads no archive: it builds its Green
-      function from the band and refuses ``bond_green`` and ``chi0q_mode =
-      "flex"``, so a spin-orbital FLEX ``green.npz`` (``"so_onsite"``) is
-      not a bond-path input. The declared and resolved bond topologies are
-      compared only by a bond-resolved consumer; in this version the only
-      one is the Python function ``load_so_bond_archive`` of the
-      spin-orbital bond archive (:ref:`flex_so_bond_archive`), which
-      consumes ``"so_bond"`` and requires ``Nmat`` to be identical.
+      ``"so_bond"`` gap archive and reads no susceptibility archive
+      (``chi0q_mode = "flex"`` is refused); with ``bond_green`` it reads
+      the ``green.npz`` of a spin-orbital FLEX run with bond channels
+      (``"so_bond"``), and refuses the ``green.npz`` of the on-site
+      spin-orbital FLEX (``"so_onsite"``) with a remedy
+      (:ref:`sc_so_bond_green`). The declared and resolved bond topologies
+      are compared only by a bond-resolved consumer: the Python function
+      ``load_so_bond_archive`` of the spin-orbital bond archive
+      (:ref:`flex_so_bond_archive`) and the ``bond_green`` reader of the
+      bond path. Both consume ``"so_bond"`` and require ``Nmat`` to be
+      identical. A declared row counts even with a zero coupling.
    4. *State.* :math:`\beta` (relative :math:`10^{-12}`); the μ-search mode
       (``hwave_sc`` always searches μ, so a fixed-μ archive is refused);
       the target ``filling * 2N`` electrons per cell (relative
       :math:`10^{-12}`); the producer's closure density against that
       target (tolerance :math:`\max(10^{-8}\max(1,|t|), 10\,r)` with
       :math:`r` the file's residual); ``Nmat`` exactly when the Green
-      function is borrowed (``"flex"``). In ``"load"`` mode ``Nmat`` may
+      function is borrowed (``"flex"`` and ``bond_green``). In ``"load"``
+      mode ``Nmat`` may
       differ: the existing rule locates the zero bosonic frequency through
       the file's ``nmat``. The loaded :math:`\chi_0` was then summed on
       another Matsubara grid, so its frequency truncation differs from this
@@ -2900,6 +2913,10 @@ The check then runs in two steps.
       go through the whole check (structure, band, interaction, capability
       and state) before any array is read, and once the Green function is
       loaded, the ``fp_green`` of ``green.npz`` must equal its digest too.
+      With ``bond_green`` the ``fp_green`` of the file must equal the
+      digest of its ``green`` member as stored; this compare runs once the
+      Green function is read, after the state step and the marker and
+      shape checks (:ref:`sc_so_bond_green`).
       In ``"load"`` mode no Green function is borrowed, and the archive's
       ``fp_green`` is logged as a producer assertion (INFO).
 
@@ -2921,16 +2938,24 @@ refused.
 "sc_so_static"``, or ``"sc_so_bond_static"`` for a bond-resolved run) and
 ``gap_dynamic.npz`` (``"sc_so_dynamic"``) carry the
 same version-2 members, describing what *this* run's kernel used; nothing
-is copied from the producer:
+is copied from the producer except the state of a Green function read
+with ``bond_green`` (below):
 
-- ``"calc"`` and ``"load"``, and every bond-resolved run: the run's own
+- ``"calc"`` and ``"load"``, and every bond-resolved run without
+  ``bond_green``: the run's own
   Green function, built from its
   band and its own μ; ``state_density`` is the Fermi count of the band at that
   μ per cell, ``state_mu_tol = |state_density - state_target|``;
 - ``"flex"``: ``fp_green`` is the digest of the borrowed Green function as
   consumed, ``state_mu`` the FLEX μ it was built at, and ``state_density``
   its closure density, computed with the routine FLEX uses (the static
-  self-energy from ``flex_sigma``, on this run's band).
+  self-energy from ``flex_sigma``, on this run's band);
+- a bond-resolved run with ``bond_green``: ``fp_green`` is the digest of
+  the Green function as consumed (after the :math:`S_z` projection, when
+  one was applied), ``fp_green_source`` the file's ``fp_green``, written
+  only when the Green function was projected, and the ``state_*``
+  members are copied from ``green.npz``: the producer's recorded state of
+  the same Green function (:ref:`sc_so_bond_green`).
 
 The interaction digests (``fp_interaction``, ``fp_topology``) are those of
 this run's input. The scalar members also appear as ``# key = value`` lines
@@ -3413,6 +3438,12 @@ The fluctuation part is a static RPA-ladder dressing, not a conserving
 
    [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the BARE Green function built from the Transfer (and Extern) input. It demonstrates the qualitative V-dependence of the pairing eigenvalue; it is NOT a conserving FLEX result (the bond chi-bar is built here at RPA-ladder level), so absolute lambda values are not comparable with FLEX/dynamic references.
 
+With ``bond_green`` (:ref:`sc_so_bond_green`), :math:`\bar\chi_B` is the
+bubble of the Green function read from the file, and the WARNING names
+the file instead::
+
+   [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the Green function read from bond_green = '<path>' (its approximation level, e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that Green function at RPA-ladder level; it is NOT the bond susceptibility of the run that wrote the file, so absolute lambda values are not comparable with FLEX/dynamic references.
+
 .. note::
 
    **Off-site PairLift.** The non-spin-orbital bond paths leave an off-site
@@ -3469,9 +3500,12 @@ site (``solver_mode``, ``num_eigenvalues``, ``spectral_shift``,
   with a WARNING. A negative or non-finite value (or a boolean) is refused:
   ``[eliashberg] bond_memory_cap_gb must be a finite number >= 0 in
   spin-orbital mode (0 disables the check), got <value>``.
+- ``bond_green``: the ``green.npz`` of a spin-orbital FLEX run with bond
+  channels, used for the bond bubble in place of the bare Green function
+  (:ref:`sc_so_bond_green`).
 - ``bond_coeff_tail`` (default ``1.0``): the Matsubara tail coefficient of
   the Green function of the bond bubble, as on the non-spin-orbital bond
-  path.
+  path. It is not applied to a Green function read with ``bond_green``.
 - ``g2_tail`` (default ``true``): the Matsubara tail correction of the pair
   propagator.
 
@@ -3531,7 +3565,9 @@ Outputs
 channel displacements), ``bond_max_shells``, ``so_bond_layout``,
 ``so_bond_layout_reason``, ``bond_memory_cap`` (the cap in force and where
 it came from), ``g2_tail``, ``bond_coeff_tail``, ``bond_coeff_tail_source``,
-``approximation = static RPA-ladder bond dressing``, ``gap_status``,
+``approximation = static RPA-ladder bond dressing`` (with ``bond_green``:
+``static RPA-ladder bond dressing on a borrowed Green function``, and the
+lines listed in :ref:`sc_so_bond_green`), ``gap_status``,
 ``pp_sector`` and ``selection`` (the eigen-selection, per sector in the
 packed layout, e.g. ``+1:dense-LR;0:LR;-1:null-operator``), plus the scalar
 provenance members of the gap archive. Past the static RPA pole of the
@@ -3608,15 +3644,328 @@ Scope
 
 - ``frequency = "static"`` only; with ``frequency = "dynamic"``
   ``bond_channels = true`` is refused (see *Refused combinations*);
-- the bond bubble is built from the bare Green function of the band; a
-  bond-resolved Green function cannot be supplied yet (``bond_green`` is
-  refused), and no chi0q or FLEX output is read (``chi0q_mode`` is not
-  used, and ``chi0q_mode = "flex"`` is refused);
+- the bond bubble is built from the bare Green function of the band, or
+  from the ``green.npz`` of a spin-orbital FLEX run with bond channels
+  named by ``bond_green`` (:ref:`sc_so_bond_green`); no chi0q and no FLEX
+  susceptibility is read (``chi0q_mode`` is not used, ``chi0q_mode =
+  "flex"`` is refused, and the bond archive ``longitudinal_bond.npz`` is
+  not read);
 - CPU only (``gpu = true`` is ignored with a WARNING, ``gpu_required =
   true`` is refused);
 - ``eigenvalue_method = "arnoldi"`` only;
 - the memory of the whole run is admitted once, before any bond array is
   built (:ref:`sc_so_bond_memory`).
+
+.. _sc_so_bond_green:
+
+A FLEX Green function (``bond_green``)
+""""""""""""""""""""""""""""""""""""""
+
+``[eliashberg] bond_green`` replaces the bare Green function of the bond
+bubble by the Green function of a file: the ``green.npz`` of a spin-orbital
+FLEX run with ``[mode.param] longitudinal_bond_channels = true``
+(:ref:`flex_so_bond_tutorial`, written with ``[file.output] green``). The
+key is read case-insensitively (``Bond_Green`` works); its value is a path,
+used as given (relative to the working directory). The vertex, the topology
+and the pairing kernel are those of the bare-band run; only
+:math:`\bar\chi_B` changes. ``bond_green`` is a key of the static path: with
+``frequency = "dynamic"``, ``bond_channels = true`` is refused in
+spin-orbital mode, with or without ``bond_green``::
+
+   [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_channels = true with frequency = "dynamic" is not available yet (issue #270); use frequency = "static", or bond_channels = false for on-site interactions.
+
+**The producing FLEX run.** The file is accepted only at the identical
+state point of this run: the same ``Nmat`` (exactly), ``T``, ``filling``,
+band (Transfer, Extern, ``coeff_extern``, ``CellShape``, ``SubShape``),
+interaction rows and declared bond topology. ``bond_max_shells`` may differ
+from the FLEX run's ``longitudinal_bond_max_shells`` as long as both keep
+the same bond channels. ``hwave_sc`` always determines μ from ``filling``,
+so the FLEX run must run in filling mode: set ``filling`` and do not set
+``mu`` in its ``[mode.param]``. A Green function of a fixed-μ FLEX run is
+refused by the state check (``state differs: calc_mu: file False, run
+True``; see the table below).
+
+**Example.** The FLEX run, with the input files of
+:ref:`flex_so_bond_tutorial` (``hwave flex.toml``):
+
+.. code-block:: toml
+
+   [mode]
+     mode = "FLEX"
+     enable_spin_orbital = true
+     calc_scheme = "general"
+   [mode.param]
+     T = 0.05
+     filling = 0.4                 # filling mode: do not set mu
+     CellShape = [16, 16, 1]
+     Nmat = 512
+     mixing_scheme = "anderson"
+     anderson_depth = 8
+     Mix = 0.2
+     EPS = 8
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output"
+     green = "green"
+
+then ``hwave_sc`` with the same state point and the same input files
+(``hwave_sc sc.toml``):
+
+.. code-block:: toml
+
+   [mode]
+     mode = "RPA"
+     enable_spin_orbital = true
+   [mode.param]
+     T = 0.05
+     filling = 0.4
+     CellShape = [16, 16, 1]
+     Nmat = 512                    # the FLEX run's Nmat
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output_sc"
+   [eliashberg]
+     bond_channels = true          # frequency = "static", the default
+     bond_green = "output/green.npz"
+
+**The checks**, in this order; the first failure is reported. The file
+must exist and be an npz archive; a spin-orbital bond archive
+(``longitudinal_bond.npz``) or a non-spin-orbital bond archive is refused
+with a pointer to the Green function. Then come the archive checks of
+:ref:`sc_so_archive_checks`, for ``producer_stage = "flex_so_bond"`` and the
+capability ``"so_bond"``: structure, the producer's density residual, band,
+interaction, capability, declared topology, resolved topology (the bond
+channels after ``bond_max_shells``) and state, with ``Nmat`` exact. Then the
+markers ``momentum_convention``, ``wavevector_index`` (it must be the k grid
+of ``CellShape``) and ``sc_vertex_version``, and the shape of the stored
+Green function, ``(1, Nmat, nvol, 2N, 2N)``; the Green function is then read
+once, must be finite, and its digest must equal the file's ``fp_green``.
+
+**The** :math:`S_z` **leakage rule.** When the input conserves :math:`S_z`
+(no spin-flip Transfer entry and no :math:`S_z`-changing interaction row;
+the rule that selects the packed layout, see *Layout*), the Green function
+must be block-diagonal in spin. With :math:`\mathrm{leak} = \max|G_{\rm
+off}| / \max|G|` (:math:`G_{\rm off}` the spin-off-diagonal blocks): a leak
+of exactly zero uses the file as stored; :math:`0 < \mathrm{leak} \le
+10^{-12}` (round-off of the producer) sets the off-diagonal blocks to zero
+with one WARNING::
+
+   the Green function '<path>' has S_z-off-sector entries at the round-off level (leak = max off-sector |G| / max |G| = <leak> <= 1e-12: numerical leakage from a non-canonical producer); they are projected to exact zeros
+
+and a larger leak is refused (see the table below). When the input does not
+conserve :math:`S_z`, the leak is neither measured nor reported and the
+Green function is used as stored. An accepted file is reported at INFO
+level::
+
+   [eliashberg] bond_green: '<path>' (written by hwave FLEX (spin-orbital, bond channels)) passed the archive checks; S_z leak <leak>; projected: <yes|no>.
+
+with ``not checked (the input does not conserve S_z)`` in place of the leak
+for an input that does not conserve :math:`S_z`. A file that records
+``scf_converged = false`` is accepted with one WARNING::
+
+   [eliashberg] bond_green '<path>' records scf_converged = false: the FLEX run did not converge; its Green function is used as stored.
+
+**No tail correction.** ``bond_coeff_tail`` is the tail coefficient of the
+band Green function; a Green function read from a file is used without a
+tail correction (``bond_coeff_tail_applied = 0.0``). Without the key, an
+INFO line says so::
+
+   [eliashberg] bond_coeff_tail: the default 1.0 applies to the band Green function only; the Green function read from bond_green is used without a tail correction.
+
+An explicit nonzero value gives one WARNING (``bond_coeff_tail = 0`` gives
+neither line)::
+
+   [eliashberg] bond_coeff_tail = <value> is not applied with bond_green = '<path>': the tail correction needs the analytic asymptote of the band Green function, which a Green function read from a file does not provide (bond_coeff_tail_applied = 0).
+
+**What the kernel is.** :math:`\bar\chi_B` is the bubble of the Green
+function read from the file, and the pairing vertex is dressed with it at
+static RPA-ladder level. The kernel is therefore not the one of the FLEX
+run: its bond susceptibility (the bond archive ``longitudinal_bond.npz``)
+is not read by ``hwave_sc``. Every run says so with one WARNING, in place
+of the bare-band WARNING of *What is exact*::
+
+   [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the Green function read from bond_green = '<path>' (its approximation level, e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that Green function at RPA-ladder level; it is NOT the bond susceptibility of the run that wrote the file, so absolute lambda values are not comparable with FLEX/dynamic references.
+
+**Outputs.** ``eigenvalue.dat`` carries the lines of *Outputs* above, with
+``approximation = static RPA-ladder bond dressing on a borrowed Green
+function``, and in addition:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - key
+     - value
+   * - ``bond_green``
+     - the path as configured
+   * - ``bond_coeff_tail``
+     - the requested value (with ``bond_coeff_tail_source``), as on the
+       bare-band path
+   * - ``bond_coeff_tail_applied``
+     - ``0.0``: no tail correction is applied to a Green function read
+       from a file
+   * - ``bond_green_leak``
+     - the measured leak (``%.3e``); only when the input conserves
+       :math:`S_z`
+   * - ``bond_green_scf_converged``
+     - ``true`` or ``false``; only when the file records ``scf_converged``
+
+``gap.npz`` records the Green function it consumed: ``fp_green``
+is the digest of the Green function used by the kernel (after the
+projection, when one was applied); ``fp_green_source`` is the file's
+``fp_green`` and is written only when the Green function was projected
+(the two then differ); the state members (``state_mu``,
+``state_density``, ``state_calc_mu``, ``state_target``,
+``state_mu_tol``) are copied from ``green.npz``: the producer's recorded
+state of the same Green function (:math:`\beta` and ``Nmat`` equal this
+run's by the state check). The band, interaction and topology digests are
+this run's, as on the bare-band path.
+
+**Memory.** The admission check (:ref:`sc_so_bond_memory`) adds a
+resident row ``file_read`` of 256 KiB for the read of the file; the Green
+function rows are those of the bare-band path.
+
+**Troubleshooting.** ``<producer>`` is ``hwave FLEX (spin-orbital, bond
+channels)`` for a file that passed the structure check.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 40 20
+
+   * - Message
+     - Cause and remedy
+     - Keys
+   * - ``[eliashberg] bond_green file not found: <path>``
+     - The path does not exist. It is used as given, relative to the
+       working directory of ``hwave_sc``.
+     - ``[eliashberg] bond_green``
+   * - ``[eliashberg] bond_green file '<path>' is not an npz archive (it
+       holds a single .npy array); point the configuration at the .npz file
+       the FLEX run wrote.``
+     - A ``.npy`` file. Use the ``green.npz`` of the FLEX run.
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is the bond archive of a
+       spin-orbital FLEX run, not a Green function; set bond_green to its
+       companion green file '<green>'.``
+     - The spin-orbital bond archive was named. Set ``bond_green`` to the
+       companion file the message names.
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is the bond archive of a
+       spin-orbital FLEX run, not a Green function, and it records no
+       readable companion green file; set bond_green to the green.npz
+       written by that FLEX run ([file.output] green).``
+     - As above, for an archive without a readable ``green_file``.
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is a bond archive, not a Green
+       function; set bond_green to the green.npz of a spin-orbital FLEX run
+       with [mode.param] longitudinal_bond_channels = true.``
+     - A non-spin-orbital bond archive was named. Run the spin-orbital bond
+       FLEX and use its ``green.npz``.
+     - ``[eliashberg] bond_green``
+   * - ``<path> was produced by <producer> (so_onsite), but this run needs
+       a so_bond artifact. [eliashberg] bond_green needs the green.npz of a
+       spin-orbital FLEX run with [mode.param] longitudinal_bond_channels =
+       true (the bond-resolved run); re-run FLEX with it.``
+     - The ``green.npz`` of the on-site spin-orbital FLEX. Rerun FLEX with
+       ``longitudinal_bond_channels = true``.
+     - ``[mode.param] longitudinal_bond_channels`` of the FLEX run
+   * - ``'<path>' (written by <producer>) does not match this run: state
+       differs: calc_mu: file False, run True. Archives are reused only at
+       the identical state point; re-run <producer> at this filling and
+       temperature.``
+     - The FLEX run fixed μ (``mu`` set). ``hwave_sc`` determines μ from
+       ``filling``. Rerun the FLEX in filling mode: set ``filling`` to this
+       run's value and remove ``mu``.
+     - ``[mode.param] filling``, ``mu`` of the FLEX run
+   * - ``... state differs: nmat <n> (file) vs <m> (run). Archives are
+       reused only at the identical state point; set [mode.param] Nmat =
+       <n> (the producer's grid).``
+     - The Green function is used on its own Matsubara grid. Set ``Nmat``
+       to the FLEX run's value.
+     - ``[mode.param] Nmat``
+   * - ``... state differs: beta ... (file) vs ... (run)`` /
+       ``... state differs: target ... (file) vs ... (run) electrons per
+       cell; density ... (file) vs target ... (run, tol ...) electrons per
+       cell``
+     - Another temperature or filling. Rerun the FLEX at this ``T`` and
+       ``filling`` (or set them to the FLEX run's values).
+     - ``[mode.param] T``, ``filling``
+   * - ``'<path>' cannot be reused: the producer did not reach its filling
+       (residual ... electrons per cell > 1e-8·max(1,|t|) = ...).
+       Regenerate it with <producer> so that its density closes to that
+       tolerance.``
+     - The FLEX density did not close to its filling. Rerun the FLEX to
+       convergence.
+     - ``[mode.param] IterationMax``, ``EPS`` of the FLEX run
+   * - ``... does not match this run: band differs: ...`` /
+       ``... interaction differs: ...``
+     - Another band or other interaction rows (see the table of
+       :ref:`sc_so_archive_checks`). Use the input files of the FLEX run.
+     - ``Transfer``, ``Extern``, ``coeff_extern``, the interaction files
+   * - ``... does not match this run: declared topology differs: file <n>
+       displacements, run <m> displacements. ...``
+     - The interaction files declare other bond displacements. A declared
+       row counts even with a zero coupling: a ``CoulombInter`` row of
+       value 0 in one run and not in the other changes the declared
+       topology. Use the same interaction files, zero rows included.
+     - the interaction files
+   * - ``... does not match this run: resolved bond topology differs: file
+       delta_r ... reverse ... (max_shells ...), run delta_r ... reverse ...
+       (max_shells ...). ...``
+     - ``bond_max_shells`` keeps other bond channels than the FLEX run's
+       ``longitudinal_bond_max_shells``. Keep the same channels (the
+       numbers may differ when the channels agree).
+     - ``[eliashberg] bond_max_shells``, ``longitudinal_bond_max_shells``
+   * - ``'<path>' is malformed or truncated: <member> is missing or older
+       than this build requires. Regenerate it with <producer>.`` /
+       ``'<path>' is malformed or truncated: wavevector_index is not the k
+       grid of CellShape [...]. Regenerate it with <producer>.``
+     - A missing or older marker (``momentum_convention``,
+       ``wavevector_index``, ``sc_vertex_version``), or a wavevector index
+       of another k grid. Rerun the FLEX with this version.
+     - the FLEX run
+   * - ``'<path>' is malformed or truncated: green shape differs from this
+       run ((...) vs (...)). Regenerate it with <producer>.``
+     - The stored Green function does not have the shape ``(1, Nmat, nvol,
+       2N, 2N)`` of this run. Rerun the FLEX.
+     - the FLEX run
+   * - ``'<path>' is malformed or truncated: green has non-finite values at
+       frequency index <n>. Regenerate it with <producer>.``
+     - A NaN or infinite entry. Rerun the FLEX.
+     - the FLEX run
+   * - ``'<path>' (written by <producer>): fp_green mismatch: the Green
+       function read from it has digest ..., the file records ... (both at
+       fingerprint_version 2); its green member is not the one the run that
+       wrote it recorded. Regenerate it with <producer>.``
+     - The ``green`` member was modified after the FLEX run wrote it.
+       Rerun the FLEX.
+     - the FLEX run
+   * - ``the Green function '<path>' breaks S_z (leak = max off-sector |G| /
+       max |G| = <leak> > 1e-12) although this run's input conserves S_z;
+       it was produced from a different Hamiltonian. Regenerate it from this
+       run's input.``
+     - The input conserves :math:`S_z` but the Green function does not
+       (leak above :math:`10^{-12}`). Rerun the FLEX with this input.
+     - the FLEX run
 
 Switching a non-spin-orbital bond configuration
 """""""""""""""""""""""""""""""""""""""""""""""
@@ -3631,9 +3980,12 @@ change avoids.
 
      [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] pairing_type = <value> has no meaning in spin-orbital mode: the gap is one general 2N x 2N spin-orbital matrix, not a singlet or a triplet channel. Remove pairing_type.
 
-- **Remove** ``bond_green``::
-
-     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_green is not available with bond_channels in spin-orbital mode: no run writes a spin-orbital bond-resolved Green function yet (it arrives with the spin-orbital bond FLEX). Remove bond_green; the Green function is built from the Transfer (and Extern) input.
+- ``bond_green``: in spin-orbital mode it names the ``green.npz`` of a
+  spin-orbital FLEX run with ``longitudinal_bond_channels = true``, written in
+  filling mode at this run's state point (:ref:`sc_so_bond_green`). The
+  ``green.npz`` of a non-spin-orbital FLEX run is refused by the structure
+  check (``marker spin_orbital is missing``): remove the key, or point it at
+  such a file.
 
 - **Remove** ``bond_diagnostics`` and every ``bond_precondition_*`` key
   (``bond_precondition_atol``, ``bond_precondition_rtol``,
@@ -3646,7 +3998,7 @@ change avoids.
 - **Remove** ``chi0q_mode = "flex"`` (remove the key; it is not used
   here)::
 
-     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "flex" with bond_channels = true is not available yet: the spin-orbital bond path builds its bond bubble from the band's Green function and reads no FLEX output. Remove chi0q_mode (or leave it unset); it is not used on this path.
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "flex" with bond_channels = true is not available: the spin-orbital bond path builds its bond bubble from a Green function (the band's, or the file named by bond_green) and reads no FLEX susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green function, set bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] longitudinal_bond_channels = true.
 
   The value check of every spin-orbital run still applies first: a value
   other than ``"calc"``, ``"load"`` or ``"flex"`` (``"FLEX"`` included,
@@ -3659,7 +4011,7 @@ change avoids.
   ``flex_chi_s`` / ``flex_chi_c`` (refused on the on-site spin-orbital path)
   get one WARNING here::
 
-     [eliashberg] <keys>: not used for bond_channels=true in spin-orbital mode (the spin-orbital bond path reads no FLEX output).
+     [eliashberg] <keys>: not used for bond_channels=true in spin-orbital mode (the spin-orbital bond path reads no FLEX susceptibility).
 
 - ``eigenvalue_method``: only ``"arnoldi"``; another value is refused::
 

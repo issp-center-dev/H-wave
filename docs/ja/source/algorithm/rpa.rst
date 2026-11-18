@@ -683,9 +683,10 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 区切ったリストです。\ ``PairHop``\ はこのリストには挙がりません。この行は FLEX
 （スピン軌道モードでは、\ ``longitudinal_bond_channels``\ なしではオフサイトの行を拒否し、
 ありではその交換を厳密に扱います。\ :ref:`flex_spin_orbital`\ を参照）と、\ ``hwave_sc``\ が
-内部で実行する RPA では記録されません。\ ``hwave_sc``\ はボンドチャネル付きのスピン軌道
-FLEX の出力をまだ読みません。その静的なボンド経路は自分で裸のボンドバブルを作ります
-（\ :ref:`sc_so_bond_static`\ を参照）。
+内部で実行する RPA では記録されません。\ ``hwave_sc``\ の静的なボンド経路は、ボンドの
+バブルを裸のバンドから、または\ ``[eliashberg] bond_green``\ で指定したボンドチャネル付きの
+スピン軌道 FLEX の\ ``green.npz``\ から作ります（\ :ref:`sc_so_bond_green`\ を参照）。
+その FLEX のボンドアーカイブは\ ``hwave_sc``\ では読みません。
 
 
 .. _flex_second_order_kernel:
@@ -1164,7 +1165,9 @@ reduced スキームはスピン軌道入力を拒否します。Eliashberg ソ�
 まとめています。この版では CPU で動作し、\ ``chi0q``\ /\ ``chiq``\ を最後の SCF 反復の
 チャネル 0 ブロックとして書き出します。\ ``longitudinal_bond_output_full = true``\ では、
 最終 Green 関数のスピン軌道ボンドアーカイブも書き出します（\ :ref:`flex_so_bond_archive`\ ）。
-この版の\ ``hwave_sc``\ はその出力を読みません（後の版でボンドアーカイブを読みます）。FLEX のみの\ ``hwave_tsweep``\ は、上と同じく\ ``warm_start = false``\ で
+``hwave_sc``\ はその\ ``green.npz``\ を静的なボンド経路で\ ``[eliashberg] bond_green``\ により
+読みます（\ :ref:`sc_so_bond_green`\ ）。この版ではボンドアーカイブは読みません（後の版で
+読みます）。FLEX のみの\ ``hwave_tsweep``\ は、上と同じく\ ``warm_start = false``\ で
 これを実行します。
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
