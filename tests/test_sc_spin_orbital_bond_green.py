@@ -1,7 +1,9 @@
 """hwave_sc in spin-orbital mode with bond-resolved channels and a Green
 function read from ``[eliashberg] bond_green`` (issue #270): the
 configuration, the Green function built from the green.npz of a
-spin-orbital bond FLEX run, the refusals of that file and the tail policy.
+spin-orbital bond FLEX run, the refusals of that file, the tail policy and
+the S_z-leakage gates of a borrowed Green function (with their
+deliberate-break rows).
 
 The producer files are written once (:func:`setUpModule`, converged
 spin-orbital bond FLEX runs at the consumer's state point) and removed in
@@ -34,23 +36,29 @@ from tests.test_so_entry_rules import _PayloadReads
 _W = "[mode] enable_spin_orbital = true (hwave_sc, issue #83)"
 _LABEL = "hwave FLEX (spin-orbital, bond channels)"
 _LOG = logging.getLogger("qlms.test_sc_spin_orbital_bond_green")
-#: the producers of the module (fixture, sigma.npz written)
-_PRODUCERS = {"ZEEMAN_SZ_ALL": X.ZEEMAN_SZ_ALL, "SOC_ALL_TYPES": F.SOC_ALL_TYPES}
+#: ZEEMAN_EXTERN with every interaction type: its band conserves S_z, its
+#: interaction (PairLift, ...) does not
+ZPL = F.ZEEMAN_EXTERN._replace(name="ZPL", interactions=F._ALL_TYPES)
+#: the producers of the module
+_PRODUCERS = {"ZEEMAN_SZ_ALL": X.ZEEMAN_SZ_ALL, "SOC_ALL_TYPES": F.SOC_ALL_TYPES, "ZPL": ZPL}
+#: the producers that also write sigma.npz
+_SIGMA = ("ZEEMAN_SZ_ALL", "SOC_ALL_TYPES")
 _GREENS = {}
 _ROOT = []
 _DROP = object()
 
 
 def setUpModule():
-    """The green.npz (and sigma.npz) of a converged spin-orbital bond FLEX
-    run of each producer, at T 0.5, Nmat 32 and the fixture's filling."""
+    """The green.npz (and, for :data:`_SIGMA`, sigma.npz) of a converged
+    spin-orbital bond FLEX run of each producer, at T 0.5, Nmat 32 and the
+    fixture's filling."""
     root = tempfile.mkdtemp(prefix="sc_so_bond_green_")
     _ROOT.append(root)
     with contextlib.redirect_stdout(io.StringIO()):
         for name, fx in _PRODUCERS.items():
             d = os.path.join(root, name)
             os.makedirs(d)
-            _GREENS[name] = X.write_sc_green(d, fx, sigma=True)
+            _GREENS[name] = X.write_sc_green(d, fx, sigma=name in _SIGMA)
 
 
 def tearDownModule():
@@ -112,6 +120,17 @@ def _perturbed(test, path, rel, *, restamp):
     test.assertGreater(float(np.max(np.abs(G2 - G))), 0.0)
     extra = {"fp_green": _restamped(G2)} if restamp else {}
     return _edited(test, path, green=G2, **extra)
+
+
+def _mismatch(path):
+    """The ``fp_green`` mismatch text of the edited, not re-stamped file at
+    ``path``."""
+    m = _members(path)
+    return ("'{}' (written by {}): fp_green mismatch: the Green function read from it has "
+            "digest {}..., the file records {}... (both at fingerprint_version 2); its "
+            "green member is not the one the run that wrote it recorded. Regenerate it "
+            "with {}.".format(path, _LABEL, str(_restamped(m["green"]))[:12],
+                              str(m["fp_green"])[:12], _LABEL))
 
 
 def _consumer(fixture, *, param=None, eliashberg=None):
@@ -480,15 +499,7 @@ class TestBorrowedRefusals(unittest.TestCase):
         # an edited green on top: the digest refuses it, no unconverged WARNING
         edited = _edited(self, _perturbed(self, src, 1e-6, restamp=False),
                          scf_converged=np.bool_(False))
-        self._row(p, edited, self._mismatch(edited), read=True)
-
-    def _mismatch(self, path):
-        m = _members(path)
-        return ("'{}' (written by {}): fp_green mismatch: the Green function read from it has "
-                "digest {}..., the file records {}... (both at fingerprint_version 2); its "
-                "green member is not the one the run that wrote it recorded. Regenerate it "
-                "with {}.".format(path, _LABEL, str(_restamped(m["green"]))[:12],
-                                  str(m["fp_green"])[:12], _LABEL))
+        self._row(p, edited, _mismatch(edited), read=True)
 
     def test_payload(self):
         p = _base("ZEEMAN_SZ_ALL")
@@ -509,7 +520,7 @@ class TestBorrowedRefusals(unittest.TestCase):
         self.assertIsNone(e.check)
         self.assertEqual(digest.call_count, 0)
         path = _perturbed(self, src, 1e-6, restamp=False)
-        e = self._row(p, path, self._mismatch(path), read=True)
+        e = self._row(p, path, _mismatch(path), read=True)
         self.assertEqual(e.check, "green")
 
 
@@ -548,6 +559,306 @@ class TestTailPolicy(unittest.TestCase):
                         "'{}': the tail correction needs the analytic asymptote of the band "
                         "Green function, which a Green function read from a file does not "
                         "provide (bond_coeff_tail_applied = 0).".format(shown, path)])
+
+
+# ------------------------------------------------------------ S_z leakage (C1b-PG)
+#: so_bond.project_borrowed_green's WARNING and refusal (``%s`` path, ``%.3e`` leak)
+_PROJECTED_WARNING = (
+    "the Green function '%s' has S_z-off-sector entries at the round-off level (leak = max "
+    "off-sector |G| / max |G| = %.3e <= 1e-12: numerical leakage from a non-canonical "
+    "producer); they are projected to exact zeros")
+_LEAK_REFUSAL = (
+    "the Green function '%s' breaks S_z (leak = max off-sector |G| / max |G| = %.3e > "
+    "1e-12) although this run's input conserves S_z; it was produced from a different "
+    "Hamiltonian. Regenerate it from this run's input.")
+_BUBBLE_REFUSAL = ("raised ValueError: so_bond_bubble: the static bond bubble has "
+                   "S_z-off-sector entries")
+_GATE_TOL = 1e-12
+_NON_VACUITY = 1e-3
+
+
+def rel_or_abs(a, b):
+    """``max|a - b| / max|b|``, or ``max|a - b|`` when ``max|b| = 0``."""
+    a, b = np.asarray(a), np.asarray(b)
+    num = float(np.max(np.abs(a - b)))
+    den = float(np.max(np.abs(b)))
+    return num / den if den != 0.0 else num
+
+
+def _gate_failures(gate):
+    """The failed checks of one gate: ``gate(check)`` runs the production
+    call and reports each assertion as ``check(name, ok, detail="")``. A
+    production exception is the failure ``"raised <Type>: <text>"``. A gate
+    row asserts ``== []``, a break row that the named failure is listed."""
+    failures = []
+
+    def check(name, ok, detail=""):
+        if not ok:
+            failures.append(name + (" (" + detail + ")" if detail else ""))
+    try:
+        gate(check)
+    except Exception as e:  # a production exception fails the gate
+        failures.append("raised {}: {}".format(type(e).__name__, e))
+    return failures
+
+
+def _bounded(check, name, value, bound):
+    """``value`` (a metric) finite, then ``<= bound``."""
+    finite = bool(np.isfinite(value))
+    check(name + " finite", finite, repr(value))
+    check(name, finite and value <= bound, "%.3e > %.0e" % (value, bound))
+
+
+def _has(failures, name):
+    return any(f.startswith(name) for f in failures)
+
+
+def _leak(G):
+    """``max off-sector |G| / max |G|`` of a canonical ``(..., nd, nd)`` G,
+    computed here (not by ``so_bond.green_leak``)."""
+    n = G.shape[-1] // 2
+    off = max(float(np.max(np.abs(G[..., :n, n:]))), float(np.max(np.abs(G[..., n:, :n]))))
+    return off / float(np.max(np.abs(G)))
+
+
+def _warning_records(records):
+    return [(r.name, r.getMessage()) for r in records if r.levelno >= logging.WARNING]
+
+
+def _clean_operator(p):
+    """The production operator of the run ``p`` on the clean module green of
+    ZEEMAN_SZ_ALL (the reference of gate (ii), built before any patch)."""
+    g = _borrow(p, _GREENS["ZEEMAN_SZ_ALL"])
+    return T._operator(p, g, T._admit(p))
+
+
+def _projected_gate(p, path, *, layout, ref, seen):
+    """Gate C1b-PG (ii) on the run ``p``: the re-stamped file at ``path``
+    (``G + 1e-14 max|G| P``) is projected with one WARNING; the record holds
+    the clean digest and the file's; the operator equals ``ref``."""
+    G2 = _members(path)["green"]
+    fp_clean = str(_members(_GREENS["ZEEMAN_SZ_ALL"])["fp_green"])
+    fp_file = str(_members(path)["fp_green"])
+    leak = _leak(G2)
+
+    def gate(check):
+        with _records() as rec:
+            g = _borrow(p, path)
+            adm = T._admit(p)
+            static = T._operator(p, g, adm)
+        check("layout " + layout, adm.layout == layout and static.layout == layout,
+              adm.layout)
+        warns = _warning_records(rec)
+        check("one projection WARNING",
+              warns == [("hwave.solver.so_bond", _PROJECTED_WARNING % (path, leak))], repr(warns))
+        check("accepted INFO", _count(rec, sc._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
+                                      "%.3e" % leak, "yes") == 1)
+        check("fp_green == clean digest", g.fp_green == fp_clean, str(g.fp_green))
+        check("fp_green_source == re-stamped digest", g.fp_green_source == fp_file,
+              str(g.fp_green_source))
+        miss = T._miss(lambda v: T._apply(static, v), lambda v: T._apply(ref, v),
+                       T._gaps(p.fixture))
+        seen["miss"] = miss
+        _bounded(check, "operator miss vs the clean file", miss, _GATE_TOL)
+    return _gate_failures(gate)
+
+
+def _refused_gate(p, path, *, seen):
+    """Gate C1b-PG (iii): the re-stamped file at ``path`` (``1e-6``) is
+    refused by the leak check, before any bubble."""
+    leak = _leak(_members(path)["green"])
+    seen["leak"] = leak
+
+    def gate(check):
+        refused = None
+        with mock.patch.object(so_bond, "so_bond_bubble",
+                               wraps=so_bond.so_bond_bubble) as bubble:
+            try:
+                g = _borrow(p, path)
+                T._operator(p, g, T._admit(p))
+            except ValueError as e:
+                refused = e
+        check("refused with the leak text", type(refused) is ValueError
+              and str(refused) == _LEAK_REFUSAL % (path, leak), repr(refused))
+        check("so_bond_bubble not called", bubble.call_count == 0, str(bubble.call_count))
+    return _gate_failures(gate)
+
+
+def _digest_gate(p, path, *, seen):
+    """Gate C1b-PG (iv): the edited, not re-stamped file at ``path`` is
+    refused by the digest step, before the leak is measured."""
+    text = _mismatch(path)
+
+    def gate(check):
+        refused = None
+        with _records() as rec, \
+                mock.patch.object(so_bond, "project_borrowed_green",
+                                  wraps=so_bond.project_borrowed_green) as project, \
+                mock.patch.object(so_bond, "green_leak", wraps=so_bond.green_leak) as leak:
+            try:
+                _borrow(p, path)
+            except fingerprint.SOArchiveError as e:
+                refused = e
+        seen["warnings"] = _warning_records(rec)
+        check("refused with the fp_green mismatch text", refused is not None
+              and str(refused) == text and refused.check == "green", repr(refused))
+        check("project_borrowed_green not called", project.call_count == 0,
+              str(project.call_count))
+        check("green_leak not called", leak.call_count == 0, str(leak.call_count))
+    return _gate_failures(gate)
+
+
+def _conserving_rule_gate(p, path):
+    """Gate R26 on ZPL: the band conserves S_z, the interaction does not, so
+    the re-stamped file at ``path`` (``1e-6``) is used as stored: no leak
+    check, no projection, no WARNING."""
+    m = _members(path)
+
+    def gate(check):
+        with _records() as rec:
+            g = _borrow(p, path)
+        check("band conserves S_z", g.conserving is True)
+        check("leak not measured", g.leak is None, repr(g.leak))
+        check("fp_green == the file's", g.fp_green == str(m["fp_green"]), str(g.fp_green))
+        check("no fp_green_source", g.fp_green_source is None, repr(g.fp_green_source))
+        check("G used as stored", np.array_equal(g.carrier.deflated_kw, m["green"]))
+        check("no WARNING", _warning_records(rec) == [], repr(_warning_records(rec)))
+        check("accepted INFO", _count(rec, sc._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
+                                      sc._SO_BOND_GREEN_LEAK_UNCHECKED, "no") == 1)
+    return _gate_failures(gate)
+
+
+def _identity_projection(G, *, norb_phys, source, axes=(-2, -1)):
+    """Break (b1): no projection; the leak is still measured."""
+    return G, so_bond.green_leak(G, norb_phys, axes=axes)
+
+
+def _digest_unchecked(stored, path, *, label, green_fp, green_only=False):
+    """Break (b2): the stored digest is returned without comparing."""
+    return stored
+
+
+_DENSE = {"SO_Bond_Layout": "dense"}
+
+
+class TestBorrowedLeak(unittest.TestCase):
+    """Gates C1b-PG (ii)-(iv) and R26: a borrowed Green function with S_z
+    leakage up to 1e-12 is projected (WARNING, both digests recorded, the
+    operator of the clean file), above that refused before any bubble; an
+    edited file is refused by its digest before the leak is measured; an
+    input that does not conserve S_z uses the file as stored."""
+
+    maxDiff = None
+
+    def test_sub_threshold_projected(self):
+        fx = X.ZEEMAN_SZ_ALL
+        clean = _GREENS["ZEEMAN_SZ_ALL"]
+        path = _perturbed(self, clean, 1e-14, restamp=True)
+        G, G2 = _members(clean)["green"], _members(path)["green"]
+        # non-vacuity: the test-side dense bubble of G' has off-sector entries
+        p = _base("ZEEMAN_SZ_ALL")
+        nd, nvol = 2 * p.norb_phys, int(np.prod(p.shape))
+        geom = so_bond.slot_geometry(p.so_run.bond.topo, p.shape)
+        from tests.so_bond_fixtures import NOCAP
+        plan = so_bond.plan_so_bond(nmat=p.nmat, nvol=nvol, B=geom.B, nd=nd,
+                                    consumers=("pairing_static",), caps=NOCAP, layout="dense")
+        ND = geom.B * nd * nd
+        Xb = so_bond.so_bond_bubble(G2, None, p.beta, geom, p.shape, plan=plan, freq="static",
+                                    sink=np.zeros((nvol, ND, ND), dtype=complex))
+        delta = float(np.max(np.abs(G2 - G)))
+        ratio = (float(np.max(np.abs(Xb[:, T._bond_off_sector_mask(nd, geom.B)])))
+                 / (delta * float(np.max(np.abs(G)))))
+        self.assertTrue(np.isfinite(ratio))
+        self.assertGreater(ratio, _NON_VACUITY)
+        for layout, eli in (("sz_packed", None), ("dense", _DENSE)):
+            with self.subTest(layout=layout):
+                q = _consumer(fx, eliashberg=eli)
+                seen = {}
+                self.assertEqual(_projected_gate(q, path, layout=layout, ref=_clean_operator(q),
+                                                 seen=seen), [])
+        # through the entry: the gap archive records both digests
+        ref = F.run_case(fx, eliashberg={"Bond_Green": clean}, fresh=True).gap_npz
+        fp_clean, fp_file = str(_members(clean)["fp_green"]), str(_members(path)["fp_green"])
+
+        def entry(check):
+            r = F.run_case(fx, eliashberg={"Bond_Green": path}, fresh=True)
+            gap = r.gap_npz
+            check("gap fp_green == clean digest", str(gap["fp_green"]) == fp_clean)
+            check("gap fp_green_source == re-stamped digest",
+                  "fp_green_source" in gap and str(gap["fp_green_source"]) == fp_file)
+            check("eigenvalue.dat leak", T._dat_keys(r.eigenvalue_dat)["bond_green_leak"]
+                  == "%.3e" % _leak(G2))
+            _bounded(check, "eigenvalues rel_or_abs", rel_or_abs(gap["eigenvalues"],
+                                                                 ref["eigenvalues"]), _GATE_TOL)
+        self.assertNotIn("fp_green_source", ref)
+        self.assertEqual(_gate_failures(entry), [])
+
+    def test_above_threshold_refused(self):
+        path = _perturbed(self, _GREENS["ZEEMAN_SZ_ALL"], 1e-6, restamp=True)
+        seen = {}
+        self.assertEqual(_refused_gate(_base("ZEEMAN_SZ_ALL"), path, seen=seen), [])
+        self.assertGreater(seen["leak"], so_bond._LEAK_NUMERICAL)
+
+    def test_digest_before_leak(self):
+        path = _perturbed(self, _GREENS["ZEEMAN_SZ_ALL"], 1e-14, restamp=False)
+        self.assertEqual(_digest_gate(_base("ZEEMAN_SZ_ALL"), path, seen={}), [])
+
+    def test_conserving_input_rule(self):
+        path = _perturbed(self, _GREENS["ZPL"], 1e-6, restamp=True)
+        p = _base("ZPL")
+        # non-vacuity: a conserving rule would refuse this file
+        self.assertGreater(_leak(_members(path)["green"]), so_bond._LEAK_NUMERICAL)
+        self.assertIs(sc._so_conserving_input(p.so_run, p.norb_phys), False)
+        self.assertEqual(_conserving_rule_gate(p, path), [])
+
+
+class TestBorrowedLeakBreaks(unittest.TestCase):
+    """Deliberate breaks of the S_z-leakage gates, made with call-time
+    patches: each row asserts that the break reached the production call,
+    then that its gate fails with the named failure."""
+
+    def test_b1_no_projection_packed(self):
+        path = _perturbed(self, _GREENS["ZEEMAN_SZ_ALL"], 1e-14, restamp=True)
+        p = _base("ZEEMAN_SZ_ALL")
+        ref = _clean_operator(p)
+        with mock.patch.object(so_bond, "project_borrowed_green",
+                               side_effect=_identity_projection) as brk:
+            failures = _projected_gate(p, path, layout="sz_packed", ref=ref, seen={})
+        self.assertEqual(brk.call_count, 1)
+        self.assertTrue(_has(failures, _BUBBLE_REFUSAL), failures)
+
+    def test_b1_no_projection_dense(self):
+        path = _perturbed(self, _GREENS["ZEEMAN_SZ_ALL"], 1e-14, restamp=True)
+        p = _consumer(X.ZEEMAN_SZ_ALL, eliashberg=_DENSE)
+        ref = _clean_operator(p)
+        with mock.patch.object(so_bond, "project_borrowed_green",
+                               side_effect=_identity_projection) as brk:
+            failures = _projected_gate(p, path, layout="dense", ref=ref, seen={})
+        self.assertEqual(brk.call_count, 1)
+        self.assertTrue(_has(failures, "fp_green == clean digest"), failures)
+
+    def test_b2_digest_unchecked(self):
+        path = _perturbed(self, _GREENS["ZEEMAN_SZ_ALL"], 1e-14, restamp=False)
+        seen = {}
+        with mock.patch.object(fingerprint, "check_green_digest",
+                               side_effect=_digest_unchecked) as brk:
+            failures = _digest_gate(_base("ZEEMAN_SZ_ALL"), path, seen=seen)
+        self.assertEqual(brk.call_count, 1)
+        self.assertTrue(_has(failures, "refused with the fp_green mismatch text"), failures)
+        self.assertTrue(_has(failures, "project_borrowed_green not called"), failures)
+        # accepted, with the projection WARNING
+        self.assertEqual(seen["warnings"], [(
+            "hwave.solver.so_bond",
+            _PROJECTED_WARNING % (path, _leak(_members(path)["green"])))])
+
+    def test_b3_conserving_rule_forced(self):
+        path = _perturbed(self, _GREENS["ZPL"], 1e-6, restamp=True)
+        p = _base("ZPL")
+        with mock.patch.object(sc, "_so_conserving_input", return_value=True) as brk:
+            failures = _conserving_rule_gate(p, path)
+        self.assertEqual(brk.call_count, 1)
+        self.assertTrue(_has(failures, "raised ValueError: " + _LEAK_REFUSAL % (
+            path, _leak(_members(path)["green"]))), failures)
 
 
 # ------------------------------------------------------------ public entry
