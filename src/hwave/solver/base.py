@@ -87,6 +87,27 @@ def scf_status_file_name(info_outputfile):
     return value
 
 
+def check_scf_status_name(info_outputfile, print_check=None):
+    """Refuse a ``[file.output] scf_status`` that is not a string
+    (:func:`scf_status_file_name`) or that names the same file as another
+    configured output key of ``[file.output]`` or the ``[log] print_check``
+    file: the status file would overwrite it, or be overwritten. Raises
+    ValueError; ``scf_status = ""`` (disabled) never clashes."""
+    name = scf_status_file_name(info_outputfile)
+    if name == "":
+        return
+    others = [(key, value) for key, value in info_outputfile.items()
+              if key not in ("scf_status", "path_to_output")]
+    if print_check is not None:
+        others.append(("[log] print_check", print_check))
+    for key, value in others:
+        if isinstance(value, str) and value == name:
+            raise ValueError(
+                "[file.output] scf_status = {!r} names the same file as {}; "
+                "choose another name, or \"\" to disable the status "
+                "file".format(name, key))
+
+
 class solver_base():
     """Base solver class for Hartree-Fock calculations.
     

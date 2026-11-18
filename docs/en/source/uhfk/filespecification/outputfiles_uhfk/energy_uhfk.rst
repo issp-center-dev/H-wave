@@ -10,7 +10,10 @@ obtained by the wave-number space UHF method
 are outputted.
 The filename is specified by the keyword ``energy`` in ``file.output`` section in the parameter file.
 
-An example of the file is shown as follows.
+An example of the file is shown as follows. The solver pads the key names
+with spaces before ``=`` (``Sz      =``, ``Sx      =``); the padding is
+omitted from the other lines of the example. Read the values by key name
+and strip the spaces.
 
 ::
 
@@ -22,8 +25,8 @@ An example of the file is shown as follows.
     NCond = 8.000000000000007
     Sz = 3.2822430107160017e-07
     ChemicalPotential = 0.123456789
-    Sx = 0.0
-    Sy = 0.0
+    Sx      = 0.0
+    Sy      = 0.0
 
 .. note::
 

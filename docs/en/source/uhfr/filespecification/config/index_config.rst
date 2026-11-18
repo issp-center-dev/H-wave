@@ -436,4 +436,5 @@ while the latter on output files, as described below.
   This parameter specifies the output file for the convergence status of
   the SCF loop (see :ref:`subsec:scf_status.dat`). Unlike the other keys of
   this section, it is exported by default; set it to ``""`` to disable the
-  output. The value must be a string. The key is matched exactly.
+  output. The value must be a string, and must not name the same file as another
+  output key or the ``print_check`` file. The key is matched exactly.

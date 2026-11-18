@@ -431,10 +431,36 @@ class TestEdgeCases(_Base):
                 # the committed UHFr case starts from a file and does not
                 # read RndSeed, which qlms.run reports as an unused key
                 del inp["mode"]["param"]["RndSeed"]
-                with self.assertLogs("qlms", level="WARNING") as logs:
+                with self.assertLogs("qlms", level="INFO") as logs:
                     self._run(inp)
-                self.assertEqual(len(logs.records), 1, logs.output)
-                self.assertIn(_ZERO_WARNING, logs.records[0].getMessage())
+                warnings = [r for r in logs.records if r.levelno >= logging.WARNING]
+                self.assertEqual(len(warnings), 1, logs.output)
+                self.assertIn(_ZERO_WARNING, warnings[0].getMessage())
+                # nor a "calculation failed: rest=1.0" message at any level
+                # (UHFk logged one at INFO, UHFr at WARNING)
+                self.assertFalse([r for r in logs.records
+                                  if "calculation" in r.getMessage()
+                                  and "failed" in r.getMessage()], logs.output)
+
+    def test_name_clash_refused_before_solve(self):
+        """An scf_status name equal to another configured output file, or to
+        the print_check file, is refused before the SCF starts."""
+        for solver in ("UHFk", "UHFr"):
+            for key in ("energy", "green", "eigen", "print_check"):
+                with self.subTest(solver=solver, key=key):
+                    out = self._out(solver + key)
+                    inp = _input(solver, out, print_check="check.dat")
+                    if key == "print_check":
+                        inp["file"]["output"]["scf_status"] = "check.dat"
+                    else:
+                        inp["file"]["output"]["scf_status"] = inp["file"]["output"][key]
+                    with self.assertRaisesRegex(ValueError, "scf_status.*" + key):
+                        self._run(inp)
+                    self.assertEqual(os.listdir(out), [])
+        # a distinct name, and the disabled file, are accepted
+        from hwave.solver.base import check_scf_status_name
+        check_scf_status_name({"scf_status": "s.dat", "energy": "e.dat"}, "c.dat")
+        check_scf_status_name({"scf_status": "", "energy": ""}, None)
 
 
 class TestInvariants(_Base):

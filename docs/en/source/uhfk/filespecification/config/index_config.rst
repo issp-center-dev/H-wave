@@ -373,7 +373,8 @@ to the definition files.
   This parameter specifies the name of the file to store the convergence
   status of the SCF loop (see :ref:`subsec:scf_status_uhfk.dat`). It is
   written by default; if it is set to an empty string, no output will be
-  generated. The value must be a string. The key is matched exactly.
+  generated. The value must be a string, and must not name the same file as another
+  output key or the ``print_check`` file. The key is matched exactly.
 
 - ``rpa``
 

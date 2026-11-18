@@ -861,7 +861,8 @@ class UHFk(solver_base):
             logger.info("UHFk calculation succeeded: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
             logger.info("Total Energy = {}.".format(self.physics["Ene"]["Total"]))
-        else:
+        elif self.scf_iterations > 0:
+            # (after zero steps save_results logs the one warning there is)
             logger.info("UHFk calculation failed: rest={}, eps={}."
                         .format(self.physics["Rest"], self.param_mod["eps"]))
         if print_check is not None:

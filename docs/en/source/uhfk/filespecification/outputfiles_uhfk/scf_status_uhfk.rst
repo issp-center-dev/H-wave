@@ -169,5 +169,10 @@ The ``print_check`` log of ``log`` section (step, residual, energy,
 
    The key name ``scf_status`` is matched exactly, like the other keys of
    ``file.output``: ``SCF_Status`` is not the same key. Its value must be a
-   string; any other value (``false``, ``0``) is refused before the
-   calculation starts.
+   string, and it must not name the same file as another output key of
+   ``file.output`` or the ``print_check`` file. When the calculation is run
+   through ``hwave`` (``hwave.qlms.run``), such a value (for example
+   ``false``, ``0`` or ``"energy.dat"`` next to ``energy = "energy.dat"``)
+   is refused before the calculation starts. A program that calls the solver
+   classes directly gets the error for a non-string value only when the
+   results are saved.
