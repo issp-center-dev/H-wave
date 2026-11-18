@@ -74,6 +74,8 @@ def tearDownModule():
         shutil.rmtree(root, True)
     _ROOT.clear()
     _GREENS.clear()
+    _BASE.clear()
+    _KERNELS.clear()
 
 
 def _scratch(test):
@@ -311,7 +313,7 @@ class TestBorrowedRecord(unittest.TestCase):
         for listed in (False, True):
             base = sc._so_bond_gap_members(listed)
             self.assertNotIn("fp_green_source", base)
-            self.assertEqual(sc._so_bond_gap_members(listed, green_source=True),
+            self.assertEqual(sc._so_bond_gap_members(listed, projected=True),
                              base | {"fp_green_source"})
 
 
@@ -664,9 +666,14 @@ def _projected_gate(p, path, *, layout, ref, seen):
         check("fp_green == clean digest", g.fp_green == fp_clean, str(g.fp_green))
         check("fp_green_source == re-stamped digest", g.fp_green_source == fp_file,
               str(g.fp_green_source))
+        n = p.norb_phys
+        kw = g.carrier.deflated_kw
+        check("off-sector of the used G exactly zero",
+              not np.any(kw[..., :n, n:]) and not np.any(kw[..., n:, :n]))
+        check("digest of the used G == clean digest",
+              fingerprint.green_digest(kw, fingerprint.GREEN_LAYOUT) == fp_clean)
         miss = T._miss(lambda v: T._apply(static, v), lambda v: T._apply(ref, v),
                        T._gaps(p.fixture))
-        seen["miss"] = miss
         _bounded(check, "operator miss vs the clean file", miss, _GATE_TOL)
     return _gate_failures(gate)
 
@@ -717,7 +724,7 @@ def _digest_gate(p, path, *, seen):
 
 
 def _conserving_rule_gate(p, path):
-    """Gate R26 on ZPL: the band conserves S_z, the interaction does not, so
+    """The conserving-input rule on ZPL: the band conserves S_z, the interaction does not, so
     the re-stamped file at ``path`` (``1e-6``) is used as stored: no leak
     check, no projection, no WARNING."""
     m = _members(path)
@@ -750,11 +757,12 @@ _DENSE = {"SO_Bond_Layout": "dense"}
 
 
 class TestBorrowedLeak(unittest.TestCase):
-    """Gates C1b-PG (ii)-(iv) and R26: a borrowed Green function with S_z
-    leakage up to 1e-12 is projected (WARNING, both digests recorded, the
-    operator of the clean file), above that refused before any bubble; an
-    edited file is refused by its digest before the leak is measured; an
-    input that does not conserve S_z uses the file as stored."""
+    """Gates C1b-PG (ii)-(iv) and the conserving-input rule: a borrowed
+    Green function with S_z leakage up to 1e-12 is projected (WARNING, both
+    digests recorded, the operator of the clean file), above that refused
+    before any bubble; an edited file is refused by its digest before the
+    leak is measured; an input that does not conserve S_z uses the file as
+    stored."""
 
     maxDiff = None
 
@@ -844,6 +852,9 @@ class TestBorrowedLeakBreaks(unittest.TestCase):
             failures = _projected_gate(p, path, layout="dense", ref=ref, seen={})
         self.assertEqual(brk.call_count, 1)
         self.assertTrue(_has(failures, "fp_green == clean digest"), failures)
+        # the G handed to the kernel is the unprojected file content
+        self.assertTrue(_has(failures, "off-sector of the used G exactly zero"), failures)
+        self.assertTrue(_has(failures, "digest of the used G == clean digest"), failures)
 
     def test_b2_digest_unchecked(self):
         path = _perturbed(self, _GREENS["ZEEMAN_SZ_ALL"], 1e-14, restamp=False)
@@ -1273,6 +1284,8 @@ class TestBorrowedEntry(unittest.TestCase):
             root.setLevel(level)
         self.assertIn("state differs", str(cm.exception))
         msgs = [r.getMessage() for r in seen]
+        # the handler received the run's records, so the absences below hold
+        self.assertIn("Calculating Green's function G(k, iwn) (spin-orbital bond)...", msgs)
         self.assertNotIn(_LADDER_BORROWED % path, msgs)
         self.assertNotIn(sc._SO_BOND_RPA_LADDER, msgs)
 

@@ -9679,7 +9679,7 @@ _SO_BOND_GAP_LISTING = ("eigenvalues", "eigenvectors", "eigenvector_spin_weights
                         "eigenvalue_match", "pp_sectors")
 
 
-def _so_bond_gap_members(listed, pole=(), green_source=False):
+def _so_bond_gap_members(listed, pole=(), projected=False):
     """The member set of a static spin-orbital bond gap archive: the stage's
     provenance members, :data:`_SO_BOND_GAP_BASE` and, when ``listed`` (the
     eigenvalue listing is not empty), :data:`_SO_BOND_GAP_LISTING`. A run
@@ -9688,7 +9688,7 @@ def _so_bond_gap_members(listed, pole=(), green_source=False):
     (``rpa_past_pole``, ``rpa_pole_indicator_spinful``,
     ``rpa_pole_q_spinful``); ``pole`` must be exactly those or empty. A run
     whose kernel used the S_z-sector projection of a Green function read
-    from ``bond_green`` (``green_source``) also has ``fp_green_source``."""
+    from ``bond_green`` (``projected``) also has ``fp_green_source``."""
     from hwave.solver import fingerprint
     pole = tuple(pole)
     if pole and set(pole) != {"rpa_past_pole", "rpa_pole_indicator_spinful",
@@ -9697,7 +9697,7 @@ def _so_bond_gap_members(listed, pole=(), green_source=False):
     names = set(fingerprint.required_members("gap", "sc_so_bond_static"))
     names.update(_SO_BOND_GAP_BASE)
     names.update(pole)
-    if green_source:
+    if projected:
         names.add("fp_green_source")
     if listed:
         names.update(_SO_BOND_GAP_LISTING)
@@ -9898,7 +9898,7 @@ def _so_output_record(output_dir, gap_file, norb_phys, gap, eigenvalues,
             record["pp_sectors"] = np.asarray(bond_report.pp_sectors, dtype=np.int8)
         expected = _so_bond_gap_members(
             listed, pole=tuple(pole_members),
-            green_source="fp_green_source" in provenance_members)
+            projected="fp_green_source" in provenance_members)
         if set(record) != expected:
             raise RuntimeError(
                 "_so_output_record: the bond gap archive members differ from the "

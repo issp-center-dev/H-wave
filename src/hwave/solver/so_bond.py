@@ -76,7 +76,8 @@ from .so_records import CompiledInteraction, _displacements
 
 __all__ = ["SlotConvention", "SLOT_CONVENTION", "BondSlotGeometry", "slot_geometry",
            "so_bond_topology", "parse_layout_key", "BandSzCheck", "band_conserves_sz",
-           "records_conserve_sz", "InputSzCheck", "input_conserves_sz", "select_layout", "canonical_band_eigen", "green_leak",
+           "records_conserve_sz", "InputSzCheck", "input_conserves_sz", "select_layout",
+           "canonical_band_eigen", "green_leak",
            "project_green_sectors", "project_borrowed_green", "SECTOR_ORDER", "SectorCross",
            "PPGather",
            "SectorMap", "sz_sector_map", "PackedArrays", "SOBondCaps", "SOBondPlan",
