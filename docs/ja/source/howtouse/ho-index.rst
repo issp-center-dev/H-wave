@@ -7,7 +7,7 @@
     H-waveを利用するには、以下のプログラムとライブラリが必要です。
 
     - python 3.10 以降
-    - numpy モジュール（1.26 以降。CI では numpy 1.26 と 2.x を検証）
+    - numpy モジュール（1.26 以上 3 未満。CI では numpy 1.26 と 2.x を検証）
     - scipy モジュール
     - requests モジュール
     - tomli モジュール

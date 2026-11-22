@@ -336,7 +336,7 @@ jobs:
         poetry config virtualenvs.in-project true
 
     # The venv cache key is shared with `test` (same Python, same numpy
-    # pin, same lock file). Only shard 1 of each numpy leg may SAVE it; the
+    # pin, same pyproject.toml). Only shard 1 of each numpy leg may SAVE it; the
     # other shards only restore, so the three legs do not race to create
     # the same cache entry.
     - name: Load cached venv (shard 1, restores and saves)

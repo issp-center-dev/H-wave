@@ -22,16 +22,19 @@
   within their rows. ``tracemalloc`` sees the Python allocations (numpy
   arrays, the ARPACK work arrays scipy allocates). The allocations inside
   ``np.linalg.eig`` (its input copy, LAPACK's eigenvectors and eigenvalues,
-  the ``zgeev`` workspace) are native and not traced on numpy 1.x, and
-  traced on numpy 2.x; the row budgets both shares. At the fallback the two
-  moments are kept apart on numpy 1.x: while ``np.linalg.eig`` runs, the
+  the ``zgeev`` workspace) are native and untraced on numpy 1.x; whether
+  ``tracemalloc`` sees some of them on numpy 2 depends on the build (the
+  PyPI 2.5.5 wheel does, a conda-forge 2.4.6 build does not). The row
+  budgets both shares. At the fallback the two moments are kept apart on
+  numpy 1.x: while ``np.linalg.eig`` runs, the
   traced bytes plus the host LAPACK's native bytes (``zgeev`` workspace
   query) are at most the row; after it returns (the native buffers freed, a
   third ``dim x dim`` array -- the reordered eigenvectors -- alive), the
   traced peak is at most the row minus its native share plus ``16 dim^2``.
-  On numpy 2.x the workspace is traced, so the traced peak is held to the
-  whole row. The native share covers the host LAPACK's sizes
-  arithmetically.
+  On numpy 2 the traced peak is held to the whole row instead: a
+  conservative policy keyed on the major, because the build, not the
+  major, decides how much of the workspace is traced. The native share
+  covers the host LAPACK's sizes arithmetically.
 """
 import logging
 import tracemalloc
@@ -870,9 +873,10 @@ class TestSolverMemory(unittest.TestCase):
     bytes plus the host LAPACK's native bytes are at most the row (the ratio
     to the row without the fallback is logged); after it returns, the
     traced peak (three ``dim x dim`` arrays, no native share on numpy 1.x)
-    is at most the row minus its native share plus ``16 dim^2``; on numpy
-    2.x the eig workspace is traced, so the traced peak is at most the whole
-    row. The host LAPACK's native bytes are at most that share. The cases include a late failure at dim
+    is at most the row minus its native share plus ``16 dim^2``; on numpy 2
+    it is held to the whole row (a conservative policy: some numpy 2 builds
+    trace part of the eig workspace). The host LAPACK's native bytes are at
+    most that share. The cases include a late failure at dim
     161, k = 1, where the ARPACK term leaves little slack. The operators are
     built before the trace starts."""
 
@@ -949,12 +953,13 @@ class TestSolverMemory(unittest.TestCase):
         # after eig: the matrix, the eigenvectors and their reordered copy
         after_eig = row - _native_share(d) + 16 * d * d
         self.assertLessEqual(_host_native(d), _native_share(d))
-        # numpy >= 2 allocates the eig workspace through its tracked
-        # allocator, so tracemalloc counts (inside the peak) the bytes that
-        # numpy 1.x keeps native and untraced: 3.3-3.7 matrices at the
-        # peak of np.linalg.eig against 1.0 on numpy 1.26. The native share
-        # is then part of the traced peak, and the row, which budgets both
-        # shares, is the bound the peak is held to.
+        # Some numpy 2 builds let tracemalloc see part of the eig workspace
+        # that numpy 1.x keeps native and untraced. This depends on the
+        # build: the PyPI 2.5.5 wheel exceeds the share above (up to 1.46x)
+        # and stays within the whole row (at most 0.96x), while a conda-forge
+        # 2.4.6 build passes the share above. Switching on the major is a
+        # conservative policy, not a property of numpy 2 as such: on any
+        # numpy 2 the peak is held to the row, which budgets both shares.
         if int(np.__version__.split(".")[0]) >= 2:
             after_eig = row
         _log_ratio(what + ", traced against the row's share after eig", peak, after_eig)
