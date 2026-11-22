@@ -551,6 +551,34 @@ class TestNoRecords(unittest.TestCase):
             read_scf_status(self.toml)
 
 
+class TestZeroStepRerun(unittest.TestCase):
+    """require_scf_steps: after a rerun with zero steps, the left-over
+    outputs of the earlier run are refused."""
+
+    def test_uhfk_energy_refused(self):
+        from tests.results_fixtures import run_input
+        toml = copy_fixture("uhfk_u8")
+        text = toml.read_text()
+        self.assertIn("IterationMax = 1000", text)
+        toml.write_text(text.replace("IterationMax = 1000", "IterationMax = 0"))
+        run_input(toml)
+        self.assertTrue((toml.parent / "output" / "energy.dat").is_file())
+        self.assertEqual(read_scf_status(toml).iterations, 0)
+        with self.assertRaises(MissingOutputError) as ctx:
+            read_energy(toml)
+        self.assertIn("scf_status.dat", ctx.exception.hint)
+
+    def test_helper(self):
+        from hwave.results.status import require_scf_steps
+        require_scf_steps(open_run(fixture("uhfk_u8")), "energy")   # steps > 0
+        run = open_run(fixture("uhfk_u8_zero_steps"))
+        for key in ("energy", "green", "scf_status_not_an_output"):
+            with self.assertRaises(MissingOutputError):
+                require_scf_steps(run, key)
+        # no status file: no rule
+        require_scf_steps(open_run(fixture("uhfk_cdw_legacy")), "energy")
+
+
 class TestEnergy(unittest.TestCase):
     def test_uhfk(self):
         toml = fixture("uhfk_u8").resolve()

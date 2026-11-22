@@ -25,10 +25,10 @@ from pathlib import Path
 from typing import Optional
 
 from hwave.results._io import read_key_value_text
-from hwave.results.errors import UnsupportedLayoutError
+from hwave.results.errors import MissingOutputError, UnsupportedLayoutError
 from hwave.results.run import as_run
 
-__all__ = ["ScfStatus", "read_scf_status"]
+__all__ = ["ScfStatus", "read_scf_status", "require_scf_steps"]
 
 FORMAT_VERSION = 1
 
@@ -158,6 +158,39 @@ def read_scf_status(run_or_toml, *, base_dir=None) -> ScfStatus:
     if check_path is not None and check_path.is_file():
         return _from_print_check(run, check_path)
     return _from_outputs(run)
+
+
+def require_scf_steps(run, output):
+    """Refuse to read ``output`` (a key of ``run.outputs``) of a run whose
+    status file records zero SCF steps.
+
+    After zero steps the solver writes ``scf_status.dat`` and returns
+    before any other writer (base.py ``_save_scf_status``; uhfk.py:1783-1794,
+    uhfr.py:1263-1266). Any other output file found in the output directory
+    is therefore left over from an earlier run, whatever its time stamp.
+    Every reader except :func:`read_scf_status` calls this before it opens
+    its file.
+
+    The rule applies only when the run's ``scf_status`` file exists (no
+    status file, e.g. ``scf_status = ""`` or an older output: no rule) and
+    records ``iterations = 0``; a status file that cannot be read raises
+    UnsupportedLayoutError as :func:`read_scf_status` does. Raises
+    MissingOutputError, with a hint naming the status file."""
+    status_path = run.outputs.get("scf_status")
+    if status_path is None or not status_path.is_file():
+        return
+    status = _from_status_file(run, status_path)
+    if status.iterations != 0:
+        return
+    path = run.outputs.get(output)
+    raise MissingOutputError(
+        "output {!r} is not from this run: the run performed no SCF step, and "
+        "the solver then writes no output other than the status file{}".format(
+            output, "" if path is None else " ({} is left over from an earlier "
+            "run)".format(path) if path.exists() else ""),
+        path=path if path is not None else status_path,
+        hint="{} records iterations = 0 ({}); rerun with IterationMax > 0".format(
+            status_path, status.note or "no SCF step performed"))
 
 
 # ------------------------------------------------------------ status file

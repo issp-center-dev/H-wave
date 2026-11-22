@@ -341,5 +341,58 @@ class TestRequiredEntries(unittest.TestCase):
             read_uhfr_green(fixture("uhfk_cdw"))
 
 
+def rerun_zero_steps(toml):
+    """Rerun ``toml`` (a copy whose outputs exist) with IterationMax = 0."""
+    text = toml.read_text()
+    assert "IterationMax = 1000" in text
+    toml.write_text(text.replace("IterationMax = 1000", "IterationMax = 0"))
+    run_input(toml)
+
+
+UHFR_READERS = (read_energy, read_uhfr_eigen, read_uhfr_green,
+                read_uhfr_order_parameters)
+
+
+class TestLeftoverOutputs(unittest.TestCase):
+    """A rerun with zero SCF steps writes only scf_status.dat; the files of
+    the earlier run are left in place and must not be read as this run's."""
+
+    def test_zero_step_rerun_refused(self):
+        toml = copy_fixture("uhfr_tutorial")
+        out = toml.parent / "output"
+        rerun_zero_steps(toml)
+        status = read_scf_status(toml)
+        self.assertEqual(status.iterations, 0)
+        for name in ("energy.dat", "green.dat", "spin-up_eigen.npz",
+                     "spin-down_eigen.npz"):
+            self.assertTrue((out / name).is_file(), name)   # the old files
+        for reader in UHFR_READERS:
+            with self.assertRaises(MissingOutputError, msg=reader.__name__) as ctx:
+                reader(toml)
+            self.assertIn(str(out / "scf_status.dat"), ctx.exception.hint,
+                          reader.__name__)
+            self.assertIn("iterations = 0", ctx.exception.hint)
+            self.assertIn("not from this run", ctx.exception.message)
+
+    def test_normal_run_unaffected(self):
+        toml = fixture("uhfr_tutorial")
+        self.assertGreater(read_scf_status(toml).iterations, 0)
+        for reader in UHFR_READERS:
+            reader(toml)
+
+    def test_status_disabled_unaffected(self):
+        # no status file, no rule
+        toml = copy_fixture("uhfr_tutorial")
+        text = toml.read_text()
+        toml.write_text(text.replace('[file.output]\n',
+                                     '[file.output]\nscf_status = ""\n'))
+        (toml.parent / "output" / "scf_status.dat").unlink()
+        run_input(toml)
+        self.assertNotIn("scf_status", open_run(toml).outputs)
+        self.assertFalse((toml.parent / "output" / "scf_status.dat").exists())
+        for reader in UHFR_READERS:
+            reader(toml)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,7 @@ from hwave.results.errors import (
     MissingOutputError, ResultsError, UnsupportedLayoutError)
 from hwave.results.order import order_parameters_from_density
 from hwave.results.run import as_run
+from hwave.results.status import read_scf_status, require_scf_steps
 
 __all__ = ["Energy", "read_energy", "UHFrEigen", "read_uhfr_eigen",
            "UHFrGreen", "read_uhfr_green", "read_uhfr_order_parameters"]
@@ -107,11 +108,14 @@ def read_energy(run_or_toml, *, base_dir=None) -> Energy:
     path of its input TOML file).
 
     Raises MissingOutputError when the output is not configured or its file
-    is absent, and UnsupportedLayoutError for a line that is not
+    is absent, or when the status file records zero SCF steps (the file is
+    then left over from an earlier run; :func:`hwave.results.status.require_scf_steps`),
+    and UnsupportedLayoutError for a line that is not
     ``key = number``, for a key given twice (compared case-insensitively),
     or for a file with both ``ChemicalPotential`` and
     ``ChemicalPotential_<suffix>``."""
     run = as_run(run_or_toml, base_dir=base_dir)
+    require_scf_steps(run, "energy")
     path = run.path("energy")
     values = {}
     seen = {}
@@ -204,8 +208,10 @@ def _onebodyg_name(run):
 
 
 def _uhfr_output(run, key, what):
-    """``run.path(key)``; when the file is configured but absent, the hint
-    says why the solver may not have written it."""
+    """``run.path(key)``, after :func:`require_scf_steps` (outputs of a
+    zero-step run are refused). When the file is configured but absent, the
+    hint says why the solver may not have written it."""
+    require_scf_steps(run, key)
     try:
         return run.path(key)
     except MissingOutputError as exc:
@@ -214,7 +220,6 @@ def _uhfr_output(run, key, what):
         hint = exc.hint
         steps = None
         try:
-            from hwave.results.status import read_scf_status
             steps = read_scf_status(run).iterations
         except ResultsError:
             pass
@@ -264,7 +269,9 @@ def read_uhfr_eigen(run_or_toml, *, base_dir=None, with_vectors=False) -> UHFrEi
     :class:`hwave.results.Run` or the path of its input TOML file).
 
     Raises MissingOutputError when ``[file.output] eigen`` is not configured
-    or a block's file is absent, and UnsupportedLayoutError for a run that
+    or a block's file is absent, or when the status file records zero SCF
+    steps (:func:`hwave.results.status.require_scf_steps`), and
+    UnsupportedLayoutError for a run that
     is not UHFr, or for a file without the ``eigenvalue`` and
     ``eigenvector`` members of the expected shapes."""
     run = _uhfr_run(run_or_toml, base_dir)
@@ -331,7 +338,9 @@ def read_uhfr_green(run_or_toml, *, base_dir=None) -> UHFrGreen:
 
     Raises MissingOutputError when ``[file.output] green`` is not configured
     or its file is absent (UHFr writes it only when ``[file.input]
-    OneBodyG`` is set), and UnsupportedLayoutError for a run that is not
+    OneBodyG`` is set) or when the status file records zero SCF steps
+    (:func:`hwave.results.status.require_scf_steps`), and
+    UnsupportedLayoutError for a run that is not
     UHFr, for a line that is not ``i s j t Re Im`` with ``0 <= i, j <
     Nsite``, ``s, t`` in ``{0, 1}`` and finite values, and for an entry
     ``(i, s, j, t)`` given on more than one line (naming the lines)."""
