@@ -460,6 +460,19 @@ class TestNpzMembers(unittest.TestCase):
         with self.assertRaisesRegex(UnsupportedLayoutError, "'wavevector_index'"):
             read_bands(toml)
 
+    def test_wavevector_index_outside_int64(self):
+        _, members = self.rewrite("eigen.npz")
+        unsigned = members["wavevector_index"].astype(np.uint64)
+        unsigned[0, 0] = 2 ** 63
+        whole = members["wavevector_index"].astype(float)
+        whole[0, 0] = 2.0 ** 63
+        for index in (unsigned, whole):
+            with self.subTest(dtype=index.dtype):
+                toml, _ = self.rewrite("eigen.npz", wavevector_index=index)
+                with self.assertRaisesRegex(UnsupportedLayoutError,
+                                            "'wavevector_index'.*int64 range"):
+                    read_bands(toml)
+
     def test_complex_eigenvalue(self):
         toml, members = self.rewrite("eigen.npz")
         energies = members["eigenvalue"].astype(complex)

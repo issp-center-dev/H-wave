@@ -87,8 +87,8 @@ def npz_member(data, path, name, kind):
     """Member ``name`` of the open archive ``data`` (from :func:`open_npz`,
     the file ``path``), checked against ``kind``:
 
-    * ``"i"``: integer; a float member is accepted when every value is an
-      integer, and the result is int64;
+    * ``"i"``: integer within the int64 range; a float member is accepted
+      when every value is such an integer, and the result is int64;
     * ``"f"``: real, as float; a complex member is accepted only when every
       imaginary part is zero;
     * ``"c"``: any integer, real or complex member, in its own dtype.
@@ -109,6 +109,11 @@ def npz_member(data, path, name, kind):
         if got == "c" or (got == "f" and not (np.all(np.isfinite(arr))
                                                and np.all(arr == np.round(arr)))):
             bad = "has non-integer values (dtype {})".format(arr.dtype)
+        elif arr.size and (
+                (got == "u" and arr.max() > np.iinfo(np.int64).max)
+                or (got == "f" and not (np.all(arr >= -2.0 ** 63)
+                                        and np.all(arr < 2.0 ** 63)))):
+            bad = "has values outside the int64 range (dtype {})".format(arr.dtype)
         else:
             arr = arr.astype(np.int64)
     elif kind == "f":
