@@ -6,6 +6,12 @@
 * :func:`read_uhfr_green`: the UHFr Green function text (:class:`UHFrGreen`).
 * :func:`read_uhfr_order_parameters`: the order parameters of a UHFr run
   (:class:`hwave.results.OrderParameters`).
+* :func:`read_bands`: the UHFk eigenvalues on the k grid (:class:`Bands`).
+* :func:`read_uhfk_green`: the UHFk ``green.npz`` (:class:`GreenR`).
+* :func:`read_uhfk_order_parameters`: the order parameters of a UHFk run.
+* :func:`so_density_from_green`: the spin density of a spin-orbital UHFk
+  Green function.
+* :func:`read_onebodyg`: refuses the UHFk ``onebodyg`` text (issue #357).
 
 UHFr numbers its spin-orbitals ``a = site + Nsite * spin`` (``spin`` 0 for
 up, 1 for down; uhfr.py:1308-1309), and its Green function is
@@ -24,7 +30,9 @@ from typing import Optional, Union
 import numpy as np
 
 from hwave.results._frozen import _freeze
-from hwave.results._io import member_shapes, open_npz, read_key_value_text
+from hwave.results._io import (
+    check_markers, input_file_path, member_shapes, open_npz, read_geometry,
+    read_key_value_text)
 from hwave.results.errors import (
     MissingOutputError, ResultsError, UnsupportedLayoutError)
 from hwave.results.order import order_parameters_from_density
@@ -32,7 +40,10 @@ from hwave.results.run import as_run
 from hwave.results.status import read_scf_status, require_scf_steps
 
 __all__ = ["Energy", "read_energy", "UHFrEigen", "read_uhfr_eigen",
-           "UHFrGreen", "read_uhfr_green", "read_uhfr_order_parameters"]
+           "UHFrGreen", "read_uhfr_green", "read_uhfr_order_parameters",
+           "Bands", "read_bands", "GreenR", "read_uhfk_green",
+           "read_uhfk_order_parameters", "OneBodyG", "read_onebodyg",
+           "so_density_from_green"]
 
 #: the ``energy.dat`` keys of the scalar fields of :class:`Energy`, in lower
 #: case: UHFr writes ``Energy_total`` (uhfr.py:1271-1292), UHFk
@@ -471,3 +482,587 @@ def read_uhfr_order_parameters(run_or_toml, *, base_dir=None, site_positions=Non
         meta["spin_offdiagonal_ignored"] = sum(
             1 for i, s, j, t in present if i == j and s != t)
     return dataclasses.replace(op, source=result.source, meta=meta)
+
+
+# ===================================================================== UHFk
+#
+# UHFk layouts (uhfk.py):
+#
+# * ``green.npz`` member ``green``: ``G[r, s, a, t, b] = <c^dag_{s a}(r)
+#   c_{t b}(0)>`` on the CellShape lattice, ``r = rz + Nz (ry + Ny rx)``
+#   (uhfk.py:1443-1444; docs green_uhfk.rst).
+# * member ``green_sublattice`` (when ``prod(SubShape) > 1``, SubShape
+#   defaulting to CellShape, uhfk.py:234-238): the same on the lattice of
+#   magnetic cells ``CellShape / SubShape``, with the folded orbital
+#   ``aa = a + norb_orig * ir`` and ``ir = irx + Bx (iry + By irz)``
+#   (uhfk.py:498-500, 532-540).
+# * spin-orbital mode: ``ns = 1`` and the orbital index is interleaved,
+#   ``a = 2 k + spin`` (spin_orbital.py:151-158).
+
+_KNOWN_ISSUE_357 = (
+    "the UHFk onebodyg text output uses a displacement convention that is "
+    "inconsistent with the Green function (issue #357)")
+
+#: the tolerance on orbital centres that must coincide
+CENTRE_ATOL = 1e-8
+#: the largest |NCond - round(NCond)| for which HOMO and LUMO are given
+NCOND_INTEGER_ATOL = 1e-8
+
+HOMO_LUMO_NOTE = ("spectral neighbours at integer NCond; not a band gap unless "
+                  "the bands are separated")
+
+
+def _uhfk_run(run_or_toml, base_dir):
+    run = as_run(run_or_toml, base_dir=base_dir)
+    if run.mode != "UHFk":
+        raise UnsupportedLayoutError(
+            "{} is a {!r} run, not a UHFk run".format(run.input_path, run.mode),
+            path=run.input_path)
+    return run
+
+
+def _shape_param(run, name, default=None):
+    value = run.param(name, default)
+    if value is None:
+        raise UnsupportedLayoutError(
+            "[mode.param] {} is missing in {}; UHFk requires it".format(
+                name, run.input_path), path=run.input_path)
+    if not isinstance(value, (list, tuple)) or len(value) != 3 or not all(
+            isinstance(v, numbers.Integral) and not isinstance(v, bool) and v >= 1
+            for v in value):
+        raise UnsupportedLayoutError(
+            "[mode.param] {} must be three positive integers in {}, got {!r}"
+            .format(name, run.input_path, value), path=run.input_path)
+    return tuple(int(v) for v in value)
+
+
+@dataclasses.dataclass(frozen=True)
+class _Lattice:
+    cell_shape: tuple        # CellShape, the lattice of the run
+    sub_shape: tuple         # SubShape (default CellShape), the magnetic cell
+    super_shape: tuple       # CellShape / SubShape, the lattice of magnetic cells
+
+    @property
+    def subvol(self):
+        return int(np.prod(self.sub_shape))
+
+    @property
+    def nvol(self):
+        return int(np.prod(self.super_shape))
+
+
+def _lattice(run):
+    """CellShape and SubShape as the solver reads them (uhfk.py:224-251)."""
+    cell = _shape_param(run, "CellShape")
+    sub = _shape_param(run, "SubShape", list(cell))
+    if any(c % b for c, b in zip(cell, sub)):
+        raise UnsupportedLayoutError(
+            "[mode.param] SubShape {} does not divide CellShape {} in {}".format(
+                sub, cell, run.input_path), path=run.input_path)
+    return _Lattice(cell, sub, tuple(c // b for c, b in zip(cell, sub)))
+
+
+def _r_index(shape):
+    """``r_index[r] = (rx, ry, rz)`` for ``r = rz + Nz (ry + Ny rx)``."""
+    return np.indices(shape).reshape(3, -1).T.astype(np.int64)
+
+
+def _uhfk_output(run, key):
+    """``run.path(key)``, after :func:`require_scf_steps`."""
+    require_scf_steps(run, key)
+    return run.path(key)
+
+
+@dataclasses.dataclass(frozen=True)
+class GreenR:
+    """A UHFk real-space Green function ``G[r, s, a, t, b] = <c^dag_{s
+    a}(r) c_{t b}(0)>``.
+
+    Attributes
+    ----------
+    green : ndarray (nr, ns, norb, ns, norb) complex, or None
+        ``ns = 2`` (``ns = 1`` and ``a = 2 k + spin`` in spin-orbital mode).
+        ``None`` when the member is not read (a deflated ``green`` member
+        without the ``green_convention`` marker, read with ``legacy=True``;
+        see ``meta["legacy_notes"]``) or absent.
+    r_index : ndarray (nr, 3) int
+        ``(rx, ry, rz)`` of each ``r``, with ``r = rz + Nz (ry + Ny rx)``.
+    cell_shape : tuple of int
+        The lattice ``(Nx, Ny, Nz)`` that ``r`` runs over: CellShape for the
+        ``green`` member, ``CellShape / SubShape`` for the sublattice one.
+    sublattice : GreenR or None
+        The ``green_sublattice`` member: the same on the lattice of magnetic
+        cells, with the folded orbital ``aa = a + norb_orig * ir`` and ``ir
+        = irx + Bx (iry + By irz)`` within the cell ``SubShape = (Bx, By,
+        Bz)``. ``None`` when the file has no such member.
+    spin_orbital : bool
+    source : Path
+    meta : dict
+        ``member`` (the npz member), ``sub_shape``, ``legacy_notes`` (the
+        assumptions of :func:`hwave.results._io.check_markers`) and, for a
+        ``green`` that is not read, ``green_unavailable``.
+    """
+    green: Optional[np.ndarray]
+    r_index: np.ndarray
+    cell_shape: tuple
+    sublattice: Optional["GreenR"]
+    spin_orbital: bool
+    source: Path
+    meta: dict
+
+
+def _check_green_shape(path, name, shape, nr, ns):
+    if len(shape) != 5 or shape[0] != nr or shape[1] != ns or shape[3] != ns \
+            or shape[2] != shape[4] or shape[2] < 1:
+        raise UnsupportedLayoutError(
+            "{}: member {!r} has shape {}, expected ({}, {}, norb, {}, norb) for "
+            "this run".format(path, name, shape, nr, ns, ns), path=path)
+    return shape[2]
+
+
+def read_uhfk_green(run_or_toml, *, legacy=False, base_dir=None) -> GreenR:
+    """Read ``green.npz`` of a UHFk run (a :class:`hwave.results.Run` or
+    the path of its input TOML file).
+
+    The convention markers are checked with the legacy table of
+    :mod:`hwave.results._io`: a run with ``prod(SubShape) > 1`` must have
+    ``green_sublattice``; a file without ``momentum_convention`` needs
+    ``legacy=True``; a file with ``green_sublattice`` but no
+    ``green_convention`` is read from ``green_sublattice`` only (its
+    deflated ``green`` may use the fold of the files written before PR #35,
+    issue #36), so ``green`` is then ``None``.
+
+    Raises MissingOutputError when ``green`` is not configured (it is by
+    default; ``green = ""`` disables it) or its file is absent, or when the
+    status file records zero SCF steps
+    (:func:`hwave.results.status.require_scf_steps`); UnsupportedLayoutError
+    for a run that is not UHFk, for a marker or member the table refuses,
+    and for members whose shapes do not fit CellShape and SubShape."""
+    run = _uhfk_run(run_or_toml, base_dir)
+    lattice = _lattice(run)
+    path = _uhfk_output(run, "green")
+    kind = "uhfk_green_sublattice" if lattice.subvol > 1 else "uhfk_green"
+    notes = check_markers(path, kind, legacy=legacy)
+    shapes = member_shapes(path)
+    ns = 1 if run.spin_orbital else 2
+    dropped = any(note["member"] == "green" and note["assumed"] is None
+                  for note in notes)
+    meta_common = {"sub_shape": lattice.sub_shape, "legacy_notes": notes}
+
+    norb = None
+    if "green" in shapes:
+        norb = _check_green_shape(path, "green", shapes["green"],
+                                  int(np.prod(lattice.cell_shape)), ns)
+    if "green_sublattice" in shapes:
+        norb_sub = _check_green_shape(path, "green_sublattice",
+                                      shapes["green_sublattice"], lattice.nvol, ns)
+        if norb_sub % lattice.subvol or (
+                norb is not None and norb_sub != norb * lattice.subvol):
+            raise UnsupportedLayoutError(
+                "{}: member 'green_sublattice' has {} orbitals, which is not "
+                "{} orbitals x {} cell positions of SubShape {}".format(
+                    path, norb_sub, norb if norb is not None else "an integer",
+                    lattice.subvol, lattice.sub_shape), path=path)
+
+    with open_npz(path) as data:
+        green = None
+        if "green" in shapes and not dropped:
+            green = np.asarray(data["green"])
+        sub = None
+        if "green_sublattice" in shapes:
+            sub = GreenR(green=_freeze(np.asarray(data["green_sublattice"])),
+                         r_index=_freeze(_r_index(lattice.super_shape)),
+                         cell_shape=lattice.super_shape, sublattice=None,
+                         spin_orbital=run.spin_orbital, source=Path(path),
+                         meta=dict(_freeze(meta_common), member="green_sublattice"))
+    meta = dict(_freeze(meta_common), member="green")
+    if green is None:
+        meta["green_unavailable"] = (
+            "not read: no green_convention marker (issue #36)" if dropped
+            else "the file has no 'green' member")
+    return GreenR(green=_freeze(green), r_index=_freeze(_r_index(lattice.cell_shape)),
+                  cell_shape=lattice.cell_shape, sublattice=sub,
+                  spin_orbital=run.spin_orbital, source=Path(path), meta=meta)
+
+
+@dataclasses.dataclass(frozen=True)
+class Bands:
+    """The UHFk eigenvalues (and eigenvectors) on the folded k grid.
+
+    Attributes
+    ----------
+    k_index : ndarray (nk, 3) int
+        The archive's ``wavevector_index``.
+    k_unit : ndarray (3, 3)
+        The archive's ``wavevector_unit``.
+    k_cart : ndarray (nk, 3)
+        ``k_index @ k_unit``.
+    energies : ndarray (nk, nd)
+        The archive's ``eigenvalue``, in its column order (the blocks of
+        the Hamiltonian one after another, uhfk.py:1839-1875); not sorted.
+    sort_index : ndarray (nk, nd) int
+        ``np.argsort(energies, axis=1, kind="stable")``.
+    eigenvectors : ndarray (nk, nd, nd) complex, or None
+        Column ``l`` is the eigenvector of ``energies[k, l]``; only with
+        ``with_vectors=True``.
+    single_reservoir : bool
+        True when ``energy.dat`` has a plain ``ChemicalPotential`` key (one
+        chemical potential for all electrons).
+    mu : float or None
+        The chemical potential of a single reservoir.
+    mu_groups : dict[int, float] or None
+        ``{g: mu}`` of the ``ChemicalPotential_<g>`` keys, in file order;
+        None for a single reservoir.
+    homo, lumo, gap : float or None
+        For a single reservoir and an integer ``NCond = n_occ`` (within
+        1e-8) with ``0 < n_occ < nk * nd``: ``E_flat[n_occ - 1]``,
+        ``E_flat[n_occ]`` and their difference, with ``E_flat`` the sorted
+        eigenvalues of every k. They are spectral neighbours, not a band gap
+        unless the bands are separated (``meta["homo_lumo_note"]``).
+        Otherwise None, with the reason in ``meta["homo_lumo_unavailable"]``.
+    spin_orbital : bool
+    source : Path
+        The eigen archive.
+    meta : dict
+        ``legacy_notes``, ``ncond`` (``NCond`` of ``energy.dat``),
+        ``energy_source``, ``energy_unavailable`` and the HOMO/LUMO notes.
+    """
+    k_index: np.ndarray
+    k_unit: np.ndarray
+    k_cart: np.ndarray
+    energies: np.ndarray
+    sort_index: np.ndarray
+    eigenvectors: Optional[np.ndarray]
+    single_reservoir: bool
+    mu: Optional[float]
+    mu_groups: Optional[dict]
+    homo: Optional[float]
+    lumo: Optional[float]
+    gap: Optional[float]
+    spin_orbital: bool
+    source: Path
+    meta: dict
+
+
+def read_bands(run_or_toml, *, with_vectors=False, legacy=False,
+               base_dir=None) -> Bands:
+    """Read the ``eigen`` archive of a UHFk run (a
+    :class:`hwave.results.Run` or the path of its input TOML file), with the
+    chemical potential and ``NCond`` of ``energy.dat``.
+
+    When ``energy`` is not configured or its file is absent, the bands are
+    still returned, with ``single_reservoir = False`` and no ``mu``,
+    ``homo``, ``lumo`` or ``gap`` (``meta["energy_unavailable"]``).
+
+    Raises MissingOutputError when ``eigen`` is not configured or its file is
+    absent, or when the status file records zero SCF steps;
+    UnsupportedLayoutError for a run that is not UHFk, for a marker the
+    legacy table refuses (an archive without ``momentum_convention`` needs
+    ``legacy=True``), for members of unexpected shapes, and for a
+    ``ChemicalPotential_<g>`` key whose suffix is not an integer."""
+    run = _uhfk_run(run_or_toml, base_dir)
+    lattice = _lattice(run)
+    path = _uhfk_output(run, "eigen")
+    notes = check_markers(path, "uhfk_eigen", legacy=legacy)
+    shapes = member_shapes(path)
+    for name in ("eigenvalue", "eigenvector", "wavevector_unit", "wavevector_index"):
+        if name not in shapes:
+            raise UnsupportedLayoutError("{}: no member {!r}".format(path, name),
+                                         path=path)
+    nk_nd = shapes["eigenvalue"]
+    if len(nk_nd) != 2 or nk_nd[0] != lattice.nvol:
+        raise UnsupportedLayoutError(
+            "{}: member 'eigenvalue' has shape {}, expected ({}, nd) for the "
+            "{} k points of this run".format(path, nk_nd, lattice.nvol,
+                                             lattice.nvol), path=path)
+    nk, nd = nk_nd
+    for name, shape in (("eigenvector", (nk, nd, nd)), ("wavevector_unit", (3, 3)),
+                        ("wavevector_index", (nk, 3))):
+        if shapes[name] != shape:
+            raise UnsupportedLayoutError(
+                "{}: member {!r} has shape {}, expected {}".format(
+                    path, name, shapes[name], shape), path=path)
+    with open_npz(path) as data:
+        energies = np.asarray(data["eigenvalue"], dtype=float)
+        k_unit = np.asarray(data["wavevector_unit"], dtype=float)
+        k_index = np.asarray(data["wavevector_index"]).astype(np.int64)
+        vectors = np.asarray(data["eigenvector"]) if with_vectors else None
+
+    meta = {"legacy_notes": notes}
+    single, mu, groups, ncond = False, None, None, None
+    try:
+        energy = read_energy(run)
+    except MissingOutputError as exc:
+        meta["energy_unavailable"] = str(exc)
+    else:
+        meta["energy_source"] = energy.source
+        ncond = energy.ncond
+        if isinstance(energy.mu, dict):
+            groups = {}
+            for suffix, value in energy.mu.items():
+                if not _INT.fullmatch(suffix):
+                    raise UnsupportedLayoutError(
+                        "{}: ChemicalPotential_{} is not a UHFk mu group (an "
+                        "integer suffix)".format(energy.source, suffix),
+                        path=energy.source)
+                groups[int(suffix)] = value
+        elif energy.mu is not None:
+            single, mu = True, float(energy.mu)
+    meta["ncond"] = ncond
+
+    homo = lumo = gap = None
+    if not single:
+        meta["homo_lumo_unavailable"] = (
+            "energy.dat has no plain ChemicalPotential (one per mu group, or "
+            "none): the electrons are not in a single reservoir")
+    elif ncond is None or not abs(ncond - round(ncond)) <= NCOND_INTEGER_ATOL:
+        meta["homo_lumo_unavailable"] = "NCond {!r} is not an integer".format(ncond)
+    elif not 0 < round(ncond) < nk * nd:
+        meta["homo_lumo_unavailable"] = (
+            "NCond {} leaves no occupied or no empty state among the {} "
+            "eigenvalues".format(ncond, nk * nd))
+    else:
+        n_occ = int(round(ncond))
+        flat = np.sort(energies, axis=None)
+        homo, lumo = float(flat[n_occ - 1]), float(flat[n_occ])
+        gap = lumo - homo
+        meta["homo_lumo_note"] = HOMO_LUMO_NOTE
+
+    return Bands(k_index=_freeze(k_index), k_unit=_freeze(k_unit),
+                 k_cart=_freeze(k_index @ k_unit), energies=_freeze(energies),
+                 sort_index=_freeze(np.argsort(energies, axis=1, kind="stable")),
+                 eigenvectors=_freeze(vectors), single_reservoir=single, mu=mu,
+                 mu_groups=groups, homo=homo, lumo=lumo, gap=gap,
+                 spin_orbital=run.spin_orbital, source=Path(path),
+                 meta=_freeze(meta))
+
+
+def so_density_from_green(G0, norb_phys_orig, subvol):
+    """The per-orbital spin density of a spin-orbital UHFk Green function at
+    ``r = 0``.
+
+    ``G0`` is ``Green[0, 0, :, 0, :]`` of shape ``(nd, nd)``, ``nd = 2 *
+    norb_phys_orig * subvol``, in the interleaved folded index ``aa = 2 j +
+    spin`` with ``j = k + norb_phys_orig * ir`` (the folded index of
+    uhfk.py:532-540 applied to the interleaved ``a = 2 k + spin``,
+    spin_orbital.py:151-158). Returns a new array ``rho`` of shape
+    ``(norb_phys_orig * subvol, 2, 2)`` with ``rho[j, s, t] = G0[2 j + s,
+    2 j + t]``; entry ``j`` is physical orbital ``j % norb_phys_orig`` at
+    cell position ``j // norb_phys_orig``. Raises ValueError for a bad
+    shape or count."""
+    for name, value in (("norb_phys_orig", norb_phys_orig), ("subvol", subvol)):
+        if isinstance(value, bool) or not isinstance(value, numbers.Integral) \
+                or value < 1:
+            raise ValueError("{} must be a positive integer, got {!r}"
+                             .format(name, value))
+    g0 = np.asarray(G0)
+    n = int(norb_phys_orig) * int(subvol)
+    if g0.shape != (2 * n, 2 * n):
+        raise ValueError(
+            "G0 must have shape ({0}, {0}) for norb_phys_orig = {1} and subvol = "
+            "{2}, got {3}".format(2 * n, norb_phys_orig, subvol, g0.shape))
+    j = np.arange(n)
+    return np.array(g0.reshape(n, 2, n, 2)[j, :, j, :], dtype=np.complex128)
+
+
+def _site_of_orbital(value, norb_phys):
+    """The validated ``site_of_orbital`` argument (length ``norb_phys``,
+    integers covering ``0..n_site - 1``)."""
+    if value is None:
+        return np.arange(norb_phys)
+    raw = np.asarray(value)
+    if raw.ndim != 1 or len(raw) != norb_phys:
+        raise ValueError(
+            "site_of_orbital must give one site per physical orbital of the "
+            "Geometry ({} values), got shape {}".format(norb_phys, raw.shape))
+    if raw.dtype == np.bool_ or not np.issubdtype(raw.dtype, np.number) \
+            or np.iscomplexobj(raw) or not all(
+                float(v).is_integer() for v in raw.tolist()):
+        raise ValueError("site_of_orbital must hold integers, got {!r}"
+                         .format(raw.tolist()))
+    sites = raw.astype(np.int64)
+    n_site = int(sites.max()) + 1 if len(sites) else 0
+    missing = sorted(set(range(n_site)) - set(sites.tolist()))
+    if np.any(sites < 0) or missing:
+        raise ValueError(
+            "site_of_orbital values must cover 0..n_site-1 with no gap, got {!r}"
+            .format(sites.tolist()))
+    return sites
+
+
+def _orbital_centres(geometry, so):
+    """The centre of each physical orbital ``k``: Geometry entry ``k``, or
+    entries ``2k`` and ``2k+1`` in spin-orbital mode, which must agree."""
+    centres = np.asarray(geometry.centres)
+    if not so:
+        return centres
+    even, odd = centres[0::2], centres[1::2]
+    for k in range(len(even)):
+        if np.max(np.abs(even[k] - odd[k])) > CENTRE_ATOL:
+            raise UnsupportedLayoutError(
+                "Geometry file {}: the spin-orbital entries {} and {} of physical "
+                "orbital {} have different centres {} and {}".format(
+                    geometry.source, 2 * k, 2 * k + 1, k, even[k].tolist(),
+                    odd[k].tolist()), path=geometry.source)
+    return even
+
+
+def read_uhfk_order_parameters(run_or_toml, *, site_of_orbital=None,
+                               site_positions=None, legacy=False, base_dir=None):
+    """The order parameters of a UHFk run (a :class:`hwave.results.Run` or
+    the path of its input TOML file), from ``green.npz`` at ``r = 0``.
+
+    The magnetic cell is SubShape (default CellShape): the density is that
+    of ``green_sublattice`` when ``prod(SubShape) > 1``, else of ``green``,
+    at ``r = 0``. Its entries are ``j = k + norb_phys_orig * ir``, physical
+    orbital ``k`` at cell position ``ir = irx + Bx (iry + By irz)``:
+
+    * normal mode: ``rho[j, s, t] = G[0, s, j, t, j]``;
+    * spin-orbital mode: :func:`so_density_from_green` of ``G[0, 0, :, 0,
+      :]``.
+
+    ``site_of_orbital`` (length ``norb_phys_orig``, default ``arange``)
+    groups the physical orbitals of one cell position into sites; entry
+    ``j`` is on site ``ir * n_site_orig + site_of_orbital[k]``. The site
+    positions are ``R_ir + tau_site`` in fractional coordinates, with
+    ``R_ir = (irx, iry, irz)`` and ``tau`` the Geometry centre of the
+    site's orbitals (which must coincide within 1e-8), or
+    ``site_positions[site]`` (shape ``(n_site_orig, 3)``) when given. Then
+    :func:`hwave.results.order_parameters_from_density` is called with
+    ``cell_shape = SubShape``, ``lattice_shape = CellShape`` and ``n_cell``
+    the number of magnetic cells. ``transverse_available`` is True: UHFk
+    stores the spin-off-diagonal entries in every mode (with a fixed 2Sz and
+    no spin-mixing term they are zero, and so are S^x and S^y).
+
+    Raises MissingOutputError for a missing Geometry or Green function file
+    (and the errors of :func:`read_uhfk_green`); UnsupportedLayoutError when
+    the Geometry does not fit the Green function, or when the two
+    spin-orbital entries of one physical orbital have different centres;
+    ValueError for a bad ``site_of_orbital`` or ``site_positions``, or when
+    the orbitals of one site have different centres (naming them)."""
+    run = _uhfk_run(run_or_toml, base_dir)
+    lattice = _lattice(run)
+    green = read_uhfk_green(run, legacy=legacy)
+    geometry = read_geometry(input_file_path(run, "Geometry"))
+    so = run.spin_orbital
+    norb_orig = geometry.norb
+    if so and norb_orig % 2:
+        raise UnsupportedLayoutError(
+            "Geometry file {}: {} entries cannot be the interleaved spin-orbitals "
+            "of spin-orbital mode (an even number)".format(geometry.source, norb_orig),
+            path=geometry.source)
+    norb_phys = norb_orig // 2 if so else norb_orig
+
+    if lattice.subvol > 1:
+        member, values = green.sublattice, green.sublattice.green
+    else:
+        member, values = green, green.green
+    if values is None:
+        raise UnsupportedLayoutError(
+            "{}: the 'green' member is not readable ({})".format(
+                green.source, green.meta.get("green_unavailable")),
+            path=green.source)
+    nfold = values.shape[2]
+    if nfold != norb_orig * lattice.subvol:
+        raise UnsupportedLayoutError(
+            "the Geometry file {} has {} orbital entries, but member {!r} of {} has "
+            "{} = {} x {} cell positions".format(
+                geometry.source, norb_orig, member.meta["member"], green.source,
+                nfold, nfold / lattice.subvol, lattice.subvol),
+            path=geometry.source)
+    g0 = values[0]
+    if so:
+        rho = so_density_from_green(g0[0, :, 0, :], norb_phys, lattice.subvol)
+    else:
+        j = np.arange(nfold)
+        rho = g0[:, j, :, j]             # rho[j, s, t] = G[0, s, j, t, j]
+
+    groups = _site_of_orbital(site_of_orbital, norb_phys)
+    n_site = int(groups.max()) + 1
+    if site_positions is not None:
+        tau = np.asarray(site_positions)
+        if tau.shape != (n_site, 3) or not np.issubdtype(tau.dtype, np.number) \
+                or np.iscomplexobj(tau) or not np.all(np.isfinite(tau)):
+            raise ValueError(
+                "site_positions must be finite real fractional coordinates of shape "
+                "({}, 3), one row per site of site_of_orbital, got {}".format(
+                    n_site, tau.shape))
+        tau = np.array(tau, dtype=float)
+        tau_source = "site_positions"
+    else:
+        centres = _orbital_centres(geometry, so)
+        tau = np.zeros((n_site, 3))
+        for site in range(n_site):
+            orbitals = np.flatnonzero(groups == site)
+            spread = np.max(np.abs(centres[orbitals] - centres[orbitals[0]]))
+            if spread > CENTRE_ATOL:
+                raise ValueError(
+                    "site {} groups the physical orbitals {} whose Geometry centres "
+                    "{} differ by more than {:g}; pass site_positions or group "
+                    "only orbitals at one centre".format(
+                        site, orbitals.tolist(), centres[orbitals].tolist(),
+                        CENTRE_ATOL))
+            tau[site] = centres[orbitals[0]]
+        tau_source = "geometry"
+
+    bx, by, _ = lattice.sub_shape
+    ir = np.arange(lattice.subvol)
+    cell_pos = np.stack([ir % bx, (ir // bx) % by, ir // (bx * by)], axis=1)
+    entries = np.arange(norb_phys * lattice.subvol)
+    entry_sites = (entries // norb_phys) * n_site + groups[entries % norb_phys]
+    positions = (cell_pos[:, None, :] + tau[None, :, :]).reshape(-1, 3)
+
+    op = order_parameters_from_density(
+        rho, site_of_orbital=entry_sites, site_positions=positions,
+        cell_shape=lattice.sub_shape, lattice_shape=lattice.cell_shape,
+        n_cell=lattice.nvol, transverse_available=True)
+    meta = dict(op.meta)
+    meta.update(solver="UHFk", spin_orbital=so, green_member=member.meta["member"],
+                legacy_notes=_freeze(green.meta["legacy_notes"]),
+                geometry=geometry.source, norb_phys_orig=norb_phys,
+                site_of_orbital_arg=_freeze(groups), tau_source=tau_source,
+                entry_index="j = k + norb_phys_orig * ir, ir = irx + Bx (iry + "
+                            "By irz)")
+    return dataclasses.replace(op, source=green.source, meta=meta)
+
+
+@dataclasses.dataclass(frozen=True)
+class OneBodyG:
+    """The UHFk ``onebodyg`` text output, lines ``i s j t Re Im``.
+
+    Not read by this version: :func:`read_onebodyg` refuses the file (issue
+    #357). The class is kept so that the result type is part of the API.
+
+    Attributes
+    ----------
+    entries : ndarray (m, 4) int
+    values : ndarray (m,) complex
+    source : Path
+    meta : dict
+    """
+    entries: np.ndarray
+    values: np.ndarray
+    source: Path
+    meta: dict
+
+
+def read_onebodyg(run_or_toml, *, base_dir=None) -> OneBodyG:
+    """Refuse the ``onebodyg`` text output of a UHFk run.
+
+    UHFk writes ``onebodyg`` with a displacement convention that does not
+    match its Green function (the displacement sign and the order in which
+    it is packed, issue #357), so the file is not read. Use
+    :func:`read_uhfk_green` (``green.npz``, ``G[r, s, a, t, b] = <c^dag_{s
+    a}(r) c_{t b}(0)>``) instead.
+
+    Raises MissingOutputError when ``onebodyg`` is not configured, or when
+    the status file records zero SCF steps; UnsupportedLayoutError (issue
+    #357) otherwise, and for a run that is not UHFk."""
+    run = _uhfk_run(run_or_toml, base_dir)
+    require_scf_steps(run, "onebodyg")
+    if "onebodyg" not in run.outputs:
+        run.path("onebodyg")             # raises MissingOutputError
+    raise UnsupportedLayoutError(
+        "{}: {}".format(run.outputs["onebodyg"], _KNOWN_ISSUE_357),
+        path=run.outputs["onebodyg"],
+        hint="read green.npz with read_uhfk_green instead; see issue #357")
