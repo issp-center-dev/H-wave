@@ -26,6 +26,7 @@ import json
 import logging
 import os
 from collections.abc import Mapping
+from types import MappingProxyType
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -62,6 +63,9 @@ SOLVER_PARAM_DEFAULTS = {
     "T": 0.0,
     "ene_cutoff": 1.0e+2,
 }
+
+#: marks "no default given" in Run.param
+_NO_DEFAULT = object()
 
 #: modes whose outputs are resolved
 SUPPORTED_MODES = ("UHFr", "UHFk")
@@ -117,12 +121,12 @@ class Run:
         ``[mode] enable_spin_orbital``, parsed as the solvers do.
     output_dir : Path
         ``root / path_to_output``.
-    outputs : dict[str, Path]
-        Every configured output and the file the solver writes for it.
+    outputs : Mapping[str, Path]
+        Read-only. Every configured output and the file the solver writes for it.
         UHFr eigenvectors are per block: ``eigen:sz-free``, or
         ``eigen:spin-up`` and ``eigen:spin-down``. Empty for other modes.
-    meta : dict
-        Notes: ``run_record_path``, ``run_record_note`` (a record bypassed by
+    meta : Mapping
+        Read-only. Notes: ``run_record_path``, ``run_record_note`` (a record bypassed by
         ``base_dir=``), ``unsupported_mode``, ``ignored_output_keys`` (keys
         in other case, which the solver does not read) and
         ``invalid_output_keys`` (a value that is not a file name).
@@ -135,8 +139,8 @@ class Run:
     mode: str
     spin_orbital: bool
     output_dir: Path
-    outputs: dict
-    meta: dict
+    outputs: Mapping
+    meta: Mapping
 
     def path(self, key):
         """The file of output ``key``. Raises MissingOutputError when the
@@ -165,17 +169,19 @@ class Run:
                 path=path, hint=_BASE_DIR_HINT)
         return path
 
-    def param(self, name, default=None):
+    def param(self, name, default=_NO_DEFAULT):
         """``[mode.param] name``, looked up case-insensitively. When the key
-        is absent, the solver default (:data:`SOLVER_PARAM_DEFAULTS`) is
-        returned, else ``default``. ``2Sz = "free"`` gives ``None``, as in
-        the solver. ``EPS`` is returned as written (the exponent)."""
+        is absent, ``default`` is returned if the caller gives one, else the
+        solver default (:data:`SOLVER_PARAM_DEFAULTS`), else ``None``.
+        ``2Sz = "free"`` gives ``None``, as in the solver. ``EPS`` is
+        returned as written (the exponent)."""
         params = self.config.get("mode", {}).get("param", {})
         if name in params:
             value = params[name]
+        elif default is not _NO_DEFAULT:
+            value = default
         else:
-            fallback = CaseInsensitiveDict(SOLVER_PARAM_DEFAULTS)
-            value = fallback[name] if name in fallback else default
+            value = CaseInsensitiveDict(SOLVER_PARAM_DEFAULTS).get(name)
         if name.lower() == "2sz" and value == "free":
             value = None
         return value
@@ -248,7 +254,7 @@ def read_run_record(toml):
         raise bad("'argv' must be a list of strings")
     if not isinstance(record.get("hwave_version"), str):
         raise bad("'hwave_version' must be a string")
-    if Path(record["input"]).resolve() != toml.resolve():
+    if not _same_file(Path(record["input"]), toml):
         raise RunRecordError(
             "run record {} was written for {}, not for {}; the files were moved "
             "or copied after the run".format(path, Path(record["input"]).resolve(),
@@ -257,6 +263,15 @@ def read_run_record(toml):
             hint="pass base_dir=<the directory the run's paths are relative to> "
                  "to open the run without the record")
     return dict(record)
+
+
+def _same_file(a, b):
+    """Whether ``a`` and ``b`` name the same file: ``os.path.samefile`` when
+    both exist (so names that differ only in case match on a
+    case-insensitive file system), else the resolved paths."""
+    if a.exists() and b.exists():
+        return os.path.samefile(a, b)
+    return a.resolve() == b.resolve()
 
 
 def _table(parent, key, where, toml):
@@ -329,9 +344,9 @@ def _resolve_outputs(mode, info_output, info_log, two_sz, output_dir, meta):
     if check:
         outputs["print_check"] = output_dir / check
     if ignored:
-        meta["ignored_output_keys"] = ignored
+        meta["ignored_output_keys"] = tuple(ignored)
     if invalid:
-        meta["invalid_output_keys"] = invalid
+        meta["invalid_output_keys"] = tuple(invalid)
     return outputs
 
 
@@ -414,17 +429,21 @@ def open_run(toml_path, *, base_dir=None):
 
     return Run(root=root, base_dir_source=source, run_record=record,
                input_path=toml.resolve(), config=_case_insensitive(raw), mode=mode,
-               spin_orbital=spin_orbital, output_dir=output_dir, outputs=outputs,
-               meta=meta)
+               spin_orbital=spin_orbital, output_dir=output_dir,
+               outputs=MappingProxyType(outputs), meta=MappingProxyType(meta))
 
 
 def as_run(run_or_toml, *, base_dir=None):
     """``run_or_toml`` as a :class:`Run`: a Run is returned as is, anything
     else is opened with :func:`open_run`. ``base_dir`` cannot be combined
-    with a Run (its base directory was fixed when it was opened)."""
+    with a Run (its base directory was fixed when it was opened): that
+    raises MissingConfigError."""
     if isinstance(run_or_toml, Run):
         if base_dir is not None:
-            raise ValueError("base_dir= cannot be given with a Run; its base directory "
-                             "was fixed by open_run (call open_run(toml, base_dir=...))")
+            raise MissingConfigError(
+                "base_dir= cannot be given with a Run; its base directory was fixed "
+                "when it was opened", path=run_or_toml.input_path,
+                hint="call open_run(toml, base_dir=...) to open the run with another "
+                     "base directory")
         return run_or_toml
     return open_run(run_or_toml, base_dir=base_dir)

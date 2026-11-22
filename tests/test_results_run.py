@@ -350,9 +350,10 @@ class TestOpenRunRefusals(_TmpDir):
         toml = _write_toml(self.tmp, UHFK_HEAD)
         run = open_run(toml)
         self.assertIs(as_run(run), run)
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(MissingConfigError) as cm:
             as_run(run, base_dir=self.tmp)
         self.assertIn("base_dir", str(cm.exception))
+        self.assertIn("open_run(toml, base_dir=", cm.exception.hint)
         other = as_run(toml, base_dir=self.tmp)
         self.assertIsInstance(other, Run)
         self.assertEqual(other.base_dir_source, "argument")
@@ -364,6 +365,14 @@ class TestOpenRunRefusals(_TmpDir):
         run = open_run(_write_toml(self.tmp, UHFK_HEAD))
         with self.assertRaises(Exception):
             run.root = Path("/")
+        # outputs and meta are read-only
+        with self.assertRaises(TypeError):
+            run.outputs["green"] = Path("/elsewhere")
+        with self.assertRaises(TypeError):
+            del run.outputs["green"]
+        with self.assertRaises(TypeError):
+            run.meta["note"] = "x"
+        self.assertEqual(run.outputs["green"], self.tmp.resolve() / "output" / "green.npz")
         # every open builds fresh mappings
         again = open_run(run.input_path)
         self.assertIsNot(run.outputs, again.outputs)
@@ -408,6 +417,7 @@ class TestCaseInsensitiveConfig(_TmpDir):
         self.assertEqual(cfg["FILE"]["Output"]["ENERGY"], "energy.dat")
         self.assertEqual(run.param("EPS"), 9)
         self.assertEqual(run.param("mix"), 0.25)
+        self.assertEqual(run.param("MIX", default=1.0), 0.25)
         self.assertEqual(run.param("2Sz"), 0)
         self.assertEqual(run.param("NSite"), 2)
         # the lower-case 2sz selects the two spin blocks, as in the solver
@@ -422,6 +432,11 @@ class TestCaseInsensitiveConfig(_TmpDir):
         self.assertIsNone(run.param("2Sz"))
         self.assertIsNone(run.param("CellShape"))
         self.assertEqual(run.param("CellShape", default=[1, 1, 1]), [1, 1, 1])
+        # a default given by the caller wins over the solver default ...
+        self.assertEqual(run.param("Mix", default=0.3), 0.3)
+        self.assertIsNone(run.param("EPS", default=None))
+        # ... but not over a value in the file
+        self.assertEqual(run.param("ncond", default=99), 2)
         run = open_run(_write_toml(self.tmp, UHFR_HEAD + '2Sz = "free"\n'))
         self.assertIsNone(run.param("2sz"))
 
@@ -519,6 +534,16 @@ class TestRunRecords(_TmpDir):
         run_record_path(toml).unlink()
         self.assertNotIn("run_record_note", open_run(toml, base_dir=moved).meta)
 
+    def test_record_input_differs_only_in_case(self):
+        toml = _write_toml(self.tmp, UHFK_HEAD)
+        write_run_record(toml, cwd=self.tmp, argv=["hwave", "input.toml"])
+        other_case = self.tmp / "INPUT.toml"
+        if not other_case.exists():
+            self.skipTest("the file system is case-sensitive")
+        # the same file: not reported as moved
+        self.assertEqual(read_run_record(other_case)["input"], str(toml.resolve()))
+        self.assertEqual(open_run(other_case).base_dir_source, "run_record")
+
 
 class TestFreezeHelpers(unittest.TestCase):
     def test_freeze(self):
@@ -534,6 +559,24 @@ class TestFreezeHelpers(unittest.TestCase):
         self.assertEqual(frozen["c"], "x")
         with self.assertRaises(ValueError):
             frozen["b"][1][0][0] = 1.0
+
+    def test_freeze_case_insensitive_dict(self):
+        from requests.structures import CaseInsensitiveDict
+        src = np.arange(3.0)
+        mapping = CaseInsensitiveDict({"Green": src, "inner": {"a": [src]}})
+        frozen = _freeze(mapping)
+        self.assertIsInstance(frozen, CaseInsensitiveDict)
+        self.assertIsNot(frozen["green"], src)
+        assert_deep_frozen(frozen)
+        with self.assertRaises(ValueError):
+            frozen["GREEN"][0] = 1.0
+        self.assertTrue(src.flags.writeable)
+        with self.assertRaises(AssertionError):
+            assert_deep_frozen(mapping)
+        from types import MappingProxyType
+        with self.assertRaises(AssertionError):
+            assert_deep_frozen(MappingProxyType({"x": src}))
+        self.assertEqual(type(_freeze(MappingProxyType({"x": src}))), dict)
 
     def test_assert_deep_frozen_detects(self):
         with self.assertRaises(AssertionError):

@@ -25,6 +25,7 @@ import logging
 import os
 import shutil
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 
 import numpy as np
@@ -53,11 +54,16 @@ def _copy_inputs(source, dest):
 def _run(toml):
     """Run H-wave on ``toml`` from its own directory, as ``hwave input.toml``
     run in that directory would; the working directory and the level of the
-    ``qlms`` logger are restored afterwards."""
+    ``qlms`` logger are restored afterwards, and so is the root logger
+    (``qlms.run`` calls ``logging.basicConfig(level=INFO)``): its level and
+    its handlers."""
     import hwave.qlms
     cwd = os.getcwd()
     qlms_logger = logging.getLogger("qlms")
+    root_logger = logging.getLogger()
     level = qlms_logger.level
+    root_level = root_logger.level
+    root_handlers = list(root_logger.handlers)
     qlms_logger.setLevel(logging.WARNING)
     try:
         os.chdir(toml.parent)
@@ -65,6 +71,10 @@ def _run(toml):
     finally:
         os.chdir(cwd)
         qlms_logger.setLevel(level)
+        root_logger.setLevel(root_level)
+        for handler in list(root_logger.handlers):
+            if handler not in root_handlers:
+                root_logger.removeHandler(handler)
 
 
 def _build_uhfr_tutorial(dest):
@@ -137,7 +147,7 @@ def assert_deep_frozen(obj, where="result"):
         for f in dataclasses.fields(obj):
             assert_deep_frozen(getattr(obj, f.name), "{}.{}".format(where, f.name))
         return
-    if isinstance(obj, dict):
+    if isinstance(obj, Mapping):
         for key, value in obj.items():
             assert_deep_frozen(value, "{}[{!r}]".format(where, key))
         return
