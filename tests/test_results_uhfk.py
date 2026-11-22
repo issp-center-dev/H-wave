@@ -180,8 +180,22 @@ class TestGeometryRequired(unittest.TestCase):
     def test_geometry_norb_must_match_green(self):
         toml = copy_fixture("uhfk_u8")
         write_uhfk_geometry(toml.parent / "geom.dat", [(0, 0, 0), (0.5, 0, 0)])
-        with self.assertRaisesRegex(UnsupportedLayoutError, "Geometry"):
+        with self.assertRaisesRegex(UnsupportedLayoutError,
+                                    r"has 4 folded orbitals, which is not 2 x 4"):
             read_uhfk_order_parameters(toml)
+
+    def test_unreadable_green_reported_before_geometry(self):
+        # a run without the sublattice layout, whose green.npz has only an
+        # untagged deflated member next to green_sublattice: the green
+        # member is not readable, which is reported even without a Geometry
+        toml = copy_fixture("uhfk_fm_axis")
+        path = open_run(toml).path("green")
+        with np.load(path) as data:
+            green = data["green"]
+        np.savez(path, green=green, green_sublattice=green)
+        (toml.parent / "geom.dat").unlink()
+        with self.assertRaisesRegex(UnsupportedLayoutError, "not readable"):
+            read_uhfk_order_parameters(toml, legacy=True)
 
     def test_so_entries_of_one_orbital_share_a_centre(self):
         toml = copy_fixture("uhfk_so_xy")
@@ -432,6 +446,11 @@ class TestFixedSz(unittest.TestCase):
         self.assertIsNone(bands.gap)
         self.assertIn("homo_lumo_unavailable", bands.meta)
         assert_deep_frozen(bands)
+        op = read_uhfk_order_parameters(fixture("uhfk_2sz_fixed"))
+        self.assertEqual(op.meta["transverse_note"], "transverse fixed to zero by 2Sz")
+        self.assertEqual(op.meta["two_sz"], 1)
+        self.assertNotIn("transverse_note",
+                         read_uhfk_order_parameters(fixture("uhfk_u8")).meta)
 
 
 class TestLegacy(unittest.TestCase):

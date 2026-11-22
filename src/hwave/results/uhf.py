@@ -932,7 +932,8 @@ def read_uhfk_order_parameters(run_or_toml, *, site_of_orbital=None,
     ``cell_shape = SubShape``, ``lattice_shape = CellShape`` and ``n_cell``
     the number of magnetic cells. ``transverse_available`` is True: UHFk
     stores the spin-off-diagonal entries in every mode (with a fixed 2Sz and
-    no spin-mixing term they are zero, and so are S^x and S^y).
+    no spin-mixing term they are zero, and so are S^x and S^y;
+    ``meta["transverse_note"]`` then says so).
 
     Raises MissingOutputError for a missing Geometry or Green function file
     (and the errors of :func:`read_uhfk_green`); UnsupportedLayoutError when
@@ -943,16 +944,6 @@ def read_uhfk_order_parameters(run_or_toml, *, site_of_orbital=None,
     run = _uhfk_run(run_or_toml, base_dir)
     lattice = _lattice(run)
     green = read_uhfk_green(run, legacy=legacy)
-    geometry = read_geometry(input_file_path(run, "Geometry"))
-    so = run.spin_orbital
-    norb_orig = geometry.norb
-    if so and norb_orig % 2:
-        raise UnsupportedLayoutError(
-            "Geometry file {}: {} entries cannot be the interleaved spin-orbitals "
-            "of spin-orbital mode (an even number)".format(geometry.source, norb_orig),
-            path=geometry.source)
-    norb_phys = norb_orig // 2 if so else norb_orig
-
     if lattice.subvol > 1:
         member, values = green.sublattice, green.sublattice.green
     else:
@@ -962,13 +953,23 @@ def read_uhfk_order_parameters(run_or_toml, *, site_of_orbital=None,
             "{}: the 'green' member is not readable ({})".format(
                 green.source, green.meta.get("green_unavailable")),
             path=green.source)
+
+    geometry = read_geometry(input_file_path(run, "Geometry"))
+    so = run.spin_orbital
+    norb_orig = geometry.norb
+    if so and norb_orig % 2:
+        raise UnsupportedLayoutError(
+            "Geometry file {}: {} entries cannot be the interleaved spin-orbitals "
+            "of spin-orbital mode (an even number)".format(geometry.source, norb_orig),
+            path=geometry.source)
+    norb_phys = norb_orig // 2 if so else norb_orig
     nfold = values.shape[2]
     if nfold != norb_orig * lattice.subvol:
         raise UnsupportedLayoutError(
             "the Geometry file {} has {} orbital entries, but member {!r} of {} has "
-            "{} = {} x {} cell positions".format(
+            "{} folded orbitals, which is not {} x {} cell positions".format(
                 geometry.source, norb_orig, member.meta["member"], green.source,
-                nfold, nfold / lattice.subvol, lattice.subvol),
+                nfold, norb_orig, lattice.subvol),
             path=geometry.source)
     g0 = values[0]
     if so:
@@ -1023,6 +1024,10 @@ def read_uhfk_order_parameters(run_or_toml, *, site_of_orbital=None,
                 site_of_orbital_arg=_freeze(groups), tau_source=tau_source,
                 entry_index="j = k + norb_phys_orig * ir, ir = irx + Bx (iry + "
                             "By irz)")
+    two_sz = _two_sz(run)
+    if two_sz is not None:
+        meta["two_sz"] = two_sz
+        meta["transverse_note"] = "transverse fixed to zero by 2Sz"
     return dataclasses.replace(op, source=green.source, meta=meta)
 
 
