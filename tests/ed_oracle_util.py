@@ -345,6 +345,142 @@ def _apply_pair(state, p, q):
     return _apply_ops(state, ((q, False), (p, False)))
 
 
+def _popcount_below(pc, states, mode):
+    """``(-1)^(number of occupied modes below mode)`` for an int64 array of
+    Fock states, through the popcount table ``pc`` (``pc[s]`` = set bits of
+    ``s``): the sign rule of :func:`_apply_ops`, array-wise."""
+    return 1 - 2 * (pc[states & ((1 << mode) - 1)] & 1)
+
+
+def _pq_on_states(pc, states, p, q):
+    """``c^dag_p c_q`` on an int64 array of Fock states, ``q`` applied
+    first (the order of :func:`_apply_pq`). Returns ``(ok, new, sign)``:
+    ``ok`` marks the states the operator does not annihilate; ``new`` and
+    ``sign`` are meaningful only there."""
+    ok = ((states >> q) & 1) == 1
+    sign = _popcount_below(pc, states, q)
+    s1 = states ^ (1 << q)
+    ok &= ((s1 >> p) & 1) == 0
+    sign = sign * _popcount_below(pc, s1, p)
+    return ok, s1 | (1 << p), sign
+
+
+def _pair_on_states(pc, states, p, q):
+    """``c_p c_q`` on an int64 array of Fock states, ``q`` applied first
+    (the order of :func:`_apply_pair`); same return contract as
+    :func:`_pq_on_states`."""
+    ok = ((states >> q) & 1) == 1
+    sign = _popcount_below(pc, states, q)
+    s1 = states ^ (1 << q)
+    ok &= ((s1 >> p) & 1) == 1
+    sign = sign * _popcount_below(pc, s1, p)
+    return ok, s1 ^ (1 << p), sign
+
+
+def _scatter_rotate(pc, pos, states_ket, V_ket, V_bra, mode_terms, apply):
+    """``V_bra^dagger B V_ket`` for ``B = sum weight * op(p, q)`` between
+    two sector bases, without forming the Fock-basis block ``B``.
+
+    ``op`` (``apply``: :func:`_pq_on_states` or :func:`_pair_on_states`)
+    maps distinct kets to distinct bras, so each term's ``B V_ket`` is a
+    scatter of the rows of ``V_ket`` into the bra positions ``pos[new]``
+    (no two rows of one term land on the same position, which is what makes
+    the fancy-indexed ``+=`` exact). Only the final rotation is a matrix
+    product. ``pc`` is the popcount table and ``pos[s]`` the position of
+    Fock state ``s`` inside its own sector."""
+    Y = np.zeros((V_bra.shape[0], V_ket.shape[1]), dtype=complex)
+    for (p, q, weight) in mode_terms:
+        ok, new, sign = apply(pc, states_ket, p, q)
+        if not ok.any():
+            continue
+        Y[pos[new[ok]]] += (weight * sign[ok])[:, None] * V_ket[ok]
+    return V_bra.conj().T @ Y
+
+
+#: contraction-axis block of the Lehmann products below. One BLAS product
+#: accumulates its contraction axis in a single running sum (error growing
+#: with the axis length, up to ~1e6 eigenstate pairs per sector pair);
+#: splitting it into blocks combined pairwise bounds that growth. The
+#: measured gain is in the Green function (:func:`lehmann_frequency_sum`):
+#: the old per-frequency product was up to 6e-14 off an exactly rounded
+#: sum, the blocked one at most 3e-16. The static correlators
+#: (:func:`_lehmann_gram`) sit at about 8e-15 of an exact sum either way;
+#: there the blocks are kept for uniformity, not for a measured gain.
+_ACC_CHUNK = 1024
+
+
+class _PairwiseSum:
+    """Running sum of equally shaped arrays, combined pairwise (a binary
+    counter of partial sums, so O(log n) of them are alive at once)."""
+
+    def __init__(self):
+        self._stack = []          # [(level, partial)], levels decreasing
+
+    def add(self, x):
+        level = 0
+        while self._stack and self._stack[-1][0] == level:
+            x = self._stack.pop()[1] + x
+            level += 1
+        self._stack.append((level, x))
+
+    def total(self, like):
+        if not self._stack:
+            return np.zeros_like(like)
+        out = self._stack[-1][1]
+        for _level, part in reversed(self._stack[:-1]):
+            out = part + out
+        return out
+
+
+def _blocked_product(acc, left, right):
+    """Add ``left @ right`` to the :class:`_PairwiseSum` ``acc``, the
+    contraction axis in blocks of :data:`_ACC_CHUNK`."""
+    n = left.shape[1]
+    for lo in range(0, n, _ACC_CHUNK):
+        acc.add(left[:, lo:lo + _ACC_CHUNK] @ right[lo:lo + _ACC_CHUNK])
+
+
+def _lehmann_gram(kernel_of, ops, conj):
+    """``out[i, j] = sum_sectors sum_{m, n} K[m, n] A_i[m, n] B_j[m, n]``
+    with ``B_j = conj(ops[j])`` (``conj=True``, the ``<A; B^dagger>``
+    contraction) -- every cell of the ``len(ops)``-square matrix as ONE
+    ``(n_op, M_m M_n) x (M_m M_n, n_op)`` product per sector pair instead
+    of ``n_op**2`` elementwise triple products. ``ops`` share one sector
+    shift, hence one key set; ``kernel_of(key)`` is that key's kernel."""
+    n_op = len(ops)
+    acc = _PairwiseSum()
+    if n_op == 0:
+        return np.zeros((0, 0), dtype=complex)
+    for key in ops[0]:
+        X = np.stack([o[key].ravel() for o in ops])
+        K = kernel_of(key).ravel()
+        _blocked_product(acc, X * K[None, :], X.conj().T if conj else X.T)
+    return acc.total(np.zeros((n_op, n_op), dtype=complex))
+
+
+def lehmann_frequency_sum(iws, Ar, Ac, weight, dE, budget=1 << 22):
+    """``out[i, r, c] = sum_k Ar[r, k] Ac[c, k] weight[k] / (iws[i] - dE[k])``:
+    the Lehmann frequency sum of one sector pair for EVERY frequency as one
+    ``(n_w, k) x (k, n_r n_c)`` product rather than one product per
+    frequency. ``Ar``/``Ac`` are the row/column matrix elements ``(n_r,
+    k)``/``(n_c, k)``, ``k`` running over the flattened ``(m, n)``
+    eigenstate pairs. The ``k`` axis is taken in blocks of at most
+    :data:`_ACC_CHUNK` (fewer when an operand would exceed ``budget``
+    elements) whose products are combined pairwise."""
+    n_w, n_r, n_c = len(iws), Ar.shape[0], Ac.shape[0]
+    if n_w == 0 or n_r == 0 or n_c == 0:
+        return np.zeros((n_w, n_r, n_c), dtype=complex)
+    acc = _PairwiseSum()
+    n_k = dE.size
+    chunk = max(1, min(_ACC_CHUNK, budget // max(n_w, n_r * n_c, 1)))
+    for lo in range(0, n_k, chunk):
+        sl = slice(lo, lo + chunk)
+        F = weight[None, sl] / (iws[:, None] - dE[None, sl])
+        AA = (Ar[:, None, sl] * Ac[None, :, sl]).reshape(n_r * n_c, -1)
+        acc.add(F @ AA.T)
+    return acc.total(np.zeros((n_w, n_r * n_c), dtype=complex)).reshape(n_w, n_r, n_c)
+
+
 class SectorED:
     """Exact diagonalization by (N_up, N_dn) symmetry block, for a
     Hamiltonian H1(+terms) - mu*(N_up+N_dn) that conserves both particle
@@ -395,7 +531,14 @@ class SectorED:
     every (q, a, c) combination simultaneously would be several hundred
     MB, so at most a "one q's worth of one operator role" cache is kept
     (see ``chi_connected``'s ``b_side`` and ``bond_correlator``/
-    ``pair_correlator``'s ``built`` lists), never the full set.
+    ``pair_correlator``'s ``ops`` lists), never the full set.
+
+    Both halves of the work are array operations over whole sectors: an
+    operator block is the scatter of the rows of the ket eigenvectors
+    through a popcount table (:func:`_scatter_rotate`, the scheme
+    ``TotalNED`` uses), and every Lehmann cell of one ``q`` is one product
+    per sector (:func:`_lehmann_gram`). The per-state helpers
+    (:func:`_apply_ops` and friends) still build the sector Hamiltonians.
     """
 
     _SECTOR_FLOOR = 1e-9   # max tolerated (N_up, N_dn)-non-conserving H
@@ -500,6 +643,36 @@ class SectorED:
 
     # -- generic bilinear machinery -----------------------------------------
 
+    def _state_tables(self):
+        """``(pc, pos, arrs)``, built once per instance: the popcount table
+        over the whole Fock space, ``pos[s]`` = position of state ``s``
+        inside its own sector, and every sector's states as an int64 array
+        (the same order as ``_sector_states``)."""
+        tabs = getattr(self, "_tables", None)
+        if tabs is None:
+            dim = self.fx.dim
+            allst = np.arange(dim, dtype=np.int64)
+            pc = np.zeros(dim, dtype=np.int64)
+            for b in range(self.fx.nmode):
+                pc += (allst >> b) & 1
+            pos = np.full(dim, -1, dtype=np.int64)
+            arrs = {}
+            for key, states in self._sector_states.items():
+                a = np.asarray(states, dtype=np.int64)
+                arrs[key] = a
+                pos[a] = np.arange(len(a))
+            tabs = self._tables = (pc, pos, arrs)
+        return tabs
+
+    def _lehmann_dagger_matrix(self, ops, delta):
+        """``out[i, j] = _lehmann_dagger(ops[i], delta, ops[j], delta)`` for
+        operators sharing the sector shift ``delta``, as one product per
+        sector (see :func:`_lehmann_gram`)."""
+        return _lehmann_gram(
+            lambda key_n: self._pair_kernel(
+                (key_n[0] + delta[0], key_n[1] + delta[1]), key_n),
+            ops, conj=True)
+
     def _build_operator(self, mode_terms):
         """mode_terms: [(p, q, weight), ...] for sum_j weight_j *
         c^dag_p c_q. Returns (delta, op): delta = (dNup, dNdn) this
@@ -516,22 +689,15 @@ class SectorED:
                 delta = d
             elif d != delta:
                 raise ValueError("mode_terms mix incompatible sector shifts")
+        pc, pos, arrs = self._state_tables()
         op = {}
-        for key_ket, states_ket in self._sector_states.items():
+        for key_ket, states_ket in arrs.items():
             key_bra = (key_ket[0] + delta[0], key_ket[1] + delta[1])
-            states_bra = self._sector_states.get(key_bra)
-            if states_bra is None:
+            if key_bra not in arrs:
                 continue
-            idx_bra = self._sector_index[key_bra]
-            block = np.zeros((len(states_bra), len(states_ket)), dtype=complex)
-            for col, state in enumerate(states_ket):
-                for (p, q, weight) in mode_terms:
-                    r = _apply_pq(state, p, q)
-                    if r is None:
-                        continue
-                    new_state, sign = r
-                    block[idx_bra[new_state], col] += weight * sign
-            op[key_ket] = self._V[key_bra].conj().T @ block @ self._V[key_ket]
+            op[key_ket] = _scatter_rotate(
+                pc, pos, states_ket, self._V[key_ket], self._V[key_bra],
+                mode_terms, _pq_on_states)
         return delta, op
 
     def _build_pair_operator(self, mode_terms):
@@ -540,22 +706,15 @@ class SectorED:
         c_down c_up order). Always delta = (-1, -1). Same block/eigenbasis
         convention as ``_build_operator``."""
         delta = (-1, -1)
+        pc, pos, arrs = self._state_tables()
         op = {}
-        for key_ket, states_ket in self._sector_states.items():
+        for key_ket, states_ket in arrs.items():
             key_bra = (key_ket[0] - 1, key_ket[1] - 1)
-            states_bra = self._sector_states.get(key_bra)
-            if states_bra is None:
+            if key_bra not in arrs:
                 continue
-            idx_bra = self._sector_index[key_bra]
-            block = np.zeros((len(states_bra), len(states_ket)), dtype=complex)
-            for col, state in enumerate(states_ket):
-                for (p, q, weight) in mode_terms:
-                    r = _apply_pair(state, p, q)
-                    if r is None:
-                        continue
-                    new_state, sign = r
-                    block[idx_bra[new_state], col] += weight * sign
-            op[key_ket] = self._V[key_bra].conj().T @ block @ self._V[key_ket]
+            op[key_ket] = _scatter_rotate(
+                pc, pos, states_ket, self._V[key_ket], self._V[key_bra],
+                mode_terms, _pair_on_states)
         return delta, op
 
     def _thermal_avg(self, op, delta):
@@ -661,8 +820,17 @@ class SectorED:
                         for j in range(fx.L)]
                     delta, op = self._build_operator(mode_terms)
                     b_side[(d, b)] = (delta, op, self._thermal_avg(op, delta))
+            # the (d, b) operators grouped by sector shift: a (a, c)
+            # operator of shift deltaA pairs only with deltaB == -deltaA
+            groups = {}
+            for (d, b), (delta, op, avg) in b_side.items():
+                groups.setdefault(delta, []).append((b, d, op, avg))
             for a in range(fx.nd):
                 oa, sa = a % fx.norb, a // fx.norb
+                # one row of (a, c) operators at a time, every (b, d) cell
+                # of it as one product per sector (the memory bound of the
+                # class docstring: one q's (d, b) role plus one row)
+                rows = {}
                 for c in range(fx.nd):
                     oc, sc = c % fx.norb, c // fx.norb
                     mode_terms = [
@@ -670,14 +838,43 @@ class SectorED:
                          np.exp(2j * np.pi * qi * j / fx.L))
                         for j in range(fx.L)]
                     deltaA, opA = self._build_operator(mode_terms)
-                    avgA = self._thermal_avg(opA, deltaA)
-                    for b in range(fx.nd):
-                        for d in range(fx.nd):
-                            deltaB, opB, avgB = b_side[(d, b)]
-                            val = self._lehmann_transpose(opA, deltaA, opB, deltaB)
-                            val -= fx.beta * avgA * avgB
-                            out[qi, a, c, b, d] = val
+                    rows.setdefault(deltaA, []).append(
+                        (c, opA, self._thermal_avg(opA, deltaA)))
+                for deltaA, arow in rows.items():
+                    minus = (-deltaA[0], -deltaA[1])
+                    bcol = groups.get(minus, [])
+                    if bcol:
+                        vals = self._lehmann_transpose_matrix(
+                            [x[1] for x in arow], deltaA, [x[2] for x in bcol])
+                    for i, (c, _opA, avgA) in enumerate(arow):
+                        for j, (b, d, _opB, avgB) in enumerate(bcol):
+                            out[qi, a, c, b, d] = vals[i, j] - fx.beta * avgA * avgB
+                    # (b, d) cells of a non-matching shift: the Lehmann sum
+                    # vanishes and only the disconnected piece is left
+                    for c, _opA, avgA in arow:
+                        for delta, gl in groups.items():
+                            if delta == minus:
+                                continue
+                            for (b, d, _opB, avgB) in gl:
+                                out[qi, a, c, b, d] = 0.0 - fx.beta * avgA * avgB
         return out / fx.L
+
+    def _lehmann_transpose_matrix(self, opsA, deltaA, opsB):
+        """``out[i, j] = _lehmann_transpose(opsA[i], deltaA, opsB[j],
+        -deltaA)`` for every pair, one product per sector (see
+        :func:`_lehmann_gram`): ``sum K[m, n] A[m, n] B[n, m]`` with ``A``
+        from ket ``n`` to ``m = n + deltaA`` and ``B`` from ``m`` back to
+        ``n``."""
+        acc = _PairwiseSum()
+        for key_n in opsA[0]:
+            key_m = (key_n[0] + deltaA[0], key_n[1] + deltaA[1])
+            if key_m not in opsB[0]:
+                continue
+            XA = np.stack([o[key_n].ravel() for o in opsA])
+            XB = np.stack([o[key_m].T.ravel() for o in opsB])
+            K = self._pair_kernel(key_m, key_n).ravel()
+            _blocked_product(acc, XA * K[None, :], XB.T)
+        return acc.total(np.zeros((len(opsA), len(opsB)), dtype=complex))
 
     def bond_correlator(self, channels):
         """Xph[q, sigma, sigma', I, J], connected, of B_{R,a,b,sigma}(q) =
@@ -706,10 +903,9 @@ class SectorED:
         n_i = len(channels)
         out = np.zeros((fx.L, 2, 2, n_i, n_i), dtype=complex)
         for qi in range(fx.L):
-            built = []   # built[I][sigma] = (delta, op, avg)
+            ops, avgs = [], []   # operator index 2 * I + sigma
             for chan in channels:
                 R, a, b = self._channel_orbitals(chan)
-                row = []
                 for sigma in range(2):
                     mode_terms = [
                         (fx.mode((j + R) % fx.L, a, sigma),
@@ -717,17 +913,16 @@ class SectorED:
                          np.exp(2j * np.pi * qi * j / fx.L))
                         for j in range(fx.L)]
                     delta, op = self._build_operator(mode_terms)
-                    row.append((delta, op, self._thermal_avg(op, delta)))
-                built.append(row)
-            for i in range(n_i):
-                for sigma in range(2):
-                    deltaA, opA, avgA = built[i][sigma]
-                    for j in range(n_i):
-                        for sigmap in range(2):
-                            deltaB, opB, avgB = built[j][sigmap]
-                            val = self._lehmann_dagger(opA, deltaA, opB, deltaB)
-                            val -= fx.beta * avgA * np.conj(avgB)
-                            out[qi, sigma, sigmap, i, j] = val
+                    if delta != (0, 0):
+                        raise AssertionError(
+                            "bond_correlator: a same-spin bond bilinear "
+                            "shifted the sector by {}".format(delta))
+                    ops.append(op)
+                    avgs.append(self._thermal_avg(op, delta))
+            avgs = np.asarray(avgs, dtype=complex)
+            acc = self._lehmann_dagger_matrix(ops, (0, 0))
+            acc -= fx.beta * np.outer(avgs, np.conj(avgs))
+            out[qi] = acc.reshape(n_i, 2, n_i, 2).transpose(1, 3, 0, 2)
         return out / fx.L
 
     def pair_correlator(self, channels):
@@ -765,19 +960,15 @@ class SectorED:
         n_i = len(channels)
         out = np.zeros((fx.L, n_i, n_i), dtype=complex)
         for qi in range(fx.L):
-            built = []
+            ops = []
             for chan in channels:
                 R, a, b = self._channel_orbitals(chan)
                 mode_terms = [
                     (fx.mode((j + R) % fx.L, a, 1), fx.mode(j, b, 0),
                      np.exp(2j * np.pi * qi * j / fx.L))
                     for j in range(fx.L)]
-                built.append(self._build_pair_operator(mode_terms))
-            for i in range(n_i):
-                deltaA, opA = built[i]
-                for j in range(n_i):
-                    deltaB, opB = built[j]
-                    out[qi, i, j] = self._lehmann_dagger(opA, deltaA, opB, deltaB)
+                ops.append(self._build_pair_operator(mode_terms)[1])
+            out[qi] = self._lehmann_dagger_matrix(ops, (-1, -1))
         return out / fx.L
 
     def bond_correlator_transverse(self, channels):
@@ -860,7 +1051,7 @@ class SectorED:
         n_i = len(wrapped)
         out = np.zeros((fx.L, n_i, n_i), dtype=complex)
         for qi in range(fx.L):
-            built = []   # built[I] = (delta, op, avg)
+            ops, avgs, delta = [], [], None
             for (R, a, b) in wrapped:
                 mode_terms = [
                     (fx.mode((j + R) % fx.L, a, 0),
@@ -868,14 +1059,14 @@ class SectorED:
                      np.exp(2j * np.pi * qi * j / fx.L))
                     for j in range(fx.L)]
                 delta, op = self._build_operator(mode_terms)
-                built.append((delta, op, self._thermal_avg(op, delta)))
-            for i in range(n_i):
-                deltaA, opA, avgA = built[i]
-                for j in range(n_i):
-                    deltaB, opB, avgB = built[j]
-                    val = self._lehmann_dagger(opA, deltaA, opB, deltaB)
-                    val -= fx.beta * avgA * np.conj(avgB)
-                    out[qi, i, j] = val
+                ops.append(op)
+                avgs.append(self._thermal_avg(op, delta))
+            if n_i == 0:
+                continue
+            avgs = np.asarray(avgs, dtype=complex)
+            acc = self._lehmann_dagger_matrix(ops, delta)
+            acc -= fx.beta * np.outer(avgs, np.conj(avgs))
+            out[qi] = acc
         return out / fx.L
 
     # -- single-particle observables ---------------------------------------
@@ -1003,8 +1194,7 @@ class SectorED:
                 Ac = np.conj(flat[c_slot])
                 weight = (w_m[:, None] + w_n[None, :]).ravel()
                 dE = (ev_n[None, :] - ev_m[:, None]).ravel()
-                for i, iw in enumerate(iws):
-                    buf[i] += (Ar * (weight / (iw - dE))) @ Ac.T
+                buf += lehmann_frequency_sum(iws, Ar, Ac, weight, dE)
             out[np.ix_(widx, r_pos, c_pos)] += buf
         return out
 
@@ -1224,20 +1414,20 @@ class TotalNED:
         SECTOR EIGENBASIS (the bra sector always equals the ket sector,
         since delta == 0, so nothing is ever absent from the dict)."""
         delta = 0
+        pc, pos = self._popcount_table(), self._position_table()
         op = {}
         for key_ket, states_ket in self._sector_states.items():
-            states_bra = states_ket
-            idx_bra = self._sector_index[key_ket]
-            block = np.zeros((len(states_bra), len(states_ket)), dtype=complex)
-            for col, state in enumerate(states_ket):
-                for (p, q, weight) in mode_terms:
-                    r = _apply_pq(state, p, q)
-                    if r is None:
-                        continue
-                    new_state, sign = r
-                    block[idx_bra[new_state], col] += weight * sign
-            op[key_ket] = self._V[key_ket].conj().T @ block @ self._V[key_ket]
+            op[key_ket] = _scatter_rotate(
+                pc, pos, np.asarray(states_ket, dtype=np.int64),
+                self._V[key_ket], self._V[key_ket], mode_terms, _pq_on_states)
         return delta, op
+
+    def _lehmann_dagger_matrix(self, ops, delta):
+        """``out[i, j] = _lehmann_dagger(ops[i], delta, ops[j], delta)``, one
+        product per sector (see :func:`_lehmann_gram`)."""
+        return _lehmann_gram(
+            lambda key_n: self._pair_kernel(key_n + delta, key_n),
+            ops, conj=True)
 
     def _thermal_avg(self, op, delta):
         if delta != 0:
@@ -1330,7 +1520,7 @@ class TotalNED:
         n_i = len(wrapped)
         out = np.zeros((fx.L, n_i, n_i), dtype=complex)
         for qi in range(fx.L):
-            built = []   # built[I] = (delta, op, avg)
+            ops, avgs, delta = [], [], None
             for (R, a, b) in wrapped:
                 mode_terms = [
                     (fx.mode((j + R) % fx.L, a, 0),
@@ -1338,20 +1528,20 @@ class TotalNED:
                      np.exp(2j * np.pi * qi * j / fx.L))
                     for j in range(fx.L)]
                 delta, op = self._build_operator(mode_terms)
-                built.append((delta, op, self._thermal_avg(op, delta)))
-            for i in range(n_i):
-                deltaA, opA, avgA = built[i]
-                for j in range(n_i):
-                    deltaB, opB, avgB = built[j]
-                    val = self._lehmann_dagger(opA, deltaA, opB, deltaB)
-                    val -= fx.beta * avgA * np.conj(avgB)
-                    out[qi, i, j] = val
+                ops.append(op)
+                avgs.append(self._thermal_avg(op, delta))
+            if n_i == 0:
+                continue
+            avgs = np.asarray(avgs, dtype=complex)
+            acc = self._lehmann_dagger_matrix(ops, delta)
+            acc -= fx.beta * np.outer(avgs, np.conj(avgs))
+            out[qi] = acc
         return out / fx.L
 
     # -- Green function and pair correlator (#83, spin-orbital Eliashberg) ---
     #
-    # Both are evaluated with array operations over whole sectors rather
-    # than SectorED's per-state loops: a total-N block is larger than any
+    # Both are evaluated with array operations over whole sectors (as are
+    # the bilinears above): a total-N block is larger than any
     # (N_up, N_dn) block of the same fixture (924 versus 400 at L = 3,
     # norb = 2), and the spin-orbital pair basis has every spin combination.
 
@@ -1430,6 +1620,8 @@ class TotalNED:
         r_slot = np.asarray([slot[p] for p in rows], dtype=int)
         c_slot = np.asarray([slot[q] for q in cols], dtype=int)
         out = np.zeros((len(iws), len(rows), len(cols)), dtype=complex)
+        if out.size == 0:
+            return out          # no row, no column or no frequency
         for key_n in self._sector_states:
             A = self._rotated_lowering(key_n, -1, [[(p, 1.0)] for p in modes])
             if A is None:
@@ -1439,8 +1631,7 @@ class TotalNED:
             Ar, Ac = flat[r_slot], np.conj(flat[c_slot])
             weight = (self._w[key_m][:, None] + self._w[key_n][None, :]).ravel()
             dE = (self._ev[key_n][None, :] - self._ev[key_m][:, None]).ravel()
-            for i, iw in enumerate(iws):
-                out[i] += (Ar * (weight / (iw - dE))) @ Ac.T
+            out += lehmann_frequency_sum(iws, Ar, Ac, weight, dE)
         return out
 
     def pair_correlator(self, pairs, qs=None):

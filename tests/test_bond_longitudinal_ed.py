@@ -57,6 +57,7 @@ from hwave.solver import bond_channels as bc
 from hwave.solver import bubble
 from hwave.solver.offsite import split_locality, sc_matrices_from_split
 from tests import ed_oracle_util
+from tests import ed_cache
 from tests.heavy_tests import heavy
 from tests.test_bond_transverse_ed import (
     _terms_exchange_offsite, _terms_hund_offsite, _terms_ising_offsite)
@@ -208,8 +209,8 @@ def _chi_hf_sub(fx, t, a, b, R, channels, v):
     if v == 0:
         n = len(channels)
         return np.zeros((fx.L, 2, 2, n, n), dtype=complex)
-    full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(list(channels))
-    hf = ed_oracle_util.SectorED(
+    full = ed_cache.sector(fx, terms=terms).bond_correlator(list(channels))
+    hf = ed_cache.sector(
         fx, terms=(), h1=ed_oracle_util.hf_h1_from_terms(fx, terms)
     ).bond_correlator(list(channels))
     return full - hf

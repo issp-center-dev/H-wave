@@ -183,6 +183,7 @@ import unittest
 import numpy as np
 
 from tests import ed_oracle_util as edu
+from tests import ed_cache
 from tests.heavy_tests import heavy
 from tests.test_flex_second_order_ed_onsite import (_coeff2, _coeff11, _quiet, _refine,
                                                     wick_hf_sigma)
@@ -838,7 +839,7 @@ def _sigma_ed(fx, rows_by_type, iws, mirrored_weight=0.5, hf_source="wick"):
         mirrored-row weight at all (the ``"wick"`` functional tracks
         whatever weight it is handed, so it cannot discriminate one).
     """
-    ed = edu.SectorED(fx, terms=_ed_terms(fx, rows_by_type, mirrored_weight))
+    ed = ed_cache.sector(fx, terms=_ed_terms(fx, rows_by_type, mirrored_weight))
     sigma = np.linalg.inv(_g0_k(fx, iws)) - np.linalg.inv(_green_ed_k(ed, fx, iws))
     rho = ed.density_matrix()
     if hf_source == "production":
