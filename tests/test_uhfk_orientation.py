@@ -450,6 +450,13 @@ def _reversed_dir(case):
 #: the ``energy.dat`` members that sum the per-type interaction energies
 _TOTALS = ("Energy_Total", "FreeEnergy_Total")
 
+#: The ``energy.dat`` members written since normal-mode UHFk reports the
+#: transverse spin (the last two lines, ``Sx`` and ``Sy``). Reference
+#: revisions older than that change do not write them in normal mode, so
+#: the comparison exempts exactly the ones the reference lacks; this tree
+#: must still write them.
+_ADDED_KEYS = frozenset({"Sx", "Sy"})
+
 
 def _refixed(case):
     """The ``energy.dat`` members of ``case`` whose formula the fix of issue
@@ -525,8 +532,11 @@ class _OrientationMixin:
         measurement it could be calibrated from.
         """
         (ea, ga), (eb, gb) = a, b
-        self.assertEqual(sorted(ea), sorted(eb),
+        added = _ADDED_KEYS - set(eb)
+        self.assertEqual(sorted(set(ea) - added), sorted(eb),
                          "{}: energy.dat key sets differ".format(what))
+        self.assertLessEqual(_ADDED_KEYS, set(ea),
+                             "{}: energy.dat lacks Sx/Sy".format(what))
         self.assertEqual(sorted(ga), sorted(gb),
                          "{}: green.dat.npz member names differ".format(what))
         self._assert_offsite_energy_is_live(case, ea, what)
@@ -551,7 +561,7 @@ class _OrientationMixin:
                 "{}: energy.dat member {} is not the negative of the "
                 "reference's (issue #350)".format(what, key))
         for key in sorted(ea):
-            if key in refixed or key in _TOTALS or key in flipped:
+            if key in refixed or key in _TOTALS or key in flipped or key in added:
                 continue
             self.assertEqual(
                 ea[key], eb[key],

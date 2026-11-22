@@ -592,6 +592,9 @@ class UHFr(solver_base):
         self._makeham_mat()
         self._detect_blocks()
         import time
+        # the convergence record (scf_status.dat), defined before the loop
+        # so that a run of zero steps has one too
+        self._reset_scf_status()
         for i_step in range(param_mod["IterationMax"]):
             self._makeham()
             self._diag()
@@ -609,13 +612,14 @@ class UHFr(solver_base):
                                                                  self.physics["Ene"]["Total"],
                                                                  self.physics["NCond"],
                                                                  self.physics["Sz"]))
-            if self.physics["Rest"] < param_mod["eps"]:
+            if self._record_scf_step(i_step, self.physics["Rest"], param_mod["eps"]):
                 break
 
-        if self.physics["Rest"] < param_mod["eps"]:
+        if self.scf_converged:
             logger.info("UHFr calculation is succeeded: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
             logger.info("Total Energy = {}.".format(self.physics["Ene"]["Total"]))
-        else:
+        elif self.scf_iterations > 0:
+            # (after zero steps save_results logs the one warning there is)
             logger.warning("UHFr calculation is failed: rest={}, eps={}.".format(self.physics["Rest"], param_mod["eps"]))
 
         if print_check is not None:
@@ -1210,6 +1214,13 @@ class UHFr(solver_base):
         N = self.Nsize
         diag = np.diag(self.Green).real
         self.physics["Sz"] = 0.5 * (np.sum(diag[:N]) - np.sum(diag[N:]))
+        # transverse spin from the on-site spin-off-diagonal elements
+        # (spin-up index i, spin-down index i + N), before the mixing below
+        idx = np.arange(N)
+        ud = self.Green[idx, idx + N]   # <c^dag_{i up} c_{i down}>
+        du = self.Green[idx + N, idx]   # <c^dag_{i down} c_{i up}>
+        self.physics["Sx"] = 0.5 * np.sum(ud + du).real
+        self.physics["Sy"] = 0.5 * np.sum(-1j * (ud - du)).real
 
         diff = self.Green - self.Green_old
         rest = np.sum(np.abs(diff) ** 2)
@@ -1249,6 +1260,14 @@ class UHFr(solver_base):
         """
         path_to_output = info_outputfile["path_to_output"]
 
+        # refuse a status file that would overwrite another output, then
+        # write the convergence status first; after zero SCF steps it is the
+        # only result there is
+        self.check_output_paths(info_outputfile)
+        if not self._save_scf_status(info_outputfile, "UHFr",
+                                     "two_frobenius_over_size:uhfr_full"):
+            return
+
         if "energy" in info_outputfile.keys():
             output_str  = "Energy_total = {}\n".format(self.physics["Ene"]["Total"].real)
             output_str += "Energy_band = {}\n".format(self.physics["Ene"]["band"].real)
@@ -1267,6 +1286,10 @@ class UHFr(solver_base):
             elif len(mus) > 1:
                 for k, mu in mus:
                     output_str += "ChemicalPotential_{} = {}\n".format(k, mu)
+            # transverse spin, as the last two lines (the mean-field state can
+            # point along any spin axis)
+            output_str += "Sx = {}\n".format(self.physics["Sx"])
+            output_str += "Sy = {}\n".format(self.physics["Sy"])
             with open(os.path.join(path_to_output, info_outputfile["energy"]), "w") as fw:
                 fw.write(output_str)
 
@@ -1350,6 +1373,31 @@ class UHFr(solver_base):
                         fw.write(output_str)
                 else:
                     logger.warning("NOT IMPLEMENTED: Sz even and Sz != 0: this case will be implemented in near future")
+
+    def _output_artifacts(self, info_outputfile):
+        """The files :meth:`save_results` writes besides the status file,
+        with the generated block prefixes."""
+        from hwave.solver.base import npz_path
+        path = info_outputfile.get("path_to_output", "output")
+        out = []
+
+        def name(key):
+            value = info_outputfile.get(key)
+            return value if isinstance(value, str) else None
+
+        for key in ("energy", "green", "initial"):
+            if name(key) is not None:
+                out.append((key, os.path.join(path, name(key))))
+        if name("eigen") is not None:
+            for block in self.green_list:
+                out.append(("eigen", npz_path(
+                    os.path.join(path, block + "_" + name("eigen")))))
+        if name("fij") is not None:
+            two_sz = self.param_mod["2Sz"]
+            prefix = "sz-free_" if two_sz is None else ("Sz0_" if two_sz == 0 else None)
+            if prefix is not None:
+                out.append(("fij", os.path.join(path, prefix + name("fij"))))
+        return out
 
     @do_profile
     def get_Ham(self):
