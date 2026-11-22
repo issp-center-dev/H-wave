@@ -16,9 +16,28 @@ Output names follow the solvers exactly: ``[file.output]`` and
 read them (uhfk.py:1796-1897, uhfr.py:1271-1375, uhfk.py:816-823,
 uhfr.py:575-577); a key that differs only in case is not written by the
 solver, so it is not configured here, and it is listed in
-``Run.meta["ignored_output_keys"]``. Parameter lookups through
-:attr:`Run.config` and :meth:`Run.param` are case-insensitive at every
-level.
+``Run.meta["ignored_output_keys"]``.
+
+:attr:`Run.config` reads each layer of the TOML file the way the solver
+does:
+
+* exact-case: the top-level tables ``[mode]``, ``[file]``, ``[log]``
+  (qlms.py:98-111), the keys of ``[mode]`` (qlms.py:20-53: a key in other
+  case makes the solver stop), of ``[file]`` (qlms.py:104-111), of
+  ``[file.input]`` (UHFk: read_input_k.py:152-190; UHFr: ``path_to_input``
+  and ``interaction``, qlms.py:108, 146), of ``[file.output]`` and of
+  ``[log]``;
+* case-insensitive: ``[mode.param]`` (``ParamDict``, base.py:16,
+  qlms.py:137) and ``[file.input.interaction]`` (qlms.py:146-149;
+  read_input_k.py:93). UHFr also matches ``[file.input]`` ``initial`` and
+  ``onebodyg`` in any case (qlms.py:155-159); in :attr:`Run.config` that
+  table stays exact-case, so look these two up case-insensitively.
+
+A key of an exact-case layer that matches a key the solver reads only when
+case is ignored is not read by the solver. It is listed in
+``Run.meta["ignored_keys"]`` (which also holds the ``ignored_output_keys``)
+and logged once as a WARNING. A ``[Mode]`` table in other case is an
+UnsupportedLayoutError, as the solver stops without a ``[mode]`` table.
 """
 from __future__ import annotations
 
@@ -97,6 +116,72 @@ def _case_insensitive(obj):
     return obj
 
 
+def _exact_copy(obj):
+    """A deep copy of ``obj`` with plain dicts for the mappings."""
+    if isinstance(obj, Mapping):
+        return {k: _exact_copy(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_exact_copy(v) for v in obj]
+    return obj
+
+
+def _solver_view(raw):
+    """``raw`` with the solver's case rules: CaseInsensitiveDicts at
+    ``[mode.param]`` and ``[file.input.interaction]``, plain dicts
+    elsewhere."""
+    config = _exact_copy(raw)
+    mode = config.get("mode")
+    if isinstance(mode, dict) and isinstance(mode.get("param"), dict):
+        mode["param"] = _case_insensitive(mode["param"])
+    finput = config.get("file", {}).get("input") \
+        if isinstance(config.get("file"), dict) else None
+    if isinstance(finput, dict) and isinstance(finput.get("interaction"), dict):
+        finput["interaction"] = _case_insensitive(finput["interaction"])
+    return config
+
+
+#: the top-level tables qlms.run reads (qlms.py:98-104), exact-case
+_TOP_TABLES = ("mode", "file", "log")
+#: the keys of [file] qlms.run reads (qlms.py:104-111)
+_FILE_KEYS = ("input", "output")
+#: the exact-case [file.input] keys of each solver: UHFk read_input_k.py:93,
+#: 152-190; UHFr qlms.py:108, 146 (UHFr matches initial and onebodyg in any
+#: case, qlms.py:155-159, so they are not listed)
+_INPUT_KEYS = {
+    "UHFk": ("path_to_input", "interaction", "initial", "initial_uhf",
+             "initial_mode", "geometry_uhf", "onebodyg_uhf"),
+    "UHFr": ("path_to_input", "interaction"),
+}
+
+
+def _case_variants(table, keys, where, is_table=False):
+    """The entries of ``table`` that equal one of ``keys`` only when case
+    is ignored."""
+    lower = {k.lower() for k in keys}
+    found = []
+    for key in table:
+        if key not in keys and key.lower() in lower:
+            found.append("[{}]".format(key) if is_table else "{} {}".format(where, key))
+    return found
+
+
+def _ignored_input_keys(raw, mode):
+    """The keys of the exact-case layers above [file.output] and [log]
+    that the solver does not read because of their case."""
+    from hwave.qlms import MODE_TABLE_KEYS
+    ignored = _case_variants(raw, _TOP_TABLES, "", is_table=True)
+    info_mode = raw.get("mode")
+    if isinstance(info_mode, dict):
+        ignored += _case_variants(info_mode, MODE_TABLE_KEYS, "[mode]")
+    info_file = raw.get("file")
+    if isinstance(info_file, dict):
+        ignored += _case_variants(info_file, _FILE_KEYS, "[file]")
+        info_input = info_file.get("input")
+        if isinstance(info_input, dict) and mode in _INPUT_KEYS:
+            ignored += _case_variants(info_input, _INPUT_KEYS[mode], "[file.input]")
+    return ignored
+
+
 @dataclass(frozen=True)
 class Run:
     """An H-wave run: where its input is, and where its outputs are.
@@ -113,8 +198,11 @@ class Run:
         The run record that gave ``root``, if any.
     input_path : Path
         The canonical path of the input TOML file.
-    config : CaseInsensitiveDict
-        The TOML content; lookups are case-insensitive at every level.
+    config : dict
+        The TOML content, with the case rules of the solver (module text):
+        ``config["mode"]["param"]`` and ``config["file"]["input"]
+        ["interaction"]`` are CaseInsensitiveDicts, every other mapping a
+        plain dict.
     mode : str
         ``[mode] mode`` (e.g. ``"UHFk"``).
     spin_orbital : bool
@@ -128,14 +216,15 @@ class Run:
     meta : Mapping
         Read-only. Notes: ``run_record_path``, ``run_record_note`` (a record bypassed by
         ``base_dir=``), ``unsupported_mode``, ``ignored_output_keys`` (keys
-        in other case, which the solver does not read) and
+        in other case, which the solver does not read), ``ignored_keys``
+        (every such key of an exact-case layer, these included) and
         ``invalid_output_keys`` (a value that is not a file name).
     """
     root: Path
     base_dir_source: str
     run_record: Optional[dict]
     input_path: Path
-    config: CaseInsensitiveDict
+    config: dict
     mode: str
     spin_orbital: bool
     output_dir: Path
@@ -374,6 +463,12 @@ def open_run(toml_path, *, base_dir=None):
     # the tables and keys that place the files are read as qlms.run reads them
     info_mode = raw.get("mode")
     if not isinstance(info_mode, dict):
+        variants = [k for k in raw if k.lower() == "mode" and isinstance(raw[k], dict)]
+        if variants:
+            raise UnsupportedLayoutError(
+                "{} has no [mode] table: [{}] is not read, the solver matches the "
+                "table names with their exact case (qlms.py:103, 122-124)"
+                .format(toml, variants[0]), path=toml)
         raise UnsupportedLayoutError("{} has no [mode] table; it is not an H-wave input "
                                      "file".format(toml), path=toml)
     mode = info_mode.get("mode")
@@ -391,7 +486,11 @@ def open_run(toml_path, *, base_dir=None):
 
     from hwave.solver.spin_orbital import resolve_flag
     try:
-        spin_orbital = resolve_flag(info_mode, allow_float=(mode == "UHFk"))
+        # [mode] keys are exact-case for the solver (qlms.py:26-53), which
+        # resolve_flag itself does not enforce
+        spin_orbital = resolve_flag(
+            {k: v for k, v in info_mode.items() if k == "enable_spin_orbital"},
+            allow_float=(mode == "UHFk"))
     except (TypeError, ValueError) as exc:
         raise UnsupportedLayoutError("[mode] enable_spin_orbital in {}: {}".format(toml, exc),
                                      path=toml) from None
@@ -418,6 +517,10 @@ def open_run(toml_path, *, base_dir=None):
     logger.debug("run %s: base directory %s (source: %s)", toml, root, source)
 
     output_dir = root / path_to_output
+    ignored = _ignored_input_keys(raw, mode)
+    for entry in ignored:
+        logger.warning("%s is not read by the solver: keys are matched with their "
+                       "exact case", entry)
     if mode in SUPPORTED_MODES:
         two_sz = CaseInsensitiveDict(info_param).get("2Sz")
         if two_sz == "free":
@@ -426,9 +529,12 @@ def open_run(toml_path, *, base_dir=None):
     else:
         outputs = {}
         meta["unsupported_mode"] = mode
+    ignored += list(meta.get("ignored_output_keys", ()))
+    if ignored:
+        meta["ignored_keys"] = tuple(ignored)
 
     return Run(root=root, base_dir_source=source, run_record=record,
-               input_path=toml.resolve(), config=_case_insensitive(raw), mode=mode,
+               input_path=toml.resolve(), config=_solver_view(raw), mode=mode,
                spin_orbital=spin_orbital, output_dir=output_dir,
                outputs=MappingProxyType(outputs), meta=MappingProxyType(meta))
 

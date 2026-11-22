@@ -400,6 +400,11 @@ class TestSpinOrbitalFlag(_TmpDir):
 
 
 class TestCaseInsensitiveConfig(_TmpDir):
+    """Run.config reads each layer as the solver does: the top-level tables,
+    [mode] and [file.*] are exact-case (qlms.py:98-113, 26-53; uhfk.py and
+    uhfr.py save_results; read_input_k.py:152-190), [mode.param] and
+    [file.input.interaction] are case-insensitive (base.py ParamDict,
+    qlms.py:137; qlms.py:146-149, read_input_k.py:93)."""
     MIXED = (
         '[mode]\nmode = "UHFr"\n'
         '[mode.param]\nNSITE = 2\nncond = 2\n2sz = 0\neps = 9\nMIX = 0.25\n'
@@ -408,21 +413,91 @@ class TestCaseInsensitiveConfig(_TmpDir):
         '[file.output]\nenergy = "energy.dat"\neigen = "eigen"\n')
 
     def test_mixed_case_toml(self):
-        run = open_run(_write_toml(self.tmp, self.MIXED))
+        with self.assertLogs("hwave.results.run", level="WARNING") as logs:
+            run = open_run(_write_toml(self.tmp, self.MIXED))
         cfg = run.config
-        self.assertEqual(cfg["MODE"]["Param"]["EPS"], 9)
+        # case-insensitive layers: [mode.param] and the interaction table
+        self.assertEqual(cfg["mode"]["param"]["EPS"], 9)
         self.assertEqual(cfg["mode"]["param"]["Nsite"], 2)
-        self.assertEqual(cfg["File"]["INPUT"]["path_to_input"], "in")
-        self.assertEqual(cfg["file"]["input"]["Interaction"]["Trans"], "trans.def")
-        self.assertEqual(cfg["FILE"]["Output"]["ENERGY"], "energy.dat")
+        self.assertEqual(cfg["file"]["input"]["interaction"]["Trans"], "trans.def")
         self.assertEqual(run.param("EPS"), 9)
         self.assertEqual(run.param("mix"), 0.25)
         self.assertEqual(run.param("MIX", default=1.0), 0.25)
         self.assertEqual(run.param("2Sz"), 0)
         self.assertEqual(run.param("NSite"), 2)
+        # exact-case layers: the tables, [file.input] and [file.output]
+        for lookup in (lambda: cfg["MODE"], lambda: cfg["File"],
+                       lambda: cfg["mode"]["Param"],
+                       lambda: cfg["file"]["INPUT"],
+                       lambda: cfg["file"]["input"]["path_to_input"],
+                       lambda: cfg["file"]["output"]["ENERGY"]):
+            with self.assertRaises(KeyError):
+                lookup()
+        self.assertEqual(cfg["file"]["input"]["Path_To_Input"], "in")
+        self.assertEqual(cfg["file"]["output"]["energy"], "energy.dat")
+        # UHFr reads [file.input] path_to_input with its exact case
+        # (qlms.py:108), so the variant is reported and logged
+        self.assertEqual(run.meta["ignored_keys"], ("[file.input] Path_To_Input",))
+        self.assertTrue(any("Path_To_Input" in line for line in logs.output))
         # the lower-case 2sz selects the two spin blocks, as in the solver
         self.assertIn("eigen:spin-up", run.outputs)
         self.assertIn("eigen:spin-down", run.outputs)
+
+    def test_uhfk_input_key_in_other_case_not_honoured(self):
+        """UHFk reads [file.input] keys exactly (read_input_k.py:155):
+        ``Initial`` is not a start, so it is reported and logged."""
+        toml = _write_toml(self.tmp, UHFK_HEAD + (
+            '[file.input]\nInitial = "start.npz"\ninitial_mode = "random"\n'))
+        with self.assertLogs("hwave.results.run", level="WARNING") as logs:
+            run = open_run(toml)
+        self.assertNotIn("initial", run.config["file"]["input"])
+        self.assertEqual(run.config["file"]["input"]["initial_mode"], "random")
+        self.assertEqual(run.meta["ignored_keys"], ("[file.input] Initial",))
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("[file.input] Initial", logs.output[0])
+        self.assertIn("exact case", logs.output[0])
+
+    def test_uhfr_initial_and_onebodyg_any_case(self):
+        """UHFr matches [file.input] initial and onebodyg in any case
+        (qlms.py:155-159): no report for those."""
+        toml = _write_toml(self.tmp, UHFR_HEAD + (
+            '[file.input]\nInitial = "init.dat"\nOneBodyG = "g.def"\n'))
+        logger = logging.getLogger("hwave.results.run")
+        with self.assertRaises(AssertionError):
+            with self.assertLogs(logger, level="WARNING"):
+                run = open_run(toml)
+        run = open_run(toml)
+        self.assertNotIn("ignored_keys", run.meta)
+        self.assertEqual(run.config["file"]["input"]["OneBodyG"], "g.def")
+
+    def test_tables_and_mode_keys_in_other_case(self):
+        # a [Mode] table is not read by the solver (qlms.py:103, 122-124)
+        toml = _write_toml(self.tmp, '[Mode]\nmode = "UHFk"\n')
+        with self.assertRaisesRegex(UnsupportedLayoutError, r"\[Mode\].*exact case"):
+            open_run(toml)
+        # [File] and [Log] are ignored by the solver, a [mode] key in other
+        # case is refused by it (qlms.py:26-53); the reader reports them
+        toml = _write_toml(self.tmp, (
+            '[mode]\nmode = "UHFk"\nEnable_Spin_Orbital = true\n'
+            '[mode.param]\nNcond = 2\n'
+            '[File.output]\nenergy = "e.dat"\n[Log]\nprint_check = "c.dat"\n'
+            '[file.Input]\ninitial = "s.npz"\n'
+            '[file.input]\nInteraction = {Geometry = "geom.dat"}\n'))
+        with self.assertLogs("hwave.results.run", level="WARNING") as logs:
+            run = open_run(toml)
+        self.assertEqual(sorted(run.meta["ignored_keys"]), [
+            "[File]", "[Log]", "[file.input] Interaction", "[file] Input",
+            "[mode] Enable_Spin_Orbital"])
+        self.assertEqual(len(logs.output), 5)
+        self.assertFalse(run.spin_orbital)
+        self.assertNotIn("energy", run.outputs)
+        self.assertNotIn("print_check", run.outputs)
+
+    def test_output_keys_also_in_ignored_keys(self):
+        toml = _write_toml(self.tmp, UHFK_HEAD + '[file.output]\nEnergy = "e.dat"\n')
+        run = open_run(toml)
+        self.assertEqual(run.meta["ignored_output_keys"], ("[file.output] Energy",))
+        self.assertEqual(run.meta["ignored_keys"], ("[file.output] Energy",))
 
     def test_defaults(self):
         run = open_run(_write_toml(self.tmp, UHFR_HEAD))
