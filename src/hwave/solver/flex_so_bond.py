@@ -560,7 +560,7 @@ def admit_so_bond_flex(*, compiled, transfer, extern, cell, shape, nmat, max_she
         log.info(so_bond_archive.T_FORCED.format(
             member=arch.member, size=so_bond_archive.format_bytes(arch.member_bytes),
             bound=so_bond_archive.format_bytes(arch.bound)))
-    sector_dyson = bool(so_bond.band_conserves_sz(transfer, extern, compiled.norb_phys).conserving
-                        and so_bond.records_conserve_sz(compiled) is None)
+    sector_dyson = bool(so_bond.input_conserves_sz(transfer, extern, compiled,
+                                                   compiled.norb_phys).conserving)
     return SOBondFlexAdmission(topo, geom, layout, reason, sector_map, plan, caps, bond_inputs,
                                int(plan.nb), sector_dyson, arch)

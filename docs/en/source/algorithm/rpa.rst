@@ -722,9 +722,11 @@ have a nonzero off-site row. ``PairHop`` is not named in this list. The line
 is not logged by FLEX (which, in spin-orbital mode, refuses off-site rows
 without ``longitudinal_bond_channels`` and resolves their exchange exactly
 with it; see :ref:`flex_spin_orbital`) or by the RPA that ``hwave_sc`` runs
-internally. ``hwave_sc`` does not read the outputs of the spin-orbital FLEX
-with bond channels yet; its static bond path builds its own bare bond
-bubble (see :ref:`sc_so_bond_static`).
+internally. The static bond path of ``hwave_sc`` builds its bond bubble
+from the bare band, or from the ``green.npz`` of the spin-orbital FLEX with
+bond channels named by ``[eliashberg] bond_green`` (see
+:ref:`sc_so_bond_green`); the bond archive of that FLEX run is not read by
+``hwave_sc``.
 
 
 .. _flex_second_order_kernel:
@@ -1263,8 +1265,10 @@ and its outputs are described in :ref:`flex_so_bond_tutorial`; in this
 version it runs on the CPU and writes ``chi0q``/``chiq`` as the channel-0
 blocks of the last SCF iteration; with ``longitudinal_bond_output_full =
 true`` it also writes the spin-orbital bond archive of the final Green
-function (:ref:`flex_so_bond_archive`). ``hwave_sc`` does not read its
-outputs in this version (a later version reads the bond archive). A FLEX-only ``hwave_tsweep`` runs it with ``warm_start =
+function (:ref:`flex_so_bond_archive`). ``hwave_sc`` reads its
+``green.npz`` through ``[eliashberg] bond_green`` on the static bond path
+(:ref:`sc_so_bond_green`) and does not read its bond archive in this
+version (a later version reads it). A FLEX-only ``hwave_tsweep`` runs it with ``warm_start =
 false``, as above.
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
