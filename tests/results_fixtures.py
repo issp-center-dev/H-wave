@@ -14,6 +14,15 @@ Fixtures (each later task adds the ones it uses):
 * ``uhfk_cdw_legacy``: a copy of docs/tutorial/Hubbard/UHFk with its
   git-tracked ``output/`` (``green.npz`` and ``eigen.npz`` written before the
   ``momentum_convention`` and ``green_convention`` markers); **not run**.
+* ``uhfk_u8``: tests/uhfk/CoulombIntra (U = 8, EPS 12) from its own start
+  (``output_ref/green.dat.npz``), with ``[log] print_check = "check.dat"``;
+  converged after 1 step.
+* ``uhfk_u8_not_converged``: the same with the start removed,
+  ``[file.input] initial_mode = "random"`` and ``IterationMax = 5``, as
+  tests/test_uhf_scf_status.py::TestConvergence::test_uhfk_not_converged;
+  stops after 5 steps without converging.
+* ``uhfk_u8_zero_steps``: ``uhfk_u8`` with ``IterationMax = 0``: only
+  ``scf_status.dat`` and an empty ``check.dat`` are written.
 
 Helpers:
 
@@ -106,10 +115,101 @@ def _build_uhfk_cdw_legacy(dest):
     return dest / "input.toml"
 
 
+def _uhfk_u8_input(dest, **param):
+    """tests/uhfk/CoulombIntra copied to ``dest`` with ``print_check`` set
+    and ``param`` written into ``[mode.param]``; returns (toml, config)."""
+    import tomli
+    _copy_inputs(REPO / "tests" / "uhfk" / "CoulombIntra", dest)
+    toml = dest / "input.toml"
+    with open(toml, "rb") as f:
+        config = tomli.load(f)
+    config["log"]["print_level"] = 0
+    config["log"]["print_check"] = "check.dat"
+    config["mode"]["param"].update(param)
+    return toml, config
+
+
+def _write_toml(toml, config):
+    """Write the two-level tables of an H-wave input (no dependency on a
+    TOML writer)."""
+    def value(v):
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, str):
+            return '"{}"'.format(v)
+        if isinstance(v, list):
+            return "[{}]".format(", ".join(value(x) for x in v))
+        return repr(v)
+
+    lines = []
+
+    def table(name, mapping):
+        lines.append("[{}]".format(name))
+        subtables = []
+        for k, v in mapping.items():
+            if isinstance(v, dict):
+                subtables.append((k, v))
+            else:
+                lines.append("  {} = {}".format(k, value(v)))
+        for k, v in subtables:
+            table("{}.{}".format(name, k), v)
+
+    for name, mapping in config.items():
+        table(name, mapping)
+    toml.write_text("\n".join(lines) + "\n")
+
+
+def _build_uhfk_u8(dest):
+    toml, config = _uhfk_u8_input(dest)
+    _write_toml(toml, config)
+    _run(toml)
+    return toml
+
+
+def _build_uhfk_u8_not_converged(dest):
+    toml, config = _uhfk_u8_input(dest, IterationMax=5)
+    finput = config["file"]["input"]
+    finput.pop("initial", None)
+    finput["initial_mode"] = "random"
+    _write_toml(toml, config)
+    _run(toml)
+    # the start really was random: its first step differs from that of a
+    # zero start (what a misplaced initial_mode silently gives) and from the
+    # committed start (output_ref), which converges in 1 step at E = -7.38962582
+    first = _first_check_line(dest)
+    zero_dest = dest.parent / (dest.name + "-zero-start")
+    zero_toml, zero_config = _uhfk_u8_input(zero_dest, IterationMax=1)
+    zero_config["file"]["input"].pop("initial", None)
+    _write_toml(zero_toml, zero_config)
+    _run(zero_toml)
+    zero = _first_check_line(zero_dest)
+    if first[1:] == zero[1:] or abs(float(first[2]) + 7.38962582) < 1e-3:
+        raise RuntimeError("uhfk_u8_not_converged did not start from a random "
+                           "Green function: first step {} (zero start: {})"
+                           .format(first, zero))
+    return toml
+
+
+def _first_check_line(dest):
+    """The fields of the first line of ``output/check.dat`` under ``dest``."""
+    text = (dest / "output" / "check.dat").read_text()
+    return [field.strip() for field in text.splitlines()[0].split(",")]
+
+
+def _build_uhfk_u8_zero_steps(dest):
+    toml, config = _uhfk_u8_input(dest, IterationMax=0)
+    _write_toml(toml, config)
+    _run(toml)
+    return toml
+
+
 _BUILDERS = {
     "uhfr_tutorial": _build_uhfr_tutorial,
     "uhfk_cdw": _build_uhfk_cdw,
     "uhfk_cdw_legacy": _build_uhfk_cdw_legacy,
+    "uhfk_u8": _build_uhfk_u8,
+    "uhfk_u8_not_converged": _build_uhfk_u8_not_converged,
+    "uhfk_u8_zero_steps": _build_uhfk_u8_zero_steps,
 }
 
 
