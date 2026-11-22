@@ -10,6 +10,13 @@ Fixtures (each later task adds the ones it uses):
 
 * ``uhfr_tutorial``: docs/tutorial/Hubbard/UHFr (Nsite 8, ``2Sz = 0``), with
   greenone.def replaced by the 16 diagonal entries ``(i, s, i, s)``.
+* ``uhfr_u8``: tests/uhfr/coulombintra (Nsite 16 on a 4 x 4 square lattice,
+  U = 8, ``2Sz`` unset) from its own start (``output_ref/green_init.dat``),
+  with greenone.def extended to every ``(i, s, i, t)``, ``s, t`` in
+  ``{0, 1}`` (64 entries); a collinear Neel state with a tilted axis,
+  converged after 1 step.
+* ``uhfr_tutorial_zero_steps``: ``uhfr_tutorial`` with ``IterationMax = 0``:
+  only ``scf_status.dat`` is written.
 * ``uhfk_cdw``: docs/tutorial/Hubbard/UHFk (V = 4).
 * ``uhfk_cdw_legacy``: a copy of docs/tutorial/Hubbard/UHFk with its
   git-tracked ``output/`` (``green.npz`` and ``eigen.npz`` written before the
@@ -43,6 +50,8 @@ Helpers:
 
 * ``_freeze`` (re-exported from ``hwave.results._frozen``): a deep private
   copy with every array marked read-only.
+* ``write_greenone(path, entries)``: write a UHFr OneBodyG file;
+  ``run_input(toml)``: rerun a (copied, edited) fixture input.
 * ``assert_deep_frozen(obj)``: fails unless every array reachable from
   ``obj`` is read-only (its base arrays too) and every dataclass is frozen.
 """
@@ -106,13 +115,44 @@ def _run(toml):
 
 def _build_uhfr_tutorial(dest):
     _copy_inputs(REPO / "docs" / "tutorial" / "Hubbard" / "UHFr", dest)
-    nsite = 8
-    rows = ["{:5d} {:5d} {:5d} {:5d}".format(i, s, i, s)
-            for i in range(nsite) for s in (0, 1)]
+    write_greenone(dest / "greenone.def",
+                   [(i, s, i, s) for i in range(8) for s in (0, 1)])
+    toml = dest / "input.toml"
+    _run(toml)
+    return toml
+
+
+def write_greenone(path, entries):
+    """Write a UHFr OneBodyG file (five header lines, then ``i s j t`` per
+    line) listing ``entries``."""
+    rows = ["{:5d} {:5d} {:5d} {:5d}".format(*e) for e in entries]
     header = ["=" * 31, "NCisAjs {:9d}".format(len(rows)), "=" * 31,
               "======== Green functions ======", "=" * 31]
-    (dest / "greenone.def").write_text("\n".join(header + rows) + "\n")
+    Path(path).write_text("\n".join(header + rows) + "\n")
+
+
+def run_input(toml):
+    """Run H-wave on ``toml`` as the fixtures do (for tests that rerun a
+    copied fixture)."""
+    _run(Path(toml))
+
+
+def _build_uhfr_u8(dest):
+    _copy_inputs(REPO / "tests" / "uhfr" / "coulombintra", dest)
+    write_greenone(dest / "greenone.def",
+                   [(i, s, i, t) for i in range(16) for s in (0, 1) for t in (0, 1)])
     toml = dest / "input.toml"
+    _run(toml)
+    return toml
+
+
+def _build_uhfr_tutorial_zero_steps(dest):
+    _copy_inputs(REPO / "docs" / "tutorial" / "Hubbard" / "UHFr", dest)
+    toml = dest / "input.toml"
+    text = toml.read_text()
+    if "IterationMax = 1000" not in text:
+        raise RuntimeError("the UHFr tutorial input changed: no IterationMax = 1000")
+    toml.write_text(text.replace("IterationMax = 1000", "IterationMax = 0"))
     _run(toml)
     return toml
 
@@ -270,6 +310,8 @@ def _build_uhfk_fm_axis(dest):
 
 _BUILDERS = {
     "uhfr_tutorial": _build_uhfr_tutorial,
+    "uhfr_u8": _build_uhfr_u8,
+    "uhfr_tutorial_zero_steps": _build_uhfr_tutorial_zero_steps,
     "uhfk_cdw": _build_uhfk_cdw,
     "uhfk_cdw_legacy": _build_uhfk_cdw_legacy,
     "uhfk_u8": _build_uhfk_u8,
