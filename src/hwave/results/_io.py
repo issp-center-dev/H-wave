@@ -15,8 +15,9 @@ Legacy table (``check_markers``), one row per marker:
 * UHFk ``eigen.npz`` and ``green.npz``, marker ``momentum_convention``: when
   absent, assumable as ``e_plus_ikR`` with ``legacy=True``; UHFk always used
   this sign (uhfk.py:1969-1975).
-* UHFk ``green.npz`` of a run with sublattices, marker ``green_convention``:
-  never assumed. Before PR #35 the deflated ``green`` member used the
+* UHFk ``green.npz`` with ``green_sublattice`` (written whenever
+  ``prod(SubShape or CellShape) > 1``, uhfk.py:234-238), marker
+  ``green_convention``: never assumed. Before PR #35 the deflated ``green`` member used the
   Hamiltonian fold (uhfk.py:1960-1967; rpa.py:3725-3735; issue #36). When
   the marker is absent, ``green_sublattice`` is used and the deflated
   ``green`` is refused; a file without ``green_sublattice`` is refused.
@@ -125,15 +126,13 @@ def member_shapes(path):
 def _python_scalar(arr):
     if arr.dtype.kind == "U":
         return str(arr.item())
-    if arr.dtype.kind == "S":
-        return arr.item().decode("ascii", errors="replace")
     return arr.item()
 
 
 def scalar_members(path):
     """``{member: value}`` of the 0-d members of the ``.npz`` archive ``path``
     (markers such as ``momentum_convention``), as Python scalars: ``str`` for
-    text (bytes are decoded), else ``.item()``. Only 0-d members are read
+    unicode text, else ``.item()`` (a bytes member stays ``bytes``). Only 0-d members are read
     (``numpy.lib.format.read_array`` on the zip member, no pickles); the
     others are identified from their headers and never loaded."""
     from hwave.solver.npy_header import read_npy_header_shape
@@ -256,8 +255,12 @@ def read_geometry(path):
                   .format(lines[3])) from None
     if norb < 1:
         raise bad("the number of orbitals must be positive, got {}".format(norb))
+    for offset, line in enumerate(lines[4:4 + norb]):
+        if not line:
+            raise bad("line {} is blank, but it must hold the centre of orbital "
+                      "{} of {}".format(5 + offset, offset + 1, norb))
     found = len([line for line in lines[4:] if line])
-    if found != norb or any(not line for line in lines[4:4 + norb]):
+    if found != norb:
         raise bad("{} orbital centres are declared on line 4 but {} centre lines "
                   "follow".format(norb, found))
     centres = np.array([vector(5 + i) for i in range(norb)], dtype=float)
@@ -268,8 +271,11 @@ def read_geometry(path):
 # ---------------------------------------------------------- legacy markers
 
 #: the ``kind`` values of :func:`check_markers`. ``uhfk_green_sublattice`` is
-#: the ``green.npz`` of a UHFk run with sublattices (``SubShape`` given),
-#: ``uhfk_green`` one without.
+#: the ``green.npz`` of a UHFk run with the sublattice layout, i.e.
+#: ``prod(SubShape or CellShape) > 1`` (SubShape defaults to CellShape,
+#: uhfk.py:234-238); ``uhfk_green`` one with ``prod == 1``. The kind only
+#: decides whether a missing ``green_sublattice`` is refused: the
+#: green_convention rule applies to every file that has ``green_sublattice``.
 MARKER_KINDS = ("uhfk_eigen", "uhfk_green", "uhfk_green_sublattice")
 
 _PAYLOAD = {"uhfk_eigen": "eigenvalue", "uhfk_green": "green",
@@ -278,7 +284,8 @@ _PAYLOAD = {"uhfk_eigen": "eigenvalue", "uhfk_green": "green",
 
 def _marker_value(path, name, shapes, scalars, expected):
     """The value of marker ``name`` (None when absent); a marker that is not
-    a single text value equal to ``expected`` raises."""
+    a single text value (a unicode string, as the solvers write it; bytes
+    are refused) equal to ``expected`` raises."""
     if name not in shapes:
         return None
     if name not in scalars or not isinstance(scalars[name], str):
@@ -307,7 +314,9 @@ def check_markers(path, kind, *, legacy):
     Raises UnsupportedLayoutError for a marker with another value, for a
     missing payload member, for an absent marker without ``legacy=True``
     (the message then mentions ``legacy=True``; only assumable rows do), and
-    for a sublattice ``green.npz`` without ``green_sublattice``. Raises
+    for kind ``uhfk_green_sublattice`` without ``green_sublattice``. The
+    ``green`` note is given for every file with ``green_sublattice``, whatever
+    ``kind`` is. Raises
     ValueError for an unknown ``kind``."""
     if kind not in MARKER_KINDS:
         raise ValueError("unknown marker kind {!r}; expected one of {}"
@@ -318,7 +327,9 @@ def check_markers(path, kind, *, legacy):
     notes = []
 
     payload = _PAYLOAD[kind]
-    if payload not in shapes:
+    has_payload = payload in shapes or (
+        kind == "uhfk_green" and "green_sublattice" in shapes)
+    if not has_payload:
         if kind == "uhfk_green_sublattice":
             raise UnsupportedLayoutError(
                 "{} has no green_sublattice member; its deflated 'green' member "
@@ -341,9 +352,11 @@ def check_markers(path, kind, *, legacy):
                       "used the e^{+ikR} sign (uhfk.py:1969-1975, issue #133)",
         })
 
+    # the file decides: every file with green_sublattice has the sublattice
+    # layout, whatever kind the caller derived from the input
     if kind != "uhfk_eigen" and _marker_value(
             path, "green_convention", shapes, scalars, GREEN_CONVENTION) is None:
-        if kind == "uhfk_green_sublattice" and "green" in shapes:
+        if "green_sublattice" in shapes and "green" in shapes:
             notes.append({
                 "member": "green",
                 "assumed": None,

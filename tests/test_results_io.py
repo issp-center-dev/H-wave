@@ -32,6 +32,28 @@ def _fail(*args, **kwargs):
     raise AssertionError("an array member was loaded")
 
 
+_READ_ARRAY = np.lib.format.read_array
+
+
+def _scalar_only_read_array(*args, **kwargs):
+    """``read_array`` that fails unless the member read is 0-d."""
+    arr = _READ_ARRAY(*args, **kwargs)
+    if arr.ndim != 0:
+        raise AssertionError("a payload member of shape {} was read".format(arr.shape))
+    return arr
+
+
+def _no_payload_reads():
+    """Patch every way of reading an array member except 0-d read_array."""
+    import contextlib
+    stack = contextlib.ExitStack()
+    stack.enter_context(mock.patch.object(np.lib.npyio.NpzFile, "__getitem__", _fail))
+    stack.enter_context(mock.patch("numpy.load", _fail))
+    stack.enter_context(mock.patch.object(np.lib.format, "read_array",
+                                          _scalar_only_read_array))
+    return stack
+
+
 class TestKeyValueText(_TmpDir):
     def test_padded_and_unpadded(self):
         path = self.write("energy.dat",
@@ -89,16 +111,22 @@ class TestNpz(_TmpDir):
                                   "vec": (2,)})
 
     def test_scalar_members(self):
-        with mock.patch.object(np.lib.npyio.NpzFile, "__getitem__", _fail), \
-                mock.patch("numpy.load", _fail):
+        with _no_payload_reads():
             scalars = scalar_members(self.path)
         self.assertEqual(scalars, {"marker": "e_plus_ikR", "plain": "text",
                                    "count": 7, "x": 0.5, "flag": True,
-                                   "raw": "bytes"})
+                                   "raw": b"bytes"})
         self.assertIs(type(scalars["marker"]), str)
         self.assertIs(type(scalars["count"]), int)
         self.assertIs(type(scalars["x"]), float)
         self.assertIs(type(scalars["flag"]), bool)
+
+    def test_spy_catches_a_payload_read(self):
+        import zipfile
+        with _no_payload_reads(), zipfile.ZipFile(self.path) as zf, \
+                zf.open("big.npy") as fh:
+            with self.assertRaises(AssertionError):
+                np.lib.format.read_array(fh)
 
     def test_open_npz_closes(self):
         with open_npz(self.path) as data:
@@ -165,6 +193,13 @@ class TestGeometry(_TmpDir):
         np.testing.assert_array_equal(geom.centres,
                                       [[0.25, 0.5, 0], [0.75, 0.5, 0]])
 
+    def test_blank_line_among_centres(self):
+        path = self.write("geom.dat", "1 0 0\n0 1 0\n0 0 1\n2\n0 0 0\n\n0.5 0 0\n")
+        with self.assertRaises(UnsupportedLayoutError) as cm:
+            read_geometry(path)
+        self.assertIn("line 6 is blank", str(cm.exception))
+        self.assertIn("orbital 2 of 2", str(cm.exception))
+
     def test_too_few_centres(self):
         path = self.write("geom.dat", "1 0 0\n0 1 0\n0 0 1\n2\n0 0 0\n")
         with self.assertRaises(UnsupportedLayoutError) as cm:
@@ -228,8 +263,14 @@ class TestLegacyTable(unittest.TestCase):
         self.assertIn("UHFk", notes[0]["reason"])
 
     def test_legacy_green_refuses_deflated_green(self):
-        notes = check_markers(self.output / "green.npz", "uhfk_green_sublattice",
-                              legacy=True)
+        for kind in ("uhfk_green_sublattice", "uhfk_green"):
+            self._check_green_notes(kind)
+
+    def _check_green_notes(self, kind):
+        # the file has green_sublattice, so the green_convention rule applies
+        # whatever kind the caller chose (CellShape [4,4,1] without SubShape
+        # writes the sublattice layout too, uhfk.py:234-238)
+        notes = check_markers(self.output / "green.npz", kind, legacy=True)
         by_member = {note["member"]: note for note in notes}
         self.assertEqual(set(by_member), {"momentum_convention", "green"})
         self.assertEqual(by_member["momentum_convention"]["assumed"], "e_plus_ikR")
@@ -264,6 +305,21 @@ class TestMarkers(_TmpDir):
                 with self.assertRaises(UnsupportedLayoutError) as cm:
                     check_markers(path, "uhfk_green", legacy=legacy)
                 self.assertNotIn("legacy=True", str(cm.exception))
+
+    def test_bytes_marker_is_refused(self):
+        path = self.npz(green=np.zeros(1), momentum_convention=np.array(b"e_plus_ikR"))
+        with self.assertRaises(UnsupportedLayoutError) as cm:
+            check_markers(path, "uhfk_green", legacy=True)
+        self.assertIn("single text value", str(cm.exception))
+
+    def test_plain_kind_with_sublattice_file(self):
+        g = np.zeros((1, 2, 1, 2, 1))
+        path = self.npz(green=g, green_sublattice=g, momentum_convention="e_plus_ikR")
+        notes = check_markers(path, "uhfk_green", legacy=False)
+        self.assertEqual([(n["member"], n["assumed"]) for n in notes], [("green", None)])
+        tagged = self.npz(green=g, green_sublattice=g, momentum_convention="e_plus_ikR",
+                          green_convention="green_slot_first")
+        self.assertEqual(check_markers(tagged, "uhfk_green", legacy=False), [])
 
     def test_wrong_green_convention_is_refused(self):
         g = np.zeros((1, 2, 1, 2, 1))
@@ -301,10 +357,9 @@ class TestMarkers(_TmpDir):
         g = np.zeros((1, 2, 1, 2, 1))
         path = self.npz(green=g, green_sublattice=g, momentum_convention="e_plus_ikR",
                         green_convention="green_slot_first")
-        with mock.patch.object(np.lib.npyio.NpzFile, "__getitem__", _fail), \
-                mock.patch("numpy.load", _fail):
-            self.assertEqual(check_markers(path, "uhfk_green_sublattice",
-                                           legacy=False), [])
+        with _no_payload_reads():
+            for kind in ("uhfk_green_sublattice", "uhfk_green"):
+                self.assertEqual(check_markers(path, kind, legacy=False), [])
 
 
 class TestInputFilePath(_TmpDir):
