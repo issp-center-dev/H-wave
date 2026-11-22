@@ -361,6 +361,17 @@ String (default value is <code class="docutils literal notranslate"><span class=
 This parameter specifies the name of the file to store the one-body Green’s functions.
 If it is set to an empty string, no output will be generated.</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">scf_status</span></code></p>
+<p><strong>Type :</strong>
+String (default value is <code class="docutils literal notranslate"><span class="pre">&quot;scf_status.dat&quot;</span></code>)</p>
+<p><strong>Description :</strong>
+This parameter specifies the name of the file to store the convergence
+status of the SCF loop (see <a class="reference internal" href="../outputfiles_uhfk/scf_status_uhfk.html#subsec-scf-status-uhfk-dat"><span class="std std-ref">scf_status</span></a>). It is
+written by default; if it is set to an empty string, no output will be
+generated. The value must be a string, and the file must not be the same file as
+another result file of the run (as written, including the <code class="docutils literal notranslate"><span class="pre">.npz</span></code> suffix
+and generated names, ignoring case) or the <code class="docutils literal notranslate"><span class="pre">print_check</span></code> file. The key is matched exactly.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">rpa</span></code></p>
 <p><strong>Type :</strong>
 String</p>

@@ -48,7 +48,16 @@ FreeEnergy_band = -0.9490352621596976
 NCond = 8.000000000000007
 Sz = 3.2822430107160017e-07
 ChemicalPotential = 0.123456789
+Sx = 0.0
+Sy = 0.0
 </pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">注釈</p>
+<p><strong>このバージョンでの変更点</strong> UHFrと通常モードのUHFkは<code class="docutils literal notranslate"><span class="pre">Sx</span></code>と<code class="docutils literal notranslate"><span class="pre">Sy</span></code>をファイルの最後の2行として出力するようになりました。
+それ以外の行は変わりません。以前のバージョンで出力されたファイルにはこの2行はありません。
+最後の行を読むスクリプト (例えば<code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code>を得るための<code class="docutils literal notranslate"><span class="pre">tail</span> <span class="pre">-n</span> <span class="pre">1</span></code>) は、今後は<code class="docutils literal notranslate"><span class="pre">Sy</span></code>を読むことになるため、値はキー名で読み取ってください。
+平均場の状態は任意のスピン軸を向きうるため、スピン軌道相互作用がなくてもSx、Syは0でない値をとりえます。</p>
 </div>
 <section id="id1">
 <h2>ファイル形式<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h2>
@@ -61,6 +70,8 @@ ChemicalPotential = 0.123456789
 <li><p>NCond = <code class="docutils literal notranslate"><span class="pre">[ncond]</span></code></p></li>
 <li><p>Sz = <code class="docutils literal notranslate"><span class="pre">[sz]</span></code></p></li>
 <li><p>ChemicalPotential = <code class="docutils literal notranslate"><span class="pre">[mu]</span></code></p></li>
+<li><p>Sx = <code class="docutils literal notranslate"><span class="pre">[sx]</span></code></p></li>
+<li><p>Sy = <code class="docutils literal notranslate"><span class="pre">[sy]</span></code></p></li>
 </ul>
 </section>
 <section id="id2">
@@ -117,6 +128,16 @@ UHF法で求めた固有ベクトルを用い計算した全エネルギー。</
 有限温度の<span class="math notranslate nohighlight">\(\mu\)</span>はギャップ内で一意に定まらない点に注意。
 スピン上下などブロックが複数ある場合は<code class="docutils literal notranslate"><span class="pre">ChemicalPotential_{block}</span></code>
 としてブロックごとに出力される。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[sx]</span></code>、<code class="docutils literal notranslate"><span class="pre">[sy]</span></code></p>
+<p><strong>形式 :</strong> float型</p>
+<dl class="simple">
+<dt><strong>説明 :</strong> 全スピンの<span class="math notranslate nohighlight">\(x\)</span>成分と<span class="math notranslate nohighlight">\(y\)</span>成分の期待値 (<span class="math notranslate nohighlight">\(\hbar\)</span>単位、<code class="docutils literal notranslate"><span class="pre">[sz]</span></code>と同様に全サイトの和)。</dt><dd><p><span class="math notranslate nohighlight">\(S_x = \sum_{i}\mathrm{Re}\,(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle + \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)/2\)</span>、
+<span class="math notranslate nohighlight">\(S_y = \sum_{i}\mathrm{Re}\,[-i(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle - \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)]/2\)</span>。
+平均場の状態は任意のスピン軸を向きうるため、スピン軌道相互作用がなくてもSx、Syは0でない値をとりえます。
+<code class="docutils literal notranslate"><span class="pre">2Sz</span></code>を固定した場合は2つのスピンブロックが分離しているため、Sx、Syは0になります。</p>
+</dd>
+</dl>
 </li>
 </ul>
 </section>

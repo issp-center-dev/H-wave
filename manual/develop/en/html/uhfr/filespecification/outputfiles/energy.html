@@ -48,7 +48,19 @@ FreeEnergy_band = -0.9490352621596976
 NCond = 8.000000000000007
 Sz = 3.2822430107160017e-07
 ChemicalPotential = 0.123456789
+Sx = 0.0
+Sy = 0.0
 </pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Changed in this version.</strong> UHFr and normal-mode UHFk now append <code class="docutils literal notranslate"><span class="pre">Sx</span></code> and <code class="docutils literal notranslate"><span class="pre">Sy</span></code> as the
+last two lines of the file; all other lines are unchanged. Files written
+by older versions lack them. A script that reads the last line (for
+example <code class="docutils literal notranslate"><span class="pre">tail</span> <span class="pre">-n</span> <span class="pre">1</span></code> to obtain <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code>) now gets <code class="docutils literal notranslate"><span class="pre">Sy</span></code>;
+read the value by its key instead. The mean-field state can point along
+any spin axis, so Sx and Sy can be nonzero also without spin-orbit
+coupling.</p>
 </div>
 <section id="file-format">
 <h2>File format<a class="headerlink" href="#file-format" title="Link to this heading">¶</a></h2>
@@ -61,6 +73,8 @@ ChemicalPotential = 0.123456789
 <li><p>NCond = <code class="docutils literal notranslate"><span class="pre">[ncond]</span></code></p></li>
 <li><p>Sz = <code class="docutils literal notranslate"><span class="pre">[sz]</span></code></p></li>
 <li><p>ChemicalPotential = <code class="docutils literal notranslate"><span class="pre">[mu]</span></code></p></li>
+<li><p>Sx = <code class="docutils literal notranslate"><span class="pre">[sx]</span></code></p></li>
+<li><p>Sy = <code class="docutils literal notranslate"><span class="pre">[sy]</span></code></p></li>
 </ul>
 </section>
 <section id="parameters">
@@ -127,6 +141,21 @@ number is independent of <span class="math notranslate nohighlight">\(\mu\)</spa
 finite-temperature <span class="math notranslate nohighlight">\(\mu\)</span> is not uniquely fixed within the gap.
 When several blocks (e.g. spin up/down) exist, the value is written per
 block as <code class="docutils literal notranslate"><span class="pre">ChemicalPotential_{block}</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[sx]</span></code>, <code class="docutils literal notranslate"><span class="pre">[sy]</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+The expectation values of the <span class="math notranslate nohighlight">\(x\)</span> and <span class="math notranslate nohighlight">\(y\)</span> components of the
+total spin, in units of <span class="math notranslate nohighlight">\(\hbar\)</span> and summed over all sites like
+<code class="docutils literal notranslate"><span class="pre">[sz]</span></code>:
+<span class="math notranslate nohighlight">\(S_x = \sum_{i}\mathrm{Re}\,(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle + \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)/2\)</span>
+and
+<span class="math notranslate nohighlight">\(S_y = \sum_{i}\mathrm{Re}\,[-i(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle - \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)]/2\)</span>.
+The mean-field state can point along any spin axis, so Sx and Sy can be
+nonzero also without spin-orbit coupling.
+With a fixed <code class="docutils literal notranslate"><span class="pre">2Sz</span></code> the two spin blocks are separate, and Sx and Sy
+are zero.</p>
 </li>
 </ul>
 </section>

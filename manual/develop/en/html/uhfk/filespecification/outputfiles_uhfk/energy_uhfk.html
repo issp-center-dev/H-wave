@@ -40,7 +40,10 @@
 obtained by the wave-number space UHF method
 are outputted.
 The filename is specified by the keyword <code class="docutils literal notranslate"><span class="pre">energy</span></code> in <code class="docutils literal notranslate"><span class="pre">file.output</span></code> section in the parameter file.</p>
-<p>An example of the file is shown as follows.</p>
+<p>An example of the file is shown as follows. The solver pads the key names
+with spaces before <code class="docutils literal notranslate"><span class="pre">=</span></code> (<code class="docutils literal notranslate"><span class="pre">Sz</span>&#160;&#160;&#160;&#160;&#160; <span class="pre">=</span></code>, <code class="docutils literal notranslate"><span class="pre">Sx</span>&#160;&#160;&#160;&#160;&#160; <span class="pre">=</span></code>); the padding is
+omitted from the other lines of the example. Read the values by key name
+and strip the spaces.</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>Energy_Total = -5.88984624257707
 Energy_Band = -0.9265413257740396
 Energy_Coulomb = -4.963304916803031
@@ -49,7 +52,20 @@ FreeEnergy_Band = -0.9490352621596976
 NCond = 8.000000000000007
 Sz = 3.2822430107160017e-07
 ChemicalPotential = 0.123456789
+Sx      = 0.0
+Sy      = 0.0
 </pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><strong>Changed in this version.</strong> UHFk now writes <code class="docutils literal notranslate"><span class="pre">Sx</span></code> and <code class="docutils literal notranslate"><span class="pre">Sy</span></code> as the
+last two lines of the file in normal mode too (spin-orbital mode already
+wrote them there); all other lines are unchanged. Files written
+by older versions lack them. A script that reads the last line (for
+example <code class="docutils literal notranslate"><span class="pre">tail</span> <span class="pre">-n</span> <span class="pre">1</span></code> to obtain <code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span></code>) now gets <code class="docutils literal notranslate"><span class="pre">Sy</span></code>;
+read the value by its key instead. The mean-field state can point along
+any spin axis, so Sx and Sy can be nonzero also without spin-orbit
+coupling.</p>
 </div>
 <section id="file-format">
 <h2>File format<a class="headerlink" href="#file-format" title="Link to this heading">¶</a></h2>
@@ -62,6 +78,8 @@ ChemicalPotential = 0.123456789
 <li><p><code class="docutils literal notranslate"><span class="pre">NCond</span> <span class="pre">=</span> <span class="pre">[ncond]</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Sz</span> <span class="pre">=</span> <span class="pre">[sz]</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">ChemicalPotential</span> <span class="pre">=</span> <span class="pre">[mu]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Sx</span> <span class="pre">=</span> <span class="pre">[sx]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Sy</span> <span class="pre">=</span> <span class="pre">[sy]</span></code></p></li>
 </ul>
 </section>
 <section id="parameters">
@@ -129,6 +147,19 @@ number is independent of <span class="math notranslate nohighlight">\(\mu\)</spa
 finite-temperature <span class="math notranslate nohighlight">\(\mu\)</span> is not uniquely fixed within the gap.
 When several <span class="math notranslate nohighlight">\(\mu\)</span>-groups exist, the value is written per group as
 <code class="docutils literal notranslate"><span class="pre">ChemicalPotential_{g}</span></code>.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">[sx]</span></code>, <code class="docutils literal notranslate"><span class="pre">[sy]</span></code></p>
+<p><strong>Type :</strong>
+Float</p>
+<p><strong>Description :</strong>
+The expectation values of the <span class="math notranslate nohighlight">\(x\)</span> and <span class="math notranslate nohighlight">\(y\)</span> components of the
+total spin, in units of <span class="math notranslate nohighlight">\(\hbar\)</span> and summed over all sites like
+<code class="docutils literal notranslate"><span class="pre">[sz]</span></code>:
+<span class="math notranslate nohighlight">\(S_x = \sum_{i}\mathrm{Re}\,(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle + \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)/2\)</span>
+and
+<span class="math notranslate nohighlight">\(S_y = \sum_{i}\mathrm{Re}\,[-i(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle - \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)]/2\)</span>.
+The mean-field state can point along any spin axis, so Sx and Sy can be
+nonzero also without spin-orbit coupling.</p>
 </li>
 </ul>
 </section>

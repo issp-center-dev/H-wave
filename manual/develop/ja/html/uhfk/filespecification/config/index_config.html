@@ -272,6 +272,10 @@ true のとき、<code class="docutils literal notranslate"><span class="pre">Ce
 <p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;green&quot;</span></code> )</p>
 <p><strong>説明 :</strong> 一体グリーン関数を出力するファイル名を指定します。空文字列<code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code>を指定した場合には情報は出力されません。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">scf_status</span></code></p>
+<p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;scf_status.dat&quot;</span></code> )</p>
+<p><strong>説明 :</strong> SCF計算の収束状態 (<a class="reference internal" href="../outputfiles_uhfk/scf_status_uhfk.html#subsec-scf-status-uhfk-dat"><span class="std std-ref">scf_status</span></a> ) を出力するファイル名を指定します。デフォルトで出力され、空文字列<code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code>を指定した場合には出力されません。値は文字列でなければならず、その計算の他の結果ファイル (<code class="docutils literal notranslate"><span class="pre">.npz</span></code>の付加や生成される名前を含め、大文字・小文字を区別せずに比較した、実際に書かれるファイル) や<code class="docutils literal notranslate"><span class="pre">print_check</span></code>と同じファイルにはできません。キー名は完全一致で照合されます。</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">rpa</span></code></p>
 <p><strong>形式 :</strong> str型</p>
 <p><strong>説明 :</strong> UHF法で近似した相互作用項を含む一体項を出力するファイル名を指定します。出力ファイルは RPAの初期値として<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>パラメータに指定して利用できます。このキーワードがない場合には情報は出力されません。</p>
