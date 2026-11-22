@@ -20,15 +20,18 @@
 * The traced peaks (``tracemalloc``) of the solver branches, the dense
   fallback after an immediate and after a late ARPACK failure included, are
   within their rows. ``tracemalloc`` sees the Python allocations (numpy
-  arrays, the ARPACK work arrays scipy allocates); the allocations inside
+  arrays, the ARPACK work arrays scipy allocates). The allocations inside
   ``np.linalg.eig`` (its input copy, LAPACK's eigenvectors and eigenvalues,
-  the ``zgeev`` workspace) are native. At the fallback the two moments are
-  kept apart: while ``np.linalg.eig`` runs, the traced bytes plus the host
-  LAPACK's native bytes (``zgeev`` workspace query) are at most the row;
-  after it returns (the native buffers freed, a third ``dim x dim`` array --
-  the reordered eigenvectors -- alive), the traced peak is at most the row
-  minus its native share plus ``16 dim^2``. The native share covers the host
-  LAPACK's sizes arithmetically.
+  the ``zgeev`` workspace) are native and not traced on numpy 1.x, and
+  traced on numpy 2.x; the row budgets both shares. At the fallback the two
+  moments are kept apart on numpy 1.x: while ``np.linalg.eig`` runs, the
+  traced bytes plus the host LAPACK's native bytes (``zgeev`` workspace
+  query) are at most the row; after it returns (the native buffers freed, a
+  third ``dim x dim`` array -- the reordered eigenvectors -- alive), the
+  traced peak is at most the row minus its native share plus ``16 dim^2``.
+  On numpy 2.x the workspace is traced, so the traced peak is held to the
+  whole row. The native share covers the host LAPACK's sizes
+  arithmetically.
 """
 import logging
 import tracemalloc
@@ -866,9 +869,10 @@ class TestSolverMemory(unittest.TestCase):
     is measured at its two moments: while ``np.linalg.eig`` runs, the traced
     bytes plus the host LAPACK's native bytes are at most the row (the ratio
     to the row without the fallback is logged); after it returns, the
-    traced peak (three ``dim x dim`` arrays, no native share) is at most the
-    row minus its native share plus ``16 dim^2``. The host LAPACK's native
-    bytes are at most that share. The cases include a late failure at dim
+    traced peak (three ``dim x dim`` arrays, no native share on numpy 1.x)
+    is at most the row minus its native share plus ``16 dim^2``; on numpy
+    2.x the eig workspace is traced, so the traced peak is at most the whole
+    row. The host LAPACK's native bytes are at most that share. The cases include a late failure at dim
     161, k = 1, where the ARPACK term leaves little slack. The operators are
     built before the trace starts."""
 

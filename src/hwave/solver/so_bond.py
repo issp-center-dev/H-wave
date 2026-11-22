@@ -2354,7 +2354,8 @@ def _dense_fallback_bytes(dim):
     eigenvector and eigenvalue outputs of ``np.linalg.eig`` (the one basis
     column of the build is left to the call allowance); the native ones are
     ``16 (2 dim^2 + dim) + 16 max(130 dim, 4352) + 8 * 2 dim`` (inside
-    ``np.linalg.eig``, not seen by ``tracemalloc``): its copy of the input,
+    ``np.linalg.eig``; not seen by ``tracemalloc`` on numpy 1.x, seen on
+    numpy 2.x): its copy of the input,
     LAPACK's right eigenvectors and eigenvalues, the ``zgeev`` workspace
     ``work`` (``max(130 dim, 4352)`` complex entries,
     :data:`_ZGEEV_WORK_PER_DIM`, :data:`_ZGEEV_WORK_FLOOR`) and ``rwork``
@@ -2622,8 +2623,9 @@ def estimate_dense_layout_solver_bytes(dim, k, n, solver_mode, *, max_iter, spec
     Of these, the ARPACK work arrays and the iterates are Python allocations
     (seen by ``tracemalloc``); ``np.linalg.eig``'s copy of its input, its
     LAPACK eigenvectors and the ``zgeev`` workspace are native allocations,
-    sized from the LAPACK interface (:func:`_dense_fallback_bytes`), not
-    traced. In the fallback the native share exists only while
+    sized from the LAPACK interface (:func:`_dense_fallback_bytes`): not
+    traced on numpy 1.x, traced on numpy 2.x. The row budgets both shares.
+    In the fallback the native share exists only while
     ``np.linalg.eig`` runs; after it the Python allocations grow to three
     ``dim x dim`` arrays (the matrix, the eigenvectors and their reordered
     copy), still within ``F``.
