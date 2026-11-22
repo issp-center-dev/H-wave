@@ -108,7 +108,10 @@ jobs:
         path: .venv
         # The numpy pin is part of the key: a venv cached for the numpy 2
         # leg must not be handed to the numpy < 2 leg (or vice versa).
-        key: venv-v5-${{ runner.os }}-${{ matrix.python-version }}-numpy${{ matrix.numpy }}-${{ hashFiles('**/poetry.lock') }}
+        # The key hashes pyproject.toml: no poetry.lock is committed, so a
+        # lock-file hash is the same empty string for every revision and a
+        # change of the dependency constraints would not renew the venv.
+        key: venv-v5-${{ runner.os }}-${{ matrix.python-version }}-numpy${{ matrix.numpy }}-${{ hashFiles('pyproject.toml') }}
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
@@ -343,7 +346,7 @@ jobs:
       with:
         path: .venv
         # The numpy pin is part of the key (see the `test` job).
-        key: venv-v5-${{ runner.os }}-${{ matrix.python-version }}-numpy${{ matrix.numpy }}-${{ hashFiles('**/poetry.lock') }}
+        key: venv-v5-${{ runner.os }}-${{ matrix.python-version }}-numpy${{ matrix.numpy }}-${{ hashFiles('pyproject.toml') }}
 
     - name: Load cached venv (other shards, restore only)
       if: matrix.shard != 1
@@ -352,7 +355,7 @@ jobs:
       with:
         path: .venv
         # The same key as shard 1, numpy pin included.
-        key: venv-v5-${{ runner.os }}-${{ matrix.python-version }}-numpy${{ matrix.numpy }}-${{ hashFiles('**/poetry.lock') }}
+        key: venv-v5-${{ runner.os }}-${{ matrix.python-version }}-numpy${{ matrix.numpy }}-${{ hashFiles('pyproject.toml') }}
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true' && steps.restored-poetry-dependencies.outputs.cache-hit != 'true'
