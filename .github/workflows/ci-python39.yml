@@ -193,8 +193,15 @@ jobs:
       run: poetry run pip install sparse-ir
 
     - name: Verify installation
+      # The default leg must have resolved numpy 2: if a dependency (or a
+      # restored venv) held it on 1.x, the "numpy 2 by default" legs would
+      # silently repeat the numpy < 2 leg. Checked here, after the last
+      # install, so nothing installed later can change the major.
       run: |
         poetry run python -c "import numpy; print('numpy version:', numpy.__version__)"
+        if [ -z "${{ matrix.numpy }}" ]; then
+          poetry run python -c "import numpy; v = numpy.__version__; assert int(v.split('.')[0]) >= 2, f'expected numpy 2 on the default leg, got {v}'"
+        fi
         poetry run python -c "import scipy; print('scipy version:', scipy.__version__)"
         poetry run python -c "import hwave; print('hwave imported successfully')"
 
@@ -427,8 +434,15 @@ jobs:
       run: poetry run pip install sparse-ir
 
     - name: Verify installation
+      # The default leg must have resolved numpy 2: if a dependency (or a
+      # restored venv) held it on 1.x, the "numpy 2 by default" legs would
+      # silently repeat the numpy < 2 leg. Checked here, after the last
+      # install, so nothing installed later can change the major.
       run: |
         poetry run python -c "import numpy; print('numpy version:', numpy.__version__)"
+        if [ -z "${{ matrix.numpy }}" ]; then
+          poetry run python -c "import numpy; v = numpy.__version__; assert int(v.split('.')[0]) >= 2, f'expected numpy 2 on the default leg, got {v}'"
+        fi
         poetry run python -c "import scipy; print('scipy version:', scipy.__version__)"
         poetry run python -c "import hwave; print('hwave imported successfully')"
 
