@@ -31,6 +31,13 @@ Fixtures (each later task adds the ones it uses):
   residual replaced by NaN from the 3rd step on (``UHFk._calc_phys``
   patched during the run, as tests/test_uhf_scf_status.py does): the
   writer's ``residual not finite after step 5`` status file.
+* ``uhfk_fm_axis``: tests/uhfk/CoulombIntra with ``Ncond = 5``,
+  ``SubShape = [1, 1, 1]`` and a start ``start.npz`` holding a fully
+  polarised ferromagnet along the generic axis
+  ``u = (0.6, 0.2537, 0.7734)/|.|`` on every cell (charge ``5/16``), as
+  tests/test_uhf_transverse_spin.py::TestUHFkRuns::test_uhfk_ferromagnet_generic_axis.
+  The Hubbard U keeps the global spin axis of the start, so the converged
+  totals are ``(Sx, Sy, Sz) = 2.5 u``.
 
 Helpers:
 
@@ -244,6 +251,23 @@ def _build_uhfk_u8_nan_residual(dest):
     return toml
 
 
+def _build_uhfk_fm_axis(dest):
+    toml, config = _uhfk_u8_input(dest, Ncond=5, SubShape=[1, 1, 1])
+    n = 5 / 16
+    u = np.array([0.6, 0.2537, 0.7734])
+    u = u / np.linalg.norm(u)
+    sigma = [np.array([[0, 1], [1, 0]]), np.array([[0, -1j], [1j, 0]]),
+             np.array([[1, 0], [0, -1]])]
+    rho = (n / 2) * (np.eye(2) + sum(c * s for c, s in zip(u, sigma)))
+    green = np.zeros((16, 2, 1, 2, 1), dtype=complex)
+    green[0, :, 0, :, 0] = rho.T        # G_st = <c^dag_s c_t> = rho_ts
+    np.savez(dest / "start.npz", green=green, momentum_convention="e_plus_ikR")
+    config["file"]["input"]["initial"] = "start.npz"
+    _write_toml(toml, config)
+    _run(toml)
+    return toml
+
+
 _BUILDERS = {
     "uhfr_tutorial": _build_uhfr_tutorial,
     "uhfk_cdw": _build_uhfk_cdw,
@@ -253,6 +277,7 @@ _BUILDERS = {
     "uhfk_u8_zero_steps": _build_uhfk_u8_zero_steps,
     "uhfk_u8_negative_max": _build_uhfk_u8_negative_max,
     "uhfk_u8_nan_residual": _build_uhfk_u8_nan_residual,
+    "uhfk_fm_axis": _build_uhfk_fm_axis,
 }
 
 
