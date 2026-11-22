@@ -675,9 +675,11 @@ have a nonzero off-site row. <code class="docutils literal notranslate"><span cl
 is not logged by FLEX (which, in spin-orbital mode, refuses off-site rows
 without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> and resolves their exchange exactly
 with it; see <a class="reference internal" href="#flex-spin-orbital"><span class="std std-ref">Spin-orbital FLEX (experimental)</span></a>) or by the RPA that <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> runs
-internally. <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read the outputs of the spin-orbital FLEX
-with bond channels yet; its static bond path builds its own bare bond
-bubble (see <a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>).</p>
+internally. The static bond path of <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> builds its bond bubble
+from the bare band, or from the <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of the spin-orbital FLEX with
+bond channels named by <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> (see
+<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>); the bond archive of that FLEX run is not read by
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>.</p>
 <section id="second-order-of-the-general-flex-path">
 <span id="flex-second-order-kernel"></span><h3>Second order of the general FLEX path<a class="headerlink" href="#second-order-of-the-general-flex-path" title="Link to this heading">¶</a></h3>
 <p>In <code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code> with <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code> the fluctuation
@@ -1165,8 +1167,10 @@ and its outputs are described in <a class="reference internal" href="../flex/tut
 version it runs on the CPU and writes <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> as the channel-0
 blocks of the last SCF iteration; with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span>
 <span class="pre">true</span></code> it also writes the spin-orbital bond archive of the final Green
-function (<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>). <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read its
-outputs in this version (a later version reads the bond archive). A FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span>
+function (<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>). <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads its
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code> through <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> on the static bond path
+(<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>) and does not read its bond archive in this
+version (a later version reads it). A FLEX-only <code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code> runs it with <code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span>
 <span class="pre">false</span></code>, as above.</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id2" role="doc-footnote">

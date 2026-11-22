@@ -1500,8 +1500,9 @@ the same rule: chi0q/chiq record the state point of the last map (its
 </ul>
 <div class="admonition important">
 <p class="admonition-title">Important</p>
-<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read the outputs of this path in this version (a
-later version reads the bond archive). The spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads the <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of this path through
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> (<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>); it does not read
+the bond archive in this version (a later version reads it). The spin-orbital <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>
 with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> (static and dynamic) refuses the chi0q,
 chiq, green and sigma of this path, at every <span class="math notranslate nohighlight">\(B\)</span>, naming the
 file:</p>
@@ -1509,9 +1510,11 @@ file:</p>
 </pre></div>
 </div>
 <p>For the pairing of an off-site model use the static bond path of
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>. It builds its own bare bond bubble from the
-band (Transfer and Extern) and does not read the <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of this
-path (<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> is refused in spin-orbital mode).</p>
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">Bond-resolved spin-orbital pairing (bond_channels)</span></a>. It builds its bond bubble from the bare band
+(Transfer and Extern) or, with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>, from the
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of this path (<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>). Run this FLEX in
+filling mode (<code class="docutils literal notranslate"><span class="pre">filling</span></code> set, no <code class="docutils literal notranslate"><span class="pre">mu</span></code>) with <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>,
+at the <code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code> and <code class="docutils literal notranslate"><span class="pre">Nmat</span></code> of the <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> run.</p>
 </div>
 <p>Not available in this version: the in-process pairing,
 the GPU, the half bosonic grid, and seeds (<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>, <code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>,
@@ -1530,8 +1533,10 @@ spin-orbital bond archive (<code class="docutils literal notranslate"><span clas
 bond-resolved dressed susceptibility <span class="math notranslate nohighlight">\(\chi_B\)</span> of the <strong>final</strong> Green
 function, the bare bond vertex <span class="math notranslate nohighlight">\(\Gamma_B\)</span> and the provenance of both,
 next to the Green function it was built from. <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read
-this archive in this version. Solver-side consumers read it through the
-Python function <code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code> (<em>Reading it</em> below); a script
+this archive in this version (it reads the companion <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>
+through <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>, <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>).
+Solver-side consumers read it through the Python function
+<code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code> (<em>Reading it</em> below); a script
 looks at its members with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code> (<em>Inspecting it by hand</em> below).</p>
 <p><strong>Configuration.</strong> On top of the input of <a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">Spin-orbital FLEX with bond channels (experimental)</span></a>
 (Input above), the archive needs two settings, the flag and the green
@@ -2572,6 +2577,10 @@ same shape as <code class="docutils literal notranslate"><span class="pre">sigma
 <li><p><code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code>: as for <code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code> above; <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses an
 older <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> under the same condition.</p></li>
 </ul>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> also reads this file through <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> on
+the static bond path (<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">Bond-resolved static pairing (bond_channels)</span></a>). In spin-orbital mode
+the <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> input is the <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of a spin-orbital FLEX run
+with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> (<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>).</p>
 </section>
 <section id="spin-orbital-runs">
 <span id="flex-so-output-files"></span><h3>Spin-orbital runs<a class="headerlink" href="#spin-orbital-runs" title="Link to this heading">¶</a></h3>
@@ -2638,8 +2647,12 @@ runs, as in UHFk).</p></li>
 it is requested), both in the static solver (see <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>) and
 in the dynamic one, which uses <span class="math notranslate nohighlight">\(\chi\)</span> at every bosonic frequency (see
 <a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>). This holds for a run without
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>: <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses the outputs of the
-spin-orbital FLEX with bond channels. Their bond archive is read by
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>: with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> refuses the outputs of the spin-orbital FLEX with bond
+channels. The <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of such a run, written in filling mode, is
+the <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> input of the static spin-orbital bond path of
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> (<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>). Its bond archive is not read by
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>; it is read by
 solver-side consumers through the Python function <code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>,
 and a script inspects it with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code> (see
 <a class="reference internal" href="#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>).</p>
@@ -3362,7 +3375,10 @@ own bond-resolved <span class="math notranslate nohighlight">\(\bar\chi\)</span>
 function, so it never reads a <code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code> file. To feed a
 FLEX-dressed Green function into the bond path, run FLEX to convergence
 and point <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code> at its <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> output; see
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">Bond-resolved static pairing (bond_channels)</span></a>.</p>
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">Bond-resolved static pairing (bond_channels)</span></a>. In spin-orbital mode use the
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of a spin-orbital FLEX run with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>, in filling mode; see
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>.</p>
 </div>
 </li>
 </ul>

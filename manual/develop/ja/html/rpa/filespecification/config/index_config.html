@@ -147,8 +147,11 @@ Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点に�
 （<code class="docutils literal notranslate"><span class="pre">[file.output]</span></code>の<code class="docutils literal notranslate"><span class="pre">chiq</span></code>・<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>・<code class="docutils literal notranslate"><span class="pre">green</span></code>を指定してください）。
 <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照。オンサイトの動的ソルバー（<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
 <span class="pre">&quot;dynamic&quot;</span></code>）もこれを読みます（<a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）。
-<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算の出力は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が拒否します。
-<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はそのボンドアーカイブを後の版で読みます。この版では、ソルバー側の
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>では、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の計算の出力は
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が拒否します。そのような計算をフィリング指定で実行して得た
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は、スピン軌道モードの静的なボンド経路で<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>に
+指定して使います（<a class="reference internal" href="../../tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>を参照）。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はそのボンドアーカイブを後の版で
+読みます。この版では、ソルバー側の
 読み込み処理が Python 関数<code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive</span></code>で
 読み、スクリプトでは<code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>で中身を見ます（<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を
 参照）。動的なボンド分解の経路と
@@ -706,7 +709,8 @@ GPU 経路が使われます。
 求めた最終 Green 関数の<span class="math notranslate nohighlight">\(\chi_B\)</span>、ボンドバーテックス、それらの来歴を持ち、
 <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を対となるファイルとします（<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>が必要）。
 <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code>ではアーカイブは書き出されません。この版の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
-このアーカイブを読みません。ソルバー側の読み込み処理は
+このアーカイブを読みません（対となる<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>で
+読みます。<a class="reference internal" href="../../tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>を参照）。ソルバー側の読み込み処理は
 <code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive</span></code>で読み、スクリプトでは
 <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>で中身を見ます。<a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を参照してください。</p>
 </li>
@@ -961,6 +965,25 @@ WARNING を出します。スピン軌道モードでは<code class="docutils li
 拒否します。軌道とそれ自身の間の<code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code>の<code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>の行
 （非ゼロ）は拒否されます（<code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>として宣言してください）。
 静的経路は<code class="docutils literal notranslate"><span class="pre">norb</span></code>を制限しません（issue #239 以前は単一軌道のみ）。</p>
+<p>スピン軌道モード（<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>）では、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>は
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>のスピン軌道 FLEX の
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を指定します。パスは<code class="docutils literal notranslate"><span class="pre">path_to_input</span></code>とも<code class="docutils literal notranslate"><span class="pre">path_to_flex_output</span></code>とも
+結合されず、そのまま使われます。相対パスは作業ディレクトリ基準です。その FLEX は
+フィリング指定（<code class="docutils literal notranslate"><span class="pre">filling</span></code>を指定し、<code class="docutils literal notranslate"><span class="pre">mu</span></code>は指定しない。μ 固定の計算の
+Green 関数は、記録された状態がこの計算と異なるため拒否されます）で、この計算と
+同一の状態点で実行したものでなければなりません。<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>、<code class="docutils literal notranslate"><span class="pre">T</span></code>、
+<code class="docutils literal notranslate"><span class="pre">filling</span></code>、バンド、相互作用の行、宣言されたボンドトポロジー（結合ゼロで宣言した
+行も数えます）が同じであることが必要です。<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code>は、解決された
+ボンドチャネルが一致する限り、FLEX の<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code>と異なっても
+かまいません。入力が<span class="math notranslate nohighlight">\(S_z\)</span>を保存するとき、ファイルの Green 関数のスピン
+非対角の部分は、最大要素に対して<span class="math notranslate nohighlight">\(10^{-12}\)</span>までなら WARNING を出して
+射影で取り除き、それより大きければ拒否します。ファイルの Green 関数は、ボンドの
+バブルとギャップ方程式の対の伝播関数の両方でバンドの Green 関数を置き換えます。
+<code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span></code>はその Green 関数には適用しません（<code class="docutils literal notranslate"><span class="pre">bond_coeff_tail_applied</span> <span class="pre">=</span>
+<span class="pre">0.0</span></code>。ゼロでない値を明示すると WARNING）。そのため固有値を<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>に対して
+確かめてください。スピン軌道モードでは、<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code>の
+<code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>は<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>の有無によらず拒否されます。
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>を参照してください。</p>
 <p><code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code>の場合（静的・動的とも）、オフサイトの行は RPA の
 ring や FLEX の general と同じく密度（Hartree）部分だけを持ちます。その交換
 （Fock）の寄与は q だけのバーテックスに厳密な置き場所がないため含まれません
@@ -976,7 +999,8 @@ WARNING で示され、密度部分を持たないオフサイトの<code class=
 <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>の動的経路が読み込むボンドアーカイブの
 ファイル名です。相対パスは<code class="docutils literal notranslate"><span class="pre">[file.input]</span> <span class="pre">path_to_flex_output</span></code>
 と結合されます。絶対パスはそのまま使われます
-（<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>と同じ規則です）。
+（これに対し<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>は<code class="docutils literal notranslate"><span class="pre">path_to_flex_output</span></code>とは結合されず、
+そのまま使われます。相対パスは作業ディレクトリ基準です）。
 <code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code>の相互作用ファイルは、アーカイブを書き出した
 FLEX 計算のものでなければなりません。それらがアーカイブのチャネル上で与える
 ボンドバーテックスをアーカイブのものと照合し、異なる場合は拒否します
@@ -1088,7 +1112,7 @@ IR 基底にフィットさせた際の、成分ごとの相対残差の拒否�
 <li><p><code class="docutils literal notranslate"><span class="pre">trans_mod</span></code></p>
 <p><strong>形式 :</strong> str型</p>
 <p><strong>説明 :</strong> UHF法で近似した相互作用項を含む一体項を RPA の初期値として利用します。UHFk の<code class="docutils literal notranslate"><span class="pre">file.output.rpa</span></code>に指定した出力ファイルのファイル名を指定します。</p>
-<p>Eliashberg ソルバー<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は、同じバンドを<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しない組み立て後のバンド（エネルギーの単位で絶対許容誤差<span class="math notranslate nohighlight">\(10^{-10}\)</span>。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">spin_free_tol</span></code>で変更でき、その範囲内のバンドはスピン平均されます。ただしスピン平均は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>自身が<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を計算する場合、すなわち<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>またはボンド経路に限られ、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>ではスピン平均は行われません）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>を指定した場合、このバンドは使われません。<code class="docutils literal notranslate"><span class="pre">green_init</span></code>からバンドを作る場合や<code class="docutils literal notranslate"><span class="pre">Extern</span></code>場を含む場合も同様です。Eliashberg チュートリアルの<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>の注を参照してください。</p>
+<p>Eliashberg ソルバー<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は、同じバンドを<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しない組み立て後のバンド（エネルギーの単位で絶対許容誤差<span class="math notranslate nohighlight">\(10^{-10}\)</span>。<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">spin_free_tol</span></code>で変更でき、その範囲内のバンドはスピン平均されます。ただしスピン平均は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>自身が<span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>を計算する場合、すなわち<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code>またはボンド経路に限られ、<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code>ではスピン平均は行われません）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>を指定した場合、このバンドは Green 関数には使われません。<code class="docutils literal notranslate"><span class="pre">green_init</span></code>からバンドを作る場合や<code class="docutils literal notranslate"><span class="pre">Extern</span></code>場を含む場合も同様です。スピン軌道モード（<a class="reference internal" href="../../tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>）では、このバンドは引き続き、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>のファイルに記録されたバンドとの照合と、相互作用の行とあわせて入力が<span class="math notranslate nohighlight">\(S_z\)</span>を保存するかどうかの判定に使われます。Eliashberg チュートリアルの<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code>の注を参照してください。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">green_init</span></code></p>
 <p><strong>形式 :</strong> str型</p>

@@ -159,9 +159,13 @@ physical orbital indices, scaled by <code class="docutils literal notranslate"><
 without <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code> with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">chi0q_mode</span> <span class="pre">=</span>
 <span class="pre">&quot;flex&quot;</span></code> (write <code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">chiq</span></code>, <code class="docutils literal notranslate"><span class="pre">chi0q</span></code> and <code class="docutils literal notranslate"><span class="pre">green</span></code>); see
 <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">Spin-orbital models (enable_spin_orbital)</span></a>. The on-site dynamic solver (<code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span>
-<span class="pre">&quot;dynamic&quot;</span></code>) reads them too (see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>). The
-outputs of a run with <code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> are refused
-by <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>, which reads its bond archive in a later version. In
+<span class="pre">&quot;dynamic&quot;</span></code>) reads them too (see <a class="reference internal" href="../../tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">Frequency-resolved gap (frequency = &quot;dynamic&quot;)</span></a>). With
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code> the outputs of a run with
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> are refused by <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>; the
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of such a run, in filling mode, is the <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span>
+<span class="pre">bond_green</span></code> input of the static spin-orbital bond path (see
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>), and <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> reads its bond archive in a
+later version. In
 this version solver-side consumers read the bond archive through the
 Python function <code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive</span></code>,
 and a script inspects it with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code> (see
@@ -799,7 +803,9 @@ writing. Ignored with a warning unless
 susceptibility pass, the bond vertex and their provenance, with
 <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> as its companion (<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code> is required);
 <code class="docutils literal notranslate"><span class="pre">IterationMax</span> <span class="pre">=</span> <span class="pre">0</span></code> writes no archive. <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> does not read this
-archive in this version: solver-side consumers read it with
+archive in this version (it reads the companion <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> through
+<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>, see <a class="reference internal" href="../../tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>): solver-side
+consumers read it with
 <code class="docutils literal notranslate"><span class="pre">hwave.solver.so_bond_archive.load_so_bond_archive</span></code>, and a script
 inspects it with <code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>. See <a class="reference internal" href="../../../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">The bond archive</span></a>.</p>
 </li>
@@ -1129,6 +1135,28 @@ off-site shells and refuses a cutoff that would drop a declared nonzero
 coefficient; a nonzero <code class="docutils literal notranslate"><span class="pre">R</span> <span class="pre">=</span> <span class="pre">0</span></code> <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> row of an orbital with
 itself is refused (declare it as <code class="docutils literal notranslate"><span class="pre">CoulombIntra</span></code>). The static path has no
 <code class="docutils literal notranslate"><span class="pre">norb</span></code> restriction (single-orbital only before issue #239).</p>
+<p>In spin-orbital mode (<code class="docutils literal notranslate"><span class="pre">[mode]</span> <span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>)
+<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> names the <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> of a spin-orbital FLEX run with
+<code class="docutils literal notranslate"><span class="pre">[mode.param]</span> <span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>. The path is used as
+given, relative to the working directory (neither <code class="docutils literal notranslate"><span class="pre">path_to_input</span></code> nor
+<code class="docutils literal notranslate"><span class="pre">path_to_flex_output</span></code> is prepended). The file must be written in
+filling mode (<code class="docutils literal notranslate"><span class="pre">filling</span></code> set, no <code class="docutils literal notranslate"><span class="pre">mu</span></code>: the Green function of a fixed-μ
+run is refused because its recorded state differs from this run’s) at
+the identical state point of this run:
+the same <code class="docutils literal notranslate"><span class="pre">Nmat</span></code>, <code class="docutils literal notranslate"><span class="pre">T</span></code>, <code class="docutils literal notranslate"><span class="pre">filling</span></code>, band, interaction rows and
+declared bond topology (a row declared with a zero coupling counts).
+<code class="docutils literal notranslate"><span class="pre">bond_max_shells</span></code> may differ from the FLEX run’s
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_max_shells</span></code> as long as the resolved bond channels
+agree. When the input conserves <span class="math notranslate nohighlight">\(S_z\)</span>, a spin-off-diagonal part
+of the file’s Green function up to <span class="math notranslate nohighlight">\(10^{-12}\)</span> (relative to its
+largest entry) is projected out with a WARNING, and a larger one is
+refused. The file’s Green function replaces the band’s in the bond bubble
+and in the pair propagator of the gap equation. <code class="docutils literal notranslate"><span class="pre">bond_coeff_tail</span></code> is not
+applied to that Green function (<code class="docutils literal notranslate"><span class="pre">bond_coeff_tail_applied</span> <span class="pre">=</span> <span class="pre">0.0</span></code>; an
+explicit nonzero value gives a WARNING), so check the eigenvalue against
+<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>. <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code> with <code class="docutils literal notranslate"><span class="pre">frequency</span> <span class="pre">=</span> <span class="pre">&quot;dynamic&quot;</span></code> is
+refused in spin-orbital mode, with or without <code class="docutils literal notranslate"><span class="pre">bond_green</span></code>. See
+<a class="reference internal" href="../../tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>.</p>
 <p>With <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">false</span></code> (both frequencies) an off-site row keeps its
 density (Hartree) part only, as in the RPA ring and the FLEX general path:
 its exchange (Fock) crossing has no exact place in the q-only vertex and is
@@ -1145,8 +1173,9 @@ only)</p>
 <p><strong>Description :</strong>
 Filename of the dynamic bond archive read by the <code class="docutils literal notranslate"><span class="pre">bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>
 dynamic path. A relative name is joined to <code class="docutils literal notranslate"><span class="pre">[file.input]</span>
-<span class="pre">path_to_flex_output</span></code>; an absolute path is used as given (the same rule
-<code class="docutils literal notranslate"><span class="pre">bond_green</span></code> follows).
+<span class="pre">path_to_flex_output</span></code>; an absolute path is used as given
+(<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>, by contrast, is always used as given, relative to the
+working directory).
 The interaction files of <code class="docutils literal notranslate"><span class="pre">[file.input.interaction]</span></code> must be those of the
 FLEX run that wrote the archive: the bond vertices they give on the
 archive’s channels are checked against the archive’s, and a difference is
@@ -1266,7 +1295,7 @@ The input file is in NumPy binary format that corresponds to the output format o
 String</p>
 <p><strong>Description :</strong>
 This parameter specifies the filename of the initial configuration exported from UHFk by the parameter <code class="docutils literal notranslate"><span class="pre">file.output.rpa</span></code>. It contains the one-body interaction term involving the approximated two-body interaction terms via UHF method.</p>
-<p>The Eliashberg solver <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> uses the same band for <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>, the chemical potential and the Green function of the pairing kernel. It accepts only a spin-independent assembled band (absolute tolerance <span class="math notranslate nohighlight">\(10^{-10}\)</span> in energy units, adjustable with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">spin_free_tol</span></code>, in which case a band within that tolerance is spin-averaged, but only when <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> computes <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> itself, i.e. with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> or on the bond path; with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> no spin averaging is applied) and refuses a spin-dependent one (issue #88). With an external <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> the band is not used. The same rules apply when the band is built from <code class="docutils literal notranslate"><span class="pre">green_init</span></code> or includes an <code class="docutils literal notranslate"><span class="pre">Extern</span></code> field. See the <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> notes in the Eliashberg tutorial.</p>
+<p>The Eliashberg solver <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> uses the same band for <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span>, the chemical potential and the Green function of the pairing kernel. It accepts only a spin-independent assembled band (absolute tolerance <span class="math notranslate nohighlight">\(10^{-10}\)</span> in energy units, adjustable with <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">spin_free_tol</span></code>, in which case a band within that tolerance is spin-averaged, but only when <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code> computes <span class="math notranslate nohighlight">\(\chi_0(\mathbf{q})\)</span> itself, i.e. with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;calc&quot;</span></code> or on the bond path; with <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;load&quot;</span></code> no spin averaging is applied) and refuses a spin-dependent one (issue #88). With an external <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> the band is not used for the Green function. The same rules apply when the band is built from <code class="docutils literal notranslate"><span class="pre">green_init</span></code> or includes an <code class="docutils literal notranslate"><span class="pre">Extern</span></code> field. In spin-orbital mode (<a class="reference internal" href="../../tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">A FLEX Green function (bond_green)</span></a>) the band is still compared with the band recorded in the <code class="docutils literal notranslate"><span class="pre">bond_green</span></code> file, and it decides, with the interaction rows, whether the input conserves <span class="math notranslate nohighlight">\(S_z\)</span>. See the <code class="docutils literal notranslate"><span class="pre">chi0q_mode</span></code> notes in the Eliashberg tutorial.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">green_init</span></code></p>
 <p><strong>Type :</strong>

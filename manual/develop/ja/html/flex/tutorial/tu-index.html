@@ -1375,17 +1375,21 @@ sigma が記録します（このとき chi0q と chiq は書き出されませ�
 </ul>
 <div class="admonition important">
 <p class="admonition-title">重要</p>
-<p>この版の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はこの経路の出力を読みません（後の版でボンドアーカイブを
-読みます）。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>のスピン軌道<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（静的・動的）は、
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はこの経路の<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>で読みます
+（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>）。この版ではボンドアーカイブは読みません（後の版で読みます）。
+<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span> <span class="pre">&quot;flex&quot;</span></code>のスピン軌道<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>（静的・動的）は、
 この経路の chi0q、chiq、green、sigma を、すべての<span class="math notranslate nohighlight">\(B\)</span>で、ファイル名を
 示して拒否します:</p>
 <div class="highlight-none notranslate"><div class="highlight"><pre><span></span>[mode] enable_spin_orbital = true (hwave_sc, issue #83): '&lt;file&gt;' was written by the spin-orbital FLEX with bond channels ([mode.param] longitudinal_bond_channels = true): the chi0q, chiq and green of that run describe the bond-resolved run, which [eliashberg] chi0q_mode = "flex" cannot use. Re-run FLEX with longitudinal_bond_channels = false for this mode.
 </pre></div>
 </div>
 <p>オフサイトのある模型のペアリングには、
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>の静的なボンド経路を使ってください。この経路はバンド
-（Transfer と Extern）から自分で裸のボンドバブルを作り、この経路の<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は
-読みません（スピン軌道モードでは<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>は拒否されます）。</p>
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>の静的なボンド経路を使ってください。この経路はボンドの
+バブルを裸のバンド（Transfer と Extern）から、または<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>を
+指定すればこの FLEX の<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>から作ります（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>）。
+この FLEX はフィリング指定（<code class="docutils literal notranslate"><span class="pre">filling</span></code>を指定し、<code class="docutils literal notranslate"><span class="pre">mu</span></code>は指定しない）で、
+<code class="docutils literal notranslate"><span class="pre">[file.output]</span> <span class="pre">green</span></code>を指定し、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の計算と同じ<code class="docutils literal notranslate"><span class="pre">T</span></code>、
+<code class="docutils literal notranslate"><span class="pre">filling</span></code>、<code class="docutils literal notranslate"><span class="pre">Nmat</span></code>で実行してください。</p>
 </div>
 <p>この版で使えないもの: プロセス内のペアリング、GPU、半分のボソン
 格子、初期値（<code class="docutils literal notranslate"><span class="pre">sigma_init</span></code>、<code class="docutils literal notranslate"><span class="pre">trans_mod</span></code>、<code class="docutils literal notranslate"><span class="pre">green_init</span></code>。オンサイトの
@@ -1402,7 +1406,8 @@ sigma が記録します（このとき chi0q と chiq は書き出されませ�
 （<code class="docutils literal notranslate"><span class="pre">bond_archive_schema</span> <span class="pre">=</span> <span class="pre">4</span></code>）を書き出します。中身は<strong>最終</strong>の Green 関数の
 ボンド分解したドレスド感受率<span class="math notranslate nohighlight">\(\chi_B\)</span>、裸のボンドバーテックス<span class="math notranslate nohighlight">\(\Gamma_B\)</span>、
 およびその両方の来歴で、それを作った Green 関数の隣に置かれます。この版の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は
-このアーカイブを読みません。ソルバー側の読み込み処理は Python 関数<code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>で
+このアーカイブを読みません（対となる<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>で
+読みます。<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>）。ソルバー側の読み込み処理は Python 関数<code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>で
 読み（下の「読み込み」）、スクリプトでは<code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>でメンバーを見ます（下の
 「手で中身を見る」）。</p>
 <p><strong>設定。</strong> <a class="reference internal" href="#flex-so-bond-tutorial"><span class="std std-ref">ボンドチャネル付きのスピン軌道 FLEX（実験的機能）</span></a>の入力（上の「入力」）に加えて、アーカイブには
@@ -2413,6 +2418,10 @@ MYO と Kuroki の差は、型別頂点内容の厳密対角化による裁定�
 <li><p><code class="docutils literal notranslate"><span class="pre">sc_vertex_version</span></code>: 上の<code class="docutils literal notranslate"><span class="pre">sigma.npz</span></code>と同じです。同じ条件のもとで、
 <code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はより古い<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を拒否します。</p></li>
 </ul>
+<p><code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>は静的なボンドの経路で、このファイルを<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>により
+読むこともできます（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">ボンド分解した静的対形成（bond_channels）</span></a>）。スピン軌道モードでは、<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>の
+入力は<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>のスピン軌道 FLEX の<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>です
+（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>）。</p>
 </section>
 <section id="flex-so-output-files">
 <span id="id40"></span><h3>スピン軌道計算<a class="headerlink" href="#flex-so-output-files" title="Link to this heading">¶</a></h3>
@@ -2473,8 +2482,12 @@ chi0q/chiq のチャネル 0 の内容は<a class="reference internal" href="#fl
 FLEX は指定されたアーカイブだけを出力します）を読みます。静的なソルバー
 （<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital"><span class="std std-ref">スピン軌道模型（enable_spin_orbital）</span></a>を参照）でも、すべてのボソン振動数の<span class="math notranslate nohighlight">\(\chi\)</span>を使う
 動的なソルバー（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-spin-orbital-dynamic"><span class="std std-ref">振動数に依存するギャップ（frequency = &quot;dynamic&quot;）</span></a>を参照）でも使えます。
-これは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>を使わない計算についてです。ボンドチャネル付きの
-スピン軌道 FLEX の出力は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が拒否します。そのボンドアーカイブは、ソルバー側の
+これは<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>を使わない計算についてです。<code class="docutils literal notranslate"><span class="pre">chi0q_mode</span> <span class="pre">=</span>
+<span class="pre">&quot;flex&quot;</span></code>では、ボンドチャネル付きのスピン軌道 FLEX の出力は<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が拒否します。
+そのような計算をフィリング指定で実行して得た<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>は、スピン軌道モードの
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の静的なボンド経路で<code class="docutils literal notranslate"><span class="pre">bond_green</span></code>に指定して使います
+（<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>）。
+そのボンドアーカイブは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>では読まず、ソルバー側の
 読み込み処理が Python 関数<code class="docutils literal notranslate"><span class="pre">load_so_bond_archive</span></code>で読み、スクリプトでは<code class="docutils literal notranslate"><span class="pre">numpy.load</span></code>で
 中身を見ます（<a class="reference internal" href="#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>を参照）。</p>
 </section>
@@ -3162,7 +3175,9 @@ FLEX converged after 62 iterations
 ファイルを読み込みません。FLEX でdressされた Green 関数をボンドパスへ
 渡す場合は、FLEX を収束まで実行し、その<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>出力を
 <code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>に指定してください。詳細は
-<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">ボンド分解した静的対形成（bond_channels）</span></a>を参照してください。</p>
+<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-bond-channels-static"><span class="std std-ref">ボンド分解した静的対形成（bond_channels）</span></a>を参照してください。スピン軌道モードでは、
+<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span> <span class="pre">=</span> <span class="pre">true</span></code>のスピン軌道 FLEX をフィリング指定で
+実行した<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を使います。<a class="reference internal" href="../../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>を参照してください。</p>
 </div>
 </li>
 </ul>

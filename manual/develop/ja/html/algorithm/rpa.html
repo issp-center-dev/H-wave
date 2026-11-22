@@ -633,9 +633,10 @@ SO RPA、SO FLEX、SO hwave_sc の結果が変わります。</p></li>
 区切ったリストです。<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>はこのリストには挙がりません。この行は FLEX
 （スピン軌道モードでは、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>なしではオフサイトの行を拒否し、
 ありではその交換を厳密に扱います。<a class="reference internal" href="#flex-spin-orbital"><span class="std std-ref">スピン軌道 FLEX（実験的機能）</span></a>を参照）と、<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>が
-内部で実行する RPA では記録されません。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はボンドチャネル付きのスピン軌道
-FLEX の出力をまだ読みません。その静的なボンド経路は自分で裸のボンドバブルを作ります
-（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-static"><span class="std std-ref">ボンド分解したスピン軌道の対形成（bond_channels）</span></a>を参照）。</p>
+内部で実行する RPA では記録されません。<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の静的なボンド経路は、ボンドの
+バブルを裸のバンドから、または<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>で指定したボンドチャネル付きの
+スピン軌道 FLEX の<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>から作ります（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>を参照）。
+その FLEX のボンドアーカイブは<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>では読みません。</p>
 <section id="flex-2">
 <span id="flex-second-order-kernel"></span><h3>一般 FLEX 経路の2次<a class="headerlink" href="#flex-2" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">mode</span> <span class="pre">=</span> <span class="pre">&quot;FLEX&quot;</span></code>・<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>では、ゆらぎ
@@ -1058,7 +1059,9 @@ W = P_B\left[\Gamma_B\left(\chi_B - \tfrac{1}{2}\bar\chi_B\right)\Gamma_B\right]
 まとめています。この版では CPU で動作し、<code class="docutils literal notranslate"><span class="pre">chi0q</span></code>/<code class="docutils literal notranslate"><span class="pre">chiq</span></code>を最後の SCF 反復の
 チャネル 0 ブロックとして書き出します。<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_output_full</span> <span class="pre">=</span> <span class="pre">true</span></code>では、
 最終 Green 関数のスピン軌道ボンドアーカイブも書き出します（<a class="reference internal" href="../flex/tutorial/tu-index.html#flex-so-bond-archive"><span class="std std-ref">ボンドアーカイブ</span></a>）。
-この版の<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はその出力を読みません（後の版でボンドアーカイブを読みます）。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は、上と同じく<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>はその<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>を静的なボンド経路で<code class="docutils literal notranslate"><span class="pre">[eliashberg]</span> <span class="pre">bond_green</span></code>により
+読みます（<a class="reference internal" href="../rpa/tutorial/sc-index.html#sc-so-bond-green"><span class="std std-ref">FLEX の Green 関数（bond_green）</span></a>）。この版ではボンドアーカイブは読みません（後の版で
+読みます）。FLEX のみの<code class="docutils literal notranslate"><span class="pre">hwave_tsweep</span></code>は、上と同じく<code class="docutils literal notranslate"><span class="pre">warm_start</span> <span class="pre">=</span> <span class="pre">false</span></code>で
 これを実行します。</p>
 <aside class="footnote-list brackets">
 <aside class="footnote brackets" id="id8" role="doc-footnote">

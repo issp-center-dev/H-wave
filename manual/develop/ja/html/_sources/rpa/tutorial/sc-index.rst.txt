@@ -1920,10 +1920,11 @@ Eliashberg方程式ソルバーは、H-waveで利用可能な
 - **バブル。** ``hwave_sc``\ はボンド分解したバブルを Green 関数から
   自ら構築します。Green 関数は、トランスファー積分から作る裸の Green 関数、
   または\ ``bond_green``\ で指定したファイル（たとえば FLEX の
-  ``green.npz``\ ）です。\ ``chi0q_mode``\ と\ ``chi0q_tensor``\ は
+  ``green.npz``\ 。スピン軌道モードではボンドチャネル付きのスピン軌道 FLEX の
+  ``green.npz``\ 。\ :ref:`sc_so_bond_green`\ を参照）です。\ ``chi0q_mode``\ と\ ``chi0q_tensor``\ は
   使われず、\ ``chi0q_mode = "flex"``\ は拒否されます。
-  ``bond_coeff_tail``\ （デフォルト\ ``1.0``\ ）はこのバブルの
-  松原テール補正の係数です。
+  ``bond_coeff_tail``\ （デフォルト\ ``1.0``\ ）は、裸の Green 関数で作るこのバブルの
+  松原テール補正の係数です（\ ``bond_green``\ の Green 関数には適用しません）。
 - **キー。** ``bond_max_shells``\ はオフサイトのシェルを（ボンド長の
   順に。シェル0はオンサイトの点）その数だけ残し、宣言された非ゼロの係数を
   落とすことになるカットオフは拒否します（宣言値がゼロのシェルは切れます）。
@@ -2115,8 +2116,10 @@ Eliashberg 頂点に入る相互作用
      - RPA と同じ
 
 スピン軌道の FLEX はボンド分解チャネル（\ ``longitudinal_bond_channels = true``\ 、
-:ref:`flex_so_bond_tutorial`\ ）を受け付けますが、\ ``hwave_sc``\ はその計算の出力を
-まだ読みません。スピン軌道の\ ``hwave_sc``\ は
+:ref:`flex_so_bond_tutorial`\ ）を受け付けます。\ ``hwave_sc``\ は静的なボンドの経路で
+その計算の\ ``green.npz``\ を\ ``[eliashberg] bond_green``\ により読みます
+（\ :ref:`sc_so_bond_green`\ ）。その計算のボンドアーカイブ（\ ``longitudinal_bond.npz``\ ）
+や感受率は読みません。スピン軌道の\ ``hwave_sc``\ は
 ``frequency = "static"``\ では\ ``bond_channels = true``\ を受け付け
 （\ :ref:`sc_so_bond_static`\ ）、\ ``frequency = "dynamic"``\ では拒否します。
 
@@ -2549,7 +2552,8 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 （\ ``bond_max_shells``\ のカットオフがなければ\ ``-1``\ ）と\ ``block_layout``
 （\ ``"dense"``\ または\ ``"sz_packed"``\ ）を加えます。
 
-``chi0q_mode = "load"``\ と\ ``"flex"``\ では、スピン軌道モードの\ ``hwave_sc``\ は
+``chi0q_mode = "load"``\ と\ ``"flex"``\ 、およびボンドの経路で\ ``bond_green``\ を
+指定した場合、スピン軌道モードの\ ``hwave_sc``\ は
 読み込む各アーカイブを、大きな配列を読む前に自身の入力と照合します。\ ``prov_*``\ の
 写しはメッセージで差分を示すためだけに使われ、そこからダイジェストを再計算する
 ことはありません。保存されたダイジェストは、**この計算自身の** Transfer・Extern・
@@ -2585,7 +2589,9 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
    * - ``longitudinal_bond.npz``\ （スピン軌道ボンドアーカイブ）と、その対となる
        ``green.npz``
      - ``hwave <input.toml>``\ （\ ``longitudinal_bond_channels = true``\ と
-       ``longitudinal_bond_output_full = true``\ のスピン軌道の FLEX）
+       ``longitudinal_bond_output_full = true``\ のスピン軌道の FLEX。\ ``bond_green``\ の
+       入力として\ ``green.npz``\ だけを使うなら、\ ``longitudinal_bond_channels =
+       true``\ と\ ``[file.output] green``\ だけで足ります）
      - ``[file.output] longitudinal_bond``\ 、\ ``green``
    * - ``gap.npz``\ 、\ ``gap_dynamic.npz``
      - ``hwave_sc <input.toml>``
@@ -2649,9 +2655,12 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
    されます。
 
    段階\ ``sc_so_bond_dynamic``\ は認識されますが、まだ読み込めません。専用の
-   メッセージで拒否されます（下の表を参照）。\ ``flex_so_bond``\ の出力は
-   ``load_so_bond_archive``\ だけが読み（ボンドアーカイブとその対となる green
-   ファイル）、\ ``hwave_sc``\ のオンサイトの読み込み側はそれを拒否します（下の表を参照）。
+   メッセージで拒否されます（下の表を参照）。\ ``flex_so_bond``\ のボンドアーカイブは
+   ``load_so_bond_archive``\ だけが対となる green ファイルとともに読み、\ ``hwave_sc``\ は
+   読みません。\ ``flex_so_bond``\ の\ ``green.npz``\ は、\ ``hwave_sc``\ の静的なボンド経路で
+   ``bond_green``\ に指定して使うこともできます（\ :ref:`sc_so_bond_green`\ ）。
+   ``hwave_sc``\ のオンサイトの読み込み側は\ ``flex_so_bond``\ のすべての出力を拒否します
+   （下の表を参照）。
 
    *レイアウトのメンバー。*\ ボンド分解した段階のアーカイブ（\ ``sc_so_bond_static``\ と、
    ``flex_so_bond``\ のすべてのアーカイブ: chi0q、chiq、green、sigma、ボンドアーカイブ）は、
@@ -2682,19 +2691,21 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
       なりません。オンサイトのスピン軌道の経路（上の\ ``"load"``\ と\ ``"flex"``\ の入力）は
       ``"so_onsite"``\ のアーカイブを使い、ボンド分解チャネルを含むアーカイブ
       （\ ``"so_bond"``\ ）は拒否されます。ボンド分解の経路（\ :ref:`sc_so_bond_static`\ ）は
-      ``"so_bond"``\ のギャップのアーカイブを書き出しますが、アーカイブは読みません。
-      Green 関数はバンドから作り、\ ``bond_green``\ と\ ``chi0q_mode = "flex"``\ は
-      拒否するので、スピン軌道 FLEX の\ ``green.npz``\ （\ ``"so_onsite"``\ ）はボンドの
-      経路の入力になりません。宣言されたボンドトポロジーと解決されたボンドトポロジーは
-      ボンド分解を使う側だけが比較します。このバージョンでその立場にあるのは、
-      スピン軌道ボンドアーカイブの Python 関数\ ``load_so_bond_archive``
-      （\ :ref:`flex_so_bond_archive`\ ）だけで、\ ``"so_bond"``\ を使い、\ ``Nmat``\ の
-      一致を求めます。
+      ``"so_bond"``\ のギャップのアーカイブを書き出し、感受率のアーカイブは読みません
+      （\ ``chi0q_mode = "flex"``\ は拒否）。\ ``bond_green``\ を指定すると、ボンドチャネル
+      付きのスピン軌道 FLEX の\ ``green.npz``\ （\ ``"so_bond"``\ ）を読み、オンサイトの
+      スピン軌道 FLEX の\ ``green.npz``\ （\ ``"so_onsite"``\ ）は対処法を示して拒否します
+      （\ :ref:`sc_so_bond_green`\ ）。宣言されたボンドトポロジーと解決されたボンド
+      トポロジーはボンド分解を使う側だけが比較します。これに該当するのは、スピン軌道ボンドアーカイブの
+      Python 関数\ ``load_so_bond_archive``\ （\ :ref:`flex_so_bond_archive`\ ）と、
+      ボンドの経路の\ ``bond_green``\ の読み込みです。どちらも\ ``"so_bond"``\ を使い、
+      ``Nmat``\ の一致を求めます。結合がゼロでも宣言した行は数えられます。
    4. *状態。*\ :math:`\beta`\ （相対\ :math:`10^{-12}`\ ）、μ の探索の有無
       （\ ``hwave_sc``\ はつねに μ を探索するので、μ 固定のアーカイブは拒否されます）、
       目標値\ ``filling * 2N``\ （1セルあたりの電子数、相対\ :math:`10^{-12}`\ ）、その目標値に
       対する出力側の閉包密度（許容幅\ :math:`\max(10^{-8}\max(1,|t|), 10\,r)`\ 、
-      :math:`r`\ はファイルの残差）、Green 関数を借りる場合（\ ``"flex"``\ ）は\ ``Nmat``\ の
+      :math:`r`\ はファイルの残差）、Green 関数を借りる場合（\ ``"flex"``\ と
+      ``bond_green``\ ）は\ ``Nmat``\ の
       完全一致。\ ``"load"``\ では\ ``Nmat``\ は異なってもかまいません。従来の規則が
       ファイルの\ ``nmat``\ からボソン振動数ゼロの位置を決めます。このとき読み込んだ
       :math:`\chi_0`\ は別の松原格子で和をとったもので、振動数の打ち切りがこの計算と
@@ -2707,6 +2718,10 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
       ``green.npz``\ と\ ``sigma.npz``\ は、配列を読む前に検査全体（構造・バンド・
       相互作用・capability・状態）を受けます。Green 関数を読み込んだ後は、
       ``green.npz``\ の\ ``fp_green``\ もそのダイジェストと等しくなければなりません。
+      ``bond_green``\ では、ファイルの\ ``fp_green``\ が保存されたままの\ ``green``\
+      メンバーのダイジェストと等しくなければなりません。この比較は、状態の検査および
+      マーカー・形の検査の後、Green 関数を読み込んだところで行います
+      （\ :ref:`sc_so_bond_green`\ ）。
       ``"load"``\ では Green 関数を借りないので、アーカイブの\ ``fp_green``\ は出力側の
       主張として INFO で記録されます。
 
@@ -2726,15 +2741,22 @@ chi0q、chiq、green、sigma のアーカイブは拒否されるので、この
 **ギャップのアーカイブに記録される内容。**\ ``gap.npz``\ （\ ``producer_stage =
 "sc_so_static"``\ 、ボンド分解した計算では\ ``"sc_so_bond_static"``\ ）と\ ``gap_dynamic.npz``\ （\ ``"sc_so_dynamic"``\ ）は同じ version 2 の
 メンバーをもち、\ *この*\ 計算のカーネルが実際に使ったものを記録します。出力側の
-値を写すことはありません。
+値を写すことはありません。ただし\ ``bond_green``\ で読んだ Green 関数の状態は写します
+（下記）。
 
-- ``"calc"``\ と\ ``"load"``\ 、およびボンド分解したすべての計算: 自身のバンドと
+- ``"calc"``\ と\ ``"load"``\ 、および\ ``bond_green``\ を使わないボンド分解した
+  すべての計算: 自身のバンドと
   自身の μ から作った Green 関数。
   ``state_density``\ はその μ でのバンドの1セルあたりの Fermi 分布の和、
   ``state_mu_tol = |state_density - state_target|``\ です;
 - ``"flex"``\ : ``fp_green``\ は消費した借用 Green 関数のダイジェスト、\ ``state_mu``\ は
   それを作った FLEX の μ、\ ``state_density``\ はその閉包密度で、FLEX と同じ手続き
-  （\ ``flex_sigma``\ の静的自己エネルギー、この計算のバンド）で求めます。
+  （\ ``flex_sigma``\ の静的自己エネルギー、この計算のバンド）で求めます;
+- ``bond_green``\ を使うボンド分解した計算: ``fp_green``\ は消費した Green 関数
+  （\ :math:`S_z`\ の射影を適用したときは射影後のもの）のダイジェスト、
+  ``fp_green_source``\ はファイルの\ ``fp_green``\ で、Green 関数を射影したときだけ
+  書かれます。\ ``state_*``\ のメンバーは\ ``green.npz``\ から写します。同じ Green
+  関数について出力側が記録した状態です（\ :ref:`sc_so_bond_green`\ ）。
 
 相互作用のダイジェスト（\ ``fp_interaction``\ 、\ ``fp_topology``\ ）はこの計算の入力の
 ものです。スカラーのメンバーは\ ``eigenvalue.dat``\ にも\ ``# key = value``\ の行として
@@ -2796,12 +2818,16 @@ Green 関数と結び付けられます。出力側は密度を1セルあたり
    * - ``<file> was produced by <producer> (so_bond), but this run needs a
        so_onsite artifact``
      - アーカイブはボンド分解チャネルを含みますが、この計算は使いません。
-       このバージョンが書き出すアーカイブのうち\ ``so_bond``\ はボンド分解した
-       計算のギャップのアーカイブ（\ ``sc_so_bond_static``\ ）だけで、ギャップの
-       アーカイブを chi0q・chiq・green・sigma の入力として与えると、この段階より前に
-       段階の検査で拒否されるので、このバージョンで書かれたアーカイブではこの
-       メッセージは出ません。
-     - 出力側の\ ``[file.output]``\ のアーカイブ
+       ボンド分解した計算のギャップのアーカイブ（\ ``sc_so_bond_static``\ ）は、この
+       段階より前に段階の検査で拒否されます。\ ``chi0q_mode = "flex"``\ では、
+       オンサイトの FLEX の読み込み側が\ ``flex_so_bond``\ の出力を先に専用の
+       メッセージで拒否します（下記）。\ ``chi0q_mode = "load"``\ では、ボンドチャネル
+       付きのスピン軌道 FLEX が書いた\ ``chi0q.npz``\ に対してこのメッセージが出ます。
+       スピン軌道 RPA（\ ``rpa_so``\ ）またはオンサイトのスピン軌道 FLEX
+       （\ ``flex_so_onsite``\ ）の chi0q を与えるか、ボンド分解の経路では出力側の FLEX の
+       ``green.npz``\ を\ ``bond_green``\ で使ってください（\ :ref:`sc_so_bond_green`\ ）。
+     - ``[file.output] chi0q``\ （\ ``"load"``\ ）。\ ``[eliashberg] bond_channels``\ 、
+       ``bond_green``
    * - ``state differs: calc_mu: file False, run True``
      - 出力側は μ 固定で実行されています（固定 μ の不一致）。\ ``hwave_sc``\ は
        つねに\ ``filling``\ から μ を探索します。\ ``mu``\ の代わりに\ ``filling``\ で
@@ -3193,6 +3219,12 @@ WARNING）は当てはまりません。対形成頂点は
 
    [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the BARE Green function built from the Transfer (and Extern) input. It demonstrates the qualitative V-dependence of the pairing eigenvalue; it is NOT a conserving FLEX result (the bond chi-bar is built here at RPA-ladder level), so absolute lambda values are not comparable with FLEX/dynamic references.
 
+``bond_green``\ を指定すると（\ :ref:`sc_so_bond_green`\ ）、ファイルから読んだ Green
+関数が、\ :math:`\bar\chi_B`\ とギャップ方程式の対の伝播関数\ :math:`G(k)G(-k)`\ の
+両方でバンドの Green 関数を置き換え、WARNING は代わりにそのファイルを示します::
+
+   [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the Green function read from bond_green = '<path>' (its approximation level, e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that Green function at RPA-ladder level; it is NOT the bond susceptibility of the run that wrote the file, so absolute lambda values are not comparable with FLEX/dynamic references.
+
 .. note::
 
    **オフサイトの PairLift。**\ 非スピン軌道のボンドの経路はオフサイトの
@@ -3247,9 +3279,14 @@ WARNING）は当てはまりません。対形成頂点は
   正の値: その GiB 数。\ ``0``\ : 検査を無効にし、WARNING を出します。負の値・有限でない
   値（および真偽値）は拒否されます: ``[eliashberg] bond_memory_cap_gb must be a
   finite number >= 0 in spin-orbital mode (0 disables the check), got <value>``
+- ``bond_green``\ : ボンドチャネル付きのスピン軌道 FLEX の\ ``green.npz``\ 。ボンドの
+  バブルとギャップ方程式の対の伝播関数で、裸の Green 関数の代わりに使います
+  （\ :ref:`sc_so_bond_green`\ ）。
 - ``bond_coeff_tail``\ （既定値\ ``1.0``\ ）: ボンドのバブルの Green 関数の松原テールの
-  係数。非スピン軌道のボンドの経路と同じです。
-- ``g2_tail``\ （既定値\ ``true``\ ）: 対の伝播関数の松原テール補正。
+  係数。非スピン軌道のボンドの経路と同じです。\ ``bond_green``\ で読んだ Green 関数には
+  適用しません。
+- ``g2_tail``\ （既定値\ ``true``\ ）: 対の伝播関数の松原テール補正
+  （\ ``bond_green``\ でも適用します）。
 
 ``eigenvalue_method``\ は、すべてのスピン軌道の計算と同じく\ ``"arnoldi"``\ （または
 指定なし）でなければならず、それ以外の値はファイルを読む前に拒否されます。Arnoldi 法の
@@ -3301,7 +3338,9 @@ packed の一覧はセクターごとの解の和集合なので、\ ``num_eigen
 ``bond_n_channels``\ （\ :math:`B`\ ）、\ ``bond_delta_r``\ （チャネルの変位）、
 ``bond_max_shells``\ 、\ ``so_bond_layout``\ 、\ ``so_bond_layout_reason``\ 、
 ``bond_memory_cap``\ （適用した上限とその由来）、\ ``g2_tail``\ 、\ ``bond_coeff_tail``\ 、
-``bond_coeff_tail_source``\ 、\ ``approximation = static RPA-ladder bond dressing``\ 、
+``bond_coeff_tail_source``\ 、\ ``approximation = static RPA-ladder bond dressing``\
+（\ ``bond_green``\ では\ ``static RPA-ladder bond dressing on a borrowed Green
+function``\ となり、\ :ref:`sc_so_bond_green`\ の行が加わります）、
 ``gap_status``\ 、\ ``pp_sector``\ 、\ ``selection``\ （固有値の選び方。packed では
 セクターごとに。例: ``+1:dense-LR;0:LR;-1:null-operator``\ ）、およびギャップの
 アーカイブのスカラーの来歴メンバー。spinful チャネルの静的 RPA 極を越えたとき
@@ -3369,14 +3408,356 @@ WARNING が必要な\ ``max_iter``\ を示します。例::
 
 - ``frequency = "static"``\ のみ。\ ``frequency = "dynamic"``\ では\ ``bond_channels =
   true``\ は拒否されます（「拒否される組み合わせ」を参照）;
-- ボンドのバブルはバンドの裸の Green 関数から作ります。ボンド分解した Green 関数は
-  まだ与えられず（\ ``bond_green``\ は拒否）、chi0q や FLEX の出力は読みません
-  （\ ``chi0q_mode``\ は使われず、\ ``chi0q_mode = "flex"``\ は拒否）;
+- ボンドのバブルは、バンドの裸の Green 関数、または\ ``bond_green``\ で指定した
+  ボンドチャネル付きのスピン軌道 FLEX の\ ``green.npz``\ から作ります
+  （\ :ref:`sc_so_bond_green`\ ）。chi0q も FLEX の感受率も読みません（\ ``chi0q_mode``\ は
+  使われず、\ ``chi0q_mode = "flex"``\ は拒否され、ボンドアーカイブ
+  ``longitudinal_bond.npz``\ は読みません）;
 - CPU のみ（\ ``gpu = true``\ は WARNING を出して無視され、\ ``gpu_required = true``\ は
   拒否されます）;
 - ``eigenvalue_method = "arnoldi"``\ のみ;
 - 計算全体のメモリは、ボンドの配列を作る前に一度だけ受け入れの判定をします
   （\ :ref:`sc_so_bond_memory`\ ）。
+
+.. _sc_so_bond_green:
+
+FLEX の Green 関数（\ ``bond_green``\ ）
+""""""""""""""""""""""""""""""""""""""""""
+
+``[eliashberg] bond_green``\ は、ボンドのバブルの裸の Green 関数をファイルの Green
+関数で置き換えます。ファイルは\ ``[mode.param] longitudinal_bond_channels = true``\ の
+スピン軌道 FLEX の\ ``green.npz``\ です（\ :ref:`flex_so_bond_tutorial`\ 、
+``[file.output] green``\ で書き出します）。キーは大文字小文字を区別せずに読まれ
+（\ ``Bond_Green``\ も使えます）、値はパスです。パスは\ ``path_to_input``\ とも
+``path_to_flex_output``\ とも結合されず、そのまま使われます。相対パスは作業ディレクトリ
+基準です。裸の頂点\ :math:`\Gamma_B`\ とトポロジーは裸のバンドの計算と同じです。
+ファイルの Green 関数は、ボンドのバブル\ :math:`\bar\chi_B`\ とギャップ方程式の対の
+伝播関数\ :math:`G(k)G(-k)`\ の両方でバンドの Green 関数を置き換えます（\ ``g2_tail``\
+も適用します。繰り込まれた Green 関数も同じ\ :math:`1/(i\omega_n)`\ の漸近形を持つため
+です）。\ ``bond_green``\ は静的な経路のキーです。
+スピン軌道モードでは、\ ``frequency = "dynamic"``\ の\ ``bond_channels = true``\ は
+``bond_green``\ の有無によらず拒否されます::
+
+   [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_channels = true with frequency = "dynamic" is not available yet (issue #270); use frequency = "static", or bond_channels = false for on-site interactions.
+
+**出力側の FLEX の計算。**\ ファイルはこの計算と同一の状態点でのみ受け入れられます。
+``Nmat``\ （完全一致）、\ ``T``\ 、\ ``filling``\ 、バンド（Transfer、Extern、
+``coeff_extern``\ 、\ ``CellShape``\ 、\ ``SubShape``\ ）、相互作用の行、宣言された
+ボンドトポロジーが同じでなければなりません。\ ``bond_max_shells``\ は、両者が同じ
+ボンドチャネルを残す限り、FLEX の\ ``longitudinal_bond_max_shells``\ と異なっても
+かまいません。\ ``hwave_sc``\ はつねに\ ``filling``\ から μ を決めるので、FLEX は
+フィリング指定で実行してください。その\ ``[mode.param]``\ では\ ``filling``\ を指定し、
+``mu``\ は指定しません。μ 固定の FLEX の Green 関数は状態の検査で拒否されます
+（\ ``state differs: calc_mu: file False, run True``\ 。下の表を参照）。
+
+**例。**\ :ref:`flex_so_bond_tutorial`\ の入力ファイルによる FLEX の計算
+（\ ``hwave flex.toml``\ ）:
+
+.. code-block:: toml
+
+   [mode]
+     mode = "FLEX"
+     enable_spin_orbital = true
+     calc_scheme = "general"
+   [mode.param]
+     T = 0.05
+     filling = 0.4                 # filling mode: do not set mu
+     CellShape = [16, 16, 1]
+     Nmat = 512
+     mixing_scheme = "anderson"
+     anderson_depth = 8
+     Mix = 0.2
+     EPS = 8
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output"
+     green = "green"
+
+続いて、同じ状態点と同じ入力ファイルで\ ``hwave_sc``\ を実行します
+（\ ``hwave_sc sc.toml``\ ）:
+
+.. code-block:: toml
+
+   [mode]
+     mode = "RPA"
+     enable_spin_orbital = true
+   [mode.param]
+     T = 0.05
+     filling = 0.4
+     CellShape = [16, 16, 1]
+     Nmat = 512                    # the FLEX run's Nmat
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output_sc"
+   [eliashberg]
+     bond_channels = true          # frequency = "static", the default
+     bond_green = "output/green.npz"
+
+**検査**\ は次の順に行い、最初の失敗を報告します。ファイルが存在し、npz アーカイブで
+なければなりません。スピン軌道ボンドアーカイブ（\ ``longitudinal_bond.npz``\ ）、
+非スピン軌道のボンドアーカイブ、FLEX の別の出力ファイル（\ ``sigma.npz``\ 、
+``chi0q.npz``\ 、\ ``chiq*.npz``\ 。\ ``green``\ メンバーを持たないファイル）は、Green
+関数を指すよう案内して拒否します。続いて\ :ref:`sc_so_archive_checks`\ のアーカイブの
+検査を、\ ``producer_stage = "flex_so_bond"``\ と capability\ ``"so_bond"``\ について
+行います: 構造、出力側の密度の残差、バンド、相互作用、capability、宣言された
+トポロジー、解決されたトポロジー（\ ``bond_max_shells``\ を適用した後のボンド
+チャネル）、状態（\ ``Nmat``\ は完全一致）。その後、マーカー\ ``scf_converged``\
+（省略可。あるときは 0 次元の真偽値でなければなりません）、\ ``momentum_convention``\ 、
+``wavevector_index``\ （この計算の k 格子、すなわち\ ``CellShape``\ 、\ ``SubShape``\ を
+指定したときはその格子でなければなりません）、\ ``sc_vertex_version``\ と、保存された
+Green 関数の形\ ``(1, Nmat, nvol, 2N, 2N)``\ を検査します。Green 関数はそこで一度だけ
+読み込まれ、有限でなければならず、そのダイジェストはファイルの\ ``fp_green``\ と等しく
+なければなりません。最後に、入力が\ :math:`S_z`\ を保存するときは、下の漏れの規則を
+適用します。
+
+:math:`S_z`\ **の漏れの規則。**\ 入力が\ :math:`S_z`\ を保存するとき（スピンを反転する
+Transfer の要素も、\ :math:`S_z`\ を変える相互作用の行もないとき。packed レイアウトを
+選ぶ規則と同じです。「レイアウト」を参照）、Green 関数はスピンについてブロック対角で
+なければなりません。\ :math:`\mathrm{leak} = \max|G_{\mathrm{off}}| / \max|G|`\
+（\ :math:`G_{\mathrm{off}}`\ はスピン非対角のブロック）について、漏れがちょうどゼロなら
+ファイルを保存されたまま使います。\ :math:`0 < \mathrm{leak} \le 10^{-12}`\ （出力側の
+丸め誤差）なら非対角のブロックをゼロにし、WARNING を 1 回出します::
+
+   the Green function '<path>' has S_z-off-sector entries at the round-off level (leak = max off-sector |G| / max |G| = <leak> <= 1e-12: numerical leakage from a non-canonical producer); they are projected to exact zeros
+
+それより大きな漏れは拒否されます（下の表を参照）。入力が\ :math:`S_z`\ を保存しない
+ときは、漏れを測らず報告もせず、Green 関数を保存されたまま使います。受け入れた
+ファイルは INFO レベルで報告されます::
+
+   [eliashberg] bond_green: '<path>' (written by hwave FLEX (spin-orbital, bond channels)) passed the archive checks; S_z leak <leak>; projected: <yes|no>.
+
+:math:`S_z`\ を保存しない入力では、漏れの値の代わりに\ ``not checked (the input does
+not conserve S_z)``\ と出ます。\ ``scf_converged = false``\ を記録したファイルは、
+上の検査（FLEX の密度の残差を含みます）をすべて通れば、WARNING を 1 回出して
+受け入れます::
+
+   [eliashberg] bond_green '<path>' records scf_converged = false: the FLEX run did not converge; its Green function is used as stored.
+
+**テール補正なし。**\ ``bond_coeff_tail``\ はバンドの Green 関数のテールの係数です。
+ファイルから読んだ Green 関数はテール補正なしで使います
+（\ ``bond_coeff_tail_applied = 0.0``\ ）。このとき\ :math:`\bar\chi_B`\ は松原和の
+打ち切り誤差を含み、その誤差はおよそ\ :math:`1/N_{\mathrm{mat}}`\ でしか小さくなりません。
+固有値を\ ``Nmat``\ に対して確かめてください（より大きな\ ``Nmat``\ で FLEX と
+``hwave_sc``\ を実行し直して比べます）。対の伝播関数には\ ``g2_tail``\ が引き続き
+適用されます。キーを指定しないときは INFO で次を示します::
+
+   [eliashberg] bond_coeff_tail: the default 1.0 applies to the band Green function only; the Green function read from bond_green is used without a tail correction.
+
+ゼロでない値を明示すると WARNING を 1 回出します（\ ``bond_coeff_tail = 0``\ ではどちらの
+行も出ません）::
+
+   [eliashberg] bond_coeff_tail = <value> is not applied with bond_green = '<path>': the tail correction is implemented for the band Green function only (bond_coeff_tail_applied = 0), so the bond bubble carries the Matsubara truncation error, which decreases only about as 1/Nmat; check the eigenvalue against Nmat.
+
+**カーネルの性質。**\ :math:`\bar\chi_B`\ はファイルから読んだ Green 関数のバブルです。
+対の伝播関数\ :math:`G(k)G(-k)`\ も同じ Green 関数から作り、対形成頂点は
+:math:`\bar\chi_B`\ を使って静的な RPA-ladder の水準で繰り込みます。したがって
+カーネルは FLEX の計算のものではありません。FLEX のボンドの感受率（ボンドアーカイブ
+``longitudinal_bond.npz``\ ）は\ ``hwave_sc``\ では読みません。どの計算もそのことを、
+「厳密な部分」の裸のバンドの WARNING の代わりに、WARNING で 1 回示します::
+
+   [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the Green function read from bond_green = '<path>' (its approximation level, e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that Green function at RPA-ladder level; it is NOT the bond susceptibility of the run that wrote the file, so absolute lambda values are not comparable with FLEX/dynamic references.
+
+**出力。**\ ``eigenvalue.dat``\ は上の「出力」の行を持ち、\ ``approximation =
+static RPA-ladder bond dressing on a borrowed Green function``\ となり、さらに次の行が
+加わります。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - キー
+     - 値
+   * - ``bond_green``
+     - 設定したとおりのパス
+   * - ``bond_coeff_tail``
+     - 指定した値（\ ``bond_coeff_tail_source``\ とともに）。裸のバンドの経路と同じ
+   * - ``bond_coeff_tail_applied``
+     - ``0.0``\ 。ファイルから読んだ Green 関数にはテール補正を適用しません
+   * - ``bond_green_leak``
+     - 測った漏れ（\ ``%.3e``\ ）。入力が\ :math:`S_z`\ を保存するときのみ
+   * - ``bond_green_scf_converged``
+     - ``true``\ または\ ``false``\ 。ファイルが\ ``scf_converged``\ を記録して
+       いるときのみ
+
+``gap.npz``\ は消費した Green 関数を記録します。\ ``fp_green``\ はカーネルが使った
+Green 関数（射影を適用したときは射影後のもの）のダイジェストです。\ ``fp_green_source``\
+はファイルの\ ``fp_green``\ で、Green 関数を射影したときだけ書かれます（そのとき両者は
+異なります）。状態のメンバー（\ ``state_mu``\ 、\ ``state_density``\ 、\ ``state_calc_mu``\ 、
+``state_target``\ 、\ ``state_mu_tol``\ ）は\ ``green.npz``\ から写します。同じ Green 関数に
+ついて出力側が記録した状態です（\ :math:`\beta`\ と\ ``Nmat``\ は状態の検査によりこの
+計算と等しくなります）。バンド、相互作用、トポロジーのダイジェストは、裸のバンドの
+経路と同じくこの計算のものです。
+
+**メモリ。**\ 受け入れの判定（\ :ref:`sc_so_bond_memory`\ ）には、ファイルの読み込みの
+ための常駐の行\ ``file_read``\ が加わります。その大きさは、256 KiB に、ファイルの
+``green``\ 以外のメンバー（入力とともに大きくなる来歴の表を含みます）のバイト数の
+4 倍を足したものです。このバイト数はメンバーを読まずに、ファイルの zip の記録と配列の
+ヘッダーから求めます。そのため上限を超える計算は、ファイルのメンバーを読む前に拒否されます。
+Green 関数の行は裸のバンドの経路と同じです。
+
+**トラブルシューティング。**\ この表はよくある誤りをまとめたもので、検査の順には
+なっていません。\ ``<producer>``\ は、構造の検査を通ったファイルでは
+``hwave FLEX (spin-orbital, bond channels)``\ です。構造の検査による拒否は
+:ref:`sc_so_archive_checks`\ にあります（たとえば非スピン軌道の FLEX の\ ``green.npz``\
+では\ ``marker spin_orbital is missing``\ ）。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 40 20
+
+   * - メッセージ
+     - 原因と対処
+     - キー
+   * - ``[eliashberg] bond_green file not found: <path>``
+     - パスが存在しません。パスは\ ``path_to_input``\ とも\ ``path_to_flex_output``\ とも
+       結合されず、そのまま使われます。相対パスは\ ``hwave_sc``\ の作業ディレクトリ
+       基準です。
+     - ``[eliashberg] bond_green``
+   * - ``[eliashberg] bond_green file '<path>' is not an npz archive (it
+       holds a single .npy array); point the configuration at the .npz file
+       the FLEX run wrote.``
+     - ``.npy``\ ファイルです。FLEX の\ ``green.npz``\ を指定してください。
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is the bond archive of a
+       spin-orbital FLEX run, not a Green function; set bond_green to its
+       companion green file '<green>'.``
+     - スピン軌道ボンドアーカイブを指定しています。\ ``bond_green``\ をメッセージが
+       示す対のファイルにしてください（対のファイルは、読める通常のファイルである
+       ときだけ示されます）。
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is the bond archive of a
+       spin-orbital FLEX run, not a Green function, and it records no
+       readable companion green file; set bond_green to the green.npz
+       written by that FLEX run ([file.output] green).``
+     - 上と同じで、\ ``green_file``\ がない、空である、または読める通常のファイルを
+       指していないアーカイブの場合です。
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is a bond archive, not a Green
+       function; set bond_green to the green.npz of a spin-orbital FLEX run
+       with [mode.param] longitudinal_bond_channels = true.``
+     - 非スピン軌道のボンドアーカイブを指定しています。ボンドチャネル付きのスピン軌道
+       FLEX を実行し、その\ ``green.npz``\ を使ってください。
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is the <kind> file of a FLEX run,
+       not a Green function; set bond_green to the green.npz written by
+       that run ([file.output] green).``
+     - FLEX の別の出力ファイルを指定しています（\ ``<kind>``\ は\ ``sigma``\ 、
+       ``chi0q``\ 、\ ``chiq``\ 、\ ``chiq_s``\ 、\ ``chiq_c``\ のいずれか）。
+       ``bond_green``\ を同じ計算の\ ``green.npz``\ にしてください。
+     - ``[eliashberg] bond_green``
+   * - ``<path> was produced by <producer> (so_onsite), but this run needs
+       a so_bond artifact. [eliashberg] bond_green needs the green.npz of a
+       spin-orbital FLEX run with [mode.param] longitudinal_bond_channels =
+       true (the bond-resolved run); re-run FLEX with it.``
+     - オンサイトのスピン軌道 FLEX の\ ``green.npz``\ です。
+       ``longitudinal_bond_channels = true``\ で FLEX を実行し直してください。
+     - FLEX の\ ``[mode.param] longitudinal_bond_channels``
+   * - ``'<path>' (written by <producer>) does not match this run: state
+       differs: calc_mu: file False, run True. Archives are reused only at
+       the identical state point; re-run <producer> at this filling and
+       temperature.``
+     - FLEX が μ を固定していました（\ ``mu``\ を指定）。\ ``hwave_sc``\ は
+       ``filling``\ から μ を決めます。FLEX をフィリング指定で実行し直してください:
+       ``filling``\ をこの計算の値にし、\ ``mu``\ を削除します。
+     - FLEX の\ ``[mode.param] filling``\ 、\ ``mu``
+   * - ``... state differs: nmat <n> (file) vs <m> (run). Archives are
+       reused only at the identical state point; set [mode.param] Nmat =
+       <n> (the producer's grid).``
+     - Green 関数はそれ自身の松原格子で使われます。\ ``Nmat``\ を FLEX の値に
+       してください。
+     - ``[mode.param] Nmat``
+   * - ``... state differs: beta ... (file) vs ... (run)`` /
+       ``... state differs: target ... (file) vs ... (run) electrons per
+       cell; density ... (file) vs target ... (run, tol ...) electrons per
+       cell``
+     - 温度またはフィリングが異なります。この\ ``T``\ と\ ``filling``\ で FLEX を
+       実行し直すか、それらを FLEX の値にしてください。
+     - ``[mode.param] T``\ 、\ ``filling``
+   * - ``'<path>' cannot be reused: the producer did not reach its filling
+       (residual ... electrons per cell > 1e-8·max(1,|t|) = ...).
+       Regenerate it with <producer> so that its density closes to that
+       tolerance.``
+     - FLEX の密度がフィリングに閉じていません。FLEX を収束まで実行し直して
+       ください。
+     - FLEX の\ ``[mode.param] IterationMax``\ 、\ ``EPS``
+   * - ``... does not match this run: band differs: ...`` /
+       ``... interaction differs: ...``
+     - バンドまたは相互作用の行が異なります（\ :ref:`sc_so_archive_checks`\ の表を
+       参照）。FLEX の入力ファイルを使ってください。オフサイトの相互作用の行は、
+       ボンドチャネルを通してのみ FLEX の Green 関数に入ります。FLEX は
+       ``longitudinal_bond_channels = true``\ で実行してください。
+     - ``Transfer``\ 、\ ``Extern``\ 、\ ``coeff_extern``\ 、相互作用ファイル
+   * - ``... does not match this run: declared topology differs: file <n>
+       displacements, run <m> displacements. ...``
+     - 相互作用ファイルが別のボンドの変位を宣言しています。結合がゼロでも宣言した
+       行は数えられます。一方の計算にだけ値 0 の\ ``CoulombInter``\ の行があると、
+       宣言されたトポロジーが変わります。ゼロの行も含めて同じ相互作用ファイルを
+       使ってください。
+     - 相互作用ファイル
+   * - ``... does not match this run: resolved bond topology differs: file
+       delta_r ... reverse ... (max_shells ...), run delta_r ... reverse ...
+       (max_shells ...). ...``
+     - ``bond_max_shells``\ が FLEX の\ ``longitudinal_bond_max_shells``\ と異なる
+       ボンドチャネルを残しています。同じチャネルを残してください（チャネルが一致
+       すれば値は異なってもかまいません）。
+     - ``[eliashberg] bond_max_shells``\ 、\ ``longitudinal_bond_max_shells``
+   * - ``'<path>' is malformed or truncated: <member> is missing or older
+       than this build requires. Regenerate it with <producer>.`` /
+       ``'<path>' is malformed or truncated: wavevector_index is not the k
+       grid [...] of this run (CellShape / SubShape). Regenerate it with
+       <producer>.``
+     - マーカー（\ ``momentum_convention``\ 、\ ``wavevector_index``\ 、
+       ``sc_vertex_version``\ ）がないか古いか、波数の添字が別の k 格子のものです。
+       このバージョンで FLEX を実行し直してください。
+     - FLEX の計算
+   * - ``'<path>' is malformed or truncated: scf_converged is not a 0-d
+       boolean. Regenerate it with <producer>.``
+     - マーカー\ ``scf_converged``\ がひとつの真偽値ではありません（ファイルが編集
+       されたか、別のツールで書かれています）。FLEX を実行し直してください。
+     - FLEX の計算
+   * - ``'<path>' is malformed or truncated: green shape differs from this
+       run ((...) vs (...)). Regenerate it with <producer>.``
+     - 保存された Green 関数がこの計算の形\ ``(1, Nmat, nvol, 2N, 2N)``\ を
+       持ちません。FLEX を実行し直してください。
+     - FLEX の計算
+   * - ``'<path>' is malformed or truncated: green has non-finite values at
+       frequency index <n>. Regenerate it with <producer>.``
+     - NaN または無限大の要素があります。FLEX を実行し直してください。
+     - FLEX の計算
+   * - ``'<path>' (written by <producer>): fp_green mismatch: the Green
+       function read from it has digest ..., the file records ... (both at
+       fingerprint_version 2); its green member is not the one the run that
+       wrote it recorded. Regenerate it with <producer>.``
+     - FLEX が書いた後に\ ``green``\ メンバーが変更されています。FLEX を実行し直して
+       ください。
+     - FLEX の計算
+   * - ``the Green function '<path>' breaks S_z (leak = max off-sector |G| /
+       max |G| = <leak> > 1e-12) although this run's input conserves S_z;
+       it was produced from a different Hamiltonian. Regenerate it from this
+       run's input.``
+     - 入力は\ :math:`S_z`\ を保存しますが、Green 関数は保存しません（漏れが
+       :math:`10^{-12}`\ を超えます）。この入力で FLEX を実行し直してください。
+     - FLEX の計算
 
 非スピン軌道のボンドの設定からの切り替え
 """"""""""""""""""""""""""""""""""""""""""
@@ -3390,9 +3771,11 @@ WARNING が必要な\ ``max_iter``\ を示します。例::
 
      [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] pairing_type = <value> has no meaning in spin-orbital mode: the gap is one general 2N x 2N spin-orbital matrix, not a singlet or a triplet channel. Remove pairing_type.
 
-- ``bond_green``\ を\ **削除**\ します::
-
-     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_green is not available with bond_channels in spin-orbital mode: no run writes a spin-orbital bond-resolved Green function yet (it arrives with the spin-orbital bond FLEX). Remove bond_green; the Green function is built from the Transfer (and Extern) input.
+- ``bond_green``\ : スピン軌道モードでは、\ ``longitudinal_bond_channels = true``\ の
+  スピン軌道 FLEX をこの計算の状態点でフィリング指定で実行して書き出した
+  ``green.npz``\ を指定します（\ :ref:`sc_so_bond_green`\ ）。非スピン軌道の FLEX の
+  ``green.npz``\ は構造の検査で拒否されます（\ ``marker spin_orbital is missing``\ ）。
+  キーを削除するか、そのようなファイルを指定してください。
 
 - ``bond_diagnostics``\ とすべての\ ``bond_precondition_*``\ のキー
   （\ ``bond_precondition_atol``\ 、\ ``bond_precondition_rtol``\ 、
@@ -3404,7 +3787,7 @@ WARNING が必要な\ ``max_iter``\ を示します。例::
 
 - ``chi0q_mode = "flex"``\ を\ **削除**\ します（キーごと削除。ここでは使われません）::
 
-     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "flex" with bond_channels = true is not available yet: the spin-orbital bond path builds its bond bubble from the band's Green function and reads no FLEX output. Remove chi0q_mode (or leave it unset); it is not used on this path.
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "flex" with bond_channels = true is not available: the spin-orbital bond path builds its bond bubble from a Green function (the band's, or the file named by bond_green) and reads no FLEX susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green function, set bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] longitudinal_bond_channels = true.
 
   すべてのスピン軌道の計算の値の検査が先に適用されます。\ ``"calc"``\ 、\ ``"load"``\ 、
   ``"flex"``\ 以外の値（値は大文字小文字を区別するので\ ``"FLEX"``\ も含む）は、その
@@ -3416,7 +3799,7 @@ WARNING が必要な\ ``max_iter``\ を示します。例::
   ``flex_chi_s``\ ・\ ``flex_chi_c``\ （オンサイトのスピン軌道の経路では拒否）は、
   ここでは WARNING を 1 回出します::
 
-     [eliashberg] <keys>: not used for bond_channels=true in spin-orbital mode (the spin-orbital bond path reads no FLEX output).
+     [eliashberg] <keys>: not used for bond_channels=true in spin-orbital mode (the spin-orbital bond path reads no FLEX susceptibility).
 
 - ``eigenvalue_method``\ : ``"arnoldi"``\ のみ。それ以外の値は拒否されます::
 
