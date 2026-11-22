@@ -945,6 +945,14 @@ class TestSolverMemory(unittest.TestCase):
         # after eig: the matrix, the eigenvectors and their reordered copy
         after_eig = row - _native_share(d) + 16 * d * d
         self.assertLessEqual(_host_native(d), _native_share(d))
+        # numpy >= 2 allocates the eig workspace through its tracked
+        # allocator, so tracemalloc counts (inside the peak) the bytes that
+        # numpy 1.x keeps native and untraced: 3.3-3.7 matrices at the
+        # peak of np.linalg.eig against 1.0 on numpy 1.26. The native share
+        # is then part of the traced peak, and the row, which budgets both
+        # shares, is the bound the peak is held to.
+        if int(np.__version__.split(".")[0]) >= 2:
+            after_eig = row
         _log_ratio(what + ", traced against the row's share after eig", peak, after_eig)
         self.assertLessEqual(peak, after_eig)
         at_eig = calls[0][1] + 16 * (d * d + d) + _host_native(d)
