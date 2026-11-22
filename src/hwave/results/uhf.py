@@ -31,13 +31,13 @@ import numpy as np
 
 from hwave.results._frozen import _freeze
 from hwave.results._io import (
-    check_markers, input_file_path, member_shapes, open_npz, read_geometry,
-    read_key_value_text)
+    check_markers, input_file_path, member_shapes, npz_member, open_npz,
+    read_geometry, read_key_value_text)
 from hwave.results.errors import (
-    MissingOutputError, ResultsError, UnsupportedLayoutError)
+    MissingOutputError, UnsupportedLayoutError)
 from hwave.results.order import order_parameters_from_density
 from hwave.results.run import as_run
-from hwave.results.status import read_scf_status, require_scf_steps
+from hwave.results.status import require_scf_steps
 
 __all__ = ["Energy", "read_energy", "UHFrEigen", "read_uhfr_eigen",
            "UHFrGreen", "read_uhfr_green", "read_uhfr_order_parameters",
@@ -218,7 +218,7 @@ def _onebodyg_name(run):
     return name
 
 
-def _uhfr_output(run, key, what):
+def _uhfr_output(run, key):
     """``run.path(key)``, after :func:`require_scf_steps` (outputs of a
     zero-step run are refused). When the file is configured but absent, the
     hint says why the solver may not have written it."""
@@ -229,15 +229,8 @@ def _uhfr_output(run, key, what):
         if key not in run.outputs:
             raise
         hint = exc.hint
-        steps = None
-        try:
-            steps = read_scf_status(run).iterations
-        except ResultsError:
-            pass
-        if steps == 0:
-            hint = ("the run performed no SCF step (IterationMax <= 0), so no "
-                    "{} was written".format(what))
-        elif key == "green" and _onebodyg_name(run) is None:
+        # a zero-step run was refused by require_scf_steps above
+        if key == "green" and _onebodyg_name(run) is None:
             hint = ("UHFr writes the Green function only when [file.input] "
                     "OneBodyG lists the entries to write (uhfr.py:1302-1314); "
                     "configure it and rerun")
@@ -292,7 +285,7 @@ def read_uhfr_eigen(run_or_toml, *, base_dir=None, with_vectors=False) -> UHFrEi
     size = 2 * nsite if two_sz is None else nsite
     energies, vectors, sources = {}, {}, []
     for block in blocks:
-        path = _uhfr_output(run, "eigen:" + block, "eigenvector file")
+        path = _uhfr_output(run, "eigen:" + block)
         shapes = member_shapes(path)
         for name, shape in (("eigenvalue", (size,)), ("eigenvector", (size, size))):
             if name not in shapes:
@@ -304,9 +297,9 @@ def read_uhfr_eigen(run_or_toml, *, base_dir=None, with_vectors=False) -> UHFrEi
                     "with Nsite = {}".format(path, name, shapes[name], shape,
                                              block, nsite), path=path)
         with open_npz(path) as data:
-            energies[block] = np.asarray(data["eigenvalue"])
+            energies[block] = npz_member(data, path, "eigenvalue", "f")
             if with_vectors:
-                vectors[block] = np.asarray(data["eigenvector"])
+                vectors[block] = npz_member(data, path, "eigenvector", "c")
         sources.append(Path(path))
     return UHFrEigen(energies=_freeze(energies),
                      eigenvectors=_freeze(vectors) if with_vectors else None,
@@ -358,7 +351,7 @@ def read_uhfr_green(run_or_toml, *, base_dir=None) -> UHFrGreen:
     run = _uhfr_run(run_or_toml, base_dir)
     nsite = _nsite(run)
     two_sz = _two_sz(run)
-    path = _uhfr_output(run, "green", "Green function")
+    path = _uhfr_output(run, "green")
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
@@ -667,10 +660,10 @@ def read_uhfk_green(run_or_toml, *, legacy=False, base_dir=None) -> GreenR:
     with open_npz(path) as data:
         green = None
         if "green" in shapes and not dropped:
-            green = np.asarray(data["green"])
+            green = npz_member(data, path, "green", "c")
         sub = None
         if "green_sublattice" in shapes:
-            sub = GreenR(green=_freeze(np.asarray(data["green_sublattice"])),
+            sub = GreenR(green=_freeze(npz_member(data, path, "green_sublattice", "c")),
                          r_index=_freeze(_r_index(lattice.super_shape)),
                          cell_shape=lattice.super_shape, sublattice=None,
                          spin_orbital=run.spin_orbital, source=Path(path),
@@ -783,10 +776,10 @@ def read_bands(run_or_toml, *, with_vectors=False, legacy=False,
                 "{}: member {!r} has shape {}, expected {}".format(
                     path, name, shapes[name], shape), path=path)
     with open_npz(path) as data:
-        energies = np.asarray(data["eigenvalue"], dtype=float)
-        k_unit = np.asarray(data["wavevector_unit"], dtype=float)
-        k_index = np.asarray(data["wavevector_index"]).astype(np.int64)
-        vectors = np.asarray(data["eigenvector"]) if with_vectors else None
+        energies = npz_member(data, path, "eigenvalue", "f")
+        k_unit = npz_member(data, path, "wavevector_unit", "f")
+        k_index = npz_member(data, path, "wavevector_index", "i")
+        vectors = npz_member(data, path, "eigenvector", "c") if with_vectors else None
 
     meta = {"legacy_notes": notes}
     single, mu, groups, ncond = False, None, None, None
@@ -1060,14 +1053,14 @@ def read_onebodyg(run_or_toml, *, base_dir=None) -> OneBodyG:
     :func:`read_uhfk_green` (``green.npz``, ``G[r, s, a, t, b] = <c^dag_{s
     a}(r) c_{t b}(0)>``) instead.
 
-    Raises MissingOutputError when ``onebodyg`` is not configured, or when
-    the status file records zero SCF steps; UnsupportedLayoutError (issue
-    #357) otherwise, and for a run that is not UHFk."""
+    Raises MissingOutputError when ``onebodyg`` is not configured, when its
+    file does not exist, or when the run performed no SCF step;
+    UnsupportedLayoutError (issue #357) otherwise, and for a run that is not
+    UHFk."""
     run = _uhfk_run(run_or_toml, base_dir)
     require_scf_steps(run, "onebodyg")
-    if "onebodyg" not in run.outputs:
-        run.path("onebodyg")             # raises MissingOutputError
+    path = run.path("onebodyg")      # MissingOutputError: not configured, absent
     raise UnsupportedLayoutError(
-        "{}: {}".format(run.outputs["onebodyg"], _KNOWN_ISSUE_357),
-        path=run.outputs["onebodyg"],
+        "{}: {}".format(path, _KNOWN_ISSUE_357),
+        path=path,
         hint="read green.npz with read_uhfk_green instead; see issue #357")

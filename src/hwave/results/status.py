@@ -176,7 +176,8 @@ def require_scf_steps(run, output):
     when it records ``iterations = 0`` (a status file that cannot be read
     raises UnsupportedLayoutError as :func:`read_scf_status` does). Without
     a status file (``scf_status = ""``, or an older output) the
-    configuration decides: ``[mode.param] IterationMax <= 0`` means the
+    configuration decides: ``[mode.param] IterationMax <= 0`` (``false``
+    counts as 0, as ``int(IterationMax)`` in the solver) means the
     solver performed no step (its ``solve`` loops ``range(IterationMax)``,
     uhfk.py:835, uhfr.py:598), so it wrote no other output in this run.
     Raises MissingOutputError, with a hint naming the status file or
@@ -185,16 +186,21 @@ def require_scf_steps(run, output):
     status_path = run.outputs.get("scf_status")
     if status_path is None or not status_path.is_file():
         steps = run.param("IterationMax")
-        if isinstance(steps, bool) or not isinstance(steps, numbers.Real) \
-                or not steps <= 0:
+        shown = repr(steps)
+        if isinstance(steps, bool):
+            # the solver takes int(IterationMax) (base.py:552) and loops
+            # range(IterationMax): false is 0 steps, true is 1
+            shown = "false" if not steps else "true"
+            steps = int(steps)
+        if not isinstance(steps, numbers.Real) or not steps <= 0:
             return
         raise MissingOutputError(
-            "output {!r} is not from this run: [mode.param] IterationMax = {!r} "
+            "output {!r} is not from this run: [mode.param] IterationMax = {} "
             "in {}, so the run performed no SCF step and the solver wrote no "
-            "output{}".format(output, steps, run.input_path, _leftover(path)),
+            "output{}".format(output, shown, run.input_path, _leftover(path)),
             path=path if path is not None else run.input_path,
-            hint="[mode.param] IterationMax = {!r} performs no SCF step; rerun "
-                 "with IterationMax > 0".format(steps))
+            hint="[mode.param] IterationMax = {} performs no SCF step; rerun "
+                 "with IterationMax > 0".format(shown))
     status = _from_status_file(run, status_path)
     if status.iterations != 0:
         return
@@ -358,7 +364,9 @@ def _from_print_check(run, path):
     eps = _config_eps(run)
     meta = {"residual_digits": 8}
     iteration_max = run.param("IterationMax")
-    if not isinstance(iteration_max, int) or isinstance(iteration_max, bool):
+    if isinstance(iteration_max, bool):
+        iteration_max = int(iteration_max)     # as the writer does (base.py:552)
+    if not isinstance(iteration_max, int):
         iteration_max = None
     elif iteration_max < 0:
         # the writer's rule (base.py:552-556): a negative IterationMax runs
@@ -409,10 +417,15 @@ def _from_print_check(run, path):
         note = ("the print_check trace ends with an incomplete line {} (the run was "
                 "stopped while writing it); {} complete SCF steps".format(
                     incomplete, iterations))
-        if iterations:
+        if not iterations:
+            residual = float("nan")       # no step performed
+        else:
             note += ", the last residual {}".format(rest_text)
+            if not math.isfinite(residual):
+                meta["residual_not_finite"] = True
+                residual = None
         return ScfStatus(status="not_converged", converged=False,
-                         residual=residual if iterations else float("nan"),
+                         residual=residual,
                          iterations=iterations, note=note + clamp, meta=meta,
                          **common)
     if not math.isfinite(residual):

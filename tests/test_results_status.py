@@ -480,6 +480,31 @@ class TestPrintCheck(unittest.TestCase):
                 else:
                     self.assertTrue(math.isnan(st.residual))
 
+    def test_incomplete_line_after_non_finite_residual(self):
+        # the last complete line has a NaN or infinite residual: normalised
+        # as on the complete-trace path
+        for rest in ("nan", "inf", "-inf"):
+            with self.subTest(rest=rest):
+                self.check.write_text(
+                    "0, 0.5, -7, 16, 0\n1, {}, -7, 16, 0\n2, 0.1".format(rest))
+                st = read_scf_status(self.toml)
+                self.assertEqual(st.status, "not_converged")
+                self.assertEqual(st.iterations, 2)
+                self.assertIsNone(st.residual)
+                self.assertIs(st.meta["residual_not_finite"], True)
+                self.assertEqual(st.meta["incomplete_line"], 3)
+
+    def test_bool_iteration_max_config(self):
+        # the solver takes int(IterationMax): false is 0, true is 1
+        text = self.toml.read_text()
+        self.assertIn("IterationMax = 1000", text)
+        for value, expected in (("false", 0), ("true", 1)):
+            with self.subTest(value=value):
+                self.toml.write_text(text.replace("IterationMax = 1000",
+                                                  "IterationMax = " + value))
+                self.check.write_text("0, 0.5, -7, 16, 0\n" if expected else "")
+                self.assertEqual(read_scf_status(self.toml).iteration_max, expected)
+
     def test_negative_iteration_max_config(self):
         text = self.toml.read_text()
         self.assertIn("IterationMax = 1000", text)

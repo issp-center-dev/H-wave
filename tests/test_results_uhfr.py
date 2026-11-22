@@ -411,6 +411,29 @@ class TestLeftoverOutputs(unittest.TestCase):
             self.assertIn("IterationMax = 0", ctx.exception.hint, reader.__name__)
             self.assertIn("not from this run", ctx.exception.message)
 
+    def test_false_iteration_max_without_status_file_refused(self):
+        # IterationMax = false passes the solver's range check (False < 0 is
+        # False) and loops range(False), zero steps: the left-over files of
+        # the earlier run must not be read
+        toml = copy_fixture("uhfr_tutorial")
+        out = toml.parent / "output"
+        text = toml.read_text().replace('[file.output]\n',
+                                        '[file.output]\nscf_status = ""\n')
+        (out / "scf_status.dat").unlink()
+        toml.write_text(text.replace("IterationMax = 1000", "IterationMax = false"))
+        run_input(toml)
+        self.assertFalse((out / "scf_status.dat").exists())
+        self.assertTrue((out / "energy.dat").is_file())         # the old file
+        for reader in UHFR_READERS:
+            with self.assertRaises(MissingOutputError, msg=reader.__name__) as ctx:
+                reader(toml)
+            self.assertIn("IterationMax = false", ctx.exception.hint, reader.__name__)
+            self.assertIn("not from this run", ctx.exception.message)
+        # true is one step: the files are read
+        toml.write_text(text.replace("IterationMax = 1000", "IterationMax = true"))
+        for reader in UHFR_READERS:
+            reader(toml)
+
     def test_status_file_decides_over_configuration(self):
         # a status file of a run with steps wins over an IterationMax edited
         # afterwards

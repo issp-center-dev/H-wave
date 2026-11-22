@@ -2,6 +2,7 @@
 function, the order parameters and the spin-orbital density helper."""
 import shutil
 import unittest
+import warnings
 from fractions import Fraction
 
 import numpy as np
@@ -434,6 +435,59 @@ class TestChargeOrder(unittest.TestCase):
         self.assertIn("NCond", bands.meta["homo_lumo_unavailable"])
 
 
+class TestNpzMembers(unittest.TestCase):
+    """A member that cannot be loaded without pickles, or whose values do
+    not fit, is an UnsupportedLayoutError naming the member."""
+
+    def rewrite(self, name, **changes):
+        toml = copy_fixture("uhfk_cdw")
+        path = toml.parent / "output" / name
+        with np.load(path) as data:
+            members = {k: data[k] for k in data.files}
+        members.update(changes)
+        np.savez(path, **members)
+        return toml, members
+
+    def test_fractional_wavevector_index(self):
+        toml, members = self.rewrite("eigen.npz")
+        index = members["wavevector_index"].astype(float)
+        toml, _ = self.rewrite("eigen.npz", wavevector_index=index)
+        k_index = read_bands(toml).k_index
+        self.assertEqual(k_index.dtype, np.int64)
+        np.testing.assert_array_equal(k_index, members["wavevector_index"])
+        index[1, 0] += 0.5
+        toml, _ = self.rewrite("eigen.npz", wavevector_index=index)
+        with self.assertRaisesRegex(UnsupportedLayoutError, "'wavevector_index'"):
+            read_bands(toml)
+
+    def test_complex_eigenvalue(self):
+        toml, members = self.rewrite("eigen.npz")
+        energies = members["eigenvalue"].astype(complex)
+        toml, _ = self.rewrite("eigen.npz", eigenvalue=energies)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            np.testing.assert_array_equal(read_bands(toml).energies,
+                                          members["eigenvalue"])
+        energies[0, 0] += 1e-3j
+        toml, _ = self.rewrite("eigen.npz", eigenvalue=energies)
+        with self.assertRaisesRegex(UnsupportedLayoutError, "'eigenvalue'"):
+            read_bands(toml)
+
+    def test_object_members(self):
+        toml, members = self.rewrite("eigen.npz")
+        vectors = members["eigenvector"].astype(object)
+        toml, _ = self.rewrite("eigen.npz", eigenvector=vectors)
+        read_bands(toml)                    # the vectors are not loaded
+        with self.assertRaisesRegex(UnsupportedLayoutError, "'eigenvector'"):
+            read_bands(toml, with_vectors=True)
+        toml, members = self.rewrite("green.npz")
+        toml, _ = self.rewrite("green.npz", **{
+            k: members[k].astype(object) for k in ("green", "green_sublattice")
+            if k in members})
+        with self.assertRaisesRegex(UnsupportedLayoutError, "'green"):
+            read_uhfk_green(toml)
+
+
 class TestFixedSz(unittest.TestCase):
     def test_2sz_fixed(self):
         bands = read_bands(fixture("uhfk_2sz_fixed"))
@@ -509,6 +563,25 @@ class TestZeroSteps(unittest.TestCase):
                 reader(toml)
 
 
+    def test_false_iteration_max_without_status_file_refused(self):
+        # no status file and IterationMax = false (zero steps in the solver)
+        toml = copy_fixture("uhfk_u8")
+        text = toml.read_text()
+        self.assertIn("IterationMax = 1000", text)
+        self.assertIn("[file.output]\n", text)
+        text = text.replace("[file.output]\n", '[file.output]\n  scf_status = ""\n')
+        (toml.parent / "output" / "scf_status.dat").unlink()
+        toml.write_text(text.replace("IterationMax = 1000", "IterationMax = false"))
+        for reader in (read_energy, read_bands, read_uhfk_green,
+                       read_uhfk_order_parameters):
+            with self.subTest(reader=reader.__name__), \
+                    self.assertRaisesRegex(MissingOutputError, "not from this run"):
+                reader(toml)
+        toml.write_text(text.replace("IterationMax = 1000", "IterationMax = true"))
+        for reader in (read_energy, read_bands):
+            reader(toml)
+
+
 class TestOneBodyG(unittest.TestCase):
     def test_onebodyg_known_issue(self):
         toml = copy_fixture("uhfk_u8")
@@ -521,6 +594,17 @@ class TestOneBodyG(unittest.TestCase):
         with self.assertRaisesRegex(UnsupportedLayoutError, "#357") as cm:
             read_onebodyg(toml)
         self.assertIn("#357", cm.exception.hint)
+        self.assertEqual(cm.exception.path.name, "greenone.dat")
+
+    def test_onebodyg_configured_absent(self):
+        toml = copy_fixture("uhfk_u8")
+        text = toml.read_text()
+        self.assertIn("[file.output]\n", text)
+        toml.write_text(text.replace("[file.output]\n",
+                                     '[file.output]\n  onebodyg = "greenone.dat"\n'))
+        self.assertFalse((toml.parent / "output" / "greenone.dat").exists())
+        with self.assertRaises(MissingOutputError) as cm:
+            read_onebodyg(toml)
         self.assertEqual(cm.exception.path.name, "greenone.dat")
 
     def test_onebodyg_not_configured(self):

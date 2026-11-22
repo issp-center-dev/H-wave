@@ -262,7 +262,9 @@ class TestOutputNames(_TmpDir):
                          ["[file.output] Energy", "[file.output] SCF_Status"])
 
     def test_invalid_output_values(self):
-        # a non-string or empty name is never written by the solver
+        # a non-string or empty name is not configured: the reader does not
+        # resolve it, although the solver may still write a file for an
+        # empty name (UHFk eigen = "" gives output/.npz)
         toml = _write_toml(self.tmp, '[log]\nprint_check = 3\n' + UHFK_HEAD + (
             '[file.output]\nenergy = ""\neigen = 3\nscf_status = 1\n'))
         run = open_run(toml)
@@ -378,6 +380,42 @@ class TestOpenRunRefusals(_TmpDir):
         self.assertIsNot(run.outputs, again.outputs)
         self.assertIsNot(run.meta, again.meta)
         self.assertIsNot(run.config, again.config)
+
+
+class TestConfigReadOnly(unittest.TestCase):
+    """Run.config is read-only at every depth: the readers consult it after
+    open_run, so a caller cannot change what they see."""
+
+    def test_config_cannot_be_changed(self):
+        toml = copy_fixture("uhfk_u8")
+        out = toml.parent / "output"
+        text = toml.read_text()
+        self.assertIn("[file.output]\n", text)
+        toml.write_text(text.replace('[file.output]\n',
+                                     '[file.output]\nscf_status = ""\n'))
+        (out / "scf_status.dat").unlink()
+        run = open_run(toml)
+        expected = results.read_energy(run).values
+        cfg = run.config
+        for mutate in (lambda: cfg.__setitem__("mode", {}),
+                       lambda: cfg["mode"]["param"].__setitem__("IterationMax", 0),
+                       lambda: cfg["mode"]["param"].__setitem__("iterationmax", 0),
+                       lambda: cfg["mode"]["param"].pop("IterationMax"),
+                       lambda: cfg["file"]["output"].__setitem__("energy", "x.dat"),
+                       lambda: cfg["file"]["input"]["interaction"].clear()):
+            with self.assertRaises((TypeError, AttributeError)):
+                mutate()
+        self.assertIsInstance(cfg["mode"]["param"]["CellShape"], tuple)
+        # the case rules survive behind the read-only view
+        self.assertEqual(cfg["mode"]["param"]["iterationmax"], 1000)
+        self.assertNotIn("Mode", cfg)
+        self.assertEqual(run.param("IterationMax"), 1000)
+        self.assertEqual(dict(results.read_energy(run).values), dict(expected))
+        # a mutable copy is the caller's own
+        copy = dict(cfg)
+        copy["mode"] = {"param": {"IterationMax": 0}}
+        self.assertEqual(run.param("IterationMax"), 1000)
+        results.read_energy(run)
 
 
 class TestSpinOrbitalFlag(_TmpDir):

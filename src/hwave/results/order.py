@@ -490,7 +490,7 @@ def cosine_amplitude(S, site_positions, q):
 
 def sum_rule_tolerance(residual, *, mix, g_size, nvol, nd):
     """The bound on ``|sum of the saved Green function - energy.dat total|``:
-    ``(1 - mix) nvol sqrt(nd) residual g_size / 2 + nvol nd 1e-12 + 1e-12``.
+    ``|1 - mix| nvol sqrt(nd) residual g_size / 2 + nvol nd 1e-12 + 1e-12``.
 
     ``residual`` is the last ``Rest = 2 ||dG||_F / g_size`` (from
     ``scf_status.dat``), ``mix`` the ``Mix`` parameter, ``g_size`` the
@@ -507,5 +507,5 @@ def sum_rule_tolerance(residual, *, mix, g_size, nvol, nd):
     g_size = _positive_int("g_size", g_size)
     nvol = _positive_int("nvol", nvol)
     nd = _positive_int("nd", nd)
-    return float((1.0 - mix) * nvol * math.sqrt(nd) * residual * g_size / 2
+    return float(abs(1.0 - mix) * nvol * math.sqrt(nd) * residual * g_size / 2
                  + nvol * nd * 1e-12 + 1e-12)

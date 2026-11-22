@@ -534,6 +534,15 @@ class TestSumRuleTolerance(unittest.TestCase):
         self.assertAlmostEqual(floor, 16 * 8 * 1e-12 + 1e-12, delta=1e-24)
         zero = sum_rule_tolerance(1e-7, mix=0.0, g_size=1024, nvol=16, nd=8)
         self.assertAlmostEqual(zero - floor, 2 * (got - floor), delta=1e-18)
+        # a Mix outside [0, 1] (reachable with trustme_interaction_range)
+        # takes |1 - mix|: the bound stays positive
+        for mix in (-0.5, 1.5):
+            with self.subTest(mix=mix):
+                got_mix = sum_rule_tolerance(1e-7, mix=mix, g_size=1024, nvol=16, nd=8)
+                want = (abs(1 - mix) * 16 * math.sqrt(8) * 1e-7 * 1024 / 2
+                        + 16 * 8 * 1e-12 + 1e-12)
+                self.assertAlmostEqual(got_mix, want, delta=1e-20)
+                self.assertGreater(got_mix, floor)
         # UHFr: g_size = 4 N^2, nvol = 1, nd = 2 N
         n = 16
         got = sum_rule_tolerance(3e-9, mix=0.3, g_size=4 * n * n, nvol=1, nd=2 * n)

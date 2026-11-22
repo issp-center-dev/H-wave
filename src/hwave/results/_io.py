@@ -38,7 +38,7 @@ import numpy as np
 from hwave.results._frozen import _freeze
 from hwave.results.errors import MissingOutputError, UnsupportedLayoutError
 
-__all__ = ["open_npz", "member_shapes", "scalar_members", "read_key_value_text",
+__all__ = ["open_npz", "npz_member", "member_shapes", "scalar_members", "read_key_value_text",
            "Geometry", "read_geometry", "MARKER_KINDS", "check_markers",
            "input_file_path"]
 
@@ -78,6 +78,51 @@ def open_npz(path):
         yield data
     finally:
         data.close()
+
+
+_MEMBER_KINDS = {"i": "integer", "f": "real", "c": "numeric"}
+
+
+def npz_member(data, path, name, kind):
+    """Member ``name`` of the open archive ``data`` (from :func:`open_npz`,
+    the file ``path``), checked against ``kind``:
+
+    * ``"i"``: integer; a float member is accepted when every value is an
+      integer, and the result is int64;
+    * ``"f"``: real, as float; a complex member is accepted only when every
+      imaginary part is zero;
+    * ``"c"``: any integer, real or complex member, in its own dtype.
+
+    Raises UnsupportedLayoutError naming the member for a member that
+    cannot be loaded (an object member needs pickles, which are never
+    loaded) or does not fit ``kind``."""
+    try:
+        arr = np.asarray(data[name])
+    except (ValueError, OSError, EOFError, zipfile.BadZipFile) as exc:
+        raise UnsupportedLayoutError("{}: member {!r} cannot be read: {}".format(
+            path, name, exc), path=path) from None
+    got = arr.dtype.kind
+    bad = None
+    if got not in "iufc":
+        bad = "has dtype {}".format(arr.dtype)
+    elif kind == "i":
+        if got == "c" or (got == "f" and not (np.all(np.isfinite(arr))
+                                               and np.all(arr == np.round(arr)))):
+            bad = "has non-integer values (dtype {})".format(arr.dtype)
+        else:
+            arr = arr.astype(np.int64)
+    elif kind == "f":
+        if got == "c":
+            if np.any(arr.imag != 0):
+                bad = "has non-zero imaginary parts"
+            else:
+                arr = arr.real
+        if bad is None:
+            arr = arr.astype(float)
+    if bad is not None:
+        raise UnsupportedLayoutError("{}: member {!r} {}, expected {} values".format(
+            path, name, bad, _MEMBER_KINDS[kind]), path=path)
+    return arr
 
 
 @contextlib.contextmanager

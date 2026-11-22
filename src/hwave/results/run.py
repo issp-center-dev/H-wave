@@ -54,6 +54,7 @@ import tomli
 from requests.structures import CaseInsensitiveDict
 
 import hwave
+from hwave.results._frozen import _read_only
 from hwave.results.errors import (
     MissingConfigError, MissingOutputError, RunRecordError,
     UnsupportedLayoutError)
@@ -198,11 +199,14 @@ class Run:
         The run record that gave ``root``, if any.
     input_path : Path
         The canonical path of the input TOML file.
-    config : dict
-        The TOML content, with the case rules of the solver (module text):
-        ``config["mode"]["param"]`` and ``config["file"]["input"]
-        ["interaction"]`` are CaseInsensitiveDicts, every other mapping a
-        plain dict.
+    config : Mapping
+        Read-only. The TOML content, with the case rules of the solver
+        (module text): ``config["mode"]["param"]`` and ``config["file"]
+        ["input"]["interaction"]`` are matched case-insensitively, every
+        other table with its exact case. Every table is a read-only mapping
+        (``types.MappingProxyType``) and every array a tuple, so the readers,
+        which consult it after :func:`open_run`, see the file as it was read.
+        Use ``dict(...)`` or a deep copy for a mutable one.
     mode : str
         ``[mode] mode`` (e.g. ``"UHFk"``).
     spin_orbital : bool
@@ -210,9 +214,16 @@ class Run:
     output_dir : Path
         ``root / path_to_output``.
     outputs : Mapping[str, Path]
-        Read-only. Every configured output and the file the solver writes for it.
-        UHFr eigenvectors are per block: ``eigen:sz-free``, or
-        ``eigen:spin-up`` and ``eigen:spin-down``. Empty for other modes.
+        Read-only. The configured outputs this reader resolves, and the
+        file the solver writes for each: ``energy``, ``eigen``, ``green``,
+        ``initial``, ``scf_status`` and ``[log] print_check``; UHFr ``fij``
+        (with 2Sz free or 0); UHFk ``onebodyg`` and ``rpa``. UHFk
+        ``export_hamiltonian`` is not resolved. UHFr eigenvectors are per
+        block: ``eigen:sz-free``, or ``eigen:spin-up`` and
+        ``eigen:spin-down``. An empty name (``""``) counts as not
+        configured for every key, even where the solver still writes a
+        file for it (UHFr ``eigen = ""`` gives ``<block>_.npz``, UHFk
+        ``eigen = ""`` gives ``.npz``). Empty for other modes.
     meta : Mapping
         Read-only. Notes: ``run_record_path``, ``run_record_note`` (a record bypassed by
         ``base_dir=``), ``unsupported_mode``, ``ignored_output_keys`` (keys
@@ -224,7 +235,7 @@ class Run:
     base_dir_source: str
     run_record: Optional[dict]
     input_path: Path
-    config: dict
+    config: Mapping
     mode: str
     spin_orbital: bool
     output_dir: Path
@@ -534,7 +545,8 @@ def open_run(toml_path, *, base_dir=None):
         meta["ignored_keys"] = tuple(ignored)
 
     return Run(root=root, base_dir_source=source, run_record=record,
-               input_path=toml.resolve(), config=_solver_view(raw), mode=mode,
+               input_path=toml.resolve(), config=_read_only(_solver_view(raw)),
+               mode=mode,
                spin_orbital=spin_orbital, output_dir=output_dir,
                outputs=MappingProxyType(outputs), meta=MappingProxyType(meta))
 
