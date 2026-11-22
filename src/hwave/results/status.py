@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import numbers
 import re
 from pathlib import Path
 from typing import Optional
@@ -171,26 +172,45 @@ def require_scf_steps(run, output):
     Every reader except :func:`read_scf_status` calls this before it opens
     its file.
 
-    The rule applies only when the run's ``scf_status`` file exists (no
-    status file, e.g. ``scf_status = ""`` or an older output: no rule) and
-    records ``iterations = 0``; a status file that cannot be read raises
-    UnsupportedLayoutError as :func:`read_scf_status` does. Raises
-    MissingOutputError, with a hint naming the status file."""
+    When the run's ``scf_status`` file exists, it decides: the rule applies
+    when it records ``iterations = 0`` (a status file that cannot be read
+    raises UnsupportedLayoutError as :func:`read_scf_status` does). Without
+    a status file (``scf_status = ""``, or an older output) the
+    configuration decides: ``[mode.param] IterationMax <= 0`` means the
+    solver performed no step (its ``solve`` loops ``range(IterationMax)``,
+    uhfk.py:835, uhfr.py:598), so it wrote no other output in this run.
+    Raises MissingOutputError, with a hint naming the status file or
+    IterationMax."""
+    path = run.outputs.get(output)
     status_path = run.outputs.get("scf_status")
     if status_path is None or not status_path.is_file():
-        return
+        steps = run.param("IterationMax")
+        if isinstance(steps, bool) or not isinstance(steps, numbers.Real) \
+                or not steps <= 0:
+            return
+        raise MissingOutputError(
+            "output {!r} is not from this run: [mode.param] IterationMax = {!r} "
+            "in {}, so the run performed no SCF step and the solver wrote no "
+            "output{}".format(output, steps, run.input_path, _leftover(path)),
+            path=path if path is not None else run.input_path,
+            hint="[mode.param] IterationMax = {!r} performs no SCF step; rerun "
+                 "with IterationMax > 0".format(steps))
     status = _from_status_file(run, status_path)
     if status.iterations != 0:
         return
-    path = run.outputs.get(output)
     raise MissingOutputError(
         "output {!r} is not from this run: the run performed no SCF step, and "
         "the solver then writes no output other than the status file{}".format(
-            output, "" if path is None else " ({} is left over from an earlier "
-            "run)".format(path) if path.exists() else ""),
+            output, _leftover(path)),
         path=path if path is not None else status_path,
         hint="{} records iterations = 0 ({}); rerun with IterationMax > 0".format(
             status_path, status.note or "no SCF step performed"))
+
+
+def _leftover(path):
+    if path is None or not path.exists():
+        return ""
+    return " ({} is left over from an earlier run)".format(path)
 
 
 # ------------------------------------------------------------ status file
