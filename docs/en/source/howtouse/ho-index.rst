@@ -48,10 +48,10 @@ Basic usage
      status = hr.read_scf_status(run)   # converged, residual, iterations
      energy = hr.read_energy(run)
 
-  The readers check the file markers and the run settings, and raise an
-  error with a hint instead of guessing when an output is missing, was not
-  written by this run, or has an unknown layout. The functions and result
-  types are documented in their docstrings, e.g. ``help(hwave.results)``.
+  The readers check the convention tags stored in the output files and the
+  run settings, and raise an error with a hint instead of guessing when an
+  output is missing, was not written by this run, or has an unknown layout. The functions and result
+  types are documented in their docstrings, e.g. ``help(hr)``.
 
 - Official Page
 
