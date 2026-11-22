@@ -87,7 +87,8 @@ class ScfStatus:
     eps : float or None
         The threshold ``10**-EPS``.
     iterations, iteration_max : int or None
-        The steps performed and the step limit.
+        The steps performed and the step limit (a negative IterationMax is
+        reported as 0, as the writer does).
     residual_definition : str or None
         The residual as the status file names it; ``None`` from other
         sources.
@@ -102,7 +103,9 @@ class ScfStatus:
         ``note_kind`` (``""``, ``"no_step"``, ``"residual_not_finite"`` with
         ``nonfinite_step``, or ``"iteration_max_negative"`` with
         ``iteration_max_requested``). From ``print_check``:
-        ``residual_digits`` (8) and, for ``"failed"``, ``scf_verdict``.
+        ``residual_digits`` (8), ``incomplete_line`` (a cut last line),
+        ``iteration_max_requested`` (a negative IterationMax, reported as 0)
+        and, for ``"failed"``, ``scf_verdict``.
         ``residual_not_finite`` is True when the last residual was NaN or
         infinite.
     """
@@ -128,7 +131,12 @@ def read_scf_status(run_or_toml, *, base_dir=None) -> ScfStatus:
     ``unknown`` in between (the residual is rounded to 8 digits). An empty
     file means that no step was performed (``IterationMax = 0``); it cannot
     be told from a run that stopped during its first step. ``failed`` when
-    steps were performed but the configured ``energy`` file is absent.
+    steps were performed but the configured ``energy`` file is absent. A
+    last line without its newline was cut while being written (a hard
+    kill): it is dropped, the run is ``not_converged`` and
+    ``meta["incomplete_line"]`` gives its number. A negative
+    ``IterationMax`` is reported as 0, as the writer does
+    (``meta["iteration_max_requested"]``).
 
     Without records: ``not_run`` when no configured output file exists,
     ``failed`` when ``energy`` is configured and absent but another output
@@ -295,23 +303,40 @@ def _config_eps(run):
 
 def _from_print_check(run, path):
     eps = _config_eps(run)
+    meta = {"residual_digits": 8}
     iteration_max = run.param("IterationMax")
     if not isinstance(iteration_max, int) or isinstance(iteration_max, bool):
         iteration_max = None
+    elif iteration_max < 0:
+        # the writer's rule (base.py:552-556): a negative IterationMax runs
+        # no step and is reported as 0
+        meta["iteration_max_requested"] = iteration_max
+        iteration_max = 0
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise UnsupportedLayoutError("{} cannot be read as text: {}".format(path, exc),
                                      path=path) from None
-    meta = {"residual_digits": 8}
     common = dict(eps=eps, iteration_max=iteration_max, residual_definition=None,
                   source_kind="print_check", source=Path(path))
+    if "iteration_max_requested" in meta:
+        clamp = "; IterationMax {} treated as 0".format(meta["iteration_max_requested"])
+    else:
+        clamp = ""
     if text == "":
         return ScfStatus(status="not_converged", converged=False,
-                         residual=float("nan"), iterations=0, note=NO_STEP_NOTE,
-                         meta=meta, **common)
+                         residual=float("nan"), iterations=0,
+                         note=NO_STEP_NOTE + clamp, meta=meta, **common)
     lines = text.splitlines()
-    residual = None
+    incomplete = None
+    if not text.endswith("\n"):
+        # every line is written with its newline (uhfk.py:850, uhfr.py:609):
+        # a last line without one was cut, e.g. by a hard kill
+        incomplete = len(lines)
+        meta["incomplete_line"] = incomplete
+        lines = lines[:-1]
+    residual = float("nan")
+    rest_text = "nan"
     for lineno, line in enumerate(lines, start=1):
         fields = line.split(",")
         if len(fields) != 5:
@@ -319,13 +344,24 @@ def _from_print_check(run, path):
                 "{}: line {} has {} comma-separated fields, not 5 (step, Rest, "
                 "energy, NCond, Sz): {!r}".format(path, lineno, len(fields), line),
                 path=path)
+        rest_text = fields[1].strip()
         try:
-            residual = float(fields[1])
+            residual = float(rest_text)
         except ValueError:
             raise UnsupportedLayoutError(
                 "{}: line {}: the residual {!r} is not a number".format(
-                    path, lineno, fields[1].strip()), path=path) from None
+                    path, lineno, rest_text), path=path) from None
     iterations = len(lines)
+    if incomplete is not None:
+        note = ("the print_check trace ends with an incomplete line {} (the run was "
+                "stopped while writing it); {} complete SCF steps".format(
+                    incomplete, iterations))
+        if iterations:
+            note += ", the last residual {}".format(rest_text)
+        return ScfStatus(status="not_converged", converged=False,
+                         residual=residual if iterations else float("nan"),
+                         iterations=iterations, note=note + clamp, meta=meta,
+                         **common)
     if not math.isfinite(residual):
         verdict = "not_converged"        # a non-finite residual never converges
         meta["residual_not_finite"] = True
@@ -337,9 +373,10 @@ def _from_print_check(run, path):
     else:
         verdict = "unknown"
     note = "from the print_check trace: {} SCF steps, the last residual {} " \
-        "against eps = {!r}".format(iterations, fields[1].strip(), eps)
+        "against eps = {!r}".format(iterations, rest_text, eps)
     if verdict == "unknown":
         note += "; the residual is too close to eps to decide at 8 significant digits"
+    note += clamp
     energy = run.outputs.get("energy")
     if energy is not None and not energy.is_file():
         meta["scf_verdict"] = verdict

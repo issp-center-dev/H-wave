@@ -148,6 +148,61 @@ class TestStatusFromFixtures(unittest.TestCase):
         self.assertIn("predates the convergence status file", st.note)
 
 
+class TestWriterForms(unittest.TestCase):
+    """The NaN-residual and negative-IterationMax files as the solver writes
+    them."""
+
+    def test_nan_residual(self):
+        toml = fixture("uhfk_u8_nan_residual").resolve()
+        text = (toml.parent / "output" / "scf_status.dat").read_text()
+        self.assertIn("residual = nan\n", text)
+        self.assertIn("note = residual not finite after step 5\n", text)
+        st = read_scf_status(toml)
+        self.assertEqual(st.status, "not_converged")
+        self.assertIs(st.converged, False)
+        self.assertIsNone(st.residual)
+        self.assertEqual(st.iterations, 5)
+        self.assertEqual(st.meta["note_kind"], "residual_not_finite")
+        self.assertEqual(st.meta["nonfinite_step"], 5)
+        self.assertIs(st.meta["residual_not_finite"], True)
+
+    def test_nan_residual_print_check(self):
+        toml = copy_fixture("uhfk_u8_nan_residual").resolve()
+        self.addCleanup(shutil.rmtree, toml.parent, ignore_errors=True)
+        _without(toml, "scf_status.dat")
+        st = read_scf_status(toml)
+        self.assertEqual(st.status, "not_converged")
+        self.assertEqual(st.iterations, 5)
+        self.assertIsNone(st.residual)
+        self.assertIs(st.meta["residual_not_finite"], True)
+
+    def test_negative_iteration_max(self):
+        toml = fixture("uhfk_u8_negative_max").resolve()
+        out = toml.parent / "output"
+        self.assertEqual(sorted(p.name for p in out.iterdir()),
+                         ["check.dat", "scf_status.dat"])
+        self.assertIn("note = IterationMax -3 treated as 0\n",
+                      (out / "scf_status.dat").read_text())
+        st = read_scf_status(toml)
+        self.assertEqual(st.status, "not_converged")
+        self.assertEqual(st.iterations, 0)
+        self.assertEqual(st.iteration_max, 0)
+        self.assertTrue(math.isnan(st.residual))
+        self.assertEqual(st.meta["note_kind"], "iteration_max_negative")
+        self.assertEqual(st.meta["iteration_max_requested"], -3)
+
+    def test_negative_iteration_max_print_check(self):
+        toml = copy_fixture("uhfk_u8_negative_max").resolve()
+        self.addCleanup(shutil.rmtree, toml.parent, ignore_errors=True)
+        _without(toml, "scf_status.dat")
+        st = read_scf_status(toml)
+        self.assertEqual(st.status, "not_converged")
+        self.assertEqual(st.iterations, 0)
+        self.assertEqual(st.iteration_max, 0)
+        self.assertEqual(st.meta["iteration_max_requested"], -3)
+        self.assertEqual(st.note, "no SCF step performed; IterationMax -3 treated as 0")
+
+
 class _StatusFile(unittest.TestCase):
     """Each test writes its own status file into a private copy of
     ``uhfk_u8``."""
@@ -395,10 +450,46 @@ class TestPrintCheck(unittest.TestCase):
                 self.assertEqual(cm.exception.path, self.check)
 
     def test_uhfr_complex_energy_column(self):
-        # UHFr writes the energy column as complex text; only Rest is read
-        self.check.write_text("0, 0.5, (-3.40819+0j), 8, -2.22e-16\n"
-                              "1, 5e-13, (-3.40819+0j), 8, -2.22e-16\n")
+        # UHFr's energy is complex: its column is complex text, written with
+        # the format string of uhfr.py:609-614; only Rest is read
+        line = "{}, {:.8g}, {:.8g}, {:.4g}, {:.4g}\n"
+        energy = complex(-3.4081901344465244, 0.0)
+        text = (line.format(0, 0.5, energy, 8.0, -2.2e-16)
+                + line.format(1, 5e-13, energy, 8.0, -2.2e-16))
+        self.assertIn("-3.4081901+0j", text)
+        self.check.write_text(text)
         self.assertEqual(read_scf_status(self.toml).status, "converged")
+
+    def test_incomplete_last_line(self):
+        # a hard kill can cut the last line (the trace is buffered)
+        for text, steps in (("0, 0.5, -7, 16, 0\n1, 0.25, -7, 16, 0\n2, 0.1", 2),
+                            ("0, 0.5, -7, 16, 0\n1, 1e-13, -7, 16, 0", 1),
+                            ("0, 0.5, -7", 0)):
+            with self.subTest(text=text):
+                self.check.write_text(text)
+                st = read_scf_status(self.toml)
+                self.assertEqual(st.status, "not_converged")
+                self.assertIs(st.converged, False)
+                self.assertEqual(st.iterations, steps)
+                incomplete = steps + 1
+                self.assertEqual(st.meta["incomplete_line"], incomplete)
+                self.assertIn("incomplete line {}".format(incomplete), st.note)
+                if steps:
+                    self.assertEqual(st.residual, float(
+                        text.splitlines()[steps - 1].split(",")[1]))
+                else:
+                    self.assertTrue(math.isnan(st.residual))
+
+    def test_negative_iteration_max_config(self):
+        text = self.toml.read_text()
+        self.assertIn("IterationMax = 1000", text)
+        self.toml.write_text(text.replace("IterationMax = 1000", "IterationMax = -3"))
+        self.check.write_text("")
+        st = read_scf_status(self.toml)
+        self.assertEqual(st.status, "not_converged")
+        self.assertEqual(st.iteration_max, 0)
+        self.assertEqual(st.meta["iteration_max_requested"], -3)
+        self.assertIn("IterationMax -3 treated as 0", st.note)
 
     def test_energy_missing_is_failed(self):
         _without(self.toml, "energy.dat")
@@ -534,7 +625,10 @@ class TestEnergyFile(unittest.TestCase):
         return cm.exception
 
     def test_bad_value(self):
-        self.refused(self.good.replace("= 15.999999999999996", "= sixteen"), "NCond")
+        # the NCond digits differ between platforms: replace the whole line
+        text, count = re.subn(r"(?m)^NCond\s*=.*$", "NCond = sixteen", self.good)
+        self.assertEqual(count, 1)
+        self.refused(text, "NCond")
 
     def test_duplicate_key(self):
         self.refused(self.good + "Sz = 0.0\n", "Sz")

@@ -23,6 +23,14 @@ Fixtures (each later task adds the ones it uses):
   stops after 5 steps without converging.
 * ``uhfk_u8_zero_steps``: ``uhfk_u8`` with ``IterationMax = 0``: only
   ``scf_status.dat`` and an empty ``check.dat`` are written.
+* ``uhfk_u8_negative_max``: ``uhfk_u8`` with ``IterationMax = -3`` and
+  ``trustme_interaction_range = true`` (which lets it through the range
+  check): the writer's ``IterationMax -3 treated as 0`` status file and an
+  empty ``check.dat``.
+* ``uhfk_u8_nan_residual``: ``uhfk_u8_not_converged`` with the solver's
+  residual replaced by NaN from the 3rd step on (``UHFk._calc_phys``
+  patched during the run, as tests/test_uhf_scf_status.py does): the
+  writer's ``residual not finite after step 5`` status file.
 
 Helpers:
 
@@ -203,6 +211,39 @@ def _build_uhfk_u8_zero_steps(dest):
     return toml
 
 
+def _build_uhfk_u8_negative_max(dest):
+    toml, config = _uhfk_u8_input(dest, IterationMax=-3,
+                                  trustme_interaction_range=True)
+    _write_toml(toml, config)
+    _run(toml)
+    return toml
+
+
+def _build_uhfk_u8_nan_residual(dest):
+    from hwave.solver import uhfk
+    toml, config = _uhfk_u8_input(dest, IterationMax=5)
+    finput = config["file"]["input"]
+    finput.pop("initial", None)
+    finput["initial_mode"] = "random"
+    _write_toml(toml, config)
+    orig = uhfk.UHFk._calc_phys
+    calls = []
+
+    def patched(this, *args, **kwargs):
+        result = orig(this, *args, **kwargs)
+        calls.append(1)
+        if len(calls) >= 3:
+            this.physics["Rest"] = float("nan")
+        return result
+
+    uhfk.UHFk._calc_phys = patched
+    try:
+        _run(toml)
+    finally:
+        uhfk.UHFk._calc_phys = orig
+    return toml
+
+
 _BUILDERS = {
     "uhfr_tutorial": _build_uhfr_tutorial,
     "uhfk_cdw": _build_uhfk_cdw,
@@ -210,6 +251,8 @@ _BUILDERS = {
     "uhfk_u8": _build_uhfk_u8,
     "uhfk_u8_not_converged": _build_uhfk_u8_not_converged,
     "uhfk_u8_zero_steps": _build_uhfk_u8_zero_steps,
+    "uhfk_u8_negative_max": _build_uhfk_u8_negative_max,
+    "uhfk_u8_nan_residual": _build_uhfk_u8_nan_residual,
 }
 
 
