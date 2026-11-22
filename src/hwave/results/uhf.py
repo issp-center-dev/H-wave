@@ -423,7 +423,9 @@ def read_uhfr_order_parameters(run_or_toml, *, base_dir=None, site_positions=Non
     ``i`` and, when 2Sz is not fixed, also ``(i 0 i 1)`` and ``(i 1 i 0)``.
     With a fixed 2Sz the spin blocks are separate (uhfr.py:553-560): the
     spin-off-diagonal entries are zero by construction, and
-    ``transverse_available`` is False.
+    ``transverse_available`` is False; on-site spin-off-diagonal lines in the
+    file are then not used, and ``meta["spin_offdiagonal_ignored"]`` (only
+    set with a fixed 2Sz) counts them.
 
     Raises MissingOutputError naming the missing entries (and the errors of
     :func:`read_uhfr_green`); ValueError for bad ``site_positions`` or
@@ -465,4 +467,7 @@ def read_uhfr_order_parameters(run_or_toml, *, base_dir=None, site_positions=Non
     meta = dict(op.meta)
     meta.update(solver="UHFr", nsite=nsite, two_sz=two_sz,
                 green_index="site + Nsite * spin")
+    if two_sz is not None:
+        meta["spin_offdiagonal_ignored"] = sum(
+            1 for i, s, j, t in present if i == j and s != t)
     return dataclasses.replace(op, source=result.source, meta=meta)

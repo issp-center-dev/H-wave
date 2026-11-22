@@ -108,6 +108,21 @@ class TestTutorial(unittest.TestCase):
         self.assertFalse(any(s != t for _, s, _, t in green.pairs.tolist()))
         read_uhfr_order_parameters(self.toml)       # does not raise
 
+    def test_offdiagonal_ignored_fixed_2sz(self):
+        # with 2Sz fixed, on-site spin-off-diagonal lines are zero by
+        # construction and not used; meta counts them
+        self.assertEqual(read_uhfr_order_parameters(self.toml)
+                         .meta["spin_offdiagonal_ignored"], 0)
+        toml = copy_fixture("uhfr_tutorial")
+        path = toml.parent / "output" / "green.dat"
+        path.write_text(path.read_text() + "2 0 2 1 0.0 0.0\n2 1 2 0 0.0 0.0\n"
+                        "3 0 4 1 0.0 0.0\n")
+        op = read_uhfr_order_parameters(toml)
+        self.assertEqual(op.meta["spin_offdiagonal_ignored"], 2)
+        np.testing.assert_array_equal(op.spin[:, :2], 0.0)
+        self.assertNotIn("spin_offdiagonal_ignored",
+                         read_uhfr_order_parameters(fixture("uhfr_u8")).meta)
+
     def test_energy_has_sx_sy(self):
         energy = read_energy(self.toml)
         self.assertEqual(energy.sx, 0.0)
@@ -316,12 +331,11 @@ class TestRequiredEntries(unittest.TestCase):
     def test_zero_steps(self):
         toml = fixture("uhfr_tutorial_zero_steps")
         self.assertEqual(read_scf_status(toml).iterations, 0)
-        for reader in (read_uhfr_green, read_uhfr_order_parameters):
-            with self.assertRaises(MissingOutputError) as ctx:
+        for reader in (read_uhfr_green, read_uhfr_order_parameters,
+                       read_uhfr_eigen):
+            with self.assertRaises(MissingOutputError, msg=reader.__name__) as ctx:
                 reader(toml)
-            self.assertIn("no SCF step", ctx.exception.hint)
-        with self.assertRaises(MissingOutputError):
-            read_uhfr_eigen(toml)
+            self.assertIn("no SCF step", ctx.exception.hint, reader.__name__)
 
     def test_eigen_not_configured(self):
         toml = copy_fixture("uhfr_tutorial")
