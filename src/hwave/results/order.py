@@ -16,7 +16,9 @@ Input
 * ``cell_shape`` ``B`` and ``lattice_shape`` ``L``, positive integer triples
   with ``L_a % B_a == 0``. Either may be ``None`` (no lattice): then only the
   per-site and the uniform (Q = 0) quantities are given.
-* ``n_cell``, the number of magnetic cells in the run.
+* ``n_cell``, the number of magnetic cells in the run. With both shapes it
+  must equal ``prod(L) / prod(B)`` and is derived from them when omitted;
+  otherwise it defaults to 1.
 
 Site defaults
 -------------
@@ -114,6 +116,8 @@ from hwave.results._frozen import _freeze
 HERMITIAN_ATOL = 1e-10
 #: amplitudes within this of the maximum tie
 TIE_ATOL = 1e-12
+#: the largest |Im S| that cosine_amplitude drops
+COSINE_IMAG_ATOL = 1e-12
 #: no ordering vector when the largest amplitude is at most this
 ORDER_FLOOR = 1e-10
 
@@ -323,7 +327,7 @@ def _phases(positions, q_frac):
 
 def order_parameters_from_density(rho, *, site_of_orbital=None,
                                   site_positions=None, cell_shape=None,
-                                  lattice_shape=None, n_cell=1,
+                                  lattice_shape=None, n_cell=None,
                                   transverse_available=True) -> OrderParameters:
     """The order parameters of the one-cell density ``rho`` (the Green slot
     ``rho[o, s, t] = <c^dag_{o s} c_{o t}>``; see the module docstring for
@@ -343,7 +347,8 @@ def order_parameters_from_density(rho, *, site_of_orbital=None,
         several orbitals); ``site_positions`` not of shape ``(n_site, 3)``;
         ``cell_shape``/``lattice_shape`` not positive integer triples or
         ``lattice_shape`` not divisible by ``cell_shape``; ``n_cell`` not a
-        positive integer.
+        positive integer, or not ``prod(lattice_shape) / prod(cell_shape)``
+        when both shapes are given.
     """
     rho = _validate_rho(rho)
     n_orb = rho.shape[0]
@@ -355,7 +360,18 @@ def order_parameters_from_density(rho, *, site_of_orbital=None,
             raise ValueError("lattice_shape {} must be divisible by cell_shape {} "
                              "on every axis (not on axis {})"
                              .format(lattice_shape, cell_shape, bad))
-    n_cell = _positive_int("n_cell", n_cell)
+    if n_cell is not None:
+        n_cell = _positive_int("n_cell", n_cell)
+    if cell_shape is not None and lattice_shape is not None:
+        cells = int(np.prod(lattice_shape)) // int(np.prod(cell_shape))
+        if n_cell is None:
+            n_cell = cells
+        elif n_cell != cells:
+            raise ValueError(
+                "n_cell {} does not match lattice_shape {} / cell_shape {} = "
+                "{} magnetic cells".format(n_cell, lattice_shape, cell_shape, cells))
+    elif n_cell is None:
+        n_cell = 1
     positions = None if site_positions is None else _validate_positions(site_positions)
     sites = _site_mapping(site_of_orbital, n_orb, positions, cell_shape)
     n_site = int(sites.max()) + 1
@@ -438,15 +454,36 @@ def cosine_amplitude(S, site_positions, q):
     ``S`` has the site as its first axis (a vector or a scalar per site);
     ``site_positions`` is ``(n_site, 3)`` fractional, ``q`` three fractional
     components. It equals ``M(Q)`` only when every ``Q.r_s`` is in ``pi Z``;
-    otherwise use ``OrderParameters.spin_fourier``."""
-    values = np.asarray(S, dtype=float)
+    otherwise use ``OrderParameters.spin_fourier``.
+
+    ``S`` must be real: a complex ``S`` is accepted only when every
+    imaginary part is at most ``COSINE_IMAG_ATOL`` (1e-12) in absolute
+    value, and is then dropped; otherwise ``ValueError``. A bad ``q`` (not
+    three finite real numbers) is a ``ValueError`` too."""
+    values = np.asarray(S)
+    if values.dtype == np.bool_ or not np.issubdtype(values.dtype, np.number):
+        raise ValueError("S must be a real numeric array, got dtype {}"
+                         .format(values.dtype))
+    if np.iscomplexobj(values):
+        imag = float(np.max(np.abs(values.imag), initial=0.0))
+        if not imag <= COSINE_IMAG_ATOL:
+            raise ValueError("S must be real (|Im S| <= {:g}); max |Im S| = {:.3g}"
+                             .format(COSINE_IMAG_ATOL, imag))
+        values = values.real
+    values = np.array(values, dtype=float)
     positions = _validate_positions(site_positions)
     if values.ndim < 1 or values.shape[0] != positions.shape[0]:
         raise ValueError("S must have the site as its first axis ({} sites), "
                          "got shape {}".format(positions.shape[0], values.shape))
-    qv = np.array([float(c) for c in q], dtype=float)
-    if qv.shape != (3,):
-        raise ValueError("q must have three components, got {!r}".format(q))
+    try:
+        items = list(q)
+    except TypeError:
+        items = None
+    if items is None or len(items) != 3 or not all(
+            isinstance(c, numbers.Real) and not isinstance(c, (bool, np.bool_))
+            and math.isfinite(c) for c in items):
+        raise ValueError("q must be three finite real numbers, got {!r}".format(q))
+    qv = np.array([float(c) for c in items], dtype=float)
     cos = np.cos(2 * np.pi * (positions @ qv))
     return np.tensordot(cos, values, axes=(0, 0)) / positions.shape[0]
 

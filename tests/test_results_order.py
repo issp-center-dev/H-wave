@@ -311,6 +311,26 @@ class TestDefinitions(unittest.TestCase):
             float(cosine_amplitude([2.0, 0.0], [[0, 0, 0], [1, 0, 0]], q)), 1.0,
             delta=1e-15)
 
+    def test_cosine_rejects_complex_s(self):
+        pos = [[0, 0, 0], [1, 0, 0]]
+        q = (Fraction(1, 2), 0, 0)
+        with self.assertRaisesRegex(ValueError, "S must be real"):
+            cosine_amplitude([0.1 + 1e-3j, 0.2], pos, q)
+        # an imaginary part within the stated tolerance is dropped
+        got = cosine_amplitude(np.array([0.1 + 1e-14j, 0.2]), pos, q)
+        self.assertAlmostEqual(float(got), (0.1 - 0.2) / 2, delta=1e-15)
+        self.assertFalse(np.iscomplexobj(got))
+        with self.assertRaisesRegex(ValueError, "S must be"):
+            cosine_amplitude(["a", "b"], pos, q)
+
+    def test_cosine_rejects_bad_q(self):
+        pos = [[0, 0, 0], [1, 0, 0]]
+        for q in (0.5, (0.5, 0), (0.5, 0, 0, 0), ("x", 0, 0), (float("nan"), 0, 0),
+                  (1j, 0, 0), None):
+            with self.subTest(q=q):
+                with self.assertRaisesRegex(ValueError, "q must"):
+                    cosine_amplitude([1.0, 0.0], pos, q)
+
     def test_site_of_orbital_required(self):
         rho = density([1, 1], [(0, 0, 0.5), (0, 0, -0.5)])
         for kw in (dict(site_positions=[[0, 0, 0]], cell_shape=(1, 1, 1),
@@ -396,6 +416,25 @@ class TestDefinitions(unittest.TestCase):
         # M is per site; N_site * n_cell * M is the total
         np.testing.assert_allclose(r.uniform, [0, 0, 0.5], rtol=0, atol=1e-15)
 
+    def test_n_cell_against_shapes(self):
+        """With both shapes, n_cell is prod(L) / prod(B): derived when not
+        given, and a different value is refused (e.g. the number of lattice
+        sites instead of the number of magnetic cells)."""
+        rho = density([1] * 4, [(0, 0, 0.5)] * 4)
+        kw = dict(site_positions=square_cell(), cell_shape=(2, 2, 1),
+                  lattice_shape=(4, 4, 1))
+        self.assertEqual(order_parameters_from_density(rho, **kw).n_cell, 4)
+        self.assertEqual(order_parameters_from_density(rho, n_cell=4, **kw).n_cell, 4)
+        with self.assertRaisesRegex(ValueError, "n_cell 16 .*4 magnetic cells"):
+            order_parameters_from_density(rho, n_cell=16, **kw)
+        # without both shapes there is nothing to check; the default is 1
+        r = order_parameters_from_density(rho, site_positions=square_cell(),
+                                          cell_shape=(2, 2, 1))
+        self.assertEqual(r.n_cell, 1)
+        r = order_parameters_from_density(rho, site_of_orbital=[0, 1, 2, 3],
+                                          n_cell=7)
+        self.assertEqual(r.n_cell, 7)
+
     def test_input_validation(self):
         good = density([1, 1], [(0, 0, 0.5), (0, 0, -0.5)])
         pos = [[0, 0, 0], [1, 0, 0]]
@@ -440,7 +479,7 @@ class TestDefinitions(unittest.TestCase):
         # integer-valued arrays are accepted
         r = order_parameters_from_density(
             good, site_of_orbital=np.array([0.0, 1.0]), site_positions=pos,
-            cell_shape=np.array([2, 1, 1]), lattice_shape=[2, 1, 1],
+            cell_shape=np.array([2, 1, 1]), lattice_shape=[6, 1, 1],
             n_cell=np.int64(3))
         self.assertEqual(r.cell_shape, (2, 1, 1))
         self.assertEqual(r.n_cell, 3)
