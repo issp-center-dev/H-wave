@@ -11,6 +11,9 @@ Fixtures (each later task adds the ones it uses):
 * ``uhfr_tutorial``: docs/tutorial/Hubbard/UHFr (Nsite 8, ``2Sz = 0``), with
   greenone.def replaced by the 16 diagonal entries ``(i, s, i, s)``.
 * ``uhfk_cdw``: docs/tutorial/Hubbard/UHFk (V = 4).
+* ``uhfk_cdw_legacy``: a copy of docs/tutorial/Hubbard/UHFk with its
+  git-tracked ``output/`` (``green.npz`` and ``eigen.npz`` written before the
+  ``momentum_convention`` and ``green_convention`` markers); **not run**.
 
 Helpers:
 
@@ -97,9 +100,16 @@ def _build_uhfk_cdw(dest):
     return toml
 
 
+def _build_uhfk_cdw_legacy(dest):
+    shutil.copytree(REPO / "docs" / "tutorial" / "Hubbard" / "UHFk", dest,
+                    ignore=shutil.ignore_patterns("run.log"))
+    return dest / "input.toml"
+
+
 _BUILDERS = {
     "uhfr_tutorial": _build_uhfr_tutorial,
     "uhfk_cdw": _build_uhfk_cdw,
+    "uhfk_cdw_legacy": _build_uhfk_cdw_legacy,
 }
 
 
