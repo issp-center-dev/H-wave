@@ -471,6 +471,18 @@ class TestLegacy(unittest.TestCase):
         self.assertAlmostEqual(op.charge_order_amplitude, 0.99, delta=1e-2)
         assert_deep_frozen(green)
 
+    def test_legacy_tutorial_bands(self):
+        toml = fixture("uhfk_cdw_legacy")
+        with self.assertRaisesRegex(UnsupportedLayoutError, r"legacy=True"):
+            read_bands(toml)
+        bands = read_bands(toml, legacy=True)
+        self.assertEqual(bands.energies.shape, (4, 8))
+        self.assertAlmostEqual(bands.meta["ncond"], 16.0, delta=1e-10)
+        # that file has no ChemicalPotential line
+        self.assertFalse(bands.single_reservoir)
+        self.assertIsNone(bands.homo)
+        assert_deep_frozen(bands)
+
     def test_legacy_eigen(self):
         toml = copy_fixture("uhfk_cdw")
         path = toml.parent / "output" / "eigen.npz"
