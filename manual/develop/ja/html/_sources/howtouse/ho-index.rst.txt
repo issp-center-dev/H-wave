@@ -35,6 +35,24 @@
     パラメータで並列FFTワーカーを指定した場合は\ `scipy.fft <https://docs.scipy.org/doc/scipy/reference/fft.html>`_\ に、
     GPU実行時は cuFFT に切り替わります。
 
+- Python からの計算結果の読み込み
+
+    ``hwave.results``\ パッケージを使うと、UHFr・UHFk の計算の出力ファイルを、
+    その計算の入力 TOML ファイルを起点として Python から読み込めます。例:
+
+    .. code-block:: python
+
+       import hwave.results as hr
+
+       run = hr.open_run("input.toml")
+       status = hr.read_scf_status(run)   # 収束判定・残差・反復回数
+       energy = hr.read_energy(run)
+
+    各読み込み関数は出力ファイルに記録された規約の情報と計算設定を確認し、出力が存在しない、
+    この計算で書かれたものではない、または未知の形式である場合には、推測せずに
+    ヒントつきのエラーを送出します。関数と結果の型の説明は docstring
+    （例: ``help(hr)``\ ）を参照してください。
+
 - Official Page
 
     - `GitHubリポジトリ <https://github.com/issp-center-dev/H-wave>`_

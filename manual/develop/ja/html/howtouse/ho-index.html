@@ -69,6 +69,23 @@ RPA・FLEX・動的Eliashbergソルバーの空間FFTは、オプトインの<co
 GPU実行時は cuFFT に切り替わります。</p>
 </div></blockquote>
 </li>
+<li><p>Python からの計算結果の読み込み</p>
+<blockquote>
+<div><p><code class="docutils literal notranslate"><span class="pre">hwave.results</span></code>パッケージを使うと、UHFr・UHFk の計算の出力ファイルを、
+その計算の入力 TOML ファイルを起点として Python から読み込めます。例:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">hwave.results</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">hr</span>
+
+<span class="n">run</span> <span class="o">=</span> <span class="n">hr</span><span class="o">.</span><span class="n">open_run</span><span class="p">(</span><span class="s2">"input.toml"</span><span class="p">)</span>
+<span class="n">status</span> <span class="o">=</span> <span class="n">hr</span><span class="o">.</span><span class="n">read_scf_status</span><span class="p">(</span><span class="n">run</span><span class="p">)</span>   <span class="c1"># 収束判定・残差・反復回数</span>
+<span class="n">energy</span> <span class="o">=</span> <span class="n">hr</span><span class="o">.</span><span class="n">read_energy</span><span class="p">(</span><span class="n">run</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>各読み込み関数は出力ファイルに記録された規約の情報と計算設定を確認し、出力が存在しない、
+この計算で書かれたものではない、または未知の形式である場合には、推測せずに
+ヒントつきのエラーを送出します。関数と結果の型の説明は docstring
+（例: <code class="docutils literal notranslate"><span class="pre">help(hr)</span></code>）を参照してください。</p>
+</div></blockquote>
+</li>
 <li><p>Official Page</p>
 <blockquote>
 <div><ul class="simple">
