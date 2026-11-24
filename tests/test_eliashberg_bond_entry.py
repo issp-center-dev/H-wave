@@ -58,7 +58,7 @@ class TestArchiveSchema2(unittest.TestCase):
     def test_archive_carries_vertices(self):
         s, gi = _run_gate(self.tmp)
         with np.load(os.path.join(self.tmp, "longitudinal_bond.npz")) as d:
-            self.assertEqual(int(d["bond_archive_schema"]), 2)
+            self.assertEqual(int(d["bond_archive_schema"]), 3)
             self.assertEqual(int(d["norb"]), s.norb)
             np.testing.assert_array_equal(d["S_bond"], s._bond_S)
             np.testing.assert_array_equal(d["C_bond"], s._bond_C)
@@ -107,7 +107,7 @@ class TestSidecarWriter(unittest.TestCase):
         c_npy = os.path.join(self.tmp, "longitudinal_bond_chi_c_w.npy")
         self.assertTrue(os.path.exists(index) and os.path.exists(s_npy) and os.path.exists(c_npy))
         with np.load(index) as d:
-            self.assertEqual(int(d["bond_archive_schema"]), 2)
+            self.assertEqual(int(d["bond_archive_schema"]), 3)
             self.assertEqual(str(d["bond_archive_layout"]), "sidecar")
             self.assertNotIn("chi_s_w", d.files)
             self.assertNotIn("chi_c_w", d.files)
@@ -180,9 +180,31 @@ class TestLoadBondArchive(unittest.TestCase):
         self._rewrite(bond_archive_schema=np.int64(1))
         with self.assertRaisesRegex(ValueError, "longitudinal_bond_output_full = true"):
             self._load()
-        self._rewrite(bond_archive_schema=np.int64(3))
+        self._rewrite(bond_archive_schema=np.int64(5))
         with self.assertRaisesRegex(ValueError, "unsupported archive schema"):
             self._load()
+
+    def test_schema2_refused_only_for_a_mirror_asymmetric_declaration(self):
+        """Schema 2 put an off-site row on the bond opposite its Transfer row
+        (issue #232): refused when the declaration is not symmetric under
+        R -> -R on the run's grid, accepted when it is."""
+        self._rewrite(bond_archive_schema=np.int64(2))
+        asym = {"CoulombInter": {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4}}
+        with self.assertRaisesRegex(ValueError, "#232"):
+            self._load(interactions=asym)
+        sym = {"CoulombInter": {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0}}
+        self._load(interactions=sym)
+        self._load()
+        # a type the archive is not built from cannot make it stale
+        self._load(interactions={"PairLift": asym["CoulombInter"]})
+
+    def test_malformed_schema_is_refused(self):
+        for bad in (np.float64(3.9), np.float64(np.nan), np.complex128(3 + 1j),
+                    np.array([3, 3]), np.str_("3"), np.bool_(True)):
+            with self.subTest(schema=bad):
+                self._rewrite(bond_archive_schema=bad)
+                with self.assertRaisesRegex(ValueError, "malformed bond_archive_schema"):
+                    self._load()
 
     def test_validations(self):
         with self.assertRaisesRegex(ValueError, "nmat"):
@@ -314,8 +336,92 @@ class TestLoadBondArchive(unittest.TestCase):
         np.savez(no_chi, **members)
         with self.assertRaisesRegex(ValueError, "not a valid bond archive"):
             call(no_chi)
+        # a schema stamp whose .npy member is cut short (header intact, data
+        # body missing) is the same contract refusal, not a bare numpy error
+        import zipfile
+        bad_stamp = os.path.join(self.tmp, "bad_stamp.npz")
+        with zipfile.ZipFile(self.path) as src, zipfile.ZipFile(bad_stamp, "w") as dst:
+            for info in src.infolist():
+                data = src.read(info.filename)
+                if info.filename == "bond_archive_schema.npy":
+                    data = data[:-4]
+                dst.writestr(info, data)
+        with self.assertRaisesRegex(ValueError, r"bad_stamp\.npz.*(not a valid bond archive|malformed)"):
+            call(bad_stamp)
         # the valid archive still loads
         self._load()
+
+
+class TestSOArchiveRefused(unittest.TestCase):
+    """The non-spin-orbital loader refuses a spin-orbital bond archive with
+    one text, before it reaches the S_bond gate."""
+
+    TEXT = ("bond archive {}: this is a spin-orbital bond archive (written by the "
+            "spin-orbital FLEX with bond channels); the non-spin-orbital bond consumers "
+            "cannot read it, and hwave_sc does not read it in this version (read it with "
+            "hwave.solver.so_bond_archive.load_so_bond_archive).")
+
+    @classmethod
+    def setUpClass(cls):
+        from tests import so_bond_archive_fixtures as fx
+        from hwave.solver import so_bond_archive as sa
+        import logging
+        cls.tmp = tempfile.mkdtemp()
+        inputs = fx.archive_inputs()
+        cls.so_path = os.path.join(cls.tmp, "so.npz")
+        sa.write_so_bond_archive(cls.so_path, output_layout="npz",
+                                 log=logging.getLogger("test_so_refusal"), **inputs.kwargs)
+        cls.nonso_dir = tempfile.mkdtemp()
+        cls.s, _ = _run_gate(cls.nonso_dir)
+        cls.nonso_path = os.path.join(cls.nonso_dir, "longitudinal_bond.npz")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        shutil.rmtree(cls.nonso_dir, ignore_errors=True)
+
+    def _load(self, path):
+        from hwave.solver.eliashberg_bond_io import load_bond_archive
+        s = self.s
+        return load_bond_archive(path, norb=s.norb, nmat_expected=s.nmat,
+                                 cell_shape_expected=tuple(int(x) for x in s.lattice.shape),
+                                 beta_expected=1.0 / s.T)
+
+    def _marked(self, marker, drop_s_bond=False):
+        with np.load(self.nonso_path) as d:
+            members = {k: d[k] for k in d.files}
+        members["spin_orbital"] = marker
+        if drop_s_bond:
+            members.pop("S_bond")
+        path = os.path.join(self.nonso_dir, "marked.npz")
+        np.savez(path, **members)
+        return path
+
+    def test_schema4_archive_refused(self):
+        with self.assertRaises(ValueError) as cm:
+            self._load(self.so_path)
+        self.assertEqual(str(cm.exception), self.TEXT.format(self.so_path))
+
+    def test_marker_true_refused(self):
+        path = self._marked(np.bool_(True))
+        with self.assertRaises(ValueError) as cm:
+            self._load(path)
+        self.assertEqual(str(cm.exception), self.TEXT.format(path))
+
+    def test_malformed_marker_refused_before_s_bond_gate(self):
+        for marker in (np.array([1, 0]), np.array(["x"]), np.array([], dtype=float)):
+            with self.subTest(marker=repr(marker)):
+                path = self._marked(marker, drop_s_bond=True)
+                with self.assertRaises(ValueError) as cm:
+                    self._load(path)
+                self.assertEqual(str(cm.exception), self.TEXT.format(path))
+
+    def test_marker_false_is_not_refused(self):
+        path = self._marked(np.bool_(False))
+        self.assertEqual(self._load(path).B, self._load(self.nonso_path).B)
+
+    def test_unmarked_non_so_loads(self):
+        self._load(self.nonso_path)
 
 
 class TestSidecarLoader(unittest.TestCase):
@@ -410,7 +516,7 @@ class TestPairingControls(unittest.TestCase):
         c = PairingControls.from_param({}, pairing_types=("singlet",))
         self.assertEqual((c.solver_mode, c.eigenvalue_method, c.num_eigenvalues, c.max_iter, c.alpha,
                           c.convergence_tol, c.matsubara_basis, c.ir_tol, c.ir_fit_tol, c.fft_workers),
-                         ("iteration", "arnoldi", 10, 1000, 0.5, 1e-5, "uniform", 1e-8, 0.5, 1))
+                         ("eigenvalue", "arnoldi", 10, 1000, 0.5, 1e-5, "uniform", 1e-8, 0.5, 1))
         self.assertIsNone(c.init_gap); self.assertIsNone(c.bond_memory_cap_gb); self.assertFalse(c.ir_keep_static_chi)
         c2 = PairingControls.from_param({"matsubara_basis": "IR", "ir_fit_tol": 0, "num_eigenvalues": 3,
                                          "ir_keep_static_chi": "true"}, pairing_types=("singlet", "triplet"))
@@ -546,8 +652,13 @@ class TestParityLeakageTolerance(unittest.TestCase):
         """The lower edge of the warning band: a leakage below ``0.1 * tol`` is
         accepted SILENTLY, so the warning of the sibling case above is a signal
         and not something every accepted run emits."""
-        with self.assertNoLogs("qlms.eliashberg_dynamic", level="WARNING"):
+        from tests.approx_util import _caplog
+        # (the 5-step iteration on this random operator does not converge and
+        # says so; only the parity-leakage warning band is under test here)
+        with _caplog("WARNING", logger="qlms.eliashberg_dynamic") as records:
             out = self._run(parity_leakage_tol=100.0 * self.leak)
+        self.assertFalse([r.message for r in records
+                          if "parity" in r.message.lower()], records)
         self.assertAlmostEqual(out[5], self.leak)
 
     def test_default_tolerance_is_1e_minus_8(self):
@@ -589,9 +700,11 @@ def _sc_input(flex_dir, out_dir, T, nmat, cell, **eli):
     return inp
 
 
-def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairing=None, eli=None):
+def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairing=None, eli=None,
+                   extra_inter=None):
     """A real single-band (U = 4, V = 1) bond-gate FLEX run through ``qlms.run``,
-    writing green.npz and the bond archive into ``tmp``."""
+    writing green.npz and the bond archive into ``tmp``. ``extra_inter`` adds
+    interaction files ``{type: absolute path}``."""
     import hwave.qlms as qlms
     par = {"T": T, "filling": 0.5, "CellShape": list(cell), "SubShape": [1, 1, 1], "Nmat": nmat,
            "IterationMax": 200, "Mix": 0.3, "EPS": 8, "flex_hartree_fock": True,
@@ -609,6 +722,7 @@ def _run_gate_1orb(tmp, T=0.5, nmat=64, cell=(4, 4, 1), output_full=True, pairin
                                "green": "green", "longitudinal_bond": "longitudinal_bond"}}}
     if eli is not None:
         inp["eliashberg"] = eli
+    inp["file"]["input"]["interaction"].update(extra_inter or {})
     qlms.run(input_dict=inp)
     return inp
 
@@ -732,7 +846,8 @@ class TestPostProcessingRuns(unittest.TestCase):
         re-reads each sidecar member, so it exercises repeated memmap
         open/close.
 
-        The leading eigenvalue matches to 1e-13 (measured |diff| 5.3e-15). The
+        The leading eigenvalue matches to 1e-12 (measured |diff| 5.3e-15
+        locally; 1.2e-13, intermittently, on the CI Linux runners). The
         output gap is already gauge-fixed (_fix_gauge), so it is compared
         directly at rtol = 0, atol = 1e-11; the measured gap max|diff| is
         3.2e-13 (uniform) / 1.9e-14 (IR) at Nmat 64 -- the eigensolver's
@@ -778,7 +893,7 @@ class TestPostProcessingRuns(unittest.TestCase):
                 lam_npz, gap_npz = ref[b["tag"]]
                 self.assertTrue(np.isfinite(lam_npz))
                 self.assertAlmostEqual(lam_side, lam_npz,
-                                       delta=1e-13 * max(1.0, abs(lam_npz)), msg=b["tag"])
+                                       delta=1e-12 * max(1.0, abs(lam_npz)), msg=b["tag"])
                 maxdiff = float(np.max(np.abs(gap_side - gap_npz)))
                 np.testing.assert_allclose(gap_side, gap_npz, rtol=0, atol=1e-11,
                                            err_msg="{}: gap max|diff|={:.3e}".format(b["tag"], maxdiff))
@@ -1047,6 +1162,258 @@ class TestInProcessHookBoundary(unittest.TestCase):
         self.assertIn("probe boom", gi["pairing_singlet_error"])
 
 
+class _Capture(object):
+    """Collects the records of one logger (any level) without asserting that
+    something was logged, so a test can pin the ABSENCE of a message on every
+    supported Python version."""
+
+    def __init__(self, name):
+        import logging
+        self.logger = logging.getLogger(name)
+        self.records = []
+        outer = self
+
+        class _H(logging.Handler):
+            def emit(self, record):
+                outer.records.append(record)
+
+        self.handler = _H(level=logging.DEBUG)
+
+    def __enter__(self):
+        import logging
+        self._level = self.logger.level
+        self.logger.addHandler(self.handler)
+        self.logger.setLevel(logging.DEBUG)
+        return self
+
+    def __exit__(self, *exc):
+        self.logger.removeHandler(self.handler)
+        self.logger.setLevel(self._level)
+        return False
+
+    def messages(self, levelno):
+        return [r.getMessage() for r in self.records if r.levelno >= levelno]
+
+
+def _write_nn_rows(path, value, fmt="{:.12f}"):
+    """A single-band interaction file with the four nearest-neighbour rows."""
+    rows = [((1, 0, 0)), ((-1, 0, 0)), ((0, 1, 0)), ((0, -1, 0))]
+    with open(path, "w") as fw:
+        fw.write("generated for test\n1\n{}\n{}\n".format(len(rows), " ".join(["1"] * len(rows))))
+        for r in rows:
+            fw.write(("{:4d} {:4d} {:4d}    1    1 " + fmt + " 0.0\n").format(r[0], r[1], r[2], value))
+
+
+def _su2_warnings(cap, where):
+    import logging
+    return [m for m in cap.messages(logging.WARNING) if "SU(2)" in m and m.startswith(where)]
+
+
+class _EntryNoticeCase(object):
+    """Runs both dynamic bond pairing entries far enough to collect their
+    notices: the post-processing entry up to the (absent) archive, the
+    in-process one through a short FLEX solve."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _post_processing(self, extra, keep=_su2_warnings):
+        import hwave.sc as sc
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 8, (4, 4, 1))
+        inter = inp["file"]["input"]["interaction"]
+        for itype, value in extra.items():
+            path = os.path.join(self.tmp, itype + ".dat")
+            _write_nn_rows(path, value)
+            inter[itype] = os.path.abspath(path)
+        with _Capture("qlms.solver.eliashberg_bond") as cap:
+            # no archive in tmp: the entry stops there, AFTER the notices
+            with self.assertRaisesRegex(ValueError, "longitudinal_bond_output_full = true"):
+                sc.calc_eliashberg(inp)
+        return keep(cap, "[eliashberg] bond_channels=true (frequency='dynamic')")
+
+    def _in_process(self, inter, path=None, keep=_su2_warnings):
+        kw = {} if path is None else {"path": path}
+        s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3}, inter=inter,
+                     **kw)
+        gi = r.get_param("green")
+        with _Capture("qlms.solver.eliashberg_bond") as cap:
+            s.solve(gi, self.tmp)
+        # the run is not refused: the pairing result is there
+        self.assertIn("pairing_singlet_eigenvalue", gi)
+        return keep(cap, "[mode.param] longitudinal_bond_pairing")
+
+
+class TestNonSU2BondWarning(_EntryNoticeCase, unittest.TestCase):
+    """Both dynamic bond pairing entries name, in ONE warning, the bonds whose
+    spin part breaks spin-rotation symmetry (``J_Exchange != J_Hund - 2
+    J_Ising``): the fluctuation part of the pairing kernel assumes
+    spin-rotation invariance. Nothing is refused and nothing changes."""
+
+    def test_post_processing_entry(self):
+        for label, extra in (("ising", {"Ising": 0.2}), ("hund", {"Hund": 0.2})):
+            msgs = self._post_processing(extra)
+            self.assertEqual(len(msgs), 1, (label, msgs))
+            # the full expected set: both members of the x and of the y
+            # bond-reversal orbit
+            self.assertIn("on 4 bond row(s)", msgs[0])
+            for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)):
+                self.assertIn("R={} orbitals=(1, 1)".format(R), msgs[0])
+            self.assertIn("#88", msgs[0])
+        self.assertEqual(self._post_processing({"Hund": 0.3, "Exchange": 0.1, "Ising": 0.1}), [])
+        self.assertEqual(self._post_processing({}), [])
+
+    def test_in_process_entry(self):
+        msgs = self._in_process({"CoulombInter": "coulombinter.dat", "Hund": "offsite_hund.dat"})
+        self.assertEqual(len(msgs), 1, msgs)
+        # the x bond of offsite_hund.dat: both members of its reversal orbit
+        self.assertIn("on 2 bond row(s)", msgs[0])
+        self.assertIn("R=(-1, 0, 0) orbitals=(1, 2)", msgs[0])
+        self.assertIn("R=(1, 0, 0) orbitals=(2, 1)", msgs[0])
+        self.assertEqual(self._in_process(None), [])
+
+
+def _bare_vertex_spy():
+    """A spy on ``eliashberg_bond.offsite_singlet_bare_vertex`` that records the
+    topology every call receives (and still computes the term)."""
+    from hwave.solver import eliashberg_bond as eb
+    return mock.patch.object(eb, "offsite_singlet_bare_vertex",
+                             wraps=eb.offsite_singlet_bare_vertex)
+
+
+def _offsite_coefficients(spy, itype):
+    """Largest off-site ``itype`` coefficient among the topologies ``spy`` saw."""
+    return max(float(np.abs(np.asarray(c.args[0].coeffs[itype])[1:]).max())
+               for c in spy.call_args_list)
+
+
+class TestOffsiteBareSingletWiring(unittest.TestCase):
+    """Both dynamic bond pairing entries hand the declared off-site Exchange and
+    PairHop rows to the singlet bare vertex
+    (``eliashberg_bond.offsite_singlet_bare_vertex``, validated against an
+    independent first-order construction in
+    ``tests/test_sc_bond_pairing_oracle.py``); before issue #239 it carried
+    only their density content, i.e. none."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_post_processing_entry(self):
+        import hwave.sc as sc
+        for itype in ("Exchange", "PairHop"):
+            with self.subTest(itype=itype):
+                d = tempfile.mkdtemp(dir=self.tmp)
+                path = os.path.join(d, itype + ".dat")
+                _write_nn_rows(path, 0.2)
+                _run_gate_1orb(d, nmat=32, extra_inter={itype: path})
+                inp = _sc_input(d, d, 0.5, 32, (4, 4, 1))
+                inp["file"]["input"]["interaction"][itype] = path
+                with _bare_vertex_spy() as spy:
+                    lam = sc.calc_eliashberg(inp)
+                self.assertTrue(np.isfinite(lam))
+                self.assertGreater(spy.call_count, 0)
+                self.assertAlmostEqual(_offsite_coefficients(spy, itype), 0.2, delta=1e-12)
+
+    def test_post_processing_refuses_files_that_differ_from_the_archive(self):
+        """The bare term reads the interaction files, the fluctuations the
+        archive: files that give other bond vertices than the archive's (here
+        an Exchange value changed after the FLEX run) are refused."""
+        import hwave.sc as sc
+        path = os.path.join(self.tmp, "Exchange.dat")
+        _write_nn_rows(path, 0.2)
+        _run_gate_1orb(self.tmp, nmat=16, extra_inter={"Exchange": path})
+        changed = os.path.join(self.tmp, "Exchange_changed.dat")
+        _write_nn_rows(changed, 0.3)
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = changed
+        with self.assertRaisesRegex(ValueError, "bond vertex S built from the interaction files"):
+            sc.calc_eliashberg(inp)
+
+    def test_post_processing_refuses_a_tiny_change(self):
+        """The comparison is exact: an Exchange coefficient changed by 5e-11 is
+        refused, and so is a doubled Exchange of 1e-13 next to the fixture's
+        U = 4 and V = 1 (below any relative tolerance of the vertex scale)."""
+        import hwave.sc as sc
+        path = os.path.join(self.tmp, "Exchange.dat")
+        _write_nn_rows(path, 0.2)
+        _run_gate_1orb(self.tmp, nmat=16, extra_inter={"Exchange": path})
+        changed = os.path.join(self.tmp, "Exchange_changed.dat")
+        _write_nn_rows(changed, 0.2 + 5e-11)
+        inp = _sc_input(self.tmp, self.tmp, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = changed
+        with self.assertRaisesRegex(ValueError, "built from the interaction files differs"):
+            sc.calc_eliashberg(inp)
+        small = os.path.join(self.tmp, "small")
+        os.makedirs(small)
+        path = os.path.join(small, "Exchange.dat")
+        _write_nn_rows(path, 1e-13, fmt="{:.6e}")
+        _run_gate_1orb(small, nmat=16, extra_inter={"Exchange": path})
+        doubled = os.path.join(small, "Exchange_doubled.dat")
+        _write_nn_rows(doubled, 2e-13, fmt="{:.6e}")
+        inp = _sc_input(small, small, 0.5, 16, (4, 4, 1))
+        inp["file"]["input"]["interaction"]["Exchange"] = doubled
+        with self.assertRaisesRegex(ValueError, "built from the interaction files differs"):
+            sc.calc_eliashberg(inp)
+
+    def test_post_processing_accepts_the_producer_topology(self):
+        """The archive's channels are rebuilt with the FLEX gate's own contract:
+        shells ordered in integer cell coordinates even when the geometry's
+        lattice vectors order them otherwise, and the declared-zero shells the
+        gate adds for an off-site PairLift next to an off-site Exchange. The
+        files of the FLEX run are accepted."""
+        import hwave.sc as sc
+        d = self.tmp
+        geom = os.path.join(d, "geom_aniso.dat")
+        with open(geom, "w") as fw:
+            # a2 three times a1: |(0,1)| = 3 > |(2,0)| = 2 physically, the
+            # reverse of the integer-coordinate order
+            fw.write("1 0 0\n0 3 0\n0 0 1\n1\n0 0 0\n")
+        ex = os.path.join(d, "exchange_y.dat")
+        with open(ex, "w") as fw:
+            fw.write("Exchange on the y bond\n1\n2\n 1 1\n")
+            fw.write("   0    1    0    1    1   0.100000000000   0.000000000000\n")
+            fw.write("   0   -1    0    1    1   0.100000000000   0.000000000000\n")
+        pl = os.path.join(d, "pairlift_2x.dat")
+        with open(pl, "w") as fw:
+            fw.write("PairLift on the second x neighbour\n1\n2\n 1 1\n")
+            fw.write("   2    0    0    1    1   0.050000000000   0.000000000000\n")
+            fw.write("  -2    0    0    1    1   0.050000000000   0.000000000000\n")
+        extra = {"Geometry": geom, "Exchange": ex, "PairLift": pl}
+        # six cells along x: the +-2 x displacements must stay distinct
+        _run_gate_1orb(d, nmat=16, cell=(6, 4, 1), extra_inter=extra)
+        inp = _sc_input(d, d, 0.5, 16, (6, 4, 1))
+        inp["file"]["input"]["interaction"].update(extra)
+        with _bare_vertex_spy() as spy:
+            lam = sc.calc_eliashberg(inp)
+        self.assertTrue(np.isfinite(lam))
+        self.assertAlmostEqual(_offsite_coefficients(spy, "Exchange"), 0.1, delta=1e-12)
+
+    def test_in_process_entry(self):
+        for itype in ("Exchange", "PairHop"):
+            with self.subTest(itype=itype):
+                d = tempfile.mkdtemp(dir=self.tmp)
+                for f in ("geom.dat", "transfer.dat", "coulombinter.dat"):
+                    shutil.copy(os.path.join(_IN2, f), d)
+                with open(os.path.join(d, "offsite.dat"), "w") as fw:
+                    fw.write("off-site {} on the x bond\n2\n2\n 1 1\n".format(itype))
+                    fw.write("   1    0    0    1    2   0.200000000000   0.000000000000\n")
+                    fw.write("  -1    0    0    2    1   0.200000000000   0.000000000000\n")
+                s, r = _flex({"longitudinal_bond_pairing": "singlet", "IterationMax": 3},
+                             inter={"CoulombInter": "coulombinter.dat", itype: "offsite.dat"},
+                             path=d)
+                gi = r.get_param("green")
+                with _bare_vertex_spy() as spy:
+                    s.solve(gi, d)
+                self.assertIn("pairing_singlet_eigenvalue", gi)
+                self.assertGreater(spy.call_count, 0)
+                self.assertAlmostEqual(_offsite_coefficients(spy, itype), 0.2, delta=1e-12)
+
+
 class TestTemporaryNames(unittest.TestCase):
     """A fixed ``x.tmp.npz`` collides between two runs writing the same
     directory (a parameter sweep, a restarted job): one run's rename can
@@ -1098,27 +1465,36 @@ class TestInProcess(unittest.TestCase):
                     self.assertIn(k, d.files, k)
                 self.assertEqual(str(d["pairing_type"]), eta)
                 # the in-process entry records the same two keys, under the
-                # same names, as the file entry; the projected iteration
-                # returns a gap in the channel's even-frequency sector
+                # same names, as the file entry
                 labels = [str(x) for x in d["gap_sector_labels"]]
                 self.assertEqual(labels, ["even_k_even_w", "odd_k_even_w",
                                           "even_k_odd_w", "odd_k_odd_w"])
                 w = dict(zip(labels, np.asarray(d["gap_sector_weights"], dtype=float)))
                 self.assertAlmostEqual(sum(w.values()), 1.0, places=9)
-                own = "even_k_even_w" if eta == "singlet" else "odd_k_even_w"
-                self.assertGreater(w[own], 0.999, (eta, w))
-                # this two-orbital kernel conserves only the combined parity,
-                # so the iteration is NOT restricted to the channel sector --
-                # yet its leading eigenvector lands there anyway, which is
-                # exactly what the recorded weights are for
-                self.assertEqual(str(d["sector_selection"]),
-                                 "combined_parity", eta)
+                # the leading eigenvector lies in the combined-parity sector of
+                # the channel (its even-frequency or odd-frequency part), and
+                # the recorded weights say which. The in-process default is
+                # the ARPACK solver (solver_mode = "eigenvalue"), whose
+                # eigenpair matching records the stage it matched with: the
+                # channel's even-frequency sector when such an eigenpair is
+                # found, else the combined-parity sector.
+                own = (("even_k_even_w", "odd_k_odd_w") if eta == "singlet"
+                       else ("odd_k_even_w", "even_k_odd_w"))
+                self.assertGreater(w[own[0]] + w[own[1]], 0.999, (eta, w))
+                sel = str(d["sector_selection"])
+                self.assertIn(sel, ("channel", "combined_parity"), eta)
+                if sel == "channel":
+                    self.assertGreater(w[own[0]], 0.999, (eta, w))
+                self.assertIs(bool(d["eigen_converged"]), True, eta)
+                self.assertTrue(np.isfinite(float(d["eigenvalue"])), eta)
+            self.assertIs(gi["pairing_{}_eigen_converged".format(eta)], True)
             with open(os.path.join(self.tmp, "eigenvalue_bond_{}.dat".format(eta))) as f:
                 txt = f.read()
             self.assertIn("scf_converged=", txt)
             self.assertIn("state=", txt)
             self.assertIn("# gap_sector_weights even_k_even_w=", txt)
-            self.assertIn("# sector_selection=combined_parity", txt)
+            self.assertIn("# sector_selection={}".format(sel), txt)
+            self.assertIn("# eigen_converged=true", txt)
             self.assertTrue(os.path.exists(os.path.join(self.tmp, "gap_bond_{}.dat".format(eta))))
             for stem in ("eliashberg_bond_{}.tmp.npz", "gap_bond_{}.tmp.dat",
                          "eigenvalue_bond_{}.tmp.dat"):
@@ -1426,7 +1802,9 @@ BOND_REFERENCE_REQUIRE_ENV = "HWAVE_REQUIRE_DEVELOP_COMPARISON_BOND"
 #: (1 -> 2). Every other member of the archive -- and every other output
 #: file -- must come out of both revisions bit for bit.
 _ARCHIVE_DELTA = frozenset(("S_bond", "C_bond", "norb", "bond_archive_schema",
-                            "longitudinal_bond_cond_tol", "bond_archive_layout"))
+                            "longitudinal_bond_cond_tol", "bond_archive_layout",
+                            # the stamp issue #232 moved
+                            "longitudinal_bond_schema"))
 
 #: The provenance members the guard-policy work (issue #199) adds to EVERY
 #: archive of a Hartree-Fock / bond-gate run, the bond archive included:
@@ -1451,6 +1829,8 @@ _BOND_GUARD_DELTA = frozenset(("longitudinal_bond_guard_method",
                                "longitudinal_bond_guard_exact_blocks_total",
                                "longitudinal_bond_guard_exact_blocks_max",
                                "longitudinal_bond_guard_blocks_per_iteration"))
+#: Version stamps of the chi files that issue #232 moved: (reference, branch).
+_STAMP_DELTA = {"sc_vertex_version": (2, 3), "longitudinal_bond_schema": (1, 2)}
 
 #: The driver both revisions run: one ``qlms.run`` on an input dict read from
 #: a file. A file rather than an argument because the reference tree is
@@ -1477,7 +1857,14 @@ def _bond_compat_input(out_dir):
                                "Mix": 0.3, "EPS": 8, "flex_hartree_fock": True,
                                "mixing_scheme": "linear",
                                "longitudinal_bond_channels": True,
-                               "longitudinal_bond_output_full": True}},
+                               "longitudinal_bond_output_full": True,
+                               # the reference revision predates the Hermitian
+                               # projection of the self-energy (issue #281),
+                               # which changes a symmetric run at round-off
+                               # only (tests/test_flex_sigma_hermitian.py);
+                               # switched off so that this bit-for-bit
+                               # comparison stays about the pairing flag
+                               "flex_sigma_hermitian_projection": False}},
             "file": {"input": {"path_to_input": "",
                                "interaction": {"path_to_input": _IN1, "Geometry": "geom.dat",
                                                "Transfer": "transfer.dat",
@@ -1511,18 +1898,21 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
         for d in (self.ref_out, self.new_out, self.work):
             shutil.rmtree(d, ignore_errors=True)
 
-    def _run(self, checkout, out_dir, name):
+    def _run(self, checkout, out_dir, name, interaction_dir=None):
         import json
         import subprocess
         import sys
-        from tests.test_flex_second_order_compat import reference_subprocess_env
+        from tests.test_flex_second_order_compat import (own_tree_subprocess_env,
+                                                         reference_subprocess_env)
         path = os.path.join(self.work, "input_{}.json".format(name))
+        inp = _bond_compat_input(out_dir)
+        if interaction_dir is not None:
+            inp["file"]["input"]["interaction"]["path_to_input"] = interaction_dir
         with open(path, "w") as fh:
-            json.dump(_bond_compat_input(out_dir), fh)
+            json.dump(inp, fh)
         if checkout == os.getcwd():
             # this tree's own run: keep it measured by the coverage run
-            env = dict(os.environ,
-                       PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+            env = own_tree_subprocess_env(checkout)
         else:
             env = reference_subprocess_env(checkout)
         subprocess.run([sys.executable, "-B", "-c", _QLMS_RUN, path],
@@ -1539,7 +1929,21 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
                                     require_env=BOND_REFERENCE_REQUIRE_ENV)
         if dev is None:
             raise unittest.SkipTest(why)
-        self._run(dev, self.ref_out, "reference")
+        # The reference revision's vertex paths put an off-site row (r, a, b)
+        # on the bond opposite its Transfer row; this tree puts it on the
+        # Transfer row's bond (issue #232), i.e. where the reference puts the
+        # row (-r, a, b). The fixture is single-band, so the physics is the
+        # same either way, but only the reversed declaration makes the two
+        # revisions add the SAME terms in the SAME order -- which is what a
+        # byte-for-byte comparison needs.
+        from tests.test_flex_hf_scf import _reversed_interaction_dir
+        rev = _reversed_interaction_dir(
+            _IN1, ("coulombinter.dat",),
+            copy=("geom.dat", "transfer.dat", "coulombintra.dat"))
+        try:
+            self._run(dev, self.ref_out, "reference", interaction_dir=rev)
+        finally:
+            shutil.rmtree(rev, ignore_errors=True)
         self._run(os.getcwd(), self.new_out, "branch")
         ref_files = sorted(os.listdir(self.ref_out))
         self.assertEqual(ref_files, sorted(os.listdir(self.new_out)),
@@ -1555,18 +1959,25 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
             with np.load(a) as da, np.load(b) as db:
                 if fn != "longitudinal_bond.npz":
                     # every member the reference wrote, bit for bit; the only
-                    # members this side may add are the provenance pair
+                    # members this side may add are the provenance pair ...
                     self.assertEqual(set(da.files) - set(db.files), set(),
                                      "{}: members the reference wrote are missing".format(fn))
                     added = set(db.files) - set(da.files)
                     # ... plus, where the bond members are written (the
                     # chiq_s / chiq_c archives carry them too), the recorded
-                    # conditioning floor and the guard method / counts
+                    # conditioning floor and the guard method / counts, and on
+                    # sigma.npz / green.npz the placement stamp of issue #232
                     self.assertTrue(_PROVENANCE_DELTA <= added, (fn, added))
                     self.assertTrue(
                         added <= _PROVENANCE_DELTA | {"longitudinal_bond_cond_tol"}
-                        | _BOND_GUARD_DELTA, (fn, added))
+                        | _BOND_GUARD_DELTA | {"sc_vertex_version"}, (fn, added))
+                    if "sc_vertex_version" in added:
+                        self.assertEqual(int(db["sc_vertex_version"]), 3, fn)
                     for k in da.files:
+                        if k in _STAMP_DELTA:
+                            # the version stamps this branch moves (issue #232)
+                            self.assertEqual((int(da[k]), int(db[k])), _STAMP_DELTA[k], fn)
+                            continue
                         np.testing.assert_array_equal(da[k], db[k],
                                                       err_msg="{} {}".format(fn, k))
                     self._assert_default_provenance(db, fn)
@@ -1585,7 +1996,7 @@ class TestFlagOffMatchesTheReferenceRevision(unittest.TestCase):
                     np.testing.assert_array_equal(da[k], db[k],
                                                   err_msg="{} {}".format(fn, k))
                 self.assertEqual(int(da["bond_archive_schema"]), 1)
-                self.assertEqual(int(db["bond_archive_schema"]), 2)
+                self.assertEqual(int(db["bond_archive_schema"]), 3)
                 self.assertEqual(float(db["longitudinal_bond_cond_tol"]), 1.0e-3)
                 self._assert_default_provenance(db, fn)
 

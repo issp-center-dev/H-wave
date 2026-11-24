@@ -79,23 +79,22 @@ def oracle_records(rows_by_type, norb, shape=_SHAPE):
     minus, Ising density-difference form), at half weight for the mirrored
     types (:data:`_MIRRORED_ROW_TYPES`).
 
-    The records are in the DOCUMENTED reading of an interaction row: a row
-    ``(r, a, b, v)`` means ``v n_{j,a} n_{j+r,b}`` -- orbital ``a`` on the
-    REFERENCE site, orbital ``b`` on the site displaced by ``r``. That is the
-    reading the interaction-file documentation states and the one every
-    solver implements since the 2026-09-16 spec (#193). The swap sits at
-    RECORD CONSTRUCTION rather than in the enumeration below because the
-    oracle is a COMPOSITE and only the composite has a physical reading: the
-    ``Gf``/``Gr`` displacement indexing of :func:`oracle_sigma2` (and of
-    :func:`oracle_w2`), together with the spatial index of the ``Sigma`` they
-    return (row site MINUS column site), realises the enumerated geometry
-    MIRRORED -- it places the FIRST orbital of a record on the DISPLACED
-    site, so an off-site record written with ``a`` at ``i`` and ``b`` at
-    ``i + r`` would come out in the reversed reading. Swapping the two
-    orbitals of every off-site record at construction is exactly what
-    cancels that mirror (on a reversal-closed declaration it is the same
-    thing as reversing every displacement), and it leaves on-site rows
-    (``r = 0``, where the two placements coincide) untouched.
+    The records place an interaction row on the SAME bond as a Transfer row
+    with the same ``(r, a, b)`` (Wannier90 / RESPACK: orbital ``a`` in the
+    original cell, ``b`` in the cell displaced by ``r``; issue #232). The
+    enumeration below writes orbital ``a`` on site ``i`` and ``b`` on
+    ``i + r``, and the ``Gf``/``Gr`` displacement indexing of
+    :func:`oracle_sigma2` (and of :func:`oracle_w2`), together with the
+    spatial index of the ``Sigma`` they return (row site MINUS column site),
+    realises that geometry MIRRORED, in the frame of the solver's Green
+    function -- the same mirror in which the solver's one-body Hamiltonian
+    carries a Transfer row ``(r, a, b)`` as ``c^dag_{r,a} c_{0,b}`` (see
+    ``EDFixture.build_h1`` in ``tests/ed_oracle_util.py``, pinned against the
+    solver's bare Green function). The composite therefore puts the
+    two-body row on the Transfer row's bond with no further relabelling.
+    (Before issue #232 the records swapped the two orbitals of every
+    off-site row, which put it on the OPPOSITE bond -- the placement the
+    solvers then implemented.)
 
     ``shape`` is the lattice the records are enumerated on, defaulting to
     this module's 4x4 torus; the chain exact-diagonalization gate passes
@@ -108,16 +107,6 @@ def oracle_records(rows_by_type, norb, shape=_SHAPE):
             if itype in _MIRRORED_ROW_TYPES:
                 v = 0.5 * v
             off = (rx, ry, rz) != (0, 0, 0)
-            if off and itype != "CoulombIntra":
-                # documented reading: the composite oracle (records + the Gf/Gr
-                # displacement indexing below) places orbital a on the DISPLACED
-                # site; swapping the orbitals of every off-site record makes it
-                # place a on the reference site (survey identity 1), which is
-                # the reading the file documents and every solver now implements.
-                # ``CoulombIntra`` is on-site by definition and its branch below
-                # ignores ``b``, so it is excluded: a malformed off-site row of
-                # that type must not be silently re-read as orbital ``b``.
-                a, b = b, a
             for i in range(shape[0] * shape[1] * shape[2]):
                 xi, yi, zi = _coords(i, shape)
                 j = _site(xi + rx, yi + ry, zi + rz, shape)
@@ -392,11 +381,13 @@ def _bare_green(s, beta):
 
 def _general_path_second_order_sigma(s, G, beta):
     """The SECOND ORDER of today's general path on the same G, from
-    production pieces only: the Takimoto-Hotta-Ueda assembly
-    ``_calc_veff_general`` with the RPA channels replaced by the bare bubble
-    (chi_s = chi_c = chibar), i.e. 3/2 Us chibar Us + 1/2 Uc chibar Uc
-    - 1/4 (Us + Uc) chibar (Us + Uc) = U^2 chibar for the Hubbard tensor
-    (spec 2.3), pushed through the production transport.
+    production pieces only: ``_calc_veff_general`` with the RPA channels
+    replaced by the bare bubble (chi_s = chi_c = chibar), which removes the
+    ring and leaves the exact local second order W2(chibar) of the solver's
+    compiled factors -- U^2 chibar for the Hubbard tensor, the value of the
+    retired Takimoto-Hotta-Ueda assembly 3/2 Us chibar Us + 1/2 Uc chibar Uc
+    - 1/4 (Us + Uc) chibar (Us + Uc) there (spec 2.3) -- pushed through the
+    production transport.
 
     The full ``_flex_compute_veff_general`` cannot serve as the reference
     here: it resums the RPA ladders, so its self-energy also carries third
@@ -404,7 +395,7 @@ def _general_path_second_order_sigma(s, G, beta):
     fixture), which an exact second-order oracle must not reproduce."""
     chi0q_raw = s._calc_chi0q(G, np.zeros_like(G), beta)[0]
     chi0q, Us, Uc = s._inflate_chi0q_and_ham_general(chi0q_raw, s.ham_info.ham_inter_q)
-    v_eff2 = s._calc_veff_general(chi0q, chi0q, chi0q, Us, Uc)
+    v_eff2 = s._calc_veff_general(chi0q, chi0q, chi0q, Us, Uc, factors=s._second_order_factors)
     return s._calc_self_energy_general(G, v_eff2, beta)
 
 
@@ -422,6 +413,10 @@ _OFFSITE = {
                            (0, 1, 0, 1, 1, 0.6, 0.0), (0, -1, 0, 1, 1, 0.6, 0.0)]},   # asymmetric bond
     "JV": {"Hund": [(1, 0, 0, 1, 1, 1.0, 0.0), (-1, 0, 0, 1, 1, 1.0, 0.0)]},
     "IV": {"Ising": [(1, 0, 0, 1, 1, 1.0, 0.0), (-1, 0, 0, 1, 1, 1.0, 0.0)]},
+    # issue #181: an off-site Exchange on an orbital-asymmetric inter-orbital
+    # bond plus a same-orbital one (the general off-site factors)
+    "XV": {"Exchange": [(1, 0, 0, 1, 2, 1.0, 0.0), (-1, 0, 0, 2, 1, 1.0, 0.0),
+                        (0, 1, 0, 1, 1, 0.6, 0.0), (0, -1, 0, 1, 1, 0.6, 0.0)]},
 }
 
 

@@ -85,9 +85,15 @@ def normalize_coulomb(tbl_dict):
     return out
 
 
-def split_locality(ham_info, lattice):
+def split_locality(ham_info, lattice, site=None):
     """Split ``ham_info``'s interaction table by locality, judged on the
-    PRE-fold declarations (see the module docstring)."""
+    PRE-fold declarations (see the module docstring).
+
+    ``site`` (the ``orbital_site`` labels, #234) moves an ``R = 0`` row
+    between orbitals of different sites to the off-site part. The
+    q-only vertex paths pass it; the bond-resolved paths, which treat the
+    exchange of every bond exactly, leave it ``None``."""
+    from hwave.solver.sites import is_onsite
     has_fold = tuple(getattr(lattice, "subshape", (1, 1, 1))) != (1, 1, 1)
     # Under folding the split must scan the PRE-fold table:
     # _init_interaction canonicalizes displacements modulo the folded
@@ -114,7 +120,7 @@ def split_locality(ham_info, lattice):
         if itype not in scan_ham:
             continue
         for (irvec, orbvec), v in scan_ham[itype].items():
-            target = onsite_tbl if tuple(irvec) == (0, 0, 0) else offsite_tbl
+            target = onsite_tbl if is_onsite(irvec, orbvec, site) else offsite_tbl
             target.setdefault(itype, {})[(irvec, orbvec)] = v
     offsite_prefold_tbl = offsite_tbl
     if has_fold:

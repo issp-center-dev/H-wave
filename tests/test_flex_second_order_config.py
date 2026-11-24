@@ -1,6 +1,7 @@
 # tests/test_flex_second_order_config.py
 """The flex_second_order key (spec 2026-09-08 D2, section 3): type/value,
-default after auto resolution, applicability refusals, RPA warning, INFO line."""
+default after auto resolution, applicability refusals, RPA warning, INFO line,
+and the refusal of the retired "takimoto" value (issue #253)."""
 import os
 import shutil
 import tempfile
@@ -34,8 +35,8 @@ class TestKey(unittest.TestCase):
     def test_default_is_local_and_canonical(self):
         s, _ = _build()
         self.assertEqual(s.flex_second_order, "local")
-        s, _ = _build({"flex_second_order": "Takimoto"})
-        self.assertEqual(s.flex_second_order, "takimoto")
+        s, _ = _build({"flex_second_order": " Local "})
+        self.assertEqual(s.flex_second_order, "local")
         s, _ = _build({"FLEX_SECOND_ORDER": "LOCAL"})
         self.assertEqual(s.flex_second_order, "local")
 
@@ -64,9 +65,9 @@ class TestKey(unittest.TestCase):
         self.assertEqual(s.calc_scheme, "reduced")
 
     def test_auto_to_general_accepts_the_key(self):
-        s, _ = _build({"flex_second_order": "takimoto"}, calc_scheme="auto")
+        s, _ = _build({"flex_second_order": "local"}, calc_scheme="auto")
         self.assertEqual(s.calc_scheme, "general")
-        self.assertEqual(s.flex_second_order, "takimoto")
+        self.assertEqual(s.flex_second_order, "local")
 
     def test_rpa_warns_once_with_the_key_alone(self):
         with self.assertLogs("hwave.solver.rpa", level="WARNING") as cm:
@@ -75,12 +76,54 @@ class TestKey(unittest.TestCase):
         self.assertEqual(len(hits), 1)
 
     def test_info_line_for_general_runs(self):
-        for so in ("local", "takimoto"):
-            with self.subTest(second_order=so):
+        for extra in (None, {"flex_second_order": "local"}):
+            with self.subTest(extra=extra):
                 with self.assertLogs("hwave.solver.flex", level="INFO") as cm:
-                    _build(None if so == "local" else {"flex_second_order": so})
+                    _build(extra)
                 self.assertEqual(
-                    len([m for m in cm.output if "flex_second_order = {}".format(so) in m]), 1)
+                    len([m for m in cm.output if "flex_second_order = local" in m]), 1)
+
+
+class TestRetiredTakimoto(unittest.TestCase):
+    """``flex_second_order = "takimoto"`` was retired (issue #253): it is
+    refused at construction, in any spelling and under any scheme, with a
+    message that says why and names ``"local"``."""
+
+    def _refused(self, value, **kw):
+        with self.assertRaises(ValueError) as cm:
+            _build({"flex_second_order": value}, **kw)
+        return str(cm.exception)
+
+    def test_refused_in_any_case_and_names_local(self):
+        for value in ("takimoto", "Takimoto", " TAKIMOTO "):
+            with self.subTest(value=value):
+                msg = self._refused(value)
+                self.assertIn('flex_second_order = "takimoto" was retired', msg)
+                self.assertIn('flex_second_order = "local"', msg)
+                self.assertIn("default", msg)
+                self.assertIn("not exact at second order", msg)
+                self.assertIn("2.0.0", msg)
+
+    def test_refused_before_the_scheme_applicability(self):
+        """The retirement is what the user needs to hear first: it wins over
+        the refusal of the key outside the general scheme, and over the
+        auto resolution."""
+        for scheme, inter in (("reduced", None), ("auto", None),
+                              ("auto", {"CoulombIntra": "coulombintra.dat"})):
+            with self.subTest(calc_scheme=scheme, interactions=inter):
+                msg = self._refused("takimoto", calc_scheme=scheme, interactions=inter)
+                self.assertIn("was retired", msg)
+                self.assertNotIn("applies to", msg)
+
+    def test_refused_before_the_lattice_is_built(self):
+        """The key is parsed before the base constructor, so an otherwise
+        broken configuration cannot mask the message."""
+        from unittest import mock
+        import hwave.solver.rpa as rpa_mod
+        with mock.patch.object(rpa_mod, "Lattice",
+                               side_effect=AssertionError("lattice built first")):
+            msg = self._refused("takimoto")
+        self.assertIn("was retired", msg)
 
 
 class TestSchemeSpelling(unittest.TestCase):
@@ -96,10 +139,7 @@ class TestSchemeSpelling(unittest.TestCase):
                 s, r = _build({"flex_second_order": so, "Nmat": 8}, calc_scheme=spelling)
             self.assertEqual(
                 len([m for m in cm.output if "flex_second_order = {}".format(so) in m]), 1)
-            if so == "local":
-                self.assertIsNotNone(s._second_order_factors)
-            else:
-                self.assertIsNone(s._second_order_factors)
+            self.assertIsNotNone(s._second_order_factors)
             gi = r.get_param("green")
             s.solve(gi, out)
             s.save_results({"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq",
@@ -109,15 +149,14 @@ class TestSchemeSpelling(unittest.TestCase):
 
     def test_mixed_case_general_builds_solves_and_stamps(self):
         for spelling in ("General", "GENERAL"):
-            for so in ("local", "takimoto"):
-                with self.subTest(spelling=spelling, second_order=so):
-                    for f, z in self._archives(spelling, so).items():
-                        self.assertEqual(str(z["flex_second_order"]), so, f)
-                        self.assertEqual(int(z["flex_second_order_schema"]), 1, f)
+            with self.subTest(spelling=spelling):
+                for f, z in self._archives(spelling, "local").items():
+                    self.assertEqual(str(z["flex_second_order"]), "local", f)
+                    self.assertEqual(int(z["flex_second_order_schema"]), 1, f)
 
     def test_mixed_case_general_accepts_the_key(self):
-        s, _ = _build({"flex_second_order": "takimoto"}, calc_scheme="General")
-        self.assertEqual(s.flex_second_order, "takimoto")
+        s, _ = _build({"flex_second_order": "Local"}, calc_scheme="General")
+        self.assertEqual(s.flex_second_order, "local")
 
     def test_mixed_case_reduced_still_refuses_exchange(self):
         """The inherited RPA validations key off the scheme name too: an

@@ -268,16 +268,25 @@ def test_static_kernel_gpu_iteration_matches_cpu(pairing_type):
     def cplx(shape):
         return rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
 
-    Vs_q = cplx((norb, norb, Nx, Ny, Nz))
-    G2 = cplx((norb, norb, norb, norb, Nx, Ny, Nz))
+    # A kernel whose power iteration converges (real, k -> -k symmetric
+    # inputs: real leading eigenvalue 0.65 singlet / 0.1875 triplet); a
+    # random complex kernel has a complex leading pair, on which the
+    # iteration reports NaN (it never converges), on CPU and GPU alike.
+    k = 2 * np.pi * np.arange(Nx) / Nx
+    KX, KY = np.meshgrid(k, k, indexing="ij")
+    Vs_q = (-(1.0 + 0.5 * (np.cos(KX) + np.cos(KY)))).reshape(
+        norb, norb, Nx, Ny, Nz).astype(complex)
+    G2 = (1.0 / (1.0 + (np.cos(KX) + np.cos(KY)) ** 2)).reshape(
+        norb, norb, norb, norb, Nx, Ny, Nz).astype(complex)
     sigma_init = cplx((norb, norb, Nx, Ny, Nz))
     kw = dict(max_iter=300, alpha=0.5, tol=1e-10, pairing_type=pairing_type)
 
-    sig_cpu, lam_cpu, _, _ = sc._solve_iteration(
+    sig_cpu, lam_cpu, conv_cpu, _ = sc._solve_iteration(
         None, Vs_q, G2, sigma_init.copy(), norb, **kw)
-    sig_gpu, lam_gpu, _, _ = sc._solve_iteration(
+    sig_gpu, lam_gpu, conv_gpu, _ = sc._solve_iteration(
         None, cupy.asarray(Vs_q), cupy.asarray(G2), sigma_init.copy(), norb, **kw)
 
+    assert conv_cpu and conv_gpu and np.isfinite(lam_cpu)
     assert abs(lam_gpu - lam_cpu) <= 1e-8 * max(1.0, abs(lam_cpu))
     assert isinstance(sig_gpu, np.ndarray)   # returned gap is host
     g_gpu, g_cpu = _phase_align(sig_gpu, sig_cpu)

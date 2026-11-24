@@ -237,7 +237,7 @@ def _validate_even_nmat_for_bond(nmat):
 
 def _validate_bond_set(bond_set):
     """Structural guard on ``bond_set`` (a
-    ``bond_channels.ResolvedInteractionSet``, duck-typed here -- this
+    ``bond_channels.BondSetView``, duck-typed here -- this
     module never imports ``bond_channels``): ``n_channels``/``delta_r``
     present, ``len(delta_r) == n_channels``, and every displacement an
     integer 3-tuple (spec: "Kernel input validation"). Returns
@@ -249,7 +249,7 @@ def _validate_bond_set(bond_set):
         raise ValueError(
             "bubble kernel: bond_set must provide 'n_channels' and "
             "'delta_r' attributes (see "
-            "bond_channels.resolve_interactions)")
+            "bond_channels.BondSetView)")
     if isinstance(n_channels, bool) or not isinstance(
             n_channels, (int, np.integer)) or n_channels <= 0:
         raise ValueError(
@@ -730,6 +730,85 @@ def dense_bubble(green_kw, green0_tail, beta, *, spatial_shape, scheme,
     return _assemble_plain(prepped, scheme, beta, spatial_shape, workers)
 
 
+#: Byte budget of one imaginary-time chunk of the contracted bubble in
+#: :func:`dense_bubble_static`: the chunk length is this budget over the bytes
+#: of one tau slice (at least 1, at most ``nmat``). It bounds the working set
+#: of the static assembly independently of ``nmat``.
+STATIC_BUBBLE_CHUNK_BYTES = 8 << 20
+
+
+def _assemble_static(prepped, scheme, beta, spatial_shape, workers):
+    """The ``nmat // 2`` bosonic row of :func:`_assemble_plain`'s dense arm,
+    without the frequency axis.
+
+    The dense arm transports ``sgn * contract(...)`` (with the equal-time
+    endpoint-mean correction at tau = 0) by ``spatial fftn -> tau_to_boson
+    -> x(-1/beta)``. Every step is linear, so one output row of
+    ``tau_to_boson`` is the weighted tau sum
+    (:func:`matsubara.tau_to_boson_row_weights`) of the real-space contraction,
+    taken here chunk by chunk BEFORE the spatial FFT; the contraction, the
+    sign array, the endpoint correction and the ``-1/beta`` are the dense
+    arm's own. Working set: one ``(nblock, nvol, *pair)`` accumulator plus
+    one chunk (:data:`STATIC_BUBBLE_CHUNK_BYTES`), independent of ``nmat``.
+    """
+    xp = _bk.array_module_of(prepped.green_rt)
+    nx, ny, nz = spatial_shape
+    nblock, nt, nvol, nd, _ = prepped.green_rt.shape
+
+    contract = contract_reduced if scheme == "reduced" else contract_general
+    nd_shape = (nd, nd) if scheme == "reduced" else (nd, nd, nd, nd)
+    nds = nd * nd if scheme == "reduced" else nd ** 4
+
+    weights = _ms.tau_to_boson_row_weights(nt, nt // 2, xp) * prepped.sgn
+
+    slice_bytes = 16 * nblock * nvol * nds
+    chunk = max(1, min(nt, STATIC_BUBBLE_CHUNK_BYTES // max(1, slice_bytes)))
+
+    acc = xp.zeros((nblock, nvol) + nd_shape, dtype=xp.complex128)
+    for start in range(0, nt, chunk):
+        stop = min(start + chunk, nt)
+        part = contract(prepped.green_rt[:, start:stop],
+                        prepped.green_rev[:, start:stop])
+        if start == 0 and prepped.tail_on:
+            # mean of the two equal-time branches (sgn[0] = +1)
+            part[:, 0] = 0.5 * (
+                contract(prepped.fwd0_p, prepped.rev0_p + prepped.jump_r_rev)
+                + contract(prepped.fwd0_p + prepped.jump_f, prepped.rev0_p))
+        acc += xp.tensordot(part, weights[start:stop], axes=([1], [0]))
+        del part
+
+    chi0_q = _bk.spatial_fftn(acc.reshape(nblock, nx, ny, nz, nds),
+                              axes=(1, 2, 3), workers=workers)
+    del acc
+    return chi0_q.reshape(nblock, 1, nvol, *nd_shape) * (-1.0 / beta)
+
+
+def dense_bubble_static(green_kw, green0_tail, beta, *, spatial_shape, scheme,
+                        workers=None):
+    """The ``nmat // 2`` bosonic-frequency slice of :func:`dense_bubble`
+    (the zero bosonic frequency for an even ``nmat``) without building the
+    other frequencies.
+
+    Same inputs, validation, Green/tail contract (including the equal-time
+    endpoint-mean correction) and normalization as :func:`dense_bubble`;
+    the result equals ``dense_bubble(...)[:, nmat // 2:nmat // 2 + 1]`` to
+    floating-point round-off (the imaginary-time sum is taken before the
+    spatial FFT instead of after it). Returns ``(nblock, 1, nvol, p, p)``
+    (``"reduced"``) or ``(nblock, 1, nvol, p, p, p, p)`` (``"general"``),
+    complex128: a one-frequency axis, so a caller indexes it with static
+    index 0. Memory: ``O(nvol * p**4)`` for the result and a bounded tau
+    chunk, instead of ``O(nmat * nvol * p**4)``; the Green function itself
+    (``O(nmat * nvol * p**2)``) is still transformed whole.
+    """
+    (green_kw, green0_tail, beta, nblock, nmat, nvol, nd, spatial_shape
+     ) = _validate_dense_inputs(green_kw, green0_tail, beta, spatial_shape,
+                                 scheme)
+
+    prepped = _prepare_dense(green_kw, green0_tail, beta, spatial_shape,
+                             workers)
+    return _assemble_static(prepped, scheme, beta, spatial_shape, workers)
+
+
 def ir_bubble(green_kw, ax_fermi, ax_bose, *, spatial_shape, scheme,
               workers=None):
     """Sparse-IR particle-hole bubble chi0(q, iOmega_l) on the bosonic IR
@@ -825,6 +904,39 @@ def _roll_spatial(arr, axis, spatial_shape, shift):
     return rolled.reshape(shape)
 
 
+def _pairs_by_shift(delta_r_row, delta_r_col):
+    """Group the ``(m, m')`` channel pairs by their spatial shift
+    ``Delta r_m - Delta r_m'`` (issue #224): ``[(shift, [(m, m'), ...]),
+    ...]``, shifts in order of first appearance and pairs in row-major
+    order within each shift. Every per-pair bubble block depends on the
+    pair ONLY through that shift (the Green functions are shared), so one
+    block per distinct shift serves every pair in its group -- bit for
+    bit, since it is the same computation."""
+    groups = {}
+    for m in range(len(delta_r_row)):
+        dm = delta_r_row[m]
+        for mp in range(len(delta_r_col)):
+            dmp = delta_r_col[mp]
+            shift = (int(dm[0]) - int(dmp[0]),
+                     int(dm[1]) - int(dmp[1]),
+                     int(dm[2]) - int(dmp[2]))
+            groups.setdefault(shift, []).append((m, mp))
+    return list(groups.items())
+
+
+def _read_only(block):
+    """``block`` shared by several yielded pairs: make it read-only where
+    the array module allows it (numpy), so a consumer cannot alter what
+    the next pair of the group receives. CuPy has no read-only flag; the
+    consumers are array-module generic code, so a consumer that wrote into
+    the block would already fail on numpy, where the suite runs. Copying
+    per pair instead would add a fourth N4-sized buffer to the documented
+    bubble budget."""
+    if isinstance(block, np.ndarray):
+        block.flags.writeable = False
+    return block
+
+
 def _bond_pair_full_block(green_fwd_sgn, green_rev, tail_pack, beta,
                           spatial_shape, workers, shift):
     """Compute the FULL-frequency bond bubble block for ONE ``(m, m')``
@@ -897,8 +1009,9 @@ def _bond_pair_full_block(green_fwd_sgn, green_rev, tail_pack, beta,
 
 def _iter_bond_channel_pairs(prepped, bond_set_validated, beta,
                              spatial_shape, workers):
-    """Shared per-pair generator: yields ``((m, m'), block)`` in row-major
-    channel order (``m`` outer, ``m'`` inner), ``block`` the FULL-frequency
+    """Shared per-pair generator: yields ``((m, m'), block)`` grouped by the
+    pair's shift (:func:`_pairs_by_shift`: shifts in order of first
+    appearance, row-major within a shift; issue #224), ``block`` the FULL-frequency
     ``(nmat, nvol, npair, npair)`` complex128 bond bubble for that channel
     pair (see :func:`_bond_pair_full_block`), on ``_prepare_dense``'s
     already-prepared tau/real-space tensors (``nblock`` assumed already
@@ -932,28 +1045,22 @@ def _iter_bond_channel_pairs(prepped, bond_set_validated, beta,
         tail_pack = (prepped.fwd0_p[0], prepped.rev0_p[0],
                      prepped.jump_f[0], prepped.jump_r_rev[0])
 
-    for m in range(n_channels):
-        dm = delta_r[m]
-        for mp in range(n_channels):
-            dmp = delta_r[mp]
-            shift = (int(dm[0]) - int(dmp[0]),
-                     int(dm[1]) - int(dmp[1]),
-                     int(dm[2]) - int(dmp[2]))
-
-            block = _bond_pair_full_block(
-                green_fwd_sgn, green_rev, tail_pack, beta, spatial_shape,
-                workers, shift)
-            yield (m, mp), block
-            # A generator's locals -- including `block`, just yielded --
-            # stay bound in its suspended frame across the yield regardless
-            # of what the consumer does with ITS reference, so without this
-            # the previous pair's block stays alive while the next pair's
-            # is being built (a 4th N4-sized buffer beyond the documented
-            # budget). Runs when the generator is resumed for the next
-            # pair, i.e. AFTER the consumer's own `del block` (if any) has
-            # already dropped its reference -- so this is the point the
-            # buffer's refcount actually reaches zero.
-            del block
+    for shift, pairs in _pairs_by_shift(delta_r, delta_r):
+        block = _read_only(_bond_pair_full_block(
+            green_fwd_sgn, green_rev, tail_pack, beta, spatial_shape,
+            workers, shift))
+        for pair in pairs:
+            yield pair, block
+        # A generator's locals -- including `block`, just yielded -- stay
+        # bound in its suspended frame across the yield regardless of what
+        # the consumer does with ITS reference, so without this the previous
+        # shift's block stays alive while the next one is being built (a 4th
+        # N4-sized buffer beyond the documented budget). Runs when the
+        # generator is resumed after the LAST pair of the group, i.e. AFTER
+        # the consumer's own `del block` (if any) has already dropped its
+        # reference -- so this is the point the buffer's refcount actually
+        # reaches zero.
+        del block
 
 
 def _assemble_bond_static(prepped, beta, bond_set_validated, spatial_shape,
@@ -1004,10 +1111,12 @@ def _iter_bond_dynamic(green_kw, green0_tail, beta, bond_set, *,
     Yields
     ------
     ((m, mp), block)
-        ``(m, mp)`` in row-major channel order (``m`` outer, ``mp`` inner,
-        both ``0 .. bond_set.n_channels - 1``). ``block`` is
-        ``(nmat, nvol, npair, npair)`` complex128, FRESHLY ALLOCATED per
-        pair (never a reused buffer). Frequency axis 0 is bosonic
+        Every ``(m, mp)`` once (both ``0 .. bond_set.n_channels - 1``),
+        grouped by the shift ``Delta r_m - Delta r_mp`` (shifts in order of
+        first appearance, row-major within a shift). ``block`` is ``(nmat, nvol, npair, npair)`` complex128,
+        computed ONCE per distinct shift and yielded for every pair of
+        that shift (issue #224): the pairs of one shift receive the SAME
+        array, read-only on numpy -- copy it before modifying it. Frequency axis 0 is bosonic
         Matsubara index ``l``, related to the bosonic Matsubara index by
         ``2*l - nmat`` (zero at ``l = nmat // 2`` -- pinned to equal
         :func:`bond_bubble_static`'s output at that same channel pair, up
@@ -1060,9 +1169,10 @@ def bond_bubble_static(green_kw, green0_tail, beta, bond_set, *,
         correction. Same pairing-provenance caveat as :func:`dense_bubble`.
     beta : float
         Inverse temperature; must be > 0.
-    bond_set : ResolvedInteractionSet-like
-        Bond-channel topology (``delta_r``, ``n_channels``), e.g. from
-        ``bond_channels.resolve_interactions``.
+    bond_set : BondSetView-like
+        Bond-channel topology (``delta_r``, ``n_channels``), e.g. a
+        ``bond_channels.BondSetView`` of
+        ``bond_channels.resolve_bond_topology``.
     spatial_shape : tuple of 3 positive ints (Nx, Ny, Nz)
         The lattice shape; ``prod(spatial_shape)`` must equal
         ``green_kw.shape[2]`` (``nvol``).
@@ -1260,7 +1370,7 @@ def _ir_bond_static(green_kw, ax_fermi, ax_bose, bond_set, *,
     ax_fermi, ax_bose : IRAxis-like
         Already-constructed fermionic/bosonic IR axis objects; must be
         parameter-compatible (see :func:`_validate_ir_axes`).
-    bond_set : ResolvedInteractionSet-like
+    bond_set : BondSetView-like
         Bond-channel topology (``delta_r``, ``n_channels``).
     spatial_shape : tuple of 3 positive ints (Nx, Ny, Nz)
         The lattice shape; ``prod(spatial_shape)`` must equal
@@ -1303,19 +1413,13 @@ def _ir_bond_static(green_kw, ax_fermi, ax_bose, bond_set, *,
     chi_bar = xp.zeros((nvol, nD, nD), dtype=xp.complex128)
     freq0 = np.array([0], dtype=np.int64)
 
-    for m in range(n_channels):
-        dm = delta_r[m]
-        for mp in range(n_channels):
-            dmp = delta_r[mp]
-            shift = (int(dm[0]) - int(dmp[0]),
-                     int(dm[1]) - int(dmp[1]),
-                     int(dm[2]) - int(dmp[2]))
-
-            block = _ir_bond_pair_block(g_rt, g_rev, ax_bose, spatial_shape,
-                                        workers, shift, freq0)
+    for shift, pairs in _pairs_by_shift(delta_r, delta_r):
+        block = _ir_bond_pair_block(g_rt, g_rev, ax_bose, spatial_shape,
+                                    workers, shift, freq0)
+        for m, mp in pairs:                    # one block per shift (#224)
             chi_bar[:, m * npair:(m + 1) * npair,
                     mp * npair:(mp + 1) * npair] = block[..., 0]
-            del block
+        del block
 
     return chi_bar
 
@@ -1354,8 +1458,9 @@ def _ir_bond_static(green_kw, ax_fermi, ax_bose, bond_set, *,
 def _iter_transverse_bond_channel_pairs(prepped, delta_r, beta,
                                         spatial_shape, workers):
     """Shared per-pair generator for the transverse (cross-block) bond
-    bubble: yields ``((m, mp), block)`` in row-major channel order (``m``
-    outer, ``mp`` inner), ``block`` the FULL-frequency ``(nmat, nvol,
+    bubble: yields ``((m, mp), block)`` grouped by shift as
+    :func:`_iter_bond_channel_pairs` does (one shared, read-only-on-numpy
+    block per distinct shift), ``block`` the FULL-frequency ``(nmat, nvol,
     npair, npair)`` complex128 bond bubble for that channel pair, built by
     :func:`_bond_pair_full_block` -- the SAME per-pair pipeline the
     longitudinal path's :func:`_iter_bond_channel_pairs` uses, differing
@@ -1409,22 +1514,16 @@ def _iter_transverse_bond_channel_pairs(prepped, delta_r, beta,
         tail_pack = (prepped.fwd0_p[1], prepped.rev0_p[0],
                      prepped.jump_f[1], prepped.jump_r_rev[0])
 
-    for m in range(B):
-        dm = delta_r[m]
-        for mp in range(B):
-            dmp = delta_r[mp]
-            shift = (int(dm[0]) - int(dmp[0]),
-                     int(dm[1]) - int(dmp[1]),
-                     int(dm[2]) - int(dmp[2]))
-
-            block = _bond_pair_full_block(
-                green_fwd_sgn, green_rev, tail_pack, beta, spatial_shape,
-                workers, shift)
-            yield (m, mp), block
-            # See _iter_bond_channel_pairs's identical comment: releases
-            # the previous pair's block from this generator's own
-            # suspended frame, keeping the per-pair working set bounded.
-            del block
+    for shift, pairs in _pairs_by_shift(delta_r, delta_r):
+        block = _read_only(_bond_pair_full_block(
+            green_fwd_sgn, green_rev, tail_pack, beta, spatial_shape,
+            workers, shift))
+        for pair in pairs:
+            yield pair, block
+        # See _iter_bond_channel_pairs's identical comment: releases the
+        # previous shift's block from this generator's own suspended frame,
+        # keeping the per-pair working set bounded.
+        del block
 
 
 def transverse_bond_bubble_static(green_kw, green0_tail, beta, topo, *,

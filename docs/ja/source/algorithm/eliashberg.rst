@@ -99,7 +99,7 @@ RPA感受率は
 .. math::
 
    V^S_{\alpha\beta}(\mathbf{q})
-   = \frac{1}{2}(W_c + W_s)_{\alpha\beta}
+   = \frac{1}{2}(W_c - W_s)_{\alpha\beta}
      + \frac{3}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
      - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}
 
@@ -108,9 +108,13 @@ RPA感受率は
 .. math::
 
    V^T_{\alpha\beta}(\mathbf{q})
-   = \frac{1}{2}(W_c - W_s)_{\alpha\beta}
+   = \frac{1}{2}(W_c + W_s)_{\alpha\beta}
      - \frac{1}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
      - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}
+
+裸の（一次の）項は、一重項で :math:`\tfrac12(W_c - W_s) = U + V`\ 、
+三重項で :math:`\tfrac12(W_c + W_s) = V` です。オンサイトの :math:`U` は一重項にだけ効き、
+同時刻の三重項には効きません。
 
 
 一般モード（S/C行列定式化）
@@ -180,6 +184,15 @@ RPA感受率は
    ついてはエルミート共役で閉じた宣言（\ :math:`P_{ba} = P_{ab}^{*}`\ 、
    物理的に妥当な形であり、転置対称である必要はありません）です。
    reduced スキームのファイルはこの向きに依存しません。
+   ``sc_vertex_version = 3``\ が記録された感受率ファイル（issue #232）では、
+   全てのオフサイト行を、同じ\ ``(R, a, b)``\ をもつトランスファーの行の
+   ボンドに置きます。CoulombInter、Hund、Ising、Exchange、
+   PairHop のいずれかが（PairLift は上と同じ理由で対象外です）
+   :math:`R \to -R`\ について対称でない
+   （\ :math:`X_{ab}(R) \neq X_{ab}(-R)`\ ）オフサイト行を宣言している場合、
+   ``sc_vertex_version = 2``\ が記録されたファイル、またはバージョンが記録
+   されていないファイルはどちらのスキームでも拒否されます。そのようなファイルは、その行を逆向きのボンドに置いて計算された
+   ものだからです。
 
 RPA感受率は
 

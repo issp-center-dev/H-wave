@@ -10,6 +10,7 @@ from . import backend as _bk
 from . import bond_channels as _bc
 from . import flex_bond as _fb
 from . import matsubara as _ms
+from . import half_grid as _hg
 
 logger = logging.getLogger("qlms").getChild("eliashberg_bond")
 
@@ -22,9 +23,13 @@ _GIB = 1024.0 ** 3
 
 class ArrayBlockSource:
     """Host arrays ``{name: (nmat, nvol, ND, ND)}`` behind the block-source
-    contract of :class:`~hwave.solver.flex_bond.BondBlockStore`."""
+    contract of :class:`~hwave.solver.flex_bond.BondBlockStore`.
 
-    def __init__(self, arrays, nd):
+    ``half_grid`` (issue #223): the arrays hold the ``nmat // 2 + 1`` stored
+    slices of the half bosonic grid (:mod:`hwave.solver.half_grid`) and
+    ``nmat`` (required then) is the full grid's length."""
+
+    def __init__(self, arrays, nd, *, half_grid=False, nmat=None):
         self.nd = int(nd)
         if self.nd <= 0:
             raise ValueError("ArrayBlockSource: nd must be a positive integer, got {}".format(nd))
@@ -41,7 +46,17 @@ class ArrayBlockSource:
             self._a[k] = v
         if shape is None:
             raise ValueError("ArrayBlockSource: no arrays")
-        self.nmat, self.nvol, self.ND = int(shape[0]), int(shape[1]), int(shape[2])
+        self.half_grid = bool(half_grid)
+        self.nslices = int(shape[0])
+        if self.half_grid:
+            if nmat is None or _hg.nslices(nmat) != self.nslices:
+                raise ValueError("ArrayBlockSource: a half-grid source needs nmat with "
+                                 "nmat // 2 + 1 = {} slices, got nmat = {}"
+                                 .format(self.nslices, nmat))
+            self.nmat = int(nmat)
+        else:
+            self.nmat = self.nslices
+        self.nvol, self.ND = int(shape[1]), int(shape[2])
         self.B = self.ND // self.nd
 
     @property
@@ -57,6 +72,22 @@ class ArrayBlockSource:
     def get_pair(self, name, alpha, beta):
         nd = self.nd
         return self._a[name][:, :, alpha * nd:(alpha + 1) * nd, beta * nd:(beta + 1) * nd]
+
+    def grid_index(self, s0, s1):
+        """The grid index ``l`` of the stored slices ``s0 ... s1 - 1``."""
+        if self.half_grid:
+            return _hg.grid_index(self.nmat, s0, s1)
+        return np.arange(int(s0), int(s1), dtype=np.int64)
+
+    def get_pair_full(self, name, alpha, beta, xp=None):
+        """The pair block on the FULL grid as a new contiguous host array
+        (the contract of :meth:`BondBlockStore.get_pair_full`)."""
+        ab = self.get_pair(name, alpha, beta)
+        if not self.half_grid:
+            full = np.ascontiguousarray(ab)
+        else:
+            full = _hg.expand(ab, self.nmat, ba=self.get_pair(name, beta, alpha))
+        return full if xp is None else _bk.to_device(full, xp)
 
 
 @dataclass(frozen=True)
@@ -88,12 +119,23 @@ class PairVertexAccumulator:
     ``out_store[out_slot]`` (host), zeroed on construction. ``ir = (axF, axB)``:
     one OR two pairing types; the targets are the per-type, per-stage
     coefficient arrays of spec 4.5 and nothing is written to any store.
+
+    ``half_grid`` (issue #223): the sources (and the uniform target) hold
+    the ``nmat // 2 + 1`` stored slices ``l(h)`` of the half bosonic grid.
+    The pairing vertex obeys ``Gamma(q, nmat - l) = Gamma(q, l)^dagger`` on
+    the ``ND x ND`` matrix, as ``chibar`` does (``S`` and ``C`` are
+    Hermitian), so only the stored slices are re-dressed and accumulated;
+    the uniform target is the half-grid slot, rebuilt by the kernel through
+    ``get_pair_full``, and the IR fit folds every paired slice as
+    ``fit[l] P(l) + fit[nmat - l] P(l)^dagger`` (the endpoints ``l = 0`` and
+    ``nmat / 2`` once). The residual pass compares both members of a pair.
     """
 
     _STAGES = ("spin", "charge")
 
     def __init__(self, dev, *, pairing_types, nb, nmat, nvol, nd, spatial_shape, ir=None,
-                 out_store=None, out_slot="W", ir_keep_static=False, workers=1):
+                 out_store=None, out_slot="W", ir_keep_static=False, workers=1,
+                 half_grid=False):
         pairing_types = tuple(pairing_types)
         if not pairing_types:
             raise ValueError("PairVertexAccumulator: no pairing type requested")
@@ -115,6 +157,9 @@ class PairVertexAccumulator:
                              "multiple of the channel block size nd = {}".format(self.ND, self.nd))
         self.B = self.ND // self.nd
         self.workers = workers
+        self.half_grid = bool(half_grid)
+        # the frequency slices every source and the uniform target hold
+        self.nslices = _hg.nslices(self.nmat) if self.half_grid else self.nmat
         self.ir = ir
         self.ir_keep_static = bool(ir_keep_static)
         self._done = set()
@@ -129,11 +174,13 @@ class PairVertexAccumulator:
                                  "pairing type, got {}".format(self.pairing_types))
             if out_store is None:
                 out_store = ArrayBlockSource(
-                    {out_slot: np.zeros((self.nmat, self.nvol, self.ND, self.ND), np.complex128)},
-                    self.nd)
+                    {out_slot: np.zeros((self.nslices, self.nvol, self.ND, self.ND),
+                                        np.complex128)},
+                    self.nd, half_grid=self.half_grid, nmat=self.nmat)
             else:
-                for l0 in range(0, self.nmat, self.nb):
-                    l1 = min(self.nmat, l0 + self.nb)
+                self._check_grid(out_store, "the target store")
+                for l0 in range(0, self.nslices, self.nb):
+                    l1 = min(self.nslices, l0 + self.nb)
                     out_store.get_freq_batch(out_slot, l0, l1)[...] = 0.0
             self._target, self._slot = out_store, out_slot
         else:
@@ -147,6 +194,39 @@ class PairVertexAccumulator:
                                for st in self._STAGES} for eta in self.pairing_types}
             self._r = {st: np.zeros((self.B, self.B)) for st in self._STAGES}
             self._a = {st: np.zeros((self.B, self.B)) for st in self._STAGES}
+
+    # -- the frequency grid ------------------------------------------------
+    def _check_grid(self, source, what):
+        """Refuse a source whose frequency layout is not the accumulator's:
+        the half-grid flag, and for a half-grid source its full grid ``nmat``
+        and its slice count (a half-grid batch of another ``nmat`` would be
+        folded at the wrong partners). ``nvol`` and ``ND`` are checked when
+        the source carries them. Runs before anything is absorbed."""
+        if bool(getattr(source, "half_grid", False)) != self.half_grid:
+            raise ValueError("PairVertexAccumulator: {} is {} but the accumulator works on the "
+                             "{}".format(what, "a half-grid store" if not self.half_grid
+                                         else "a full-grid store",
+                                         "half grid" if self.half_grid else "full grid"))
+        want = [("nvol", self.nvol), ("ND", self.ND)]
+        if self.half_grid:
+            want = [("nmat", self.nmat), ("nslices", self.nslices)] + want
+        for attr, value in want:
+            got = getattr(source, attr, None)
+            if (got is not None or attr in ("nmat", "nslices")) and got != value:
+                raise ValueError("PairVertexAccumulator: {} has {} = {} but the accumulator "
+                                 "works with {} = {}".format(what, attr, got, attr, value))
+
+    def _batches(self):
+        """``(s0, s1, ls)`` over the stored slices: ``ls`` the grid index of
+        each slice under the half grid, ``None`` on the full grid."""
+        for s0 in range(0, self.nslices, self.nb):
+            s1 = min(self.nslices, s0 + self.nb)
+            yield s0, s1, (_hg.grid_index(self.nmat, s0, s1) if self.half_grid else None)
+
+    def _where(self, s0, s1):
+        if self.half_grid:
+            return _hg.describe_slices(self.nmat, s0, s1)
+        return "[{}, {})".format(s0, s1)
 
     # -- stages -----------------------------------------------------------
     def _refuse_if_tainted(self):
@@ -178,18 +258,41 @@ class PairVertexAccumulator:
         the spin AND the charge channel with :func:`flex_bond._dress` and add
         both contributions for every requested pairing type."""
         self._check_open(self._STAGES)
+        self._check_grid(source, "the chibar source")
         xp, S, C = self.xp, self.dev.S, self.dev.C
+        hgd = None
+        if self.half_grid:
+            # issue #223: the stored slices are re-dressed, and the mirrored
+            # ones are guarded under the FLEX map's own rule
+            # (flex_bond.HalfGridDressing; this re-dressing refuses on every
+            # violation, the "refuse" policy)
+            hgd = _fb.HalfGridDressing(
+                source.get_freq_batch("chibar", 0, self.nslices), S, C, nmat=self.nmat,
+                spatial_shape=self.shape, cond_tol=cond_tol, guard_freqs=guard_freqs,
+                guard_policy="refuse")
+
+            def dress(cb, V, channel, ls, guard_only=False):
+                return _fb._dress(cb, V, channel, int(ls[0]), self.nmat, self.shape, cond_tol,
+                                  None, guard_freqs, ls=ls, guard_only=guard_only)
         try:
-            for l0 in range(0, self.nmat, self.nb):
-                l1 = min(self.nmat, l0 + self.nb)
-                cb = _bk.to_device(source.get_freq_batch("chibar", l0, l1), xp)
-                chi_s_b, _ = _fb._dress(cb, S, "spin", l0, self.nmat, self.shape, cond_tol,
-                                        None, guard_freqs)
-                self._absorb("spin", S[None] @ chi_s_b @ S[None], l0, l1)
+            for l0, l1, ls in self._batches():
+                cb = _fb.freq_batch_on(source, "chibar", l0, l1, xp)
+                if hgd is None:
+                    chi_s_b, _ = _fb._dress(cb, S, "spin", l0, self.nmat, self.shape, cond_tol,
+                                            None, guard_freqs)
+                else:
+                    if hgd.mirror_guard:
+                        for V_, ch in ((S, "spin"), (C, "charge")):
+                            hgd.mirror(dress, cb, ls, V_, ch, None)
+                    chi_s_b = hgd.stored(dress, cb, ls, S, "spin", None)
+                self._add("spin", S[None] @ chi_s_b @ S[None], l0, l1, ls)
                 del chi_s_b
-                chi_c_b, _ = _fb._dress(cb, C, "charge", l0, self.nmat, self.shape, cond_tol,
-                                        None, guard_freqs)
-                self._absorb("charge", C[None] @ chi_c_b @ C[None], l0, l1)
+                if hgd is None:
+                    chi_c_b, _ = _fb._dress(cb, C, "charge", l0, self.nmat, self.shape, cond_tol,
+                                            None, guard_freqs)
+                else:
+                    chi_c_b = hgd.stored(dress, cb, ls, C, "charge", None)
+                self._add("charge", C[None] @ chi_c_b @ C[None], l0, l1, ls)
                 del chi_c_b, cb
         except Exception:
             # a batch was absorbed before this raise; the partial vertex cannot
@@ -205,11 +308,11 @@ class PairVertexAccumulator:
         if channel not in self._STAGES:
             raise ValueError("channel must be 'spin' or 'charge', got {!r}".format(channel))
         self._check_open((channel,))
+        self._check_grid(source, "the {!r} source".format(name))
         V = self.dev.S if channel == "spin" else self.dev.C
         try:
-            for l0 in range(0, self.nmat, self.nb):
-                l1 = min(self.nmat, l0 + self.nb)
-                chi_b = _bk.to_device(source.get_freq_batch(name, l0, l1), self.xp)
+            for l0, l1, ls in self._batches():
+                chi_b = _fb.freq_batch_on(source, name, l0, l1, self.xp)
                 # finiteness of the RAW member batch, before the V @ chi_b @ V
                 # contraction (issue #205): the sidecar member() returns a
                 # memmap and skips the whole-array scan, so the per-batch scan
@@ -219,8 +322,8 @@ class PairVertexAccumulator:
                 if not bool(self.xp.all(self.xp.isfinite(chi_b))):
                     raise ValueError(
                         "PairVertexAccumulator: non-finite values in the {} channel member {!r}, "
-                        "frequency batch [{}, {})".format(channel, name, l0, l1))
-                self._absorb(channel, V[None] @ chi_b @ V[None], l0, l1)
+                        "frequency batch {}".format(channel, name, self._where(l0, l1)))
+                self._add(channel, V[None] @ chi_b @ V[None], l0, l1, ls)
                 del chi_b
         except Exception:
             # a batch was absorbed before this raise; the partial vertex cannot
@@ -229,32 +332,74 @@ class PairVertexAccumulator:
             raise
         self._done.add(channel)
 
-    def _absorb(self, channel, P, l0, l1):
+    def _add(self, channel, P, l0, l1, ls):
+        """:meth:`_absorb` of one batch; on the full grid (``ls`` None) with
+        exactly the call it always had."""
+        if ls is None:
+            self._absorb(channel, P, l0, l1)
+        else:
+            self._absorb(channel, P, l0, l1, ls)
+
+    def _absorb(self, channel, P, l0, l1, ls=None):
+        """Add the contribution ``P`` of the stored slices ``[l0, l1)`` (grid
+        indices ``ls`` under the half grid, ``None`` on the full grid)."""
         xp = self.xp
         if not bool(xp.all(xp.isfinite(P))):
             raise ValueError("PairVertexAccumulator: non-finite {} contribution in the frequency "
-                             "batch [{}, {})".format(channel, l0, l1))
+                             "batch {}".format(channel, self._where(l0, l1)))
         idx = 0 if channel == "spin" else 1
-        Ph = _bk.to_host(P)
+        tgt_dev = False
+        if self.ir is None:
+            # a device-resident target (the FLEX device block store, issue
+            # #275) takes the contribution on the device, without a host trip
+            tgt_dev = _bk.array_module_of(
+                self._target.get_freq_batch(self._slot, l0, l0)) is not np
+        Ph = P if tgt_dev else _bk.to_host(P)
+        Pr, Pm = Ph, None
+        if ls is None:
+            cols, cols_m = slice(l0, l1), None
+        elif self.ir is not None:
+            # issue #223: the IR sums run over the FULL grid. Every stored
+            # slice contributes at its own l; all but the self-conjugate
+            # endpoints l = 0 and nmat / 2 contribute again at the partner
+            # nmat - l, as P(l)^dagger (the ND x ND matrix)
+            rows, sel, cols_m = _hg.fold_rows(ls, self.nmat)
+            cols = ls[rows]
+            if rows.size != ls.size:
+                Pr = Ph[rows]
+            if sel.size:
+                Pm = _hg.dagger(Ph[sel])
+        else:
+            cols, cols_m = None, None
         for eta in self.pairing_types:
             if self._resid_mode and eta != self._resid_type:
                 continue
             c = COEFF[eta][idx]
             if self.ir is None:
+                # the uniform target is the source's own (half-grid) layout,
+                # on the target's module (Ph is P itself for a device target)
                 self._target.get_freq_batch(self._slot, l0, l1)[...] += c * Ph
             elif not self._resid_mode:
-                self._sol[eta][channel] += np.einsum("lvij,lc->cvij", c * Ph, self._fit[l0:l1])
+                sol = self._sol[eta][channel]
+                sol += np.einsum("lvij,lc->cvij", c * Pr, self._fit[cols])
+                if Pm is not None:
+                    # the folded IR sum: fit[nmat - l] P(l)^dagger
+                    sol += np.einsum("lvij,lc->cvij", c * Pm, self._fit[cols_m])
             else:
-                self._residual(eta, channel, c * Ph, l0, l1)
+                self._residual(eta, channel, c * Pr, cols)
+                if Pm is not None:
+                    self._residual(eta, channel, c * Pm, cols_m)
 
-    def _residual(self, eta, channel, G, l0, l1):
+    def _residual(self, eta, channel, G, cols):
         """Componentwise per-block misfit of this stage's own fit against this
         stage's own contribution (spec 4.5): ``eval(sol)`` reconstructs exactly
         what the kernel will use -- the smooth coefficients alone when the
-        constant is dropped, plus the constant when it is retained."""
+        constant is dropped, plus the constant when it is retained. ``cols``
+        are the grid indices of the rows of ``G`` (a slice or an index
+        array)."""
         self._resid_seen.add(channel)
         sol = self._sol[eta][channel]
-        rec = np.einsum("cvij,cl->lvij", sol[:self.L], self._ev[:, l0:l1])
+        rec = np.einsum("cvij,cl->lvij", sol[:self.L], self._ev[:, cols])
         if self.ir_keep_static:
             rec = rec + sol[self.L][None]
         nd, B = self.nd, self.B
@@ -453,7 +598,7 @@ def estimate_pair_memory(*, nmat, ntau, nfreq, nvol, norb, B, num_eigenvalues, r
 # The pairing kernel on the uniform grid (spec 3, 4.1-4.4)
 # =============================================================================
 
-def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
+def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape, *, topo):
     """The frequency-INDEPENDENT pairing vertex of spec 4.2.
 
     ``0.5 (S_0 + C_0)`` (singlet) / ``0.5 (C_0 - S_0)`` (triplet) built from the
@@ -461,7 +606,10 @@ def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
     ``(l1, l2, l3, l4)`` layout by the shared
     :func:`~hwave.solver.eliashberg_dynamic._instantaneous_vertex` (which
     evaluates ``sc._compute_vertices_flex`` at ``chi_s = chi_c = 0``), so the
-    bond path and the on-site path carry bit-identical bare terms.
+    bond path and the on-site path carry bit-identical bare terms; plus, in the
+    singlet channel, the bare pairing of the off-site ``Exchange`` and
+    ``PairHop`` rows of ``topo`` (:func:`offsite_singlet_bare_vertex`), which
+    the channel-0 blocks do not contain.
 
     Parameters
     ----------
@@ -473,6 +621,10 @@ def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
     pairing_type : {"singlet", "triplet"}
     spatial_shape : tuple
         ``(Nx, Ny, Nz)``.
+    topo : bond_channels.BondTopology or None
+        The topology ``S`` and ``C`` were built on. Keyword-only and required,
+        so that no caller drops the off-site bare terms by omission; ``None``
+        states that there are no off-site Exchange or PairHop rows.
 
     Returns
     -------
@@ -483,8 +635,62 @@ def instantaneous_vertex(S, C, nd, pairing_type, spatial_shape):
     norb = int(round(nd ** 0.5))
     S0 = np.asarray(S)[:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
     C0 = np.asarray(C)[:, :nd, :nd].reshape(nx, ny, nz, nd, nd)
-    return _ed._instantaneous_vertex({}, norb, nx, ny, nz, pairing_type=pairing_type,
-                                     convention="myo", sc_matrices=(S0, C0))
+    V = _ed._instantaneous_vertex({}, norb, nx, ny, nz, pairing_type=pairing_type,
+                                  convention="myo", sc_matrices=(S0, C0))
+    if pairing_type == "singlet" and topo is not None:
+        V = V + offsite_singlet_bare_vertex(topo, norb, spatial_shape)
+    return V
+
+
+def offsite_singlet_bare_vertex(topo, norb, spatial_shape):
+    """The first-order SINGLET pairing vertex of the off-site ``Exchange`` and
+    ``PairHop`` rows of ``topo``, in the layout of :func:`instantaneous_vertex`
+    (``(a, b, c, d)`` with the gap ``Delta_ad(r) = -sum_bc V_abcd(r) F_bc(r)``,
+    momentum ``q`` on the spatial axes).
+
+    Neither type has density (Hartree) content, so the channel-0 blocks of the
+    bond vertices carry none of their pairing. Both act on a pair as a
+    displacement-diagonal (``q``-convolution) term:
+
+    * ``Exchange`` row ``(R, a, b)`` moves the pair ``(a up at 0, b down at R)``
+      out of ``(b up at R, a down at 0)``; on a singlet amplitude
+      (``F_ba(-R) = F_ab(R)``) that is the ``(aa, bb)`` element at the pair
+      displacement ``-R``, i.e. at ``delta_r[m]`` of the channel the row is
+      filed on;
+    * ``PairHop`` row ``(R, a, b)`` moves an on-site ``b`` pair into an on-site
+      ``a`` pair one bond away: the ``(ab, ba)`` element at zero displacement.
+
+    In the equal-spin triplet channel both vanish (a spin flip and a pair
+    transfer have no equal-spin pairing). Validated against an independent
+    spin-orbital first-order construction (tests/test_sc_bond_pairing_oracle.py)
+    at ``norb = 1`` and on an inter-orbital, mirror-asymmetric ``norb = 2``
+    chain, for both orientations of the declared row. The coefficients must be
+    real to the tolerance ``bond_channels.build_sc_bond_channel`` applies;
+    their real part is used, as there."""
+    nx, ny, nz = (int(x) for x in spatial_shape)
+    Vr = np.zeros((norb, norb, norb, norb, nx, ny, nz), dtype=complex)
+    delta_r = np.asarray(topo.delta_r)
+    ex = topo.coeffs.get("Exchange")
+    ph = topo.coeffs.get("PairHop")
+    if ex is None and ph is None:
+        return Vr
+    from .bond_channels import is_real_coefficient
+    for t, arr in (("Exchange", ex), ("PairHop", ph)):
+        if arr is not None:
+            bad = [v for v in np.asarray(arr).ravel() if not is_real_coefficient(v)]
+            if bad:
+                raise ValueError(
+                    "offsite_singlet_bare_vertex: the off-site {} coefficient {} is complex; only "
+                    "real off-site coefficients are supported".format(t, bad[0]))
+    a = np.arange(norb)[:, None]
+    b = np.arange(norb)[None, :]
+    for m in range(1, len(delta_r)):
+        if ex is not None:
+            x, y, z = (int(v) % n for v, n in zip(delta_r[m], (nx, ny, nz)))
+            Vr[a, a, b, b, x, y, z] += np.asarray(ex[m]).real
+        if ph is not None:
+            Vr[a, b, b, a, 0, 0, 0] += np.asarray(ph[m]).real
+    return np.fft.fftn(Vr, axes=(4, 5, 6))
 
 
 def _vinst_as_block(V_inst, nd, nvol):
@@ -509,7 +715,7 @@ def block_to_rtau_uniform(blk, spatial_shape, norb, workers, xp):
     nmat = blk.shape[0]
     nvol = nx * ny * nz
     nd = norb * norb
-    b = _bk.to_device(np.ascontiguousarray(blk) if isinstance(blk, np.ndarray) else blk, xp)
+    b = _bk.to_device(np.ascontiguousarray(blk) if _bk.array_module_of(blk) is np else blk, xp)
     bt = _ms.boson_to_tau(b.reshape(nmat, nvol * nd * nd), axis=0)
     br = _bk.spatial_ifftn(bt.reshape(nmat, nx, ny, nz, nd * nd), axes=(1, 2, 3),
                            workers=workers)
@@ -565,17 +771,37 @@ class BondPairKernel:
     .. code-block:: text
 
         F(k, n)        = sum G2(k, n) phi(k, n)                 (orbital pair)
-        F_beta(r, tau) = roll(ifft F(r, tau), -R_beta)
-        P_alpha        = - sum_beta Gamma_{alpha beta}(r, tau) F_beta(r, tau)
-        out(k, n)      = tau->freq fft sum_alpha roll(P_alpha, -R_alpha)
+        F_alpha(r, tau) = roll(ifft F(r, tau), +R_alpha)
+        P_beta         = - sum_alpha Gamma_{alpha beta}(r, tau) F_alpha(r, tau)
+        out(k, n)      = tau->freq fft sum_beta roll(P_beta, +R_beta)
 
     i.e. ``2B`` rolls and ``B**2`` real-space multiply-accumulates per matvec.
     The roll convention is spec 4.3: ``e^{+ik.R} f(k)`` is ``f(r + R)``, which
-    on the FFT grid is ``xp.roll(f, -R, axis=(2, 3, 4))`` -- the same rule the
-    static bond kernel (:func:`~hwave.solver.bond_channels.make_bond_kernel`)
-    realizes with explicit ``e^{+ik.dr_m}`` phases and the FLEX bond transport
-    (``flex_bond.calc_self_energy_bond``) realizes with its ``R_alpha -
-    R_beta`` shift.
+    on the FFT grid is ``xp.roll(f, -R, axis=(2, 3, 4))``; the pair legs here
+    carry ``e^{-ik.R}``, i.e. ``xp.roll(f, +R)``.
+
+    Pair-leg geometry (issue #232). In momentum space one matvec is
+
+    .. code-block:: text
+
+        out_{a d}(k) = -(1/N) sum_{alpha, beta} e^{-ik.R_beta}
+            sum_{k'} Gamma_{alpha beta; a b c d}(k - k') e^{-ik'.R_alpha} F_{b c}(k')
+
+    with ``Gamma_{alpha beta; a b c d}`` the ph-layout block (row pair
+    ``(alpha; a, b)``, column pair ``(beta; c, d)``). The ROW channel
+    ``alpha`` carries the INPUT phase and the COLUMN channel ``beta`` the
+    OUTPUT phase, and both phases are ``e^{-ik.R}``, because channel ``m``'s slot ``(a, b)`` is the bond with orbital ``a``
+    in the origin cell and ``b`` in the cell at ``-R_m`` -- the bond the
+    two-body rows declared at ``-R_m`` act on, which is where
+    ``resolve_bond_topology`` stores them. This is the bond of the Transfer
+    row with the same ``(R, a, b)`` as the declared two-body row (Wannier90
+    / RESPACK convention). The second-order vertex of an inter-orbital,
+    mirror-asymmetric CoulombInter model built this way equals an
+    independent spin-orbital second-order calculation to round-off, and the
+    opposite placement misses by O(1)
+    (``tests/test_bond_pairing_placement.py``). The previous leg assignment
+    (row channel on the output, column channel on the input, both
+    ``e^{+ik.R}``) reproduced neither placement.
 
     The frequency-independent bare vertex ``V_inst`` (spec 4.2) is added to the
     CHANNEL-0 block at every bosonic frequency: on the dense uniform tau grid
@@ -708,9 +934,23 @@ class BondPairKernel:
     def _raw_block_uniform(self, a, b):
         """The ``(a, b)`` vertex block on the bosonic grid, with the bare term
         added to the channel-0 block at every frequency (spec 4.2)."""
-        blk = np.array(self.vertex.source.get_pair(self.vertex.slot, a, b), copy=True)
+        source = self.vertex.source
+        if getattr(source, "half_grid", False):
+            # issue #223: the stored slices of (a, b) and the mirror of those of
+            # (b, a), Gamma_ab(l) = Gamma_ba(nmat - l)^dagger, as a NEW
+            # full-grid array (the bare term is added to it below)
+            blk = source.get_pair_full(self.vertex.slot, a, b)
+        else:
+            # a copy on the source's own module (a device block store keeps
+            # its vertex on the device, issue #275); the bare term below must
+            # not reach the source
+            src = source.get_pair(self.vertex.slot, a, b)
+            xs = _bk.array_module_of(src)
+            blk = np.array(src, copy=True) if xs is np else xs.ascontiguousarray(
+                xs.array(src, copy=True))
         if a == 0 and b == 0 and self.V_inst is not None:
-            blk += _vinst_as_block(self.V_inst, self.nd, self.nvol)[None]
+            blk += _bk.to_device(_vinst_as_block(self.V_inst, self.nd, self.nvol),
+                                 _bk.array_module_of(blk))[None]
         return blk
 
     def _block_rtau(self, a, b, mod):
@@ -769,33 +1009,38 @@ class BondPairKernel:
         else:
             F_rt = _bk.spatial_ifftn(_ms.fermion_to_tau(F, axis=-1), axes=ax,
                                      workers=self.workers)
+        # Pair legs (issue #232): the block (alpha, beta) takes its INPUT pair
+        # from the row channel alpha and hands its OUTPUT pair to the column
+        # channel beta, both with the phase e^{-ik.R} (a roll by +R): channel
+        # m's slot (a, b) is the bond with orbital a in the origin cell and b
+        # at -R_m, the bond its two-body rows (declared at -R_m) act on. See
+        # the class docstring.
         acc = [None] * self.B
         acc0 = [None] * self.B
-        for b in range(self.B):
-            Rb = self.delta_r[b]
-            F_b = F_rt if Rb == (0, 0, 0) else xp.roll(F_rt, tuple(-x for x in Rb), axis=ax)
-            F0_b = None
-            if self._const_rt is not None:
-                F0_b = F0_r if Rb == (0, 0, 0) else xp.roll(F0_r, tuple(-x for x in Rb),
-                                                            axis=ax)
-            for a in range(self.B):
-                G_ab = self._get_block(a, b)
-                P = -xp.einsum("abcdxyzt,bcxyzt->adxyzt", G_ab, F_b)
-                acc[a] = P if acc[a] is None else acc[a] + P
-                del G_ab, P
-                if F0_b is not None:
-                    P0 = -xp.einsum("abcdxyz,bcxyz->adxyz",
-                                    xp.asarray(self._const_rt[(a, b)]), F0_b)
-                    acc0[a] = P0 if acc0[a] is None else acc0[a] + P0
-        out_rt = None
-        out0_r = None
         for a in range(self.B):
             Ra = self.delta_r[a]
-            t = acc[a] if Ra == (0, 0, 0) else xp.roll(acc[a], tuple(-x for x in Ra), axis=ax)
+            F_a = F_rt if Ra == (0, 0, 0) else xp.roll(F_rt, Ra, axis=ax)
+            F0_a = None
+            if self._const_rt is not None:
+                F0_a = F0_r if Ra == (0, 0, 0) else xp.roll(F0_r, Ra, axis=ax)
+            for b in range(self.B):
+                G_ab = self._get_block(a, b)
+                P = -xp.einsum("abcdxyzt,bcxyzt->adxyzt", G_ab, F_a)
+                acc[b] = P if acc[b] is None else acc[b] + P
+                del G_ab, P
+                if F0_a is not None:
+                    P0 = -xp.einsum("abcdxyz,bcxyz->adxyz",
+                                    xp.asarray(self._const_rt[(a, b)]), F0_a)
+                    acc0[b] = P0 if acc0[b] is None else acc0[b] + P0
+            del F_a, F0_a
+        out_rt = None
+        out0_r = None
+        for b in range(self.B):
+            Rb = self.delta_r[b]
+            t = acc[b] if Rb == (0, 0, 0) else xp.roll(acc[b], Rb, axis=ax)
             out_rt = t if out_rt is None else out_rt + t
-            if acc0[a] is not None:
-                t0 = acc0[a] if Ra == (0, 0, 0) else xp.roll(acc0[a], tuple(-x for x in Ra),
-                                                             axis=ax)
+            if acc0[b] is not None:
+                t0 = acc0[b] if Rb == (0, 0, 0) else xp.roll(acc0[b], Rb, axis=ax)
                 out0_r = t0 if out0_r is None else out0_r + t0
         if self.is_ir:
             out = self.axF.tau_to_freq(_bk.spatial_fftn(out_rt, axes=ax, workers=self.workers))
@@ -818,6 +1063,21 @@ class BondPairKernel:
 def gap_bond_projection(gap_w, view, spatial_shape):
     """Project a gap onto the bond form factors: ``psi_m = (1/N) sum_k
     e^{-i k . R_m} Delta(k)`` for every channel ``m`` (spec 4.4, 5.1).
+
+    Convention. With the gap's Fourier convention ``Delta_ab(k) = sum_R
+    e^{+ik.R} Delta_ab(R)`` (the pairing term ``sum_k Delta_ab(k) c+_{k a}
+    c+_{-k b}``, the same convention the kernels act in), ``psi_m[a, b, n] =
+    Delta_ab(+R_m)`` is the real-space gap amplitude of the pair with
+    orbital ``a`` in the origin cell and orbital ``b`` in the cell at
+    ``+R_m`` (``R_m = view.delta_r[m]``), i.e. on the bond of the Transfer
+    row ``(+R_m, a, b)`` -- the bond the two-body rows DECLARED at ``+R_m``
+    act on. These rows live in channel ``reverse[m]`` of the vertex (channel
+    ``m`` holds the rows declared at ``-R_m``, issue #232), so ``psi_m`` is
+    NOT the pair amplitude on the bond of vertex channel ``m``'s slot
+    ``(a, b)`` (``a`` at the origin, ``b`` at ``-R_m``); that one is
+    ``psi_{reverse[m]}[a, b]``.
+    Pinned against an independent real-space reference in
+    ``tests/test_bond_pairing_placement.py``.
 
     Parameters
     ----------

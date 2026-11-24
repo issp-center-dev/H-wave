@@ -5,9 +5,7 @@ A converged multi-orbital SCF under ``flex_second_order = "local"`` -- on-site
 U, U' and Hund plus an off-site V, Anderson mixing, with
 ``flex_hartree_fock`` both false and true -- must
 
-* converge, and within the ``"takimoto"`` iteration count + 50 % (the exact
-  kernel must not cost self-consistency: it is a different W, not a harder
-  fixed-point problem), and
+* converge, and
 * have a fixed point that IS a fixed point: re-entering the solver from the
   converged self-energy (written as an archive and read back through
   ``[file.input] sigma_init``, the production warm-start path) with
@@ -19,9 +17,18 @@ the MAP still does (Anderson extrapolation, or a residual measured on a
 different quantity than the one that is iterated). Reading the archive back
 also pins that the kernel provenance of Task 7 survives the round trip.
 
-Both stay in the fast gate: the six solves of :class:`TestSCF` measure 0.7 s
-together at Nmat = 64 on a 4x4 cell (T = 1 converges in ~10 Anderson
-iterations), well under the 5 s opt-in rule of ``tests/heavy_tests.py``.
+Both stay in the fast gate: the four solves of :class:`TestSCF` are well
+under a second together at Nmat = 64 on a 4x4 cell (T = 1 converges in ~10
+Anderson iterations), well under the 5 s opt-in rule of
+``tests/heavy_tests.py``.
+
+The convergence leg used to be measured against the iteration count of the
+``"takimoto"`` kernel, together with an anti-vacuity check that the two
+kernels reach different fixed points on this interaction set. That kernel
+was retired by issue #253, so both are gone; the difference between the
+local kernel and the Takimoto-Hotta-Ueda assembly on a multi-orbital
+interaction is pinned by the anti-vacuity leg of
+tests/test_flex_ir_general.py::test_second_order_local_ir_matches_uniform_onsite_uprime.
 :class:`TestSecondOrderSCFSmoke` covers what the SCF case does not: that the
 kernel provenance of Task 7 reaches the written archive.
 """
@@ -118,21 +125,9 @@ class TestSCF(unittest.TestCase):
         for hf in (False, True):
             with self.subTest(hf=hf), tempfile.TemporaryDirectory() as tmp:
                 seed = os.path.join(tmp, "sigma.npz")
-                st, _ = _run("takimoto", hf)
                 sl, _ = _run("local", hf, save_sigma=seed)
-                self.assertTrue(st.scf_converged)
                 self.assertTrue(sl.scf_converged)
-                self.assertLessEqual(sl.scf_iterations, int(1.5 * st.scf_iterations) + 5)
-                print("RECORDED iterations: takimoto {} local {} (hf={})".format(
-                    st.scf_iterations, sl.scf_iterations, hf))
-                # anti-vacuity: on THIS interaction set the two kernels really
-                # are two different fixed points, so "local converged" is a
-                # statement about the local kernel and not about a shared one.
-                st_scale = np.abs(np.array(st.sigma)).max()
-                kernel_gap = np.abs(np.array(sl.sigma) - np.array(st.sigma)).max() / st_scale
-                print("RECORDED local-vs-takimoto sigma gap: {:.3e} (hf={})".format(
-                    kernel_gap, hf))
-                self.assertGreater(kernel_gap, 1.0e-3)
+                print("RECORDED iterations: local {} (hf={})".format(sl.scf_iterations, hf))
                 # The fixed point IS a fixed point: the converged sigma, read
                 # back through the production sigma_init seed path, survives one
                 # more application of the map.

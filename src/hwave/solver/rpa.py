@@ -6,8 +6,11 @@ import dataclasses
 import numpy as np
 import numpy.fft as FFT
 import itertools
+import functools
 import copy
 from requests.structures import CaseInsensitiveDict
+from .base import ParamDict
+from .sites import is_onsite, cross_site_rows
 
 try:
     from .perf import do_profile
@@ -35,6 +38,9 @@ from . import bond_channels
 from . import bubble
 from . import fold
 from . import green as green_mod
+from . import spin_orbital
+from . import fingerprint
+from . import threaded as _threaded
 
 
 #: Emitted whenever a PairLift declaration is solved: its particle-hole
@@ -45,6 +51,19 @@ PAIRLIFT_INERT_WARNING = (
     "PairLift's particle-hole vertex is exactly zero (adjudicated "
     "against exact diagonalization), so it has no effect on the "
     "susceptibility channels in any scheme.")
+
+#: The INFO line a public spin-orbital RPA run logs once when the
+#: interaction has off-site rows; ``{types}`` is the sorted, ``", "``-joined
+#: names of the types with a nonzero off-site record that enter the vertex
+#: through their direct part (``spin_orbital.offsite_types``).
+SO_OFFSITE_INFO = (
+    "enable_spin_orbital: the off-site rows of {types} enter the spinful RPA "
+    "vertex through their direct (Hartree-like) part V(q) only; the exchange "
+    "(crossing) part of these off-site rows is not included in the ring sum. "
+    "The on-site and in-cell exchange is included. For an exact treatment of the "
+    "off-site exchange use hwave_sc with [eliashberg] bond_channels = true "
+    "(frequency = \"static\") or FLEX with [mode.param] "
+    "longitudinal_bond_channels = true.")
 
 
 def canonical_scheme_name(raw):
@@ -66,48 +85,10 @@ def canonical_scheme_name(raw):
     return str(raw).lower()
 
 
-def validate_chi0q_index_convention(data, enable_spin_orbital, file_name=""):
-    """Reject a stored chi0q whose spin-orbital index convention is unknown.
-
-    RPA writes ``index_convention="spin_block"`` (spin*norb+orb) into its
-    chi0q.npz / chiq.npz. UHFk instead uses the interleaved (2*orb+spin)
-    ordering, and chi0q files produced before the SO convention fix
-    (commit 9dd9a21) carry no ``index_convention`` key at all. In spin-orbital
-    mode the two orderings differ, so silently accepting such a file would mix
-    conventions and corrupt the result. Outside spin-orbital mode the
-    convention is irrelevant and this is a no-op.
-
-    Parameters
-    ----------
-    data : Mapping
-        Loaded npz (e.g. ``numpy.load(...)``); must support ``in`` and ``[]``.
-    enable_spin_orbital : bool
-        Whether the consuming calculation runs in spin-orbital mode.
-    file_name : str, optional
-        Source path, used only for the error message.
-
-    Raises
-    ------
-    ValueError
-        If spin-orbital mode is on and the file lacks a ``spin_block``
-        ``index_convention`` marker.
-    """
-    if not enable_spin_orbital:
-        return
-    if "index_convention" not in data:
-        raise ValueError(
-            "chi0q file '{}' lacks an 'index_convention' marker. It predates "
-            "the spin-orbital index convention fix and may use the interleaved "
-            "(2*orb+spin) ordering; regenerate it with the current RPA solver "
-            "(which writes index_convention='spin_block').".format(file_name)
-        )
-    conv = str(data["index_convention"])
-    if conv != "spin_block":
-        raise ValueError(
-            "chi0q file '{}' has index_convention='{}', but spin-orbital mode "
-            "requires 'spin_block' (spin*norb+orb). Regenerate it with the "
-            "current RPA solver.".format(file_name, conv)
-        )
+# The spin-orbital conventions live in hwave.solver.spin_orbital (#83);
+# re-exported under their historical names for existing importers.
+from .spin_orbital import validate_chi0q_index_convention  # noqa: E402,F401
+from .spin_orbital import physical_norb as _so_physical_norb  # noqa: E402,F401
 
 MOMENTUM_CONVENTION = "e_plus_ikR"
 
@@ -312,28 +293,6 @@ def validate_momentum_convention(data, file_name, payload, q_axis,
                     file_name, asym_rel, scale))
 
 
-
-def _so_physical_norb(geom_norb, enable_spin_orbital, *, check_norb=None,
-                      source="geom.dat"):
-    """Physical orbital count from a geometry ``norb``.
-
-    In spin-orbital mode ``geom.dat``'s ``norb`` is the spin-orbital count
-    (= 2 * physical orbitals = Wannier90 num_wann), matching UHFk, so halve it.
-    Evenness is validated on ``check_norb`` (the *original*, pre-sublattice-fold
-    value) so the error names the user's actual ``geom.dat`` entry, while the
-    returned count is derived from ``geom_norb`` (which may be the post-fold
-    value ``orig * subvol``).
-    """
-    if not enable_spin_orbital:
-        return geom_norb
-    cn = check_norb if check_norb is not None else geom_norb
-    if cn % 2 != 0:
-        raise ValueError(
-            "spin-orbital mode requires an even Geometry norb (the spin-orbital "
-            "count = 2 * physical orbitals); got {} in {}".format(cn, source))
-    return geom_norb // 2
-
-
 def _chi0q_fingerprint(arr):
     """Content binding for chi0q provenance.
 
@@ -356,6 +315,32 @@ def _chi0q_fingerprint(arr):
     h.update(str(a.dtype).encode())
     h.update(memoryview(a).cast("B"))
     return h.hexdigest()
+
+
+def _so_source_marker(present, value, source):
+    """Spin-orbital provenance of a chi0q that a spin-orbital run did NOT
+    compute (chi0q_init file or in-memory green_info reuse), issue #83.
+
+    Returns ``True`` for a scalar boolean ``spin_orbital = True`` marker and
+    ``None`` when there is no marker (a legacy or non-spin-orbital source:
+    the run proceeds, but its outputs are written WITHOUT the marker, so the
+    marker is never laundered onto data of unknown provenance). ``None`` is
+    returned ONLY for an absent key: a present key with any other value than
+    a scalar boolean ``True`` -- ``None`` included -- is refused."""
+    if not present:
+        return None
+    val = np.asarray(value)
+    if val.ndim != 0 or val.dtype != np.bool_:
+        raise ValueError(
+            "chi0q from {}: malformed spin_orbital marker ({!r}); expected a "
+            "boolean.".format(source, value))
+    if not bool(val[()]):
+        raise ValueError(
+            "chi0q from {} records spin_orbital = False: it was produced by a "
+            "non-spin-orbital run and cannot be used by a run with [mode] "
+            "enable_spin_orbital = true. Drop it and let the run compute "
+            "chi0q.".format(source))
+    return True
 
 
 def _validate_chi0q_provenance(meta, nfreq, source):
@@ -493,6 +478,23 @@ def _to_bubble_pair_convention(ham):
             "{}".format(ham.shape))
     lead = tuple(range(nlead))
     return ham.transpose(*lead, nlead + 1, nlead, nlead + 3, nlead + 2)
+
+
+def spinful_bubble_vertex(ham_inter_q, exchange):
+    """The antisymmetrized spinful vertex of the spin-orbital solvers (#83).
+
+    ``ham_inter_q`` is the host ``(nvol, nd, nd, nd, nd)`` interaction in the
+    Hamiltonian slot convention and ``exchange`` the on-site exchange crossing
+    ``(nd, nd, nd, nd)`` (or ``None``).  Returns the direct tensor plus the
+    crossing in the bubble's pair convention, ``(nvol, nd^2, nd^2)`` complex
+    (issue #137).  Shared by the spin-orbital FLEX and the Eliashberg solver.
+    """
+    ham = np.asarray(ham_inter_q)
+    nvol, nd = ham.shape[0], ham.shape[1]
+    if exchange is not None:
+        ham = ham + np.asarray(exchange).reshape(nd, nd, nd, nd)[None, ...]
+    return np.ascontiguousarray(_to_bubble_pair_convention(ham)).reshape(
+        nvol, nd * nd, nd * nd)
 
 
 def _masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
@@ -700,10 +702,20 @@ class Interaction:
     ham_spinful_exchange = None
     _spinful_exchange_built = False
     _onsite_direct_calls = ()
+    # spin-orbital mode: the entry context (spin_orbital.SOEntryContext)
+    # and whether this construction built it (a public entry) rather than
+    # receiving it from an enclosing solver; None / False otherwise
+    so_context = None
+    so_context_built_here = False
+    #: whether the solver represents an off-site PairHop on its own bond
+    #: vertex (the spin-orbital bond FLEX), so that the discard WARNING of
+    #: _make_ham_inter does not apply
+    offsite_pairhop_represented = False
 
-    def __init__(self, lattice, param_ham, info_mode):
+    def __init__(self, lattice, param_ham, info_mode, *, offsite_pairhop_represented=False):
         logger.debug(">>> Interaction.__init__")
 
+        self.offsite_pairhop_represented = bool(offsite_pairhop_represented)
         self.lattice = lattice
         self.param_ham = param_ham
 
@@ -714,7 +726,26 @@ class Interaction:
 
 
         # mode options
-        self.enable_spin_orbital = info_mode.get("enable_spin_orbital", False)
+        self.enable_spin_orbital = spin_orbital.resolve_flag(info_mode)
+
+        # issue #88: in spin-orbital mode the Extern file is written in
+        # PHYSICAL orbital indices 1..norb_phys; _make_ham_trans would drop
+        # an out-of-range row without a word, so refuse it here, on the
+        # pre-fold table and header (before _init_interaction folds them).
+        # The non-spin-orbital silent drop is unchanged (issue #303).
+        if self.enable_spin_orbital and "Extern" in param_ham:
+            _files = getattr(param_ham, "source_files", {})
+            _ext_file = _files.get("extern", "Extern")
+            _declared = getattr(param_ham, "source_dimensions", {}).get("extern")
+            if _declared is None and "extern" in _files:
+                # the reader stores None for a malformed header; re-read it
+                # so the user gets the explicit "line 2 must be ..." error
+                _declared = wan90.read_w90_header_dim(_ext_file)
+            spin_orbital.check_extern_indices(
+                param_ham["Extern"],
+                _so_physical_norb(param_ham["Geometry"]["norb"], True, source="Geometry"),
+                _ext_file,
+                declared_norb=_declared)
 
         # initialize, and reshape if use sublattice
         self._init_interaction()
@@ -734,6 +765,41 @@ class Interaction:
         # without sublattice; under folding self.norb = norb_orig * subvol.
         # Reused by RPA._reshape_green to decode the folded orbital index.
         self.norb_orig = _so_physical_norb(orig_norb, self.enable_spin_orbital)
+
+        # Which orbitals share a site (#234): an R = 0 row between orbitals
+        # of different sites gets the off-site treatment in the q-only
+        # vertex (Hartree part only). Labels index the PRE-fold (physical)
+        # orbitals; every locality test below reads the pre-fold table.
+        from .sites import parse_orbital_site, warn_if_undeclared
+        _param = info_mode.get("param", {}) or {}
+        if not isinstance(_param, ParamDict):
+            # keys are case-insensitive; a ParamDict (from hwave) is read
+            # directly so that the read is recorded
+            _param = CaseInsensitiveDict(_param)
+        _prefold = self.param_ham_orig if self.lattice.has_sublattice else self.param_ham
+        if self.enable_spin_orbital:
+            # Spin-orbital mode treats every R = 0 row exactly (direct and
+            # exchange crossing), so orbital_site is never parsed (an invalid
+            # value is ignored too) and the undeclared-site advisory does not
+            # apply. A public entry compiles the pre-fold interaction once and
+            # logs the orbital_site WARNING; a nested solver gets that
+            # context in info_mode and reuses it.
+            self.orbital_site = None
+            context = info_mode.get(spin_orbital.SO_ENTRY_CONTEXT_KEY)
+            self.so_context_built_here = context is None
+            if context is None:
+                context = spin_orbital.build_so_entry_context(
+                    _param, _prefold, self.norb_orig, logger)
+            elif (spin_orbital.interaction_tables_digest(_prefold)
+                  != context.tables_digest):
+                # the vertex is built below from this solver's own tables;
+                # the archives record the context's fingerprints
+                raise ValueError(spin_orbital.TABLES_MISMATCH_TEXT)
+            self.so_context = context
+        else:
+            self.orbital_site = parse_orbital_site(_param.get("orbital_site"), self.norb_orig)
+            if not info_mode.get("_orbital_site_reported", False):
+                warn_if_undeclared(_prefold, self.orbital_site, info_mode.get("mode", "RPA"))
 
         # create hamiltonian
         self._make_ham_trans()
@@ -863,16 +929,13 @@ class Interaction:
             self.ham_extern_q = None
             return
 
-        if self.enable_spin_orbital == True:
+        if self.enable_spin_orbital:
             # The SO transfer file uses the interleaved convention
             # (index = 2*orb + spin, matching UHFk and the docs), while RPA
             # works internally in spin-block order (index = spin*norb + orb).
-            # Remap each orbital index P(i) = (i % 2) * norb + i // 2 on both
-            # the row and column so the (spin, orbital) reshapes downstream are
-            # correct. For norb_phys = 1 this is the identity.
-            def _so_interleaved_to_spinblock(i):
-                return (i % 2) * norb + i // 2
-
+            # Remap the row and column orbital indices so the (spin, orbital)
+            # reshapes downstream are correct. For norb_phys = 1 this is the
+            # identity.
             tab_r = np.zeros((nx,ny,nz,nd,nd), dtype=np.complex128)
 
             for (irvec,orbvec), v in self.param_ham["Transfer"].items():
@@ -881,8 +944,8 @@ class Interaction:
                         "spin-orbital Transfer index {} out of range [0,{}); "
                         "geom norb (SO count) must cover all transfer indices"
                         .format(orbvec, nd))
-                a = _so_interleaved_to_spinblock(orbvec[0])
-                b = _so_interleaved_to_spinblock(orbvec[1])
+                a = spin_orbital.to_spinblock_index(orbvec[0], norb)
+                b = spin_orbital.to_spinblock_index(orbvec[1], norb)
                 # accumulate: R and R+-L are distinct bonds that wrap onto
                 # the same array slot when the hopping range reaches the
                 # lattice size (numpy negative indexing)
@@ -992,8 +1055,8 @@ class Interaction:
             # for every type except PairHop they multiply the SAME operator,
             # so the table entering the vertex is the mean
             #     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
-            # Without this the ring read a one-sided off-site declaration as
-            # v e^{+iqR} (the documented sign, #133) where the operator it
+            # Without this the ring read a one-sided off-site declaration with
+            # its bare phase where the operator it
             # declares -- v n_a(i) n_a(i+R),
             # even in R by the site sum -- has the exact vertex v cos(qR)
             # (measured: chiq differed by 1.2e-2 from the symmetric reading
@@ -1027,11 +1090,17 @@ class Interaction:
             tbl = _symmetrised(type, tbl)
             for (irvec,orbvec), v in tbl.items():
                 a, b = orbvec
+                # A row (R, a, b) puts orbital a in the original cell and b
+                # in the cell displaced by R -- the same bond as a Transfer
+                # row (R, a, b) (Wannier90 / RESPACK, issue #232). In this
+                # layout (beta pair first) that operator sits at -R; storing
+                # it at +R put it on the opposite bond.
+                rvec = tuple(-r for r in irvec)
                 for spinvec, w in spins.items():
                     s1,s2,s3,s4 = spinvec
                     # beta beta' alpha alpha'
                     orb = (s4, b, s3, b, s1, a, s2, a)
-                    ham_r[(*irvec, *orb)] += v * w
+                    ham_r[(*rvec, *orb)] += v * w
 
         # pairhop-type interaction
         #   H^PH = P^{\alpha\alpha^\prime}
@@ -1064,12 +1133,13 @@ class Interaction:
                         else self.param_ham.get(type, {}))
             offsite = [(irvec, orbvec, v)
                        for (irvec, orbvec), v in orig_tbl.items()
-                       if tuple(int(x) for x in irvec) != (0, 0, 0)]
-            if offsite:
+                       if not is_onsite(irvec, orbvec, getattr(self, "orbital_site", None))]
+            if offsite and not self.offsite_pairhop_represented:
                 shown = offsite[:8]
                 logger.warning(
                     "PairHop declares %d off-site term(s) (irvec != "
-                    "(0,0,0)) that this solver discards: only the "
+                    "(0,0,0), or between orbitals of different sites "
+                    "per orbital_site) that this solver discards: only the "
                     "on-site part of PairHop is represented (an off-site "
                     "PairHop's transverse contribution lies outside the "
                     "particle-hole channel space this solver dresses -- "
@@ -1103,7 +1173,7 @@ class Interaction:
             # the unfolded path is bit-for-bit unchanged.
             onsite_tbl = {}
             for (irvec, orbvec), v in orig_tbl.items():
-                if tuple(int(x) for x in irvec) == (0, 0, 0):
+                if is_onsite(irvec, orbvec, getattr(self, "orbital_site", None)):
                     onsite_tbl[(irvec, orbvec)] = v
             if not onsite_tbl:
                 return
@@ -1187,7 +1257,7 @@ class Interaction:
                     tbl = self.param_ham.get(type, {})
             filtered = {}
             for (irvec, orbvec), v in tbl.items():
-                if tuple(irvec) == (0, 0, 0) and orbvec[0] != orbvec[1]:
+                if is_onsite(irvec, orbvec, getattr(self, "orbital_site", None)) and orbvec[0] != orbvec[1]:
                     filtered[(irvec, orbvec)] = v
             if not filtered:
                 return
@@ -1360,7 +1430,7 @@ class Interaction:
                     tbl = self.param_ham.get(type, {})
             filtered = {}
             for (irvec, orbvec), v in tbl.items():
-                if tuple(irvec) == (0, 0, 0):
+                if is_onsite(irvec, orbvec, getattr(self, "orbital_site", None)):
                     filtered[(irvec, orbvec)] = v
             if not filtered:
                 continue
@@ -1383,7 +1453,7 @@ class Interaction:
     def spinful_exchange(self):
         """Spinful exchange content (issue #137), materialized on demand.
 
-        The spinful general solve resums chi = [1 - chi0 W]^-1 chi0 with
+        The spinful general solve resums chi = [1 + chi0 W]^-1 chi0 with
         ONE vertex tensor; the physically complete first order is the
         ANTISYMMETRIZED bare particle-hole vertex Gamma = D + X, where X
         is the crossed (exchange) wiring of the same interaction.
@@ -1437,17 +1507,38 @@ class LongitudinalBondResults:
     types: tuple
 
 
+def _case_insensitive_file_input(info_inputfile, keys):
+    """``[file.input]`` as a ``CaseInsensitiveDict`` (issue #279): a
+    ``Trans_Mod`` must not be ignored silently (hwave_sc has read these keys
+    case-insensitively since #277). Two spellings of one of ``keys`` are
+    refused."""
+    for key in keys:
+        spellings = [k for k in info_inputfile if str(k).lower() == key]
+        if len(spellings) > 1:
+            raise ValueError(
+                "[file.input] {} is given more than once with different "
+                "spellings ({}); keys are case-insensitive.".format(
+                    key, ", ".join(repr(k) for k in spellings)))
+    return CaseInsensitiveDict(info_inputfile)
+
+
 class RPA:
     """
     RPA calculation
     """
+    #: Whether a public spin-orbital run logs :data:`SO_OFFSITE_INFO` (the
+    #: off-site rows enter the ring sum through their direct part only).
+    #: FLEX sets it False: its spin-orbital vertex refuses off-site rows.
+    #: A solver nested in hwave_sc never logs it (its context is supplied).
+    _SO_OFFSITE_INFO = True
+
     @do_profile
     def __init__(self, param_ham, info_log, info_mode):
         logger.debug(">>> RPA.__init__")
 
         self.param_ham = param_ham
         self.info_log = info_log
-        self.param_mod = CaseInsensitiveDict(info_mode.get("param", {}))
+        self.param_mod = ParamDict(info_mode.get("param", {}))
         # The two experimental bond gates are mutually exclusive by
         # calc_type (#181 Tier 3 Phase A); refuse both TRUE here, before
         # any numerical state is built, so nothing else can mask it.
@@ -1484,7 +1575,14 @@ class RPA:
                 "the migration note in the RPA output-file documentation.")
 
         self.lattice = Lattice(self.param_mod)
-        self.ham_info = Interaction(self.lattice, param_ham, info_mode)
+        self.ham_info = Interaction(
+            self.lattice, param_ham, info_mode,
+            offsite_pairhop_represented=self._offsite_pairhop_in_bond_vertex())
+        if (self._SO_OFFSITE_INFO and self.ham_info.enable_spin_orbital
+                and self.ham_info.so_context_built_here):
+            types = spin_orbital.offsite_types(self.ham_info.so_context.compiled)
+            if types:
+                logger.info(SO_OFFSITE_INFO.format(types=", ".join(types)))
 
         self._set_scheme(info_mode)
 
@@ -1555,10 +1653,10 @@ class RPA:
                     "of {} has no density-diagonal content: the interaction "
                     "would have exactly zero effect (not an approximation). "
                     "Use calc_scheme='general', which carries the full "
-                    "vertex. (Note: FLEX's general scheme is spin-free "
-                    "only; with enable_spin_orbital or a spin-polarized "
-                    "setup no current FLEX scheme supports these "
-                    "interactions.)".format(
+                    "vertex. (Note: under enable_spin_orbital, FLEX's "
+                    "general scheme requires flex_hartree_fock = true; "
+                    "with a spin-polarized setup no current FLEX scheme "
+                    "supports these interactions.)".format(
                         raw, ", ".join(dropped)))
             if self.param_ham.get("PairLift"):
                 logger.warning(PAIRLIFT_INERT_WARNING)
@@ -1681,7 +1779,7 @@ class RPA:
                 "under '{}'. chiq output becomes rank-6; memory/solve cost grow "
                 "from O(nd^2)/O(nd^3) to O(nd^4)/O(nd^6) per (q, freq) "
                 "(estimated principal array {:.3f} GB). To keep the 1.0.x "
-                "behaviour request calc_scheme = 'reduced' explicitly (a "
+                "behaviour request [mode] calc_scheme = 'reduced' explicitly (a "
                 "documented approximation).".format(
                     self.calc_scheme, token, legacy, ", ".join(sorted(types)),
                     legacy, est / 1e9))
@@ -1796,6 +1894,10 @@ class RPA:
         self.coeff_tail = _ct
         # #167 invariant: never mutated after construction (scheme resolution input).
         self.ext = self.param_mod.get("coeff_extern", 0.0)
+        if self.ham_info.enable_spin_orbital:
+            # the spin-orbital RPA/FLEX and hwave_sc accept or refuse the
+            # same values (a bool would otherwise enable the field as 1.0)
+            self.ext = spin_orbital.validate_coeff_extern(self.ext)
 
         # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
         # user request; consumers resolve it via backend.get_backend (warn and
@@ -1980,6 +2082,19 @@ class RPA:
         self._reject_offsite_pairhop_under_transverse_bond_gate()
 
 
+    def _offsite_pairhop_in_bond_vertex(self):
+        """Whether an off-site PairHop is represented by the subclass's own
+        bond vertex, so that the discard WARNING of :meth:`_make_ham_inter`
+        does not apply (``False`` here; the spin-orbital bond FLEX
+        overrides it)."""
+        return False
+
+    def _bond_memory_cap_parsed_elsewhere(self):
+        """Whether ``longitudinal_bond_memory_cap_gb`` is parsed by the
+        subclass rather than by :meth:`_init_longitudinal_bond_config`
+        (``False`` here; the spin-orbital bond FLEX overrides it)."""
+        return False
+
     def _init_longitudinal_bond_config(self):
         """Parse ``[mode.param] longitudinal_bond_channels`` and its
         companion options (the experimental bond-resolved LONGITUDINAL
@@ -2005,6 +2120,8 @@ class RPA:
             _flex_only = [k for k in ("flex_hartree_fock",
                                       "longitudinal_bond_output_full",
                                       "longitudinal_bond_freq_batch",
+                                      "longitudinal_bond_half_grid",
+                                      "longitudinal_bond_store",
                                       "flex_second_order")
                           if k in self.param_mod]
             if _flex_only:
@@ -2069,6 +2186,12 @@ class RPA:
                     "got {}".format(_max_shells))
         self.longitudinal_bond_max_shells = _max_shells
 
+        if self._bond_memory_cap_parsed_elsewhere():
+            # the spin-orbital bond FLEX (#270) keeps the raw value: its
+            # cap has the spin-orbital meaning (unset = 0.8 x available,
+            # 0 disables the check) and is validated by its admission
+            self.longitudinal_bond_memory_cap_gb = None
+            return
         _cap_gb = self.param_mod.get("longitudinal_bond_memory_cap_gb",
                                       LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT)
         if (isinstance(_cap_gb, (bool, np.bool_))
@@ -2309,6 +2432,12 @@ class RPA:
 
         beta = 1.0/self.T
 
+        # spin-orbital archive provenance (#88): the realized state and the
+        # Green-function digest of THIS solve; set only when this solve
+        # builds its own bubble, so a previous solve cannot leak them
+        self._so_state = None
+        self._so_fp_green = None
+
         # The longitudinal bond gate (#181 Tier 3 Phase A) needs the
         # Green's function that produced the bubble: refuse an external
         # chi0q FIRST -- before the backend is resolved and before the
@@ -2417,6 +2546,15 @@ class RPA:
                 # nonzero-tail bubble without or with an unknown marker)
                 _enforce_tail_endpoint(norm, "green_info chi0q_freq_meta")
                 self._chi0q_init_meta = dict(norm)
+                # spin-orbital provenance (#83), as on the file route
+                if self.ham_info.enable_spin_orbital:
+                    self._chi0q_init_meta["spin_orbital"] = _so_source_marker(
+                        "spin_orbital" in mem_meta,
+                        mem_meta.get("spin_orbital"),
+                        "green_info chi0q_freq_meta")
+                else:
+                    self._chi0q_init_meta["spin_orbital"] = mem_meta.get(
+                        "spin_orbital")
             elif getattr(self, "_chi0q_init_meta", None) is not None:
                 # metadata set by the chi0q_init file reader on this
                 # instance: verify it still describes THIS array before
@@ -2457,6 +2595,12 @@ class RPA:
                     "calc_scheme": self.calc_scheme,
                     "fingerprint": _chi0q_fingerprint(chi0q),
                 }
+                # spin-orbital provenance carried unchanged (a reuse never
+                # upgrades it); an unmarked source stays ABSENT, since a
+                # present key must hold a boolean (_so_source_marker)
+                if eff.get("spin_orbital") is not None:
+                    green_info["chi0q_freq_meta"]["spin_orbital"] = \
+                        eff["spin_orbital"]
             # must_fix 6 guard state: the spin-diag transverse channel needs
             # Green functions bound to THIS bubble; an externally supplied
             # chi0q has none (a same-instance green0 may belong to an older
@@ -2516,6 +2660,9 @@ class RPA:
             else:
                 mu = self.mu_value
 
+            if self.ham_info.enable_spin_orbital:
+                self._so_state = self._so_bare_state(mu)
+
             if gpu_active:
                 logger.info("RPA: GPU backend active (CuPy); moving H0 "
                             "eigenpairs to the device.")
@@ -2536,6 +2683,8 @@ class RPA:
                 self.H0_eigenvector = xp.asarray(self.H0_eigenvector)
 
             green0, green0_tail = self._calc_green(beta, mu)
+            if self.ham_info.enable_spin_orbital:
+                self._so_fp_green = self._so_green_digest(green0, green0_tail)
             #XXX
             self.green0 = green0
             self.green0_tail = green0_tail
@@ -2588,6 +2737,8 @@ class RPA:
                 # content binding: a same-shaped replacement of the array
                 # must not inherit this metadata (round-5 review)
                 "fingerprint": _chi0q_fingerprint(green_info["chi0q"]),
+                # spin-orbital provenance of this computed bubble (#83)
+                "spin_orbital": bool(self.ham_info.enable_spin_orbital),
             }
 
         if self.calc_chiq:
@@ -2724,10 +2875,14 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = xp.identity(2)
-                    chi0q = xp.einsum('glkab,gh->lkgahb',
-                                      chi0q_orig,
-                                      spin_tensor).reshape(nfreq,nvol,nd,nd)
+                    # source block g onto spin block (g, g), as
+                    # einsum('glkab,gh->lkgahb') with I_2, layout-independent
+                    # (#309)
+                    chi0q = xp.zeros((nfreq, nvol, nd, nd),
+                                     dtype=xp.result_type(chi0q_orig, float))
+                    for g in range(ns):
+                        sl = slice(g * norb, (g + 1) * norb)
+                        chi0q[..., sl, sl] = chi0q_orig[g]
 
                     ham = project_density_pairs(ham_long, nvol, nd, xp)
 
@@ -2738,13 +2893,14 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = xp.zeros((2,2,2,2), dtype=np.int32)
-                    spin_tensor[0,0,0,0] = 1
-                    spin_tensor[1,1,1,1] = 1
-
-                    chi0q = xp.einsum('glkabcd,gtuv->lkgatbucvd',
-                                      chi0q_orig,
-                                      spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
+                    # source block g on the all-equal spin slots (g,g,g,g),
+                    # as einsum('glkabcd,gtuv->lkgatbucvd') with the
+                    # g=t=u=v tensor, layout-independent (#309)
+                    chi0q = xp.zeros((nfreq, nvol, ns, norb, ns, norb, ns, norb, ns, norb),
+                                     dtype=xp.result_type(chi0q_orig, np.int32))
+                    for g in range(ns):
+                        chi0q[:, :, g, :, g, :, g, :, g, :] = chi0q_orig[g]
+                    chi0q = chi0q.reshape(nfreq, nvol, nd, nd, nd, nd)
                     ham = ham_long
 
             elif self.spin_mode == "spin-free":
@@ -2761,10 +2917,16 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = xp.identity(ns)
-                    chi0q = xp.einsum('lkab,st->lksatb',
-                                      chi0q_orig.reshape(nfreq,nvol,norb,norb),
-                                      spin_tensor).reshape(nfreq,nvol,nd,nd)
+                    # scatter onto the spin-block diagonal (the Kronecker
+                    # product with I_ns, as einsum('lkab,st->lksatb')),
+                    # off-diagonal spin blocks zero; layout-independent,
+                    # unlike the einsum (#309)
+                    chi0q_src = chi0q_orig.reshape(nfreq, nvol, norb, norb)
+                    chi0q = xp.zeros((nfreq, nvol, nd, nd),
+                                     dtype=xp.result_type(chi0q_src, float))
+                    for s in range(ns):
+                        sl = slice(s * norb, (s + 1) * norb)
+                        chi0q[..., sl, sl] = chi0q_src
 
                     # same spin-major extraction as the combined-index
                     # pair diagonal (verified bitwise); shared projection
@@ -2778,13 +2940,16 @@ class RPA:
                     ns = self.ns
                     nd = norb * ns
 
-                    spin_tensor = xp.zeros((2,2,2,2), dtype=np.int32)
-                    spin_tensor[0,0,0,0] = 1
-                    spin_tensor[1,1,1,1] = 1
-
-                    chi0q = xp.einsum('lkabcd,stuv->lksatbucvd',
-                                      chi0q_orig.reshape(nfreq,nvol,norb,norb,norb,norb),
-                                      spin_tensor).reshape(nfreq,nvol,nd,nd,nd,nd)
+                    # chi0q on the all-equal spin slots (s,s,s,s) of the
+                    # spin-major pair layout, zero elsewhere -- as
+                    # einsum('lkabcd,stuv->lksatbucvd') with the s=t=u=v
+                    # tensor, but layout-independent (#309)
+                    chi0q_src = chi0q_orig.reshape(nfreq, nvol, norb, norb, norb, norb)
+                    chi0q = xp.zeros((nfreq, nvol, ns, norb, ns, norb, ns, norb, ns, norb),
+                                     dtype=xp.result_type(chi0q_src, np.int32))
+                    for s in range(ns):
+                        chi0q[:, :, s, :, s, :, s, :, s, :] = chi0q_src
+                    chi0q = chi0q.reshape(nfreq, nvol, nd, nd, nd, nd)
                     ham = ham_long
 
             # For ring+ladder, validate the transverse channel BEFORE the
@@ -2808,6 +2973,7 @@ class RPA:
                     self._transverse_bond_resource_preflight(
                         self._transverse_bond_topo)
                 else:
+                    self._reject_cross_site_rows_under_ladder()
                     self._check_transverse_representable(ham_orig)
 
             # solve longitudinal (ring) RPA
@@ -2962,6 +3128,61 @@ class RPA:
                 "scheme_resolution": str(res),
             }
 
+        def _spin_orbital_stamp():
+            # #83: an explicit marker of the PRODUCING run's spin-orbital
+            # mode. The index_convention tag above is written by every run,
+            # so on its own it cannot tell a spin-orbital chi0q from a
+            # non-spin-orbital one of coincident shape (2N orbitals vs N
+            # spin-orbital orbitals); hwave_sc requires this marker in
+            # spin-orbital load mode. Written ONLY by a spin-orbital run, so a
+            # non-spin-orbital archive keeps exactly its previous member set.
+            # getattr: tests drive save_results on __new__-built stubs
+            # without ham_info.
+            #
+            # Provenance is PROPAGATED, never asserted: the marker goes on
+            # only when solve() established it -- this run computed chi0q,
+            # or its chi0q_init / in-memory source itself carried
+            # spin_orbital = True -- as recorded in
+            # green_info["chi0q_freq_meta"] (bound to the array by its
+            # fingerprint). An unmarked source (legacy, or a shape-coincident
+            # non-spin-orbital file) still runs, but its outputs get no
+            # marker; so does a save without a solve.
+            ham_info = getattr(self, "ham_info", None)
+            if not bool(getattr(ham_info, "enable_spin_orbital", False)):
+                return {}
+            meta = green_info.get("chi0q_freq_meta")
+            from collections.abc import Mapping
+            if not isinstance(meta, Mapping) or meta.get("spin_orbital") is not True:
+                return {}
+            chi0q = green_info.get("chi0q")
+            if chi0q is None or meta.get("fingerprint") != _chi0q_fingerprint(chi0q):
+                return {}
+            return {"spin_orbital": True}
+
+        so_stamp = _spin_orbital_stamp()
+        # #88: the fingerprint and state members, built once and
+        # written beside the spin_orbital marker into chi0q and chiq
+        so_prov = {}
+        if so_stamp:
+            if "trans_mod" in green_info or "green_init" in green_info:
+                logger.info(
+                    "save_results: spin-orbital provenance not written: the one-body "
+                    "band includes trans_mod/green_init, which the fingerprints do "
+                    "not cover; a spin-orbital consumer cannot read these outputs")
+            else:
+                so_prov = self._so_provenance("rpa_so", "hwave RPA (spin-orbital)")
+        if (bool(getattr(getattr(self, "ham_info", None),
+                         "enable_spin_orbital", False))
+                and not so_stamp
+                and ("chiq" in info_outputfile or "chi0q" in info_outputfile)):
+            logger.info(
+                "save_results: the supplied chi0q (chi0q_init or green_info) "
+                "carries no spin_orbital = True marker (or solve() did not "
+                "establish one), so the chiq/chi0q "
+                "archives of this spin-orbital run are written without it; "
+                "hwave_sc cannot load them in spin-orbital mode until they "
+                "are regenerated by a spin-orbital run that computes chi0q.")
+
         if "chiq" in info_outputfile.keys():
             if self.calc_chiq == True:
                 file_name = os.path.join(path_to_output, info_outputfile["chiq"])
@@ -2972,10 +3193,12 @@ class RPA:
                     # RPA orders spin-orbital axes as spin-block (spin*norb+orb),
                     # unlike UHFk's interleaved (2*orb+spin) output; record it so
                     # consumers do not silently mix the two conventions.
-                    index_convention = "spin_block",
+                    index_convention = spin_orbital.INDEX_CONVENTION,
                     momentum_convention = MOMENTUM_CONVENTION,
                     **_freq_meta_kwargs(green_info["chiq"]),
                     **_scheme_stamp(),
+                    **so_stamp,
+                    **so_prov,
                 )
                 # transverse channel chi_+-(q), present for calc_type ring+ladder
                 if green_info.get("chiq_pm") is not None:
@@ -2991,7 +3214,9 @@ class RPA:
                         green_info["chiq_pm_bond_static"]
                     save_kwargs["chiq_pm_static"] = \
                         green_info["chiq_pm_static"]
-                    save_kwargs["transverse_bond_schema_version"] = 1
+                    # 2: channel m carries the rows declared at -delta_r[m],
+                    # the bond of their Transfer rows (issue #232)
+                    save_kwargs["transverse_bond_schema_version"] = 2
                     save_kwargs["transverse_output_kind"] = "bond_static"
                     save_kwargs["transverse_bond_delta_r"] = \
                         np.asarray(topo.delta_r)
@@ -3028,10 +3253,12 @@ class RPA:
                 wavevector_unit = self.kvec,
                 wavevector_index = self.wavenum_table,
                 # spin-orbital axes are spin-block ordered (spin*norb+orb)
-                index_convention = "spin_block",
+                index_convention = spin_orbital.INDEX_CONVENTION,
                 momentum_convention = MOMENTUM_CONVENTION,
                 **_freq_meta_kwargs(green_info["chi0q"]),
                 **_scheme_stamp(),
+                **so_stamp,
+                **so_prov,
             )
             np.savez(file_name, **save_kwargs)
             logger.info("save_results: save chi0q in file {}".format(file_name))
@@ -3111,6 +3338,8 @@ class RPA:
     @do_profile
     def read_init(self, info_inputfile):
         logger.info("RPA read initial configs")
+        info_inputfile = _case_insensitive_file_input(
+            info_inputfile, ("trans_mod", "green_init", "chi0q_init"))
         # #167: resolve BEFORE _read_chi0q materialises the array. The two
         # presence flags are read_init's own branch conditions below, so
         # they equal the eventual green_info presence (qlms.py merges the
@@ -3223,7 +3452,7 @@ class RPA:
                     hint = (" calc_scheme='auto' resolved to 'general' ({}) for this "
                             "input, but the supplied chi0q has the 4-axis reduced "
                             "layout. Supply a rank-6 chi0q, or request "
-                            "calc_scheme = 'reduced' explicitly to accept the "
+                            "[mode] calc_scheme = 'reduced' explicitly to accept the "
                             "documented approximation.".format(self._scheme_resolution))
                 raise ValueError(
                     "chi0q from {}: unexpected shape for general scheme: "
@@ -3342,6 +3571,14 @@ class RPA:
 
         validate_chi0q_index_convention(
             data, self.ham_info.enable_spin_orbital, file_name)
+        # spin-orbital provenance of the file (#83): refused if explicitly
+        # False / malformed; None (no marker) is carried to save_results
+        so_source = None
+        if self.ham_info.enable_spin_orbital:
+            so_source = _so_source_marker(
+                "spin_orbital" in data,
+                data["spin_orbital"] if "spin_orbital" in data else None,
+                "file '{}'".format(file_name))
 
         # Keep the frequency metadata of the file that PRODUCED this chi0q:
         # solve() passes an input chi0q through untouched, so save_results
@@ -3363,6 +3600,7 @@ class RPA:
         # info["chi0q"] with a same-shaped array before solve(), the file's
         # axis must not be inherited by the replacement (round-6 review)
         self._chi0q_init_meta["fingerprint"] = _chi0q_fingerprint(chi0q)
+        self._chi0q_init_meta["spin_orbital"] = so_source
         # The tail correction changes chi0q at O(1); a config whose
         # coeff_tail differs from the file's describes different physics
         # than this chi0q_init actually contains (issue #80).
@@ -3446,10 +3684,8 @@ class RPA:
             # orbital axes interleaved->spin-block, mirroring _make_ham_trans's
             # remap of the Transfer file. For norb_phys=1 this is the identity,
             # so non-multi-orbital SO and non-SO paths are unaffected.
-            norb_phys = self.norb_orig            # pre-fold physical orbital count
-            nd0 = tab_r.shape[-1]                 # = 2 * norb_phys
-            inv = [2 * (j % norb_phys) + (j // norb_phys) for j in range(nd0)]
-            tab_r = tab_r[:, inv, :][:, :, inv]   # interleaved -> spin-block
+            tab_r = spin_orbital.interleaved_to_spinblock(
+                tab_r, self.norb_orig)            # pre-fold physical orbital count
 
         if self.lattice.has_sublattice:
             # use reshape green to convert layout (Hamiltonian/transfer convention)
@@ -3576,10 +3812,8 @@ class RPA:
             # self.nd. Reorder both orbital axes interleaved->spin-block, mirroring
             # _read_trans_mod (and _make_ham_trans's remap of the Transfer file).
             # For norb_phys=1 this is the identity.
-            norb_phys = self.norb_orig            # pre-fold physical orbital count
-            nd0 = green.shape[-1]                 # = 2 * norb_phys
-            inv = [2 * (j % norb_phys) + (j // norb_phys) for j in range(nd0)]
-            green = green[:, inv, :][:, :, inv]   # interleaved -> spin-block
+            green = spin_orbital.interleaved_to_spinblock(
+                green, self.norb_orig)            # pre-fold physical orbital count
 
         if self.lattice.has_sublattice:
             # use reshape green to convert layout
@@ -3690,57 +3924,72 @@ class RPA:
         return green_sub
 
     def _calc_trans_mod_copy(self, g0):
-        """``_calc_trans_mod`` on a COPY of ``ham_trans_r`` (the legacy
-        helper adds into a view of the shared array): the HF-on seed path
-        of the FLEX solver (#181 Phase B) uses this so that neither
-        ``ham_trans_r`` nor the user's arrays are mutated. Same arithmetic
-        and result as the legacy helper."""
-        nx, ny, nz = self.lattice.shape
-        nvol = self.lattice.nvol
-        nd = self.nd
-        norb = self.norb
-        gg = np.asarray(g0)[0]
-        ww = self.ham_info.ham_inter_r.reshape(nvol, nd, nd, nd, nd)
-        hh1 = np.einsum('rbacd,cd->rab', ww, gg)
-        hh2 = np.einsum('rcdab,dc->rab', ww, gg)
-        hh3 = np.sum(hh1 + hh2, axis=0) / 2
-        if self.ham_info.enable_spin_orbital:
-            H0r = np.array(self.ham_info.ham_trans_r, copy=True).reshape(nvol, nd, nd)
-        else:
-            H0r = np.einsum('kab,st->ksatb',
-                            np.asarray(self.ham_info.ham_trans_r).reshape(nvol, norb, norb),
-                            np.eye(2)).reshape(nvol, nd, nd)
-        H0r[0] += hh3
-        H0 = (np.fft.ifftn(H0r.reshape(nx, ny, nz, nd, nd), axes=(0, 1, 2))
-              * nvol).reshape(nvol, nd, nd)
-        return H0
+        """The ``green_init`` band (:meth:`_calc_trans_mod`); kept under its
+        historical name for the HF-on seed path of the FLEX solver (#181
+        Phase B), which relies on neither ``ham_trans_r`` nor the user's
+        arrays being mutated -- :meth:`_calc_trans_mod` guarantees that
+        itself since issue #278."""
+        return self._calc_trans_mod(g0)
 
     def _calc_trans_mod(self, g0):
+        """One-body band ``H0(k) = T(k) + Sigma_HF[G](k)`` of a ``green_init``
+        Green function (issue #278).
+
+        ``g0`` is the real-space Green function as :meth:`_read_green`
+        returns it, ``(nvol, nd, nd)`` in spin-block order (in spin-orbital
+        mode too), ``g0[r, (s,a), (t,b)] = <c^dag_{sa}(r) c_{tb}(0)>`` --
+        UHFk's ``Green``. The mean field is UHFk's: the shared kernel
+        ``hartree_fock.build_interaction_tables`` + ``accumulate_hf`` with
+        the Fock term, on the (folded) interaction tables of this solver,
+        i.e. the construction UHFk's ``_make_ham`` applies to the same G.
+        ``green_init`` and the ``trans_mod`` UHFk writes for the same G
+        therefore define the same band (before #278 the Fock term was left
+        out). No input array is modified; the result is a new array."""
         logger.debug(">>> RPA._calc_trans_mod")
+        from . import hartree_fock
 
         nx,ny,nz = self.lattice.shape
         nvol = self.lattice.nvol
         nd = self.nd
         norb = self.norb
 
-        gg = g0[0]
-        ww = self.ham_info.ham_inter_r.reshape(nvol,nd,nd,nd,nd)
+        gg = np.asarray(g0)
+        if gg.shape != (nvol, nd, nd):
+            raise ValueError(
+                "green_init: Green function shape {} does not match "
+                "(nvol, nd, nd) = {}".format(gg.shape, (nvol, nd, nd)))
+        gab_r = np.array(gg, dtype=np.complex128).reshape(nvol, 2, norb, 2, norb)
 
-        hh1 = np.einsum('rbacd,cd->rab', ww, gg)
-        hh2 = np.einsum('rcdab,dc->rab', ww, gg)
-        hh3 = np.sum(hh1+hh2, axis=0)/2
-
+        # transfer term T(k), e^{+ikR} (issue #133), consistent with
+        # _make_ham_trans (spin-block order in spin-orbital mode)
         if self.ham_info.enable_spin_orbital:
-            H0r = self.ham_info.ham_trans_r.reshape(nvol,nd,nd)
+            H0r = np.array(self.ham_info.ham_trans_r, dtype=np.complex128,
+                           copy=True).reshape(nvol,nd,nd)
         else:
             H0r = np.einsum('kab,st->ksatb',
-                            self.ham_info.ham_trans_r.reshape(nvol,norb,norb),
+                            np.asarray(self.ham_info.ham_trans_r).reshape(nvol,norb,norb),
                             np.eye(2)).reshape(nvol,nd,nd)
-        H0r[0] += hh3
-
-        # e^{+ikR} (issue #133), consistent with _make_ham_trans
         H0 = (np.fft.ifftn(H0r.reshape(nx,ny,nz,nd,nd), axes=(0,1,2))
               * nvol).reshape(nvol,nd,nd)
+
+        # Hartree + Fock of every interaction type, by UHFk's kernel. The
+        # tables are built from the (folded) declarations with the physical
+        # orbital count; spin-orbital mode uses the same spin-block frame
+        # UHFk's spin-orbital mode runs the kernel in (_so_to_virtual_green).
+        # (An aggregate Coulomb together with CoulombIntra/CoulombInter, which
+        # the table builder refuses, never reaches here: Interaction exits on
+        # it at construction.)
+        tables = hartree_fock.build_interaction_tables(
+            self.ham_info.param_ham, norb, (nx, ny, nz))
+        if not getattr(self, "_green_init_fock_reported", False):
+            logger.info("green_init: the one-body band is T + Hartree + Fock "
+                        "of the Green function (UHFk's mean field with "
+                        "flag_fock = true; before issue #278 it was T + "
+                        "Hartree only)")
+            self._green_init_fock_reported = True
+        hartree_fock.accumulate_hf(
+            H0, gab_r, tables.inter_table, tables.spin_table, (nx, ny, nz),
+            include_fock=True)
         return H0
 
     @do_profile
@@ -3775,14 +4024,23 @@ class RPA:
             if self.ham_info.ham_extern_q is not None:
                 H1 = self.ham_info.ham_extern_q * self.ext
                 Sz = np.diag((1,-1))
-                H0 += np.einsum('kab,st->ksatb', H1, Sz).reshape(H0.shape)
+                # not in place: H0 may alias ham_trans_q or a caller's
+                # trans_mod, and a repeated call must not add the field twice
+                H0 = H0 + np.einsum('kab,st->ksatb', H1, Sz).reshape(H0.shape)
 
             # check if diagonal
             ns = self.ns
             norb = self.norb
 
             Htmp = H0.reshape(nvol,ns,norb,ns,norb)
-            if np.allclose(Htmp[:,0,:,1,:], 0) and np.allclose(Htmp[:,1,:,0,:], 0):
+            # a solver whose spin-orbital path is the spinful one throughout
+            # (FLEX, #83) keeps the full nd x nd form even when H0 happens to
+            # be spin-diagonal
+            if getattr(self, "_keep_spinful", False):
+                logger.debug("H is treated as spinful")
+                H0 = H0.reshape(1,*H0.shape)
+                self.spin_mode = "spinful"
+            elif np.allclose(Htmp[:,0,:,1,:], 0) and np.allclose(Htmp[:,1,:,0,:], 0):
                 if np.allclose(Htmp[:,0,:,0,:], Htmp[:,1,:,1,:]):
                     logger.info("H is spin-free")
                     H0 = Htmp[:,0,:,0,:].reshape(1,nvol,norb,norb)
@@ -3857,6 +4115,98 @@ class RPA:
 
         self.H0_eigenvalue = w
         self.H0_eigenvector = v
+
+    # ------------------------------------------------- #88 SO provenance
+    def _so_bare_state(self, mu):
+        """The realized band state of a spin-orbital RPA run
+        (:class:`fingerprint.SOState`), in electrons per cell summed over
+        all spin-orbitals: the density is the masked Fermi count
+        ``_find_mu`` roots, at the realized ``mu``; a spin-free band holds
+        one spin's levels, so its count is doubled. "Per cell" is per
+        ORIGINAL unit cell (``lattice.cellvol``), also under a sublattice."""
+        ncell = self.lattice.cellvol          # ORIGINAL cells (nvol * subvol)
+        nspin = 2 if self.spin_mode == "spin-free" else 1
+        count = _masked_fermi_delta_n(_bk.to_host(self.H0_eigenvalue), self.T, mu,
+                                      0.0, self.ene_cutoff)[0]
+        target = self.Ncond / ncell if self.calc_mu else mu
+        return fingerprint.so_state(beta=1.0 / self.T, nmat=self.nmat, mu=mu,
+                                    density=nspin * count / ncell,
+                                    calc_mu=self.calc_mu, target=target)
+
+    def _so_green_digest(self, green, green_tail):
+        """``fp_green`` of a spin-orbital run: the digest (layout
+        ``"b_f_k_o_o_v1"``) of the full bare G in the canonical layout
+        ``(1, Nmat, nvol, nd, nd)``, spin-block order -- the deflated G plus
+        its tail, a spin-free or spin-diagonal band expanded to its spin
+        blocks. Under a sublattice this is the folded-supercell G (k on the
+        supercell grid, nd = 2 * norb_phys * subvol).
+
+        The canonical array is never materialized: the sum and the
+        spin-block expansion are formed one digest block at a time
+        (:func:`fingerprint.green_digest_blocks`, at most
+        ``fingerprint.CHUNK_BYTES`` per block, on the array's device), so
+        this adds no Green-sized allocation to the run."""
+        xp = _bk.array_module_of(green)
+        nb, nmat, nvol, n, _ = green.shape
+        tail = xp.broadcast_to(green_tail, green.shape)
+        if self.spin_mode == "spinful":
+            def block(f0, f1, k0, k1):
+                return green[0, f0:f1, k0:k1] + tail[0, f0:f1, k0:k1]
+            return fingerprint.green_digest_blocks(nmat, nvol, n, block)
+
+        def block(f0, f1, k0, k1):
+            b = xp.zeros((f1 - f0, k1 - k0, 2 * n, 2 * n), dtype=xp.complex128)
+            for s in (0, 1):
+                g = s if nb == 2 else 0
+                b[:, :, s * n:(s + 1) * n, s * n:(s + 1) * n] = (
+                    green[g, f0:f1, k0:k1] + tail[g, f0:f1, k0:k1])
+            return b
+        return fingerprint.green_digest_blocks(nmat, nvol, 2 * n, block)
+
+    def _so_band_tables(self):
+        """``(transfer, extern, BandMeta)`` of the PRE-FOLD ``read_w90``
+        tables of this run (``ham_info.param_ham_orig`` when the lattice has
+        a sublattice, else ``ham_info.param_ham``); never the folded table
+        and never ``ham_trans_q``."""
+        ham_info = self.ham_info
+        src = (ham_info.param_ham_orig if self.lattice.has_sublattice
+               else ham_info.param_ham)
+        transfer = src.get("Transfer", None)
+        extern = src.get("Extern", None)
+        meta = fingerprint.BandMeta(
+            coeff_extern=float(self.ext),
+            enable_spin_orbital=True,
+            index_convention=spin_orbital.INDEX_CONVENTION,
+            norb=int(src["Geometry"]["norb"]),
+            norb_phys=int(ham_info.norb_orig),
+            cell_shape=tuple(int(x) for x in self.lattice.cellshape),
+            sub_shape=tuple(int(x) for x in self.lattice.subshape))
+        return transfer, extern, meta
+
+    def _so_provenance(self, producer_stage, producer_label, *, bond=None, fp_green=None,
+                       state=None):
+        """The fingerprint/state members of this spin-orbital run, built
+        once per call (merged into every archive of the run), or ``{}``
+        when this solve established no state (e.g. a supplied chi0q).
+        They carry the interaction fingerprints of the run's entry context;
+        without them (no state, or the band changed by trans_mod/green_init)
+        a spin-orbital consumer refuses the outputs.
+
+        ``bond`` is the :class:`~hwave.solver.fingerprint.BondInputs` of a
+        bond-resolved stage (``None`` otherwise); ``fp_green`` the Green
+        digest the archive records (``None``: ``self._so_fp_green``) and
+        ``state`` its state point (``None``: ``self._so_state``)."""
+        if state is None:
+            state = getattr(self, "_so_state", None)
+        if fp_green is None:
+            fp_green = getattr(self, "_so_fp_green", None)
+        if state is None or fp_green is None:
+            return {}
+        transfer, extern, meta = self._so_band_tables()
+        return fingerprint.so_provenance_members(
+            producer_stage=producer_stage, producer_label=producer_label,
+            transfer=transfer, extern=extern, meta=meta, fp_green=fp_green,
+            state=state, interaction=self.ham_info.so_context.interaction, bond=bond)
 
     @do_profile
     def _find_mu(self, Ncond, T):
@@ -4012,7 +4362,7 @@ class RPA:
         return green, green_tail
 
     @do_profile
-    def _calc_chi0q(self, green_kw, green0_tail, beta):
+    def _calc_chi0q(self, green_kw, green0_tail, beta, static_only=False):
         """Calculate the bare susceptibility chi0q.
 
         Parameters
@@ -4028,6 +4378,13 @@ class RPA:
             High-frequency tail correction for Green's function.
         beta : float
             Inverse temperature.
+        static_only : bool, optional
+            If true, return only the ``nmat // 2`` bosonic slice (the zero
+            bosonic frequency for an even ``nmat``) as a one-frequency axis,
+            ``chi0q[:, nmat // 2:nmat // 2 + 1]`` to round-off, through
+            ``bubble.dense_bubble_static`` (memory ``O(nvol * nd**4)``
+            instead of ``O(nmat * nvol * nd**4)``). Used by hwave_sc's static
+            ``chi0q_mode = "calc"`` (issue #272). Default false.
 
         Returns
         -------
@@ -4100,7 +4457,9 @@ class RPA:
         # green0_tail is forwarded AS-IS -- an all-zero tail is not
         # special-cased here; the kernel's own data-driven tail gate
         # (mirroring the legacy _tail_on predicate) handles it.
-        return bubble.dense_bubble(
+        kernel = (bubble.dense_bubble_static if static_only
+                  else bubble.dense_bubble)
+        return kernel(
             green_kw, green0_tail, beta,
             spatial_shape=(nx, ny, nz),
             scheme="reduced" if self.enable_reduced else "general",
@@ -4312,6 +4671,26 @@ class RPA:
         cross_sym = _mean(cross_block)
         flip_sym = _mean(spin_flip_block)
         return -cross_sym.transpose(0, 2, 4, 1, 3) + flip_sym
+
+    def _reject_cross_site_rows_under_ladder(self):
+        """``calc_type='ring+ladder'`` judges locality on the folded,
+        q-only transverse vertex, which cannot tell an ``R = 0`` row
+        between orbitals of different sites (``orbital_site``, #234) from
+        an on-site one; refuse such rows rather than give them the on-site
+        transverse treatment."""
+        ham_info = self.ham_info
+        site = getattr(ham_info, "orbital_site", None)
+        source = (ham_info.param_ham_orig if getattr(self.lattice, "has_sublattice", False)
+                  else ham_info.param_ham)
+        rows = cross_site_rows(source, site)
+        if rows:
+            t, found = next(iter(rows.items()))
+            raise ValueError(
+                "calc_type='ring+ladder' cannot represent an R = 0 interaction between "
+                "orbitals of different sites ([mode.param] orbital_site): {} declares {} "
+                "such row(s), e.g. {}. Use calc_type='ring', or the bond-resolved "
+                "transverse gate (transverse_bond_channels=true), or declare these "
+                "orbitals on one site.".format(t, len(found), found[0]))
 
     def _check_transverse_representable(self, ham_orig):
         """Reject input whose transverse vertex is not a function of q alone.
@@ -4772,15 +5151,25 @@ class RPA:
         # Determine thread-parallel chunking for frequency axis
         # LAPACK releases the GIL, so threading gives real parallelism.
         # Only parallelize when there is enough work per thread.
-        # LAPACK's batched zgesv already uses internal threads for large batches,
-        # so explicit threading only helps for very large problems where the
-        # per-chunk overhead is negligible relative to compute.
+        # The workers run with the BLAS pinned to one thread (threaded._run):
+        # worker threads over a multithreaded OpenBLAS oversubscribe the CPU
+        # and can crash it (numpy 1.26), so without threadpoolctl the solve
+        # stays serial.
+        # The BLAS limit is process-wide while the workers run, so BLAS work
+        # in other Python threads is single-threaded meanwhile. A BLAS that
+        # threadpoolctl cannot see (Apple Accelerate) is left as it is: it is
+        # thread-safe, and the crash came from OpenBLAS, which it does see.
         # Users can force threading via HWAVE_RPA_THREADS env var.
         import os as _os
         n_workers = int(_os.environ.get("HWAVE_RPA_THREADS", "0"))
         if n_workers == 0:
             import multiprocessing
             n_workers = min(multiprocessing.cpu_count(), 4)
+            if not _threaded.available():
+                n_workers = 1
+        elif n_workers > 1:
+            # an explicit request: one warning when it cannot be honoured
+            n_workers = _threaded._effective_workers(n_workers)
         # Heuristic: only parallelize for large multi-orbital problems
         # where ndx >= 16 (8+ orbitals spinful) and enough frequency points.
         # For small ndx, batched LAPACK is faster than thread pool overhead.
@@ -4838,7 +5227,6 @@ class RPA:
         sol : ndarray, shape (nmat, nvol, ndx, ndx)
             RPA susceptibility.
         """
-        from concurrent.futures import ThreadPoolExecutor
         nmat = chi0q_2d.shape[0]
         sol = np.empty_like(chi0q_2d)
         eye = np.eye(ndx, dtype=np.complex128)
@@ -4854,8 +5242,9 @@ class RPA:
             mat = eye + (chi0q_chunk @ ham_bc)
             sol[sl] = np.linalg.solve(mat, chi0q_chunk)
 
-        with ThreadPoolExecutor(max_workers=n_workers) as pool:
-            list(pool.map(_solve_chunk, slices))
+        # BLAS pinned to one thread inside the workers (see _solve_rpa)
+        _threaded._run([functools.partial(_solve_chunk, sl) for sl in slices],
+                       n_workers)
 
         return sol
 
@@ -5595,7 +5984,10 @@ class RPA:
         ``ValueError`` naming the gate; there is no fallback. Called from
         ``solve()`` after ``spin_mode`` is known and BEFORE any expensive
         work. Returns ``(topo, split)``: the master bond topology over
-        ``bond_channels._LONGITUDINAL_ACTIVE_TYPES`` and the pre-fold
+        ``bond_channels._LONGITUDINAL_ACTIVE_TYPES`` (plus each
+        declared off-site Exchange / PairHop:
+        ``bond_channels.longitudinal_bond_types``)
+        and the pre-fold
         :class:`hwave.solver.offsite.LocalitySplit` the channel-0 block
         is built from.
         """
@@ -5627,25 +6019,6 @@ class RPA:
                 "Omega = 0 slice at Nmat//2); got Nmat={}.".format(self.nmat))
 
         split = split_locality(self.ham_info, self.lattice)
-        for itype in ("PairHop", "Exchange"):
-            if itype in split.offsite_types:
-                (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
-                if itype == "PairHop":
-                    reason = ("no local-pair particle-hole form exists for "
-                              "an inter-site pair hopping (Phase C of GitHub "
-                              "issue #181)")
-                else:
-                    reason = ("exact diagonalization finds no q-representable "
-                              "longitudinal content (#181 Tier 2); its "
-                              "bond-resolved promotion is a recorded "
-                              "follow-up, so the gate refuses it rather than "
-                              "silently dropping it")
-                raise ValueError(
-                    g + " does not support an off-site '{}' declaration "
-                    "(irvec={}, orbvec={} -- the declared displacement and "
-                    "the zero-based orbital pair): {}. Remove those entries "
-                    "from the interaction input.".format(
-                        itype, tuple(irvec), tuple(orbvec), reason))
         if "PairLift" in split.offsite_types:
             logger.info(
                 g + ": off-site PairLift declarations carry no longitudinal "
@@ -5660,11 +6033,14 @@ class RPA:
         topo = bond_channels.resolve_bond_topology(
             interactions, np.eye(3), self.norb,
             max_shells=self.longitudinal_bond_max_shells,
-            active_types=bond_channels._LONGITUDINAL_ACTIVE_TYPES)
+            # Exchange and PairHop join the bond types only when an off-site
+            # one is declared, so a run without them keeps its previous
+            # topology and longitudinal_bond_types metadata exactly
+            active_types=bond_channels.longitudinal_bond_types(split.offsite_types))
         if int(np.asarray(topo.delta_r).shape[0]) <= 1:
             raise ValueError(
                 g + " requires at least one declared off-site CoulombInter, "
-                "Hund or Ising shell (a declared-but-zero coefficient "
+                "Hund, Ising, Exchange or PairHop shell (a declared-but-zero coefficient "
                 "counts; the aggregate Coulomb table's off-site part "
                 "counts); none is present after longitudinal_bond_max_shells "
                 "truncation, so the bond channels have nothing to "
@@ -5763,7 +6139,8 @@ class RPA:
         green_kw, green0_tail : the solver's single-block Green tensor
             ``(1, nmat, nvol, norb, norb)`` and its tail (or None).
         beta : float
-        topo : bond_channels.BondTopology over _LONGITUDINAL_ACTIVE_TYPES.
+        topo : bond_channels.BondTopology (see
+            _validate_longitudinal_bond_prereqs for its types).
         S0, C0 : ndarray (nvol, nd, nd)
             The Tier-1 locality-split S/C matrices (channel-0 blocks).
 
@@ -5790,11 +6167,13 @@ class RPA:
             workers=getattr(self, "fft_workers", 1))
         chi_bar = np.ascontiguousarray(_bk.to_host(chi_bar))
         types = tuple(topo.coeffs)
-        S_bond = bond_channels.build_sc_bond_channel(topo, S0, "S", types=types)
+        S_bond = bond_channels.build_sc_bond_channel(topo, S0, "S", types=types,
+                                                     spatial_shape=spatial_shape)
         chi_s, cond_s = bond_channels.dress_channel(
             chi_bar, S_bond, "spin", spatial_shape=spatial_shape)
         del S_bond
-        C_bond = bond_channels.build_sc_bond_channel(topo, C0, "C", types=types)
+        C_bond = bond_channels.build_sc_bond_channel(topo, C0, "C", types=types,
+                                                     spatial_shape=spatial_shape)
         chi_c, cond_c = bond_channels.dress_channel(
             chi_bar, C_bond, "charge", spatial_shape=spatial_shape)
         del C_bond
@@ -5850,7 +6229,9 @@ class RPA:
                 else int(self.longitudinal_bond_max_shells)),
             "longitudinal_bond_cond_min_s": np.float64(res.cond_min_s),
             "longitudinal_bond_cond_min_c": np.float64(res.cond_min_c),
-            "longitudinal_bond_schema": np.int64(1),
+            # 2: channel m carries the rows declared at -delta_r[m], the bond
+            # of their Transfer rows (issue #232)
+            "longitudinal_bond_schema": np.int64(2),
         }
         green_info.update(out)
         logger.info(

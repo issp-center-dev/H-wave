@@ -154,27 +154,22 @@ class TestBondDeviceContext(unittest.TestCase):
 
     def _arrays(self):
         rng = np.random.default_rng(1)
-        nvol, ND, nd = 3, 4, 2
+        nvol, ND = 3, 4
         S = rng.normal(size=(nvol, ND, ND)) + 0j
         C = rng.normal(size=(nvol, ND, ND)) + 0j
-        S_on = rng.normal(size=(nvol, nd, nd)) + 0j
-        C_on = rng.normal(size=(nvol, nd, nd)) + 0j
         perm = np.array([0, 1, 3, 2])
         mask = np.ones((ND, ND))
-        return S, C, S_on, C_on, perm, mask
+        return S, C, perm, mask
 
     def test_numpy_backend_passes_host_arrays_through(self):
         from hwave.solver.flex_bond import BondDeviceContext
-        S, C, S_on, C_on, perm, mask = self._arrays()
-        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+        S, C, perm, mask = self._arrays()
+        with BondDeviceContext(np, S, C, perm, mask) as dev:
             self.assertIs(dev.xp, np)
             self.assertIs(dev.S, S)
             self.assertIs(dev.C, C)
-            self.assertIs(dev.S_on, S_on)
-            self.assertIs(dev.C_on, C_on)
             self.assertIs(dev.perm, perm)
             self.assertIs(dev.mask, mask)
-            np.testing.assert_array_equal(dev.SpC_on, S_on + C_on)
             self.assertFalse(dev.released)
         self.assertTrue(dev.released)
         with self.assertRaises(RuntimeError):
@@ -185,9 +180,9 @@ class TestBondDeviceContext(unittest.TestCase):
         the tail it is paired with is a solve-scoped device array of the
         context rather than a per-iteration transfer (issue #196)."""
         from hwave.solver.flex_bond import BondDeviceContext
-        S, C, S_on, C_on, perm, mask = self._arrays()
+        S, C, perm, mask = self._arrays()
         tail = np.arange(6, dtype=complex).reshape(1, 2, 3)
-        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask,
+        with BondDeviceContext(np, S, C, perm, mask,
                                green0_tail=tail) as dev:
             self.assertIs(dev.green0_tail, tail)          # numpy: the identity
         self.assertTrue(dev.released)
@@ -196,13 +191,13 @@ class TestBondDeviceContext(unittest.TestCase):
 
     def test_green0_tail_defaults_to_none(self):
         from hwave.solver.flex_bond import BondDeviceContext
-        S, C, S_on, C_on, perm, mask = self._arrays()
-        with BondDeviceContext(np, S, C, S_on, C_on, perm, mask) as dev:
+        S, C, perm, mask = self._arrays()
+        with BondDeviceContext(np, S, C, perm, mask) as dev:
             self.assertIsNone(dev.green0_tail)
 
     def test_green0_tail_is_transferred_once(self):
         from hwave.solver import flex_bond
-        S, C, S_on, C_on, perm, mask = self._arrays()
+        S, C, perm, mask = self._arrays()
         tail = np.zeros((1, 2, 3), dtype=complex)
         seen = []
         fake_xp = object()
@@ -211,24 +206,24 @@ class TestBondDeviceContext(unittest.TestCase):
             seen.append(id(a))
             return a
         with mock.patch.object(flex_bond._bk, "to_device", _to_device):
-            with flex_bond.BondDeviceContext(fake_xp, S, C, S_on, C_on, perm, mask,
+            with flex_bond.BondDeviceContext(fake_xp, S, C, perm, mask,
                                              green0_tail=tail):
                 pass
-        self.assertEqual(len(seen), 8)         # the seven vertices plus the tail
+        self.assertEqual(len(seen), 5)         # S, C, perm, mask plus the tail
         self.assertEqual(seen.count(id(tail)), 1)
 
     def test_transfer_uses_to_device_once_per_array(self):
         from hwave.solver import flex_bond
-        S, C, S_on, C_on, perm, mask = self._arrays()
+        S, C, perm, mask = self._arrays()
         seen = []
         fake_xp = object()
         def _to_device(a, xp):
             seen.append((id(a), xp))
             return a
         with mock.patch.object(flex_bond._bk, "to_device", _to_device):
-            with flex_bond.BondDeviceContext(fake_xp, S, C, S_on, C_on, perm, mask) as dev:
+            with flex_bond.BondDeviceContext(fake_xp, S, C, perm, mask) as dev:
                 self.assertIs(dev.xp, fake_xp)
-        self.assertEqual(len(seen), 7)                      # S, C, S_on, C_on, SpC_on, perm, mask
+        self.assertEqual(len(seen), 4)                      # S, C, perm, mask
         self.assertTrue(all(x is fake_xp for _, x in seen))
 
 
@@ -274,24 +269,20 @@ class TestDeviceContextOptional(unittest.TestCase):
             self.assertIs(dev.xp, np)
             np.testing.assert_array_equal(dev.S, S)
             np.testing.assert_array_equal(dev.C, 2 * S)
-            for name in ("S_on", "C_on", "SpC_on", "perm", "mask", "green0_tail"):
+            for name in ("perm", "mask", "green0_tail"):
                 self.assertIsNone(getattr(dev, name))
 
-    def test_full_construction_unchanged(self):
+    def test_on_site_vertices_are_not_members(self):
+        """The context holds the bond vertices S and C only: the on-site
+        vertices it used to carry were read by nothing but the retired
+        "takimoto" channel-0 kernel (issue #253)."""
         from hwave.solver.flex_bond import BondDeviceContext
+        self.assertEqual(BondDeviceContext._NAMES, ("S", "C", "perm", "mask", "green0_tail"))
         S = np.eye(2, dtype=complex)[None]
-        with BondDeviceContext(np, S, S, S, S, np.arange(2), np.zeros((2, 2))) as dev:
-            np.testing.assert_array_equal(dev.SpC_on, 2 * S)
-
-    def test_on_site_pair_must_be_given_together(self):
-        """``SpC_on`` is formed only when BOTH on-site vertices are present, so
-        one of them alone would be silently dropped into a context whose
-        ``SpC_on`` is ``None``."""
-        from hwave.solver.flex_bond import BondDeviceContext
-        S = np.eye(2, dtype=complex)[None]
-        for S_on, C_on in ((S, None), (None, S)):
-            with self.assertRaisesRegex(ValueError, "S_on.*C_on|C_on.*S_on"):
-                BondDeviceContext(np, S, S, S_on, C_on)
+        with BondDeviceContext(np, S, S, np.arange(2), np.zeros((2, 2))) as dev:
+            for name in ("S_on", "C_on", "SpC_on"):
+                with self.assertRaises(AttributeError):
+                    getattr(dev, name)
 
 
 class TestOutputNameRegistry(unittest.TestCase):

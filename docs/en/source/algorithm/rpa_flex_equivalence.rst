@@ -374,10 +374,10 @@ record what the unsupported side does instead.
    * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``ring+ladder``.
 
 ``so.general.construction.reject``
-   * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``enable_spin_orbital``.
+   * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``enable_spin_orbital = true (FLEX) requires [mode.param] flex_hartree_fock = true``.
 
 ``so.reduced.construction.reject``
-   * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``enable_spin_orbital``.
+   * FLEX refuses the input at construction and raises ``ValueError`` whose message contains ``calc_scheme='reduced' FLEX does not support enable_spin_orbital``.
 
 Recorded agreement
 ******************

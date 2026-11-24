@@ -249,11 +249,11 @@ def _one_map_sigma(rows, gate):
         with flex_bond.BondBlockStore(nmat, nvol, B * nd, nd, ("chibar", "W")) as store:
             s._phase_b_prepare_vertices()
             flex_bond.assemble_bubble(store, G, np.zeros_like(G), _BETA, s._bond_view, _SHAPE, 1)
-            with flex_bond.BondDeviceContext.for_view(np, s._bond_S, s._bond_C, s._bond_S_on,
-                                                       s._bond_C_on, s._bond_view, norb) as dev:
+            with flex_bond.BondDeviceContext.for_view(np, s._bond_S, s._bond_C,
+                                                      s._bond_view, norb) as dev:
                 flex_bond.dress_and_build_w(store, dev, nb=nmat, output_full=False, nmat=nmat,
                                             nvol=nvol, nd=nd, spatial_shape=_SHAPE,
-                                            factors=s._second_order_factors, second_order="local")
+                                            factors=s._second_order_factors)
             return flex_bond.calc_self_energy_bond(store, G, _BETA, s._bond_view, _SHAPE, norb, 1), G
 
 

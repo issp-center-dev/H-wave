@@ -113,9 +113,11 @@ def test_densified_files_still_load_everywhere(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _dyn_input(outdir, nmat=64, extra=None):
+    # ARPACK: the dominant eigenvalue of this kernel is negative, so a short
+    # power iteration does not converge (and reports NaN)
     eli = {"chi0q_mode": "flex", "frequency": "dynamic",
-           "solver_mode": "iteration", "max_iter": 200,
-           "convergence_tol": 1e-7, "matsubara_basis": "ir"}
+           "solver_mode": "eigenvalue", "num_eigenvalues": 4,
+           "matsubara_basis": "ir"}
     if extra:
         eli.update(extra)
     return {

@@ -10,6 +10,7 @@ from numpy.lib import format as _npfmt
 
 logger = logging.getLogger("qlms").getChild("solver").getChild("eliashberg_bond")
 
+
 _INDEX_ORDER = "I = m*norb**2 + l1*norb + l2"
 _FREQ_AXIS = "bosonic l -> 2l - nmat"
 _SOLVER_MODES = ("iteration", "eigenvalue", "both")
@@ -41,7 +42,15 @@ class PairingControls:
     bond_memory_cap_gb: object = None
 
     @classmethod
-    def from_param(cls, eli_param, *, pairing_types):
+    def from_param(cls, eli_param, *, pairing_types, default_solver_mode=None):
+        """``default_solver_mode`` is the ``solver_mode`` of an input that does
+        not set one: ``None`` means ``hwave.sc.DEFAULT_SOLVER_MODE`` (the
+        ``hwave_sc`` file entry, as the on-site solver); the in-process
+        pairing step of the FLEX run passes
+        ``hwave.sc.IN_PROCESS_DEFAULT_SOLVER_MODE``
+        (``FLEX._install_pairing_controls``)."""
+        if default_solver_mode is None:
+            from hwave.sc import DEFAULT_SOLVER_MODE as default_solver_mode
         p = dict(eli_param or {})
         for eta in pairing_types:
             if eta not in ("singlet", "triplet"):
@@ -95,7 +104,7 @@ class PairingControls:
                     return False
             raise ValueError("[eliashberg] {} must be a boolean, got {!r}".format(key, v))
 
-        sm = str(p.get("solver_mode", "iteration")).lower()
+        sm = str(p.get("solver_mode", default_solver_mode)).lower()
         if sm not in _SOLVER_MODES:
             raise ValueError("[eliashberg] solver_mode must be one of {}, got {!r}".format(_SOLVER_MODES, sm))
         mb = str(p.get("matsubara_basis", "uniform")).lower()
@@ -220,8 +229,8 @@ def _as_index_array(member, name, path):
     return arr.astype(np.int64)
 
 
-#: what a schema-2 bond archive is, named in every "malformed file" refusal
-_ARCHIVE_CONTRACT = ("not a valid bond archive (schema-2, written by FLEX with "
+#: what a bond archive is, named in every "malformed file" refusal
+_ARCHIVE_CONTRACT = ("not a valid bond archive (schema 3, written by FLEX with "
                      "longitudinal_bond_channels = true and "
                      "longitudinal_bond_output_full = true)")
 
@@ -239,14 +248,68 @@ def _archive_contract_error(path, exc):
 def _require(d, key, path):
     """One member of an open archive, or the contract ValueError if it is
     missing (bare ``KeyError``) or unreadable (a truncated member surfaces as a
-    ``BadZipFile`` / ``EOFError`` / ``OSError`` on lazy access)."""
+    ``BadZipFile`` / ``EOFError`` / ``OSError`` on lazy access, or as numpy's
+    ``ValueError`` when an ``.npy`` member's data body is cut short)."""
     try:
         return d[key]
-    except (KeyError, zipfile.BadZipFile, EOFError, OSError) as exc:
+    except (KeyError, zipfile.BadZipFile, EOFError, OSError, ValueError) as exc:
         raise _archive_contract_error(path, exc)
 
 
-def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_expected):
+#: Placement-aware bond archives (issue #232): schema 3 files every declared
+#: row on the channel whose kernels act on the bond of its Transfer row;
+#: schema 2 put it on the opposite bond.
+_BOND_ARCHIVE_SCHEMA = 3
+
+
+def _placement_sensitive_types(interactions, cell_shape):
+    """The two-body types whose declaration is not symmetric under R -> -R
+    on the run's grid -- the tables for which a schema-2 archive (#232)
+    holds a different Hamiltonian."""
+    if not interactions:
+        return []
+    from hwave.sc import _offsite_mirror_asymmetry
+    # the types the archive's bond channels are built from (an aggregate
+    # Coulomb table carries CoulombInter rows)
+    return [t for t in ("Coulomb", "CoulombInter", "Hund", "Ising")
+            if interactions.get(t)
+            and _offsite_mirror_asymmetry(interactions[t], grid=cell_shape) > 0.0]
+
+
+def _archive_schema(member, path):
+    """The schema stamp as an int, refusing anything but one finite, exactly
+    integral real scalar (``int()`` would silently truncate 3.9 to 3)."""
+    arr = np.asarray(member)
+    try:
+        if arr.dtype.kind not in "iufc":            # no bool, str or object stamps
+            raise ValueError("not numeric")
+        if arr.size != 1:
+            raise ValueError("not a scalar")
+        val = complex(arr.reshape(())[()])
+        if val.imag != 0.0 or not (np.isfinite(val.real) and float(val.real).is_integer()):
+            raise ValueError("not an integer")
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("bond archive {}: malformed bond_archive_schema {!r}".format(path, member))
+    return int(val.real)
+
+
+def _marks_spin_orbital(d, files):
+    """True when the archive has a ``spin_orbital`` member whose value is
+    true. A marker that is not a one-element numeric or boolean array counts
+    as present and true."""
+    if "spin_orbital" not in files:
+        return False
+    try:
+        m = np.asarray(d["spin_orbital"])
+        if m.size == 1 and m.dtype.kind in "biufc":
+            return bool(m.reshape(-1)[0])
+    except (TypeError, ValueError, OSError, EOFError, zipfile.BadZipFile):
+        pass
+    return True
+
+
+def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_expected,
+                      interactions=None):
     from hwave.solver.rpa import check_momentum_marker
     if not os.path.exists(path):
         raise ValueError("bond archive not found: {} (post-processing needs a FLEX run with "
@@ -257,14 +320,31 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
         raise _archive_contract_error(path, exc)
     with d:
         files = set(d.files)
-        schema = int(d["bond_archive_schema"]) if "bond_archive_schema" in files else 0
+        schema = (_archive_schema(_require(d, "bond_archive_schema", path), path)
+                  if "bond_archive_schema" in files else 0)
+        if schema == 4 or _marks_spin_orbital(d, files):
+            raise ValueError(
+                "bond archive {}: this is a spin-orbital bond archive (written by the "
+                "spin-orbital FLEX with bond channels); the non-spin-orbital bond consumers "
+                "cannot read it, and hwave_sc does not read it in this version (read it with "
+                "hwave.solver.so_bond_archive.load_so_bond_archive).".format(path))
         if schema == 1 or "S_bond" not in files:
             raise ValueError(
                 "bond archive {}: schema {} was written by a version without the bond vertices S and C; "
                 "re-run FLEX under this version with longitudinal_bond_channels = true and "
                 "longitudinal_bond_output_full = true".format(path, schema))
-        if schema != 2:
+        if schema not in (2, _BOND_ARCHIVE_SCHEMA):
             raise ValueError("bond archive {}: unsupported archive schema {}".format(path, schema))
+        if schema == 2:
+            sensitive = _placement_sensitive_types(interactions, tuple(cell_shape_expected))
+            if sensitive:
+                raise ValueError(
+                    "bond archive {}: schema 2 was written by a version that put an off-site "
+                    "row on the bond opposite its Transfer row (issue #232), and {} declare(s) "
+                    "off-site rows that are not symmetric under R -> -R, so the archive "
+                    "describes a different Hamiltonian; re-run FLEX under this version with "
+                    "longitudinal_bond_channels = true and longitudinal_bond_output_full = "
+                    "true".format(path, ", ".join(sensitive)))
         # the on-disk layout (issue #205): "npz" (the default; the two big
         # channel members live inside this file) or "sidecar" (they are raw
         # .npy files named here and read next to the index). An archive written
@@ -368,6 +448,54 @@ def load_bond_archive(path, *, norb, nmat_expected, cell_shape_expected, beta_ex
     return BondArchive(path, small, (nmat, nvol, ND, ND), sidecar=sidecar_paths)
 
 
+def _declared_topology_of_archive(arch, interactions, norb, shape, path):
+    """The bond topology of the DECLARED interactions on the archive's channel
+    set, after checking that its bond vertices are the archive's.
+
+    The archive carries the bond vertices ``S``, ``C`` but not the per-type
+    coefficients, which the off-site bare pairing term
+    (``eliashberg_bond.offsite_singlet_bare_vertex``) needs; those are read
+    from the interaction files. The channels are rebuilt with the archive's
+    own producer contract (``bond_channels.gate_bond_topology``) and the
+    vertices with the builders the FLEX gate uses, so the files of the FLEX
+    run reproduce the archive to the last bit; files that give other vertices
+    are refused, or the kernel would mix two models. A shell truncation
+    (``longitudinal_bond_max_shells``) only ever drops declared-zero shells
+    (the resolver refuses to drop a nonzero one), so the smallest shell count
+    that reproduces the archive's channels is used. The comparison is exact,
+    so that a change of any coefficient is caught, however small next to the
+    others."""
+    import hwave.sc as sc
+    from hwave.solver import bond_channels as _bc
+    want = np.asarray(arch.delta_r)
+    split = sc._bond_locality_split(interactions)
+    for shells in list(range(want.shape[0])) + [None]:
+        try:
+            topo = _bc.gate_bond_topology(split, norb, max_shells=shells)
+        except ValueError:
+            continue
+        if np.array_equal(np.asarray(topo.delta_r), want):
+            break
+    else:
+        raise ValueError(
+            "bond archive {}: its bond channels {} are not the ones the interaction files "
+            "declare; the post-processing must read the interaction files of the FLEX run "
+            "that wrote the archive".format(path, [tuple(int(x) for x in r) for r in want]))
+    S, C = sc._build_bond_vertices(topo, split, norb, shape)
+    for name, mine, theirs in (("S", S, arch.S_bond), ("C", C, arch.C_bond)):
+        mine = np.asarray(mine).reshape(np.shape(theirs))
+        dev = float(np.abs(mine - theirs).max())
+        # EXACT: the same builders on the same files reproduce the archive to
+        # the last bit, and any tolerance would let a coupling small next to
+        # another one in the same slot change unnoticed
+        if not np.array_equal(mine, theirs):
+            raise ValueError(
+                "bond archive {}: the bond vertex {} built from the interaction files differs "
+                "from the archive's (max deviation {:.3e}); the post-processing must read the "
+                "interaction files of the FLEX run that wrote the archive".format(path, name, dev))
+    return topo
+
+
 class _ArchiveView:
     """The ``BondSetView`` contract (``delta_r``, ``reverse``, ``n_channels``)
     rebuilt from the archive arrays: the pairing kernel needs only the bond
@@ -413,6 +541,35 @@ def _frequency_batch(nmat, nvol, ND, host_cap, device_cap=None):
     return max(1, min(int(nmat), nb))
 
 
+def _pole_header_lines(report):
+    """The ``key=value`` header lines of an
+    :class:`~hwave.solver.bond_channels.RpaPoleReport` (issue #345); empty
+    below the pole or without a report."""
+    if report is None:
+        return []
+    return ["{}={}".format(k, v) for k, v in report.text_members().items()]
+
+
+def _archive_pole_indicators(arch, member, channel, spatial_shape):
+    """The static RPA pole indicator of one channel of a bond archive
+    (issue #345), from the dressed static susceptibility ``member``
+    (``chi_s_w`` / ``chi_c_w``) at the zero bosonic frequency ``nmat // 2``
+    and the archived vertex, through the inversion
+    :func:`~hwave.solver.bond_channels.pole_indicator_from_dressed`."""
+    from . import bond_channels as _bc
+    W = arch.S_bond if channel == "spin" else arch.C_bond
+    chi0 = np.array(member[int(arch.nmat) // 2])
+    return _bc.pole_indicator_from_dressed(chi0, W, channel, spatial_shape)
+
+
+#: what a dynamic bond solve on an archive past the static RPA pole means
+_ARCHIVE_POLE_CONSEQUENCE = (
+    "The archive's FLEX state and the pairing vertex built from it here rest on that "
+    "susceptibility, so the pairing eigenvalue lambda of this run describes no physical "
+    "state; it is still reported (eigen_converged keeps its meaning of eigen-solver "
+    "convergence).")
+
+
 def solve_dynamic_bond(input_dict):
     """Bond-resolved dynamic Eliashberg solve from a FLEX bond archive (spec 6).
 
@@ -430,6 +587,7 @@ def solve_dynamic_bond(input_dict):
     """
     import hwave.sc as sc
     from . import backend as _bk
+    from . import bond_channels as _bc
     from . import eliashberg_bond as _eb
     from . import eliashberg_dynamic as _ed
     from . import flex_bond as _fb
@@ -464,17 +622,29 @@ def solve_dynamic_bond(input_dict):
     geom_info, hr, interactions = sc._read_interaction_files(input_dict)
     norb = int(geom_info["norb"])
     nd = norb * norb
+    # the archive carries the topology but not the per-type coefficients, so
+    # the notices read the declared interactions (and the off-site bare
+    # pairing terms read them too, once they are checked against the archive:
+    # _declared_topology_of_archive)
+    topo_decl, _, _ = sc._resolve_bond_topology(interactions, geom_info, norb, None)
+    _bc.warn_pairing_approximations(
+        topo_decl, "[eliashberg] bond_channels=true (frequency='dynamic')", log=logger)
+    del topo_decl
 
     # --- the archive (validated before any large member is touched) --------
     flex_dir = sc._resolve_flex_dir(input_dict)
     arch_name = str(eli_param.get("flex_bond_archive", "longitudinal_bond.npz"))
     arch_path = arch_name if os.path.isabs(arch_name) else os.path.join(flex_dir, arch_name)
     arch = load_bond_archive(arch_path, norb=norb, nmat_expected=nmat,
-                             cell_shape_expected=(Nx, Ny, Nz), beta_expected=beta)
+                             cell_shape_expected=(Nx, Ny, Nz), beta_expected=beta,
+                             interactions=interactions)
     logger.info("bond pairing: archive %s (B = %d, ND = %d, nmat = %d)",
                 arch_path, arch.B, arch.ND, arch.nmat)
+    topo_arch = _declared_topology_of_archive(arch, interactions, norb, (Nx, Ny, Nz),
+                                              arch_path)
 
-    green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz)
+    green = sc._load_flex_green(input_dict, norb, Nx, Ny, Nz,
+                                interactions=interactions)
     if green is None:
         raise ValueError(
             "dynamic bond Eliashberg requires the dressed green.npz of the same "
@@ -521,19 +691,28 @@ def solve_dynamic_bond(input_dict):
             spatial_shape=(Nx, Ny, Nz), ir=((axF, axB) if use_ir else None),
             ir_keep_static=ctl.ir_keep_static_chi, workers=ctl.fft_workers)
 
+        pole_indicators = {}
+
         def stages(a):
             # one archive member resident at a time (spec 6): the IR residual
             # pass replays this and re-reads each member once more
             for channel, name in (("spin", "chi_s_w"), ("charge", "chi_c_w")):
                 arr = arch.member(name)
+                if channel not in pole_indicators:
+                    # issue #345, on the member already read (first pass only)
+                    pole_indicators[channel] = _archive_pole_indicators(
+                        arch, arr, channel, (Nx, Ny, Nz))
                 a.add_channel(channel, _eb.ArrayBlockSource({name: arr}, nd), name)
                 del arr
 
         stages(acc)
+        pole = _bc.check_rpa_pole(
+            pole_indicators, where="hwave_sc dynamic bond_channels (archive {})".format(arch_path),
+            consequence=_ARCHIVE_POLE_CONSEQUENCE, log=logger)
         vertex = acc.finish(ir_fit_tol=ctl.ir_fit_tol, stage_callable=stages)[pairing_type]
         del acc
         V_inst = _eb.instantaneous_vertex(arch.S_bond, arch.C_bond, nd, pairing_type,
-                                          (Nx, Ny, Nz))
+                                          (Nx, Ny, Nz), topo=topo_arch)
         g = _ed._ir_compress(green, axF, nmat, "green") if use_ir else green
         G2 = xp.asarray(_ed.calc_g2_dynamic(g, beta))
         del g
@@ -544,13 +723,15 @@ def solve_dynamic_bond(input_dict):
         logger.info("bond pairing kernel residency: %s", kernel.residency)
         phi0, seed_vec = _ed.build_seed(ctl.as_eli_param(), pairing_type, norb, kx, ky, kz,
                                         kernel.gap_shape, use_ir, axF, nmat)
+        eig_info = {}
         lam, gap_w, eigenvalues_all, eigenvalue_match, note, leakage, \
             sector_weights, sector_selection, eigenvalue_selection = \
             _ed.run_leading_eigenproblem(
                 kernel.matvec, kernel.gap_shape, ctl.as_eli_param(), pairing_type, phi0=phi0,
                 seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
                 logger_label="bond pairing kernel", parity_leakage_policy="refuse",
-                parity_leakage_tol=ctl.resolved_parity_leakage_tol)
+                parity_leakage_tol=ctl.resolved_parity_leakage_tol, info_out=eig_info)
+        eigen_converged = bool(eig_info["eigen_converged"])
         residency_used = kernel.residency
 
     # --- outputs (the on-site dynamic file set plus the bond provenance) ----
@@ -561,16 +742,18 @@ def solve_dynamic_bond(input_dict):
     head = ["bond_channels=true", "residency=" + residency_used]
     if leakage is not None:
         head.append("parity_leakage={:.6e}".format(leakage))
+    head += _pole_header_lines(pole)
     _ed.write_eigenvalue_file(
         os.path.join(out_dir, eli_param.get("output_eigenvalue", "eigenvalue.dat")),
         lam, eigenvalues_all, eigenvalue_match, note, header_lines=head,
         sector_weights=sector_weights, selection=sector_selection,
-        eigenvalue_selection=eigenvalue_selection)
+        eigenvalue_selection=eigenvalue_selection, eigen_converged=eigen_converged)
     extra = {"bond_channels": True, "bond_delta_r": arch.delta_r, "bond_reverse": arch.reverse,
              "bond_archive": arch_path, "bond_residency": residency_used,
              "gap_bond_projection": _eb.gap_bond_projection(gap_w, view, (Nx, Ny, Nz))}
     if leakage is not None:
         extra["bond_parity_leakage"] = float(leakage)
+    extra.update(pole.npz_members())
     if use_ir:
         extra.update({"matsubara_basis": "ir", "ir_tol": axF.eps, "ir_wmax": axF.wmax,
                       "ir_L": axF.L, "bond_ir_fit_residual_rel": vertex.fit_residual_rel})
@@ -578,7 +761,8 @@ def solve_dynamic_bond(input_dict):
                               gap_file=eli_param.get("output_gap", "gap.dat"),
                               extra_meta=extra, sector_weights=sector_weights,
                               selection=sector_selection,
-                              eigenvalue_selection=eigenvalue_selection)
+                              eigenvalue_selection=eigenvalue_selection,
+                              eigen_converged=eigen_converged)
     return lam
 
 
@@ -624,6 +808,13 @@ def pairing_preflight(solver):
     kernel-only (the vertex is built by then) and charges none. Raises
     ``ValueError``; the post-SCF admission re-measures and is a per-channel
     error there, not an exception.
+
+    A DEVICE block store (issue #275, ``longitudinal_bond_store``) does not
+    compete with the kernel: it leaves device memory before the kernel's
+    admission (:func:`_release_device_store`), and the re-dressing that runs
+    while it is resident is charged by the FLEX device admission
+    (``pairing_redress`` row), so the kernel rows here are measured against
+    the device without the store.
     """
     from . import backend as _bk
     from . import eliashberg_bond as _eb
@@ -666,7 +857,8 @@ def pairing_preflight(solver):
             "longitudinal_bond_pairing: the pairing step would not fit after the FLEX solve "
             "({}); set [eliashberg] matsubara_basis = 'ir' or raise bond_memory_cap_gb"
             .format(exc))
-    logger.info("bond pairing preflight at solve entry: residency %s would fit; rows (GiB) %s",
+    logger.info("bond pairing preflight at solve entry: residency %s would fit (a device-"
+                "resident bond block store is released before the kernel); rows (GiB) %s",
                 residency, {k: round(v / _eb._GIB, 3) for k, v in table.rows.items()})
 
 
@@ -713,6 +905,40 @@ def run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
         _record_backstop(green_info, _requested_types(solver), "pairing", exc)
 
 
+def _release_device_store(store, *, last_group, xp):
+    """Give the device memory of a DEVICE block store (issue #275) back
+    before the pairing kernel's admission.
+
+    The vertex of this group is built (uniform grid: in the store's ``W``
+    slot; IR: as host coefficients), so the kernel reads the store only to
+    hoist its blocks. With the store resident the kernel's admission would
+    measure the device without the store's slots and fall back to the host
+    residency, whose matvecs are several times slower. ``chibar`` is
+    released when no later pairing group re-dresses it, the remaining slots
+    move to host memory -- exactly the state of a host store, so the kernel
+    is built as on the host-store path -- and the pool is emptied. chibar is
+    released after the last group also when an earlier group already moved
+    the store to the host (or the store was a host store), so it is not
+    held through the last kernel and its eigensolver."""
+    from . import backend as _bk
+    if getattr(store, "resident", None) is None:
+        return                       # not a BondBlockStore (no residency)
+    if last_group:
+        # also when an earlier group already moved the store to the host:
+        # chibar is not read again (release_slot is idempotent)
+        store.release_slot("chibar")
+    if store.resident != "device":
+        return
+    moved = store.nbytes
+    store.to_host()
+    if xp is not np:
+        _bk.free_device_pool()
+    logger.info("longitudinal_bond_pairing: the bond block store leaves device memory before "
+                "the pairing kernel (%s; %.3f GiB moved to host memory)",
+                "chibar released" if last_group else "chibar kept for the next channel",
+                moved / float(1024 ** 3))
+
+
 def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
     from . import backend as _bk
     from . import bond_channels as _bc
@@ -722,6 +948,8 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
     xp = dev.xp
     nmat, nvol, norb = solver.nmat, solver.lattice.nvol, solver.norb
     nd = norb * norb
+    _bc.warn_pairing_approximations(solver._bond_topo, "[mode.param] longitudinal_bond_pairing",
+                                    log=logger)
     shape = tuple(int(x) for x in solver.lattice.shape)
     Nx, Ny, Nz = shape
     view = solver._bond_view
@@ -771,7 +999,10 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 spatial_shape=shape, ir=((axF, axB) if use_ir else None),
                 out_store=(None if use_ir else store), out_slot="W",
                 ir_keep_static=ctl.ir_keep_static_chi,
-                workers=getattr(solver, "fft_workers", 1))
+                workers=getattr(solver, "fft_workers", 1),
+                # issue #223: the store's half grid (the uniform target is
+                # its W slot; the IR fit folds the mirrored slices)
+                half_grid=bool(getattr(store, "half_grid", False)))
 
             def stages(a):
                 a.add_dressed(store, cond_tol=_bc._BOND_COND_FLOOR,
@@ -780,6 +1011,7 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
             stages(acc)
             vertices = acc.finish(ir_fit_tol=ctl.ir_fit_tol, stage_callable=stages)
             del acc
+            _release_device_store(store, last_group=group is groups[-1], xp=xp)
         except caught as exc:
             fail(group, "vertex", exc)
             continue
@@ -803,7 +1035,8 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                     residency="auto", ir=use_ir, L_B=(axB.L if use_ir else 0),
                     n_channels=1, in_process=True,
                     keep_const=ctl.ir_keep_static_chi and use_ir)
-                V_inst = _eb.instantaneous_vertex(solver._bond_S, solver._bond_C, nd, eta, shape)
+                V_inst = _eb.instantaneous_vertex(solver._bond_S, solver._bond_C, nd, eta, shape,
+                                                  topo=solver._bond_topo)
                 K = _eb.BondPairKernel(
                     vertices[eta], G2, view, xp=xp, spatial_shape=shape, norb=norb, beta=beta,
                     nfreq=nfreq, V_inst=V_inst, axF=axF, residency="auto", admission=table,
@@ -813,6 +1046,7 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 kx, ky, kz = (np.linspace(0.0, 2.0 * np.pi, n, endpoint=False) for n in shape)
                 phi0, seed = _ed.build_seed(ctl.as_eli_param(), eta, norb, kx, ky, kz,
                                             K.gap_shape, use_ir, axF, nmat)
+                eig_info = {}
                 lam, gap_w, evs, match, note, leakage, sector_weights, \
                     sector_selection, eigenvalue_selection = \
                     _ed.run_leading_eigenproblem(
@@ -820,7 +1054,9 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                         seed_vec=seed, use_ir=use_ir, axF=axF, nmat=nmat,
                         logger_label="bond pairing kernel ({})".format(eta),
                         parity_leakage_policy="refuse",
-                        parity_leakage_tol=ctl.resolved_parity_leakage_tol)
+                        parity_leakage_tol=ctl.resolved_parity_leakage_tol,
+                        info_out=eig_info)
+                eigen_converged = bool(eig_info["eigen_converged"])
                 meta = {"bond_channels": True,
                         "bond_delta_r": np.asarray(view.delta_r, dtype=np.int64),
                         "bond_reverse": np.asarray(view.reverse, dtype=np.int64),
@@ -836,11 +1072,20 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                             [float(sector_weights[label])
                              for label in _ed._SECTOR_LABELS]),
                         "gap_sector_labels": np.array(_ed._SECTOR_LABELS),
-                        "sector_selection": str(sector_selection)}
+                        "sector_selection": str(sector_selection),
+                        # False: the power iteration did not converge, the
+                        # eigenvalue is NaN and the gap is NOT an eigenvector
+                        "eigen_converged": eigen_converged}
                 if eigenvalue_selection is not None:
                     meta["eigenvalue_selection"] = str(eigenvalue_selection)
                 if leakage is not None:
                     meta["bond_parity_leakage"] = float(leakage)
+                # issue #345: the FLEX final map's static RPA pole check (the
+                # vertex is re-dressed from that map's chibar), only past the
+                # pole
+                pole = getattr(solver, "_bond_pole", None)
+                if pole is not None:
+                    meta.update(pole.npz_members())
                 if use_ir:
                     meta.update({"ir_tol": axF.eps, "ir_wmax": axF.wmax, "ir_L": axF.L,
                                  "bond_ir_fit_residual_rel": vertices[eta].fit_residual_rel})
@@ -852,8 +1097,19 @@ def _run_inprocess_pairing(solver, store, dev, green_kw, beta, green_info):
                 green_info["pairing_{}_gap".format(eta)] = gap_w
                 green_info["pairing_{}_meta".format(eta)] = meta
                 green_info["pairing_{}_note".format(eta)] = note
-                logger.info("longitudinal_bond_pairing (%s): leading eigenvalue %.8e (%s)",
-                            eta, float(lam), label_state)
+                green_info["pairing_{}_eigen_converged".format(eta)] = eigen_converged
+                if eigen_converged:
+                    logger.info("longitudinal_bond_pairing (%s): leading eigenvalue %.8e (%s)",
+                                eta, float(lam), label_state)
+                else:
+                    # the FLEX results are valid and the run's exit status is
+                    # not changed; only this channel's eigenvalue is missing
+                    logger.warning(
+                        "longitudinal_bond_pairing (%s): the eigen-solver did not converge; "
+                        "the eigenvalue is recorded as NaN with eigen_converged = false "
+                        "(the FLEX outputs are unaffected). Use [eliashberg] solver_mode = "
+                        "\"eigenvalue\" (the in-process default) or spectral_shift = \"auto\".",
+                        eta)
             except caught as exc:
                 fail((eta,), "kernel/solver", exc)
             finally:
@@ -981,7 +1237,8 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
                      "state={}".format(meta["state"]),
                      "residency={}".format(meta["bond_residency"])]
                     + (["parity_leakage={:.6e}".format(meta["bond_parity_leakage"])]
-                       if "bond_parity_leakage" in meta else [])),
+                       if "bond_parity_leakage" in meta else [])
+                    + _pole_header_lines(getattr(solver, "_bond_pole", None))),
                 # the weights travelled here inside meta (they are npz keys);
                 # rebuild the dict the header writer takes
                 sector_weights=(
@@ -989,7 +1246,8 @@ def _write_pairing_outputs(solver, info_outputfile, green_info, path_to_output):
                                                       meta["gap_sector_weights"])}
                     if "gap_sector_weights" in meta else None),
                 selection=meta.get("sector_selection"),
-                eigenvalue_selection=meta.get("eigenvalue_selection"))
+                eigenvalue_selection=meta.get("eigenvalue_selection"),
+                eigen_converged=meta.get("eigen_converged"))
         except Exception as exc:
             for t in tmps.values():
                 try:

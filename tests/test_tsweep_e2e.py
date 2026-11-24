@@ -112,3 +112,27 @@ def test_e2e_dynamic_eliashberg_two_rungs_real_solver(tmp_path):
     assert os.path.exists(os.path.join(rung1_out, "gap_dynamic.npz"))
     gap0 = np.load(os.path.join(rung0_out, "gap_dynamic.npz"))["gap"]
     assert np.all(np.isfinite(gap0))
+
+
+def test_e2e_flex_only_spin_orbital_two_rungs(tmp_path):
+    """A FLEX-only spin-orbital sweep (#83) reaches the FLEX solve of every
+    rung: with warm_start = false (required, see tsweep.preflight) each rung
+    starts from the bare state."""
+    base = _tsweep_base(tmp_path, [4.0, 3.0], run_eli=False)
+    base["continuation"]["warm_start"] = False
+    # the same one-orbital Hubbard model in the spin-orbital encoding
+    (tmp_path / "geom.dat").write_text(
+        "1.0 0.0 0.0\n0.0 1.0 0.0\n0.0 0.0 1.0\n2\n0.0 0.0 0.0\n0.0 0.0 0.0\n")
+    rows = []
+    for (rx, ry) in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        for s in (1, 2):
+            rows.append("  %d %d 0 %d %d -1.0 0.0\n" % (rx, ry, s, s))
+    (tmp_path / "transfer.dat").write_text("transfer\n2\n4\n 1 1 1 1\n" + "".join(rows))
+    base["mode"]["enable_spin_orbital"] = True
+    base["mode"]["calc_scheme"] = "general"
+    base["mode"]["param"]["flex_hartree_fock"] = True
+    out = ts.run(base, base_dir=str(tmp_path))
+    assert len(out) == 2
+    assert all(r["status"] in ("ok", "not_converged") for r in out)
+    for rung in ("000_T4", "001_T3"):
+        assert os.path.exists(os.path.join(tmp_path, "sweep", rung, "output", "sigma.npz"))

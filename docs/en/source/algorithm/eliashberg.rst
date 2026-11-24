@@ -98,7 +98,7 @@ The singlet pairing vertex is
 .. math::
 
    V^S_{\alpha\beta}(\mathbf{q})
-   = \frac{1}{2}(W_c + W_s)_{\alpha\beta}
+   = \frac{1}{2}(W_c - W_s)_{\alpha\beta}
      + \frac{3}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
      - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}
 
@@ -107,9 +107,13 @@ and the triplet pairing vertex is
 .. math::
 
    V^T_{\alpha\beta}(\mathbf{q})
-   = \frac{1}{2}(W_c - W_s)_{\alpha\beta}
+   = \frac{1}{2}(W_c + W_s)_{\alpha\beta}
      - \frac{1}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
      - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}
+
+The bare (first-order) terms are :math:`\tfrac12(W_c - W_s) = U + V` in the
+singlet channel and :math:`\tfrac12(W_c + W_s) = V` in the triplet channel:
+the on-site :math:`U` acts only on the singlet, not on the equal-time triplet.
 
 
 General mode (S/C matrix formulation)
@@ -184,7 +188,14 @@ The matrix elements are:
    PairHop, Hermitian-closed declarations
    (:math:`P_{ba} = P_{ab}^{*}`) -- the physically valid form, which
    need not be transpose-symmetric. Reduced-scheme files never depended
-   on this orientation.
+   on this orientation. Susceptibility files stamped
+   ``sc_vertex_version = 3`` (issue #232) place every off-site row on the
+   bond of the transfer row with the same ``(R, a, b)``; a file stamped
+   ``sc_vertex_version = 2``, or an unversioned one, is refused, in either
+   scheme, when CoulombInter, Hund, Ising, Exchange or PairHop declares an
+   off-site row (PairLift is exempt, as above) that is not symmetric under
+   :math:`R \to -R` (:math:`X_{ab}(R) \neq X_{ab}(-R)`), because such a
+   file was computed with that row on the opposite bond.
 
 The RPA susceptibilities are
 

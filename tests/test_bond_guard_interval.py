@@ -386,19 +386,19 @@ class TestDressAndBuildWGuardMethod(unittest.TestCase):
     def test_map_is_identical_and_counts_are_reported(self):
         import types
         from hwave.solver import flex_bond as fb
-        from tests.test_flex_bond_dressing import _problem
+        from tests.test_flex_bond_dressing import _onsite_factors, _problem
         chi_bar, S, C = _problem()
+        factors = _onsite_factors()
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
-        S_on = np.ascontiguousarray(S[:, :nd, :nd]); C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
 
         def run(method):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext.for_view(np, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(np, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                           second_order="takimoto", guard_method=method)
+                                           factors=factors, guard_method=method)
                 return store.get_freq_batch("W", 0, nmat).copy(), res
 
         W_ref, r_ref = run("svd")

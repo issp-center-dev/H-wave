@@ -17,23 +17,39 @@ in the random phase approximation,
     **CoulombIntra**:
       :math:`\sum_{i\alpha} U_\alpha\,n_ {i\alpha\uparrow} n_{i\alpha\downarrow}, \quad n_{i\alpha\sigma}=c_{i\alpha\sigma}^{\dagger}c_{i\alpha\sigma}^{\phantom{\dagger}}`
     **CoulombInter**:
-      :math:`\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}, \quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} V_{\alpha\beta}(r_{ij})\,n_{i\alpha} n_{j\beta}, \quad n_{i\alpha}=n_{i\alpha\uparrow}+n_{i\alpha\downarrow}`
     **Hund**:
-      :math:`-\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
+      :math:`-\frac{1}{2}\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Hund}(r_{ij}) \left( n_{i\alpha\uparrow} n_{j\beta\uparrow} + n_{i\alpha\downarrow} n_{j\beta\downarrow} \right)`
     **Ising**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ising}(r_{ij}) (n_{i\alpha\uparrow} - n_{i\alpha\downarrow})(n_{j\beta\uparrow} - n_{j\beta\downarrow})`
     **PairHop**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} \left[ J_{\alpha\beta}^{\rm PH}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{j\beta\uparrow}^{\phantom{\dagger}} c_{i\alpha\downarrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.} \right]`
     **Exchange**:
       :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm Ex}(r_{ij})\,c_{i\alpha\uparrow}^\dagger c_{j\beta\uparrow}^{\phantom{\dagger}} c_{j\beta\downarrow}^\dagger c_{i\alpha\downarrow}^{\phantom{\dagger}}`
     **PairLift**:
-      :math:`\sum_{ij\alpha\beta} J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.}`
+      :math:`\frac{1}{2}\sum_{ij\alpha\beta} \left[ J_{\alpha\beta}^{\rm PairLift}(r_{ij})\,c_{i\alpha\uparrow}^{\dagger} c_{i\alpha\downarrow}^{\phantom{\dagger}} c_{j\beta\uparrow}^{\dagger} c_{j\beta\downarrow}^{\phantom{\dagger}} + \textit{h.c.} \right]`
 
 .. note::
 
-   Two of the expressions above were corrected to match what the solvers
+   Some of the expressions above were corrected to match what the solvers
    have always implemented; **no input file needs to be changed**, and no
    numerical result changes.
+
+   - **Factor 1/2** (CoulombInter, Hund, Ising, PairHop, PairLift): the
+     sums run over every ordered pair, i.e. over every declared row. Each
+     row :math:`(R, \alpha, \beta)` with value :math:`X` must be
+     accompanied by its partner :math:`(-R, \beta, \alpha)` with value
+     :math:`X^{*}` (see below), and the two describe the same bond. For
+     these types the partner row gives the same term as the row itself
+     (for PairHop and PairLift, the same Hermitian-completed bracket), so
+     each row carries half of it: a bond declared as a CoulombInter pair
+     with value :math:`V` contributes :math:`V n_{i\alpha} n_{j\beta}`
+     once. This is the convention of RESPACK ``zvo_ur.dat``, which lists
+     both orientations of every bond. The factor was missing from earlier
+     editions of this page. **Exchange** needs no factor: its summand has
+     no explicit ``h.c.``, and the partner row supplies the Hermitian
+     conjugate of the row's term, so the sum as written gives the bond
+     term once.
 
    - **Hund**: the implemented convention carries a MINUS sign, as written
      above. A ferromagnetic (same-spin attractive) Hund coupling is
@@ -53,42 +69,56 @@ in the random phase approximation,
    :math:`\vec{r} = (r_x, r_y, r_z)`, for the one-body and the two-body files
    alike.
 
-   **Compatibility with version 2.0.0.** Up to H-wave 2.0.0 the mean-field
-   solvers (``UHFk``; the Hartree-Fock term of ``FLEX``) read an off-site
-   two-body row with the two cells swapped, while the RPA, FLEX and Eliashberg
-   vertices used the rule above; the mean field now follows it too. Results of
-   ``UHFk`` (and of ``FLEX`` with ``flex_hartree_fock = true`` or
-   ``flex_second_order = "local"``) change only for off-site rows with two
-   different orbitals or a complex coefficient; every on-site interaction,
-   every real orbital-diagonal off-site row, every real single-orbital input,
-   and every RPA or Eliashberg result without the bond-resolved channels
-   (``longitudinal_bond_channels = false``, the default) and computed from an
-   unaffected susceptibility are unchanged (an Eliashberg run with
-   ``chi0q_mode = "flex"`` moves together with the FLEX run that produced its
-   susceptibility). An RPA/FLEX calculation with
-   ``calc_type = "ring"`` and ``longitudinal_bond_channels = true`` on real
-   inter-orbital off-site bonds changes as well: its mixed second-order blocks
-   are now exact (issue #192). Runs under ``flex_second_order = "takimoto"``
-   without the Hartree-Fock term and without the bond-resolved channels are
-   unchanged.
+   **Correction of the bond placement (issue #232).** A two-body row and a
+   one-body row with the same ``(R, a, b)`` act on the same bond, as the
+   Wannier90 ``hr.dat`` and RESPACK ``zvo_*r.dat`` formats define them.
+   Earlier versions did not do this everywhere: the RPA solver (released
+   versions up to and including v1.0.1 among them), the FLEX vertex
+   (including ``flex_second_order = "local"`` and the bond-resolved
+   channels) and the Eliashberg vertices put an off-site two-body row on
+   the bond OPPOSITE its one-body row. The released ``UHFk`` placed it
+   correctly (development versions between issues #193 and #232, which
+   were never part of a release, had moved it, and the Hartree-Fock term
+   of ``FLEX``, to the opposite bond as well). From the first release that
+   includes issue #232, all solvers follow the convention above. Results
+   change only for off-site rows that are not symmetric under
+   :math:`R \to -R` (:math:`X_{ab}(R) \neq X_{ab}(-R)`), the generic case
+   of multi-orbital RESPACK input: a bond between two different orbitals
+   :math:`a \neq b` is declared as :math:`X_{ab}(R)` together with its
+   partner :math:`X_{ba}(-R)`, and :math:`X_{ab}(-R)` -- the same pair of
+   orbitals on the mirrored bond -- is in general a different number;
+   every on-site interaction, every real single-orbital input and every
+   table with :math:`X_{ab}(R) = X_{ab}(-R)` is unaffected
+   (a complex off-site ``PairHop`` is affected even with a single orbital,
+   because its coefficient at :math:`-R` is the complex conjugate).
    **No input file needs to be changed.**
 
-   **Reproduction recipe and composite pipelines.** To reproduce a 2.0.0
-   ``UHFk`` number, negate the displacement of every off-site two-body row
-   (``[rx] [ry] [rz]`` -> ``[-rx] [-ry] [-rz]``; not the one-body rows such as
-   ``Transfer`` and ``Extern``, not the on-site
-   rows; do not swap the orbital indices, which is wrong for complex
-   couplings) -- and note that this negated file changes what the RPA and
-   Eliashberg solvers compute, whose 2.0.0 results on the original file were
-   already correct. A 2.0.0 ``FLEX`` run with ``flex_hartree_fock = true``
-   cannot be reproduced with a single modified file, because that release
-   evaluated the mean-field term and the vertices in different orientations
-   within one run. A 2.0.0 pipeline that fed ``UHFk`` output into the RPA or
-   Eliashberg solvers is reproduced only by running ``UHFk`` on the negated
-   file and the later stages on the original one, because 2.0.0 solved a
-   different Hamiltonian in the two stages. Remove any workaround you added
-   for the old discrepancy, and restart affected self-consistent runs from
-   scratch rather than from 2.0.0 seeds.
+   **Reproducing earlier results.** An earlier RPA, FLEX-vertex or
+   Eliashberg result is reproduced by negating the displacement of every
+   off-site two-body row (``[rx] [ry] [rz]`` -> ``[-rx] [-ry] [-rz]``; not
+   the one-body rows such as ``Transfer``, not the on-site rows, and
+   without swapping the orbital indices, which is wrong for complex
+   couplings) -- that negated file describes the Hamiltonian those versions
+   actually solved. The exception is the bond-resolved pairing kernel
+   (``longitudinal_bond_pairing`` and the dynamic bond path of
+   ``hwave_sc``): with more than one orbital it also coupled the gap to the
+   bond channels with a wrong pair geometry, corrected at the same time, so
+   multi-orbital results of that kernel can change even for an off-site
+   table that is symmetric under :math:`R \to -R`, and cannot be
+   reproduced from a modified file. Released ``UHFk`` results are
+   unchanged. An earlier
+   ``FLEX`` run with ``flex_hartree_fock = true`` evaluated the mean-field
+   term and the vertices on different bonds and cannot be reproduced with
+   a single file. Keep such reproduction runs in a separate directory:
+   their outputs carry the current version stamps although they describe
+   the old Hamiltonian. FLEX susceptibility, self-energy and Green-function
+   files now carry ``sc_vertex_version = 3`` and the dynamic bond archive
+   ``bond_archive_schema = 3``; the Eliashberg solvers and a FLEX
+   ``sigma_init`` seed refuse an older file when the interaction declares
+   an off-site row that is not symmetric under :math:`R \to -R`, so
+   regenerate those files by re-running FLEX. Remove any workaround added
+   for the old placement, and restart affected self-consistent runs from
+   scratch rather than from earlier seeds.
 
 
 An example of the file is shown below.
@@ -197,7 +227,7 @@ Usage rules
 
 -  Header cannot be omitted.
 
--  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.
+-  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared. A nonzero on-site CoulombInter row of an orbital with itself (:math:`R = 0`, :math:`\alpha = \beta`) is also rejected: each declared row carries half of :math:`V n n`, so such a row is the Hubbard term :math:`U = V` plus a one-body level shift :math:`V/2`; declare :math:`U = V` in CoulombIntra and add :math:`V/2` to the orbital's on-site energy in the Transfer file (or absorb it in the chemical potential).
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
 
@@ -214,5 +244,48 @@ Usage rules
       **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
       spin-orbital count (= 2 × physical orbitals); double any pre-existing RPA
       spin-orbital ``geom.dat`` ``Norbit``.
+
+-  **Complex coefficients in spin-orbital mode.** With
+   ``mode.enable_spin_orbital = true`` every solver (RPA, FLEX and
+   ``hwave_sc``) refuses a nonzero ``[J.imag]`` (``[V.imag]``) on a
+   ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange`` or ``PairLift`` row,
+   before any calculation. The test is
+   :math:`|\mathrm{Im}\,X| > 10^{-10} + 10^{-8}|X|` on the coefficient as
+   read. In H-wave's declaration convention a row and its partner
+   :math:`(-R, \beta, \alpha)` multiply the same operator, so the imaginary
+   part has no operator content and was silently folded before; the message
+   reads ``<type> coefficient at R=... orbitals (a, b) has an imaginary part
+   (...)`` and asks to remove it. For ``Exchange`` the partner multiplies the
+   Hermitian conjugate, so an imaginary part would be a
+   Dzyaloshinskii-Moriya-type term; that extension is tracked in issue #302.
+   Only ``PairHop`` carries a physical complex phase and is accepted with an
+   imaginary part. Without ``enable_spin_orbital`` the previous behaviour is
+   unchanged.
+
+-  **Extern in spin-orbital mode.** With ``mode.enable_spin_orbital = true``
+   the Extern file keeps the **physical** orbital indices: an
+   :math:`N_\text{orbital} \times N_\text{orbital}` matrix per :math:`R`,
+   indices from 1 to :math:`N_\text{orbital}` (half the geometry ``norb``),
+   and line 2 of the header is :math:`N_\text{orbital}`. It does **not** use
+   the :math:`1, \ldots, 2 N_\text{orbital}` spin-orbital indices of the
+   Transfer file. An index outside :math:`1, \ldots, N_\text{orbital}`, or a
+   header that declares another orbital count, is rejected with an error
+   (the solver does not drop such rows).
+
+   The spin dependence comes from :math:`\sigma^z`. Let
+   :math:`\alpha = 0, \ldots, N_\text{orbital}-1` be the physical-orbital
+   index of the previous item (Extern file index :math:`\alpha + 1`). An entry
+   :math:`H_{\alpha\alpha}(0) = h`, scaled by ``coeff_extern``, shifts the
+   up-spin level of orbital :math:`\alpha` by :math:`+h` and the down-spin
+   level by :math:`-h`. For :math:`h > 0` the down spin is therefore
+   favoured: at fixed filling its occupation grows and :math:`S^z` becomes
+   negative.
+
+   The same field can be written into the Transfer file instead, as on-site
+   entries :math:`+h` on index :math:`2\alpha + 1` and :math:`-h` on index
+   :math:`2\alpha + 2` (1-based Transfer file indices, :math:`\alpha` 0-based as above). Use one route, not both: the two fields add.
+
+   ``coeff_extern`` defaults to 0.0, so an Extern file has no effect until
+   ``[mode.param] coeff_extern`` is set (e.g. to 1.0).
 
 .. raw:: latex

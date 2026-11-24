@@ -5,8 +5,11 @@ non-Hermitian-closed input, so unclosed tables reach these reductions
 only through reader-bypassing internal paths (and tests). A declaration
 table may carry the same physical bond from both ends:
 the two declarations of one coupling are ``(R, a, b)`` and
-``(-R, b, a)``. For every type except PairHop they multiply the SAME
-operator, so the table entering any vertex is the mean
+``(-R, b, a)``. For CoulombInter, Hund, Ising and PairLift the reversed
+partner multiplies the SAME operator; for Exchange and PairHop it
+multiplies the HERMITIAN CONJUGATE, which for a real Exchange coefficient
+has the same effect. For every type except PairHop the table entering any
+vertex is the mean
 
     T~[r, a, b] = (T[r, a, b] + T[-r, b, a]) / 2.
 
@@ -92,10 +95,10 @@ def symmetrise_k(inter_k):
     """Momentum-space form of the same reduction, per interaction type.
 
     The same-operator partner of ``M[b, a](q)`` is the orbital-transposed
-    entry AT ``-q`` (arrays carry ``e^{+iqR}`` phases since #133; the
-    reduction is sign-agnostic) -- averaging with
+    entry AT ``-q`` (the interaction arrays carry ``e^{-iqR}`` phases since
+    issue #232; the reduction is sign-agnostic) -- averaging with
     the same-q transpose instead corrupted every off-site interaction,
-    collapsing a one-direction bond's ``V(q) = v e^{+iqR}`` to
+    collapsing a one-direction bond's ``V(q) = v e^{-iqR}`` to
     ``v cos(qR)`` (measured: the S/C entry vanished outright at
     ``q = pi/2``). The mean used here:
 
@@ -160,6 +163,39 @@ def symmetrise_k(inter_k):
 #: agree by construction (issue #93).
 REVERSE_ATOL = 1e-10
 REVERSE_RTOL = 1e-8
+
+
+def validate_no_onsite_same_orbital_inter(itype, table, source=""):
+    """Reject a nonzero on-site (``R = 0``) ``CoulombInter`` row of an orbital
+    with itself.
+
+    ``CoulombInter`` is the density interaction between two different
+    orbitals or sites. Each declared row carries half of its operator
+    ``V n n`` (the row and its partner together make one bond), so a row
+    ``V_aa(0)`` of an orbital with itself is
+    ``(V/2) n_a n_a = V n_{a up} n_{a dn} + (V/2) n_a``: a Hubbard term
+    ``U = V`` plus a one-body level shift ``V/2``. The solvers do not read
+    it that way -- the RPA/FLEX spin/charge vertex gives a ``CoulombInter``
+    density row charge content only, and the Hartree-Fock decoupling of
+    the same-spin part drops the level shift -- so it is refused; declare
+    ``U = V`` in ``CoulombIntra`` and add ``V/2`` to the orbital's on-site
+    energy in the Transfer file (or absorb it in the chemical potential).
+    A row declared at zero is accepted (it carries no interaction).
+    """
+    if str(itype).lower() != "coulombinter":
+        return
+    for (irvec, orbvec), v in table.items():
+        if (tuple(int(x) for x in irvec) == (0, 0, 0)
+                and int(orbvec[0]) == int(orbvec[1]) and complex(v) != 0):
+            raise ValueError(
+                "CoulombInter{}: the on-site row of orbital {} with itself (R = (0, 0, 0), "
+                "value V = {}) is the Hubbard term U = V plus a one-body level shift V/2 "
+                "(each row carries half of V n n), which the solvers do not read as a "
+                "CoulombInter density interaction. Declare U = V in CoulombIntra and add V/2 "
+                "to the orbital's on-site energy in the Transfer file (or absorb it in the "
+                "chemical potential); an on-site interaction between DIFFERENT orbitals "
+                "stays in CoulombInter.".format(
+                    " in {}".format(source) if source else "", int(orbvec[0]) + 1, v))
 
 
 def validate_hermitian_closure(itype, table, source=""):

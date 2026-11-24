@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Timing of the FLEX general path under the two second-order kernels.
+"""Timing of the FLEX general path under the second-order kernel.
 
 Measures, on the CPU, (i) one assembly of the effective interaction
 ``V_eff`` (``_flex_compute_veff_general``) and (ii) one full FLEX iteration
 (``solve`` with ``IterationMax = 1``) under ``flex_second_order = "local"``
-and ``"takimoto"``, and prints the ratios quoted in the configuration
-reference.  Two inputs: the 2-orbital fixture ``tests/rpa/input_2orb``
+and prints both.  (It used to print their ratio to the ``"takimoto"``
+kernel, which was retired by issue #253.)  Two inputs: the 2-orbital fixture ``tests/rpa/input_2orb``
 (geometry and transfer) and a synthetic 3-orbital square lattice written by
 this script (nearest-neighbour hopping ``-1 + 0.2 a`` per orbital ``a``,
 inter-orbital on-site hopping ``0.3``); both get on-site ``CoulombIntra``
@@ -33,7 +33,7 @@ from tests.test_second_order_factors import _write_wan  # noqa: E402
 _IN2 = "tests/rpa/input_2orb"
 
 
-def build(norb, second_order, L, nmat):
+def build(norb, L, nmat):
     import hwave.qlmsio.read_input_k as read_input_k
     import hwave.solver.flex as flex_mod
     d = tempfile.mkdtemp()
@@ -62,7 +62,7 @@ def build(norb, second_order, L, nmat):
              "CoulombIntra": "intra.dat", "CoulombInter": "inter.dat", "Hund": "hund.dat"}
     r = read_input_k.QLMSkInput({"path_to_input": d, "interaction": idict})
     par = {"T": 1.0, "filling": 0.5, "CellShape": [L, L, 1], "SubShape": [1, 1, 1], "Nmat": nmat,
-           "IterationMax": 1, "Mix": 1.0, "EPS": 1, "flex_second_order": second_order}
+           "IterationMax": 1, "Mix": 1.0, "EPS": 1, "flex_second_order": "local"}
     s = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
                                                 "enable_spin_orbital": False, "calc_scheme": "general"})
     shutil.rmtree(d, ignore_errors=True)
@@ -72,27 +72,21 @@ def build(norb, second_order, L, nmat):
 def main(L=8, nmat=128, repeats=5):
     beta = 1.0
     for norb in (2, 3):
-        veff, full = {}, {}
-        for so in ("local", "takimoto"):
-            s = build(norb, so, L, nmat)
-            s._calc_epsilon_k({})
-            nvol = s.lattice.nvol
-            G = s._calc_dressed_green(beta, 0.1, np.zeros((1, nmat, nvol, norb, norb), complex))
-            chi0q_raw = s._calc_chi0q(G, np.zeros_like(G), beta)[0]
-            best = min(_timed(lambda: s._flex_compute_veff_general(chi0q_raw, s.ham_info.ham_inter_q))
-                       for _ in range(repeats))
-            veff[so] = best
-            best = 1e9
-            for _ in range(repeats):
-                s = build(norb, so, L, nmat)
-                out = tempfile.mkdtemp()
-                best = min(best, _timed(lambda: s.solve({"path_to_input": out}, out)))
-                shutil.rmtree(out, ignore_errors=True)
-            full[so] = best
-        print("norb {} (nd {}, L {}, Nmat {}): V_eff assembly local {:.4f} s / takimoto {:.4f} s = {:.2f}; "
-              "one iteration local {:.4f} s / takimoto {:.4f} s = {:.2f}".format(
-                  norb, norb * norb, L, nmat, veff["local"], veff["takimoto"], veff["local"] / veff["takimoto"],
-                  full["local"], full["takimoto"], full["local"] / full["takimoto"]))
+        s = build(norb, L, nmat)
+        s._calc_epsilon_k({})
+        nvol = s.lattice.nvol
+        G = s._calc_dressed_green(beta, 0.1, np.zeros((1, nmat, nvol, norb, norb), complex))
+        chi0q_raw = s._calc_chi0q(G, np.zeros_like(G), beta)[0]
+        veff = min(_timed(lambda: s._flex_compute_veff_general(chi0q_raw, s.ham_info.ham_inter_q))
+                   for _ in range(repeats))
+        full = 1e9
+        for _ in range(repeats):
+            s = build(norb, L, nmat)
+            out = tempfile.mkdtemp()
+            full = min(full, _timed(lambda: s.solve({"path_to_input": out}, out)))
+            shutil.rmtree(out, ignore_errors=True)
+        print("norb {} (nd {}, L {}, Nmat {}): V_eff assembly {:.4f} s; one iteration {:.4f} s".format(
+            norb, norb * norb, L, nmat, veff, full))
 
 
 def _timed(fn):

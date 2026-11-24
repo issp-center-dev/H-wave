@@ -30,6 +30,16 @@ Parameters
 ``mode`` section
 ================================
 
+Only the keys ``mode``, ``calc_scheme``, ``calc_type``,
+``enable_spin_orbital`` and ``flag_fock`` (those the chosen solver supports,
+see below) are written in the ``mode`` table itself, with exactly this
+spelling and case; every other solver parameter goes in ``mode.param``.
+``hwave`` stops with an error when ``mode`` contains any other key or a
+differently cased one, and when ``mode.param`` contains one of these keys (in
+any case) or a nested ``param`` table. At the end of a run it warns about the
+``mode.param`` keys the run did not read: a misspelled name, or a parameter
+that has no effect under the current settings.
+
 - ``mode``
 
   **Type :**
@@ -43,7 +53,8 @@ Parameters
 - ``enable_spin_orbital`` (default value is ``false``)
 
   **Type :**
-  Boolean
+  Boolean (a recognized string such as ``"true"`` is accepted with a warning;
+  an unrecognized value is an error)
 
   **Description :**
   This parameter specifies whether to allow spin-orbital interaction.
@@ -61,6 +72,65 @@ Parameters
      **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
      spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
      ``Norbit``.
+
+  **FLEX (experimental).** In ``mode = "FLEX"`` the spin-orbital mode runs on
+  ``calc_scheme = "general"`` only and requires ``[mode.param]
+  flex_hartree_fock = true``: the first order is the self-consistent
+  Hartree-Fock term of the full spin-orbital density, and the fluctuation
+  part is resummed in one channel with the antisymmetrized spinful vertex
+  (see :ref:`flex_spin_orbital`). Requirements and limitations of this
+  version:
+
+  - without ``longitudinal_bond_channels``: on-site and in-cell (``R = 0``)
+    interactions only (an off-site declaration is refused);
+  - ``longitudinal_bond_channels = true`` is supported: off-site rows of
+    every type are accepted (a complex coefficient on ``PairHop`` only) and
+    their exchange is resolved exactly on the bond channels. It runs on the
+    CPU (``gpu = true`` is ignored with a WARNING; ``gpu_required = true``
+    and ``longitudinal_bond_store = "device"`` are refused), writes the
+    spin-orbital bond archive (schema 4) of the final Green function with
+    ``longitudinal_bond_output_full = true`` (``[file.output] green`` is
+    then required; see :ref:`flex_so_bond_archive`), takes no in-process
+    pairing (``longitudinal_bond_pairing`` must be ``"none"``) and guards
+    every frequency (``longitudinal_bond_guard_freqs = "static"`` is
+    refused); ``so_bond_layout`` selects the layout and
+    ``longitudinal_bond_memory_cap_gb`` has the spin-orbital meaning; see
+    :ref:`flex_so_bond_tutorial`;
+  - ``spinful_vertex_exchange`` must stay ``true`` (the default);
+  - no seed: ``sigma_init``, ``trans_mod`` and ``green_init`` are refused,
+    and the run starts from the bare Hartree-Fock state;
+  - the other conditions of ``flex_hartree_fock`` apply (uniform Matsubara
+    grid, no sublattice, even ``Nmat``); an Extern field is accepted (in the
+    physical orbital indices, scaled by ``coeff_extern``);
+  - ``calc_scheme = "reduced"`` refuses spin-orbital input;
+  - the static Eliashberg solver (``hwave_sc``) reads the outputs of a run
+    without ``longitudinal_bond_channels`` with ``[eliashberg] chi0q_mode =
+    "flex"`` (write ``[file.output] chiq``, ``chi0q`` and ``green``); see
+    :ref:`sc_spin_orbital`. The on-site dynamic solver (``frequency =
+    "dynamic"``) reads them too (see :ref:`sc_spin_orbital_dynamic`). With
+    ``chi0q_mode = "flex"`` the outputs of a run with
+    ``longitudinal_bond_channels = true`` are refused by ``hwave_sc``; the
+    ``green.npz`` of such a run, in filling mode, is the ``[eliashberg]
+    bond_green`` input of the static spin-orbital bond path (see
+    :ref:`sc_so_bond_green`), and ``hwave_sc`` reads its bond archive in a
+    later version. In
+    this version solver-side consumers read the bond archive through the
+    Python function ``hwave.solver.so_bond_archive.load_so_bond_archive``,
+    and a script inspects it with ``numpy.load`` (see
+    :ref:`flex_so_bond_archive`). The dynamic bond path and
+    ``hwave_tsweep`` with ``run_eliashberg = true`` still refuse
+    ``enable_spin_orbital``; a FLEX-only ``hwave_tsweep`` runs it with
+    ``warm_start = false``.
+
+  **Eliashberg solver.** ``hwave_sc`` solves the static linearized
+  Eliashberg equation for a spin-orbital model with one
+  :math:`2N \times 2N` gap matrix (no ``pairing_type``), on-site and in-cell
+  interactions
+  and ``chi0q_mode = "calc"``, ``"load"`` or ``"flex"``; the scope, the
+  outputs and the refused combinations are listed in
+  :ref:`sc_spin_orbital`. With ``frequency = "dynamic"`` it solves for the
+  frequency-resolved gap (uniform grid, ``chi0q_mode = "calc"`` or
+  ``"flex"``); see :ref:`sc_spin_orbital_dynamic`.
 
 .. _rpa_calc_scheme_auto:
 
@@ -240,6 +310,49 @@ Parameters
   this resummation; it remains excluded (as it is in the
   non-spin-orbital ladder).
 
+- ``orbital_site``
+
+  **Type :**
+  List of non-negative integers (default: not set)
+
+  **Description :**
+  Assigns each orbital of the original cell to a site (atom or molecule).
+  Orbitals with the same label are on the same site. **In spin-orbital mode
+  (``mode.enable_spin_orbital = true``) the key is ignored**: its value is
+  not read (an invalid value is ignored too), one WARNING is logged, and
+  every ``R = 0`` row is treated exactly, exchange crossing included (see
+  the :ref:`migration note <so_migration_note>`). The rest of this entry
+  describes the non-spin-orbital solvers. Read by ``hwave`` (RPA, FLEX)
+  and by ``hwave_sc``; the UHF solvers do not use it.
+
+  An ``R = 0`` two-body row between orbitals of DIFFERENT sites -- for
+  example the two molecules of a dimer that share a unit cell -- is an
+  inter-site interaction. With the key, such a row is treated like an
+  off-site row: in the RPA ring, the FLEX general path (vertex and second
+  order) and the non-bond ``hwave_sc`` vertex only its density (Hartree)
+  part enters, and its exchange crossing does not, as for every ``R != 0``
+  row (issue #239). Rows of types without a
+  density part follow the off-site rules: between different sites,
+  ``Exchange`` and ``PairHop`` are refused in FLEX general and in the
+  non-bond ``hwave_sc`` paths (``bond_channels = false``), ``PairHop`` is
+  dropped with a warning in RPA, and ``PairLift`` is dropped with a warning in
+  ``hwave_sc``.
+
+  Without the key every orbital is taken to be on one site: every ``R = 0``
+  row gets the on-site (Kanamori) treatment, exchange crossing included.
+  That is correct for orbitals of one atom (``U'``, ``J``) but makes the
+  result depend on the choice of unit cell when the orbitals are different
+  sites, so a warning names the ``R = 0`` inter-orbital rows when the key is
+  absent; for an atomic multi-orbital model declare all orbitals on one site
+  (e.g. ``orbital_site = [0, 0]``).
+
+  Not affected: the bond-resolved paths (``longitudinal_bond_channels``,
+  ``transverse_bond_channels``), which resolve the exchange of every bond,
+  the in-cell ones included, and the Hartree-Fock self-energy of
+  ``flex_hartree_fock``, which keeps the exchange of every row.
+  ``calc_type = "ring+ladder"`` without the bond gate refuses rows between
+  different sites.
+
 - ``longitudinal_bond_channels``
 
   **Type :**
@@ -250,23 +363,32 @@ Parameters
   channel for ``calc_type = "ring"`` with ``calc_scheme = "general"`` (or
   ``"auto"`` resolving to it) on a spin-free system (see
   :ref:`rpa_longitudinal_bond`). The exchange (Fock)
-  crossing of the off-site ``CoulombInter``, ``Hund`` and ``Ising``
-  terms -- which the standard ring omits -- is carried on a bond-enlarged
+  crossing of the off-site ``CoulombInter``, ``Hund``, ``Ising`` and
+  ``Exchange`` terms -- which the standard ring omits -- is carried on a bond-enlarged
   pair basis, and the dressed static susceptibilities are written to the
   ``chiq`` file under the ``longitudinal_bond_*`` keys; the ``chiq``
   array inside that file is not overwritten and stays the standard ring
   result. The gate requires at least one
-  declared off-site ``CoulombInter``/``Hund``/``Ising`` shell (a
-  declared-zero coefficient counts), real coefficients, an even
+  declared off-site ``CoulombInter``/``Hund``/``Ising``/``Exchange``/``PairHop``
+  shell (a declared-zero coefficient counts), real coefficients, an even
   ``Nmat``, no sublattice, no ``chi0q_init`` and no
-  ``enable_spin_orbital``; an off-site ``Exchange`` or ``PairHop``
-  declaration is rejected with an error. It cannot be combined with
+  ``enable_spin_orbital``. An off-site ``PairHop`` enters through its
+  bond entries only (see :ref:`rpa_longitudinal_bond`). An off-site ``Exchange`` enters through its
+  bond (Fock) crossing only -- it has no Hartree content -- and its
+  spin-flip content is the transverse channel's
+  (``transverse_bond_channels``), not this one's. It cannot be combined with
   ``transverse_bond_channels = true``. In ``mode = "FLEX"`` the same key
   enables the self-consistent bond-resolved channel of the Hartree-Fock
-  FLEX (experimental; requires ``flex_hartree_fock = true``,
-  ``calc_scheme = "general"``, a spin-free system, the uniform Matsubara
-  grid, no sublattice and an even ``Nmat``; see
-  :ref:`flex_bond_hf`). With ``longitudinal_bond_channels = true``
+  FLEX (experimental; an off-site ``Exchange`` or ``PairHop`` is accepted there too, with
+  its second order built exactly and a warning when a bond's spin part is
+  not SU(2) symmetric; requires ``flex_hartree_fock = true``,
+  ``calc_scheme = "general"``, a spin-free system (or, with
+  ``enable_spin_orbital = true``, the spin-orbital FLEX with bond channels
+  of :ref:`flex_so_bond_tutorial`, where the GPU and pairing options below
+  are not available and the archive is the spin-orbital bond archive of
+  :ref:`flex_so_bond_archive`), the uniform Matsubara grid, no
+  sublattice and an even ``Nmat``; see :ref:`flex_bond_hf`).
+  With ``longitudinal_bond_channels = true``
   (which requires ``flex_hartree_fock = true``) and ``gpu = true``,
   the dressing, the effective interaction and the self-energy
   transport run on the GPU (CuPy); the bond arrays stay in host memory
@@ -290,13 +412,16 @@ Parameters
   that would drop a shell carrying a declared nonzero coefficient is
   rejected, so it can only remove declared-zero (spectator) shells; to
   exclude a physical interaction, set its coefficient to zero in the
-  interaction file. Ignored with a warning unless
+  interaction file. In FLEX mode with an off-site ``Exchange``, the
+  displacements of nonzero off-site ``PairLift`` rows are needed by the
+  exact second order and must be kept as well. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
 - ``longitudinal_bond_memory_cap_gb``
 
   **Type :**
-  Float (default value is ``8.0``)
+  Float (default value is ``8.0``; with ``enable_spin_orbital = true``
+  (FLEX), unset means ``0.8`` times the available host memory)
 
   **Description :**
   Cap on the ESTIMATED peak host (CPU) memory of the bond-resolved solve,
@@ -305,6 +430,11 @@ Parameters
   The refusal message reports the estimate and the shapes behind it; on
   a machine with enough physical memory, raise the cap to proceed.
   Ignored with a warning unless ``longitudinal_bond_channels = true``.
+  With ``enable_spin_orbital = true`` (FLEX) the key has the spin-orbital
+  meaning instead: unset is ``0.8`` times the available host memory, a
+  positive value is that many GiB, ``0`` disables the check (with a
+  WARNING), and a negative or non-finite value is refused; see
+  :ref:`flex_so_bond_tutorial`.
 
 - ``longitudinal_bond_guard_freqs``
 
@@ -335,7 +465,42 @@ Parameters
   is a reduced diagnostic that removes the dominant CPU cost of the
   guard and is recorded in the outputs (``longitudinal_bond_guard_freqs``
   member). The default does not depend on ``gpu``. Ignored with a
-  warning unless ``longitudinal_bond_channels = true``.
+  warning unless ``longitudinal_bond_channels = true``. With
+  ``enable_spin_orbital = true`` (FLEX) only ``"all"`` is accepted
+  (``"static"`` is refused: the spin-orbital dressing decomposes every block
+  exactly); see :ref:`flex_so_bond_tutorial`.
+
+- ``longitudinal_bond_guard_exact``
+
+  **Type :**
+  String (``"decide"`` or ``"always"``, case-insensitive; default value
+  is ``"decide"``)
+
+  **Description :**
+  When the conditioning guard of ``longitudinal_bond_guard_freqs =
+  "all"`` decomposes blocks exactly on the GPU path. Under ``"decide"``
+  (default), a frequency batch whose device-side bounds already prove
+  that every block passes -- every block has valid bounds and the
+  smallest lower bound of the score exceeds ``2 * longitudinal_bond_cond_tol``
+  (plus a round-off allowance of order :math:`10^{-12}`) -- is passed
+  without gathering its blocks to the host and without any exact
+  singular-value decomposition. Otherwise the batch is decomposed
+  exactly as before, so a refusal, a ``flex_guard_policy = "warn"``
+  record and every decision are identical to ``"always"``; only the
+  per-iteration log and the recorded exact-decomposition counts change. When a map's minimum was not computed
+  exactly, the ``guards:`` line reports
+  ``bond cond_min spin in bracket [low, up] (interval bound, no exact
+  SVD; smallest upper end at flat index i)`` in place of the value: the
+  exact minimum lies in ``[low, up]``, and ``i = l * nvol + q`` is the
+  flattened (bosonic grid index, q-point) position of the smallest
+  upper bound. Every map that can be the last one -- the map of
+  ``IterationMax`` and any map that can complete the convergence
+  criterion -- runs the exact decomposition, so the
+  ``longitudinal_bond_cond_min_s`` / ``_c`` written to the outputs are
+  always exact. ``"always"`` decomposes exactly in every map (the
+  behaviour of previous versions). The setting changes nothing on the
+  CPU path, nor with ``longitudinal_bond_guard_freqs = "static"``.
+  Ignored with a warning unless ``longitudinal_bond_channels = true``.
 
 - ``longitudinal_bond_cond_tol``
 
@@ -357,6 +522,161 @@ Parameters
   dominated by amplified round-off. Ignored with a warning unless
   ``longitudinal_bond_channels = true``.
 
+- ``longitudinal_bond_half_grid``
+
+  **Type :**
+  Boolean (default value is ``false``; FLEX mode only)
+
+  **Description :**
+  Store and dress only the non-negative half of the bosonic Matsubara
+  grid in the bond-resolved FLEX. Every bosonic object of the bond map
+  (the bubble, the dressed spin and charge channels, the effective
+  interaction and the channel-0 collapses) satisfies
+  :math:`X(q, \nu_l) = X(q, -\nu_l)^\dagger` on the bond pair matrix at the
+  same :math:`q`, so with ``true`` the block store keeps the
+  ``Nmat/2 + 1`` frequencies :math:`\nu \ge 0` (the zero frequency and
+  the last slot of the grid included) and rebuilds the others where they
+  are read: in the self-energy, in the channel-0 susceptibilities and in
+  the outputs. The results agree with ``false`` to round-off (about
+  :math:`10^{-13}` relative). The conditioning guard still covers the
+  whole grid. The denominator at :math:`-\nu` is
+  :math:`1 \mp \bar\chi(q, \nu)^\dagger V(q)`, whose singular values in
+  general differ from those at :math:`+\nu`, so the negative frequencies
+  are guarded on their own, through the same checks as with ``false``
+  (the conditioning guard, the exact-singular check and, under
+  ``longitudinal_bond_guard_freqs = "static"``, the solve residual). This
+  is always the case with ``flex_guard_policy = "warn"`` and with
+  ``"static"``. The one exception is ``longitudinal_bond_guard_freqs =
+  "all"`` with ``flex_guard_policy = "refuse"`` under time-reversal
+  symmetry: when the bubble and the vertices satisfy
+  :math:`\bar\chi(q)^T = \bar\chi(-q)` and :math:`V(q)^T = V(-q)` (real
+  hopping and interactions; checked on every map, to :math:`10^{-12}`
+  relative), the denominator at :math:`(q, -\nu)` is the complex
+  conjugate of the one at :math:`(-q, \nu)` and has the same score, so the
+  negative frequencies are not decomposed again; a frequency batch whose
+  minimum score lies closer to the threshold than the tolerance of that
+  symmetry check (:math:`10^{-12}` relative) can resolve is still guarded
+  on its own, and a refusal is reported at the
+  mirror of the stored violating block. In every case the decision
+  (refuse, warn or pass) is that of ``false``, and ``cond_min`` (log and
+  ``longitudinal_bond_cond_min_s`` / ``_c``) is the minimum over the whole
+  grid. When several blocks violate, the location a refusal names (the
+  first violation met) can differ from ``false``, and so can the blocks
+  the warnings name (one per frequency batch and channel), because the
+  half grid's batches start at the zero frequency and group the
+  frequencies differently; an exactly singular denominator is refused on
+  both grids, possibly from a different batch. With time reversal the bond store takes about half the
+  memory and the dressing with its guard about half the time; with
+  broken time reversal the store is still halved but the dressing saves
+  only about 20 %. The bubble and the
+  self-energy transport are unchanged. The guard statistics
+  (``longitudinal_bond_guard_blocks_per_iteration``,
+  ``longitudinal_bond_guard_exact_blocks_*``) count the stored
+  frequencies only; such outputs carry ``longitudinal_bond_half_grid =
+  true``. A ``sigma_init`` seed must satisfy
+  :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`. With
+  ``longitudinal_bond_output_full`` the in-memory dynamic buffers
+  (``chi_s_w``, ``chi_c_w``) hold the stored half during the solve; they
+  are expanded to the full grid when the results are published, so the
+  archive written to disk still holds the full grid and is read by
+  ``hwave_sc`` as before. The in-process
+  pairing (``longitudinal_bond_pairing``) works on the half grid too: the
+  pairing vertex satisfies the same relation, so only the stored
+  frequencies are dressed again and accumulated, and the kernel rebuilds
+  the others (the IR fit folds them in). The two store slots that the
+  pairing keeps (the bubble and the slot that receives the vertex) are then
+  halved as well: for ``ND`` = 36, ``nvol`` = 1024 and ``Nmat`` = 1024 they
+  take 20.3 GiB instead of 40.5 GiB. The pairing results agree with
+  ``false`` to round-off for the vertex; the eigenvalues and gaps agree to
+  the eigensolver's convergence. Only booleans are accepted. Refused with
+  ``[mode] enable_spin_orbital = true``. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
+
+- ``longitudinal_bond_store``
+
+  **Type :**
+  String (``"auto"``, ``"host"`` or ``"device"``, case-insensitive; default
+  value is ``"auto"``; FLEX mode only)
+
+  **Description :**
+  Where the bond block store of the bond-resolved FLEX lives on the GPU
+  path (``gpu = true``). The store holds the bubble and the effective
+  interaction of every frequency and channel pair (with
+  ``longitudinal_bond_pairing`` a second slot for the pairing vertex, with
+  ``longitudinal_bond_output_full`` two more for the dynamic channels). In
+  host memory, every iteration copies the whole store between host and
+  device several times (the bubble's blocks out, the frequency batches in,
+  the effective interaction out and back in); in device memory these copies
+  disappear and only small arrays (the channel-0 collapses, the static
+  slices, the self-energy) come back. ``"auto"`` (default) keeps the store
+  on the device when it fits there and on the host otherwise; ``"host"``
+  always keeps it on the host (the behaviour of previous versions);
+  ``"device"`` always keeps it on the device and is refused when it does
+  not fit or when the GPU backend is not active (with ``gpu = false``
+  already when the input is read).
+
+  The admission is the device table of the bond gate with the store added
+  as a persistent row: the store fits when
+  ``1.25 * (persistent device rows + store + largest phase) <= 0.9 *
+  available device memory``, where the largest phase is
+  ``max(bubble, dressing + guard, transport)`` at a frequency batch. Under
+  ``"auto"`` the batch is at least ``ceil(4096 / nvol)`` frequencies (but
+  not more than the host table admits), so that the store does not push
+  the batch so small that the batched solves underfill the device;
+  ``"device"`` needs the store to fit at batch 1; a pinned
+  ``longitudinal_bond_freq_batch`` is checked as given. With
+  ``longitudinal_bond_pairing`` the device-store need also charges the
+  pairing's re-dressing (the pair bubble ``norb^4 * nvol * Nmat * 16``
+  bytes plus two frequency batches), which a host store left room for.
+  After the self-consistency the store leaves device memory before the
+  pairing kernel is admitted (the bubble slot is released, or moved to
+  host memory when a second pairing channel still needs it, and the vertex
+  slot moves to host memory), so the kernel can still keep
+  its blocks on the device.
+  The memory pool's
+  cached blocks are released before the free device memory is measured.
+  The decision and its reason are logged with the device table. The store
+  takes ``n_slots * Nmat_s * nvol * ND^2 * 16`` bytes, with ``Nmat_s =
+  Nmat`` (``Nmat/2 + 1`` with ``longitudinal_bond_half_grid = true``),
+  ``ND = B * norb^2`` and ``n_slots`` = 1 without pairing, 2 with it, plus
+  2 with ``longitudinal_bond_output_full``. For example, with ``ND`` = 36,
+  ``nvol`` = 1024 and ``Nmat`` = 1024 one slot is 20.3 GiB on the full
+  grid and 10.1 GiB on the half grid, so a singlet pairing run (two
+  slots) fits a 40 GB device only with the half grid. The host memory
+  table (``longitudinal_bond_memory_cap_gb``) is not reduced when the store
+  goes to the device.
+
+  If allocating the store on the device runs out of memory despite the
+  admission (fragmentation, another process), ``"auto"`` logs a warning and
+  continues with the store in host memory and the host-store frequency
+  batch; nothing has been computed at that point. ``"device"`` stops with
+  the error. An out-of-memory error during an iteration is not retried;
+  its message suggests ``"host"`` when the store is on the device.
+
+  Copies of the store between host and device memory (every iteration with
+  a host store; once, before the pairing kernel, with a device store) go in
+  chunks through one reusable page-locked (pinned) staging buffer of at
+  most 256 MiB (a frequency slice larger than that is copied in parts);
+  this buffer adds to the host memory in use. Host copies of 16 MiB or more
+  (the host side of each chunk, and the channel-pair strided copies of a
+  host store) run on up to 8 threads (at most the CPUs the process may use),
+  on the GPU path only; a CPU run copies in one thread, as before. All of
+  this is automatic; there is no key to set. If the pinned buffer cannot be
+  allocated (for example under a locked-memory limit, ``ulimit -l``), that
+  copy takes the unstaged path and a debug-level log message says so; the
+  next copy tries again. The copied values are the same either way.
+
+  Results: only where the store lives changes, not the arithmetic. At the
+  same frequency batch (``longitudinal_bond_freq_batch`` pinned), the
+  device store gives the results of the host store, bit for bit or, when
+  the GPU libraries pick different kernels for the differently aligned
+  arrays, to round-off. Under ``"auto"`` the device store can come with a
+  smaller frequency batch than the host store (the store takes device
+  memory the batch would otherwise use), and a different batch changes
+  the results at round-off level. The CPU path is unchanged (the store is
+  always in host memory there). Ignored with a warning unless
+  ``longitudinal_bond_channels = true``.
+
 - ``longitudinal_bond_pairing``
 
   **Type :**
@@ -371,7 +691,8 @@ Parameters
   dressed ``chi_s``, ``chi_c`` the self-energy used (the in-process
   counterpart of ``[eliashberg] bond_channels`` below). The solver controls
   are read from the ``[eliashberg]`` table of the SAME input file (optional;
-  every key defaults to the value ``hwave_sc`` uses; ``pairing_type`` is
+  every key defaults to the value ``hwave_sc`` uses (``solver_mode =
+  "eigenvalue"`` included); ``pairing_type`` is
   refused there -- the channel(s) are selected by this key instead; ``gpu``
   follows the FLEX solve). Results: ``eliashberg_bond_<type>.npz``,
   ``gap_bond_<type>.dat``, ``eigenvalue_bond_<type>.dat`` per requested
@@ -380,7 +701,11 @@ Parameters
   simply not written (the FLEX outputs are written first and are never lost
   to it). Memory: see :ref:`the FLEX tutorial section on pairing with the
   bond-resolved vertex <flex_bond_pairing_tutorial>`; for large models set
-  ``[eliashberg] matsubara_basis = "ir"``.
+  ``[eliashberg] matsubara_basis = "ir"``. The bond-resolved pairing has no
+  ``norb`` restriction; see :ref:`the scope note <sc_bond_channels_static>`
+  for how multi-orbital results are validated (issue #239). Combining
+  any pairing with ``longitudinal_bond_half_grid = true`` is supported
+  (see that key).
 
 - ``flex_hartree_fock``
 
@@ -393,9 +718,14 @@ Parameters
   and off-site) to the FLEX self-energy, :math:`\Sigma = \Sigma_{\rm HF}
   + \Sigma_{\rm fluct}`, recomputed from the dressed Green function every
   iteration (see :ref:`flex_bond_hf`). Requires ``calc_scheme =
-  "general"`` on a spin-free system, the uniform Matsubara grid
+  "general"`` on a spin-free system (or, with ``enable_spin_orbital =
+  true``, the spin-orbital FLEX described under that key), the uniform
+  Matsubara grid
   (``matsubara_basis = "ir"`` is refused), no sublattice, no external
-  field and an even ``Nmat``. ``gpu = true`` is accepted: on its own
+  field (accepted in spin-orbital mode) and an even ``Nmat``. An off-site ``Exchange`` or ``PairHop`` is refused on its
+  own (it has no Hartree content, so its first order would enter without
+  any higher order); it is accepted together with
+  ``longitudinal_bond_channels = true``. ``gpu = true`` is accepted: on its own
   the ordinary FLEX GPU path applies (see ``gpu`` below); with
   ``longitudinal_bond_channels = true`` the bond-resolved GPU path
   described there applies instead.
@@ -465,9 +795,22 @@ Parameters
   ``chi_s_w`` / ``chi_c_w`` (``ndarray(l, q, I, J)`` over the bosonic
   frequencies) of the last SCF map into the dedicated archive named by
   ``[file.output] longitudinal_bond`` (default ``longitudinal_bond.npz``).
-  Doubles the persistent memory of the bond-resolved solve; the archive
-  size is logged before writing. Ignored with a warning unless
-  ``longitudinal_bond_channels = true``.
+  Adds two ``(Nmat, nvol, ND, ND)`` complex buffers to the persistent
+  memory of the bond-resolved solve, which otherwise holds one such buffer
+  (the bubble, overwritten in place by the effective interaction) or two
+  with ``longitudinal_bond_pairing``; the archive size is logged before
+  writing. Ignored with a warning unless
+  ``longitudinal_bond_channels = true``. With ``enable_spin_orbital =
+  true`` it writes instead the spin-orbital bond archive (schema 4):
+  :math:`\chi_B` of the final Green function from one extra
+  susceptibility pass, the bond vertex and their provenance, with
+  ``green.npz`` as its companion (``[file.output] green`` is required);
+  ``IterationMax = 0`` writes no archive. ``hwave_sc`` does not read this
+  archive in this version (it reads the companion ``green.npz`` through
+  ``[eliashberg] bond_green``, see :ref:`sc_so_bond_green`): solver-side
+  consumers read it with
+  ``hwave.solver.so_bond_archive.load_so_bond_archive``, and a script
+  inspects it with ``numpy.load``. See :ref:`flex_so_bond_archive`.
 
 - ``longitudinal_bond_output_layout``
 
@@ -486,12 +829,22 @@ Parameters
   time, so a large channel member is never fully resident. Meaningful
   only with ``longitudinal_bond_output_full = true`` (no archive is
   written otherwise); a ``"sidecar"`` request without it is ignored with
-  a warning.
+  a warning. With ``enable_spin_orbital = true`` the sidecars are
+  ``<block>.<archive_nonce>.npy`` (one per ``chi_w`` block), and an unset
+  key lets the archive choose: ``"npz"`` unless a ``chi_w`` member is above
+  the small-array bound :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)` (cap:
+  the resolved host cap, ``longitudinal_bond_memory_cap_gb`` or, unset, 0.8
+  times the available host memory; with no cap the bound is 1 GiB), then
+  ``"sidecar"`` (an explicit ``"npz"`` above the bound is refused). With
+  ``longitudinal_bond_memory_cap_gb`` unset that choice depends on the
+  memory available on the host; set this key explicitly for files that do
+  not depend on the host. See :ref:`flex_so_bond_archive`.
 
 - ``longitudinal_bond_freq_batch``
 
   **Type :**
-  Integer (default: chosen automatically; FLEX mode only)
+  Integer (default: chosen automatically, with ``enable_spin_orbital =
+  true`` the largest of 16, 8, 4, 2, 1 that fits the cap; FLEX mode only)
 
   **Description :**
   Number of bosonic frequencies dressed at once by the bond-resolved
@@ -502,18 +855,35 @@ Parameters
   the host cap always, and the free device memory measured when the
   bond solve starts when ``gpu = true`` -- and refused when it exceeds
   either. Ignored with a warning unless
-  ``longitudinal_bond_channels = true``.
+  ``longitudinal_bond_channels = true``. With ``enable_spin_orbital =
+  true`` the automatic batch is the largest of 16, 8, 4, 2, 1 (not above
+  ``Nmat``) that fits the cap.
+
+- ``so_bond_layout``
+
+  **Type :**
+  String (default value is ``"auto"``; FLEX mode only)
+
+  **Description :**
+  The layout of the bond objects of the spin-orbital FLEX with bond
+  channels (``enable_spin_orbital = true`` and
+  ``longitudinal_bond_channels = true``): ``"auto"`` stores them in the
+  :math:`S_z`-packed layout when the input conserves :math:`S_z` and dense
+  otherwise; ``"dense"`` forces the dense layout. ``"sz_packed"`` cannot be
+  forced; any other value is refused. Read case-insensitively. Set without
+  both switches, the key is ignored with a WARNING. See
+  :ref:`flex_so_bond_tutorial`.
 
 - ``flex_second_order``
 
   **Type :**
-  String (default value is ``"local"``; FLEX mode with ``calc_scheme =
-  "general"`` only)
+  String (default value is ``"local"``, which is also the only accepted
+  value; FLEX mode with ``calc_scheme = "general"`` only)
 
   **Description :**
-  Selects the second-order part of the FLEX effective interaction on the
-  general (full-vertex) path; see
-  :ref:`flex_second_order_kernel` for the formulas.
+  The second-order part of the FLEX effective interaction on the general
+  (full-vertex) path; see :ref:`flex_second_order_kernel` for the
+  formulas.
 
   - ``"local"`` (default) builds the exact LOCAL second order: the
     complete second order of the on-site interaction (``CoulombIntra``,
@@ -527,14 +897,20 @@ Parameters
     off-site vertices, which is not representable by a
     :math:`q`-only vertex: full second-order accuracy for an off-site
     interaction additionally needs ``longitudinal_bond_channels = true``.
-  - ``"takimoto"`` keeps the legacy Takimoto-Hotta-Ueda expression
-    verbatim; its second-order (double-counting subtraction) term is
+  - ``"takimoto"`` is **retired** and refused at start-up with a
+    message that names ``"local"``. It selected the Takimoto-Hotta-Ueda
+    expression, whose second-order (double-counting subtraction) term
     :math:`-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\,\bar\chi\,
-    (\hat{U}^s + \hat{U}^c)`, with :math:`\bar\chi` the bare bubble
-    (the full expression is given in
-    :ref:`flex_second_order_kernel`). It is the reproduction path for
-    results produced with H-wave 2.0.0 and remains available throughout
-    the 2.x series.
+    (\hat{U}^s + \hat{U}^c)` is not exact at second order for
+    multi-orbital and off-site interactions, and whose ring was contracted
+    in a non-conserving pair orientation (see
+    :ref:`flex_second_order_kernel`). It was the kernel of H-wave 2.0.0 and
+    earlier, so the results of those releases can no longer be reproduced
+    by a setting; use an earlier release for that. A ``sigma_init`` seed
+    recorded with ``"takimoto"`` is still accepted, with a warning: if it
+    passes the usual seed checks it is only the initial value, and every
+    iteration uses ``"local"`` (a run that does not converge can still
+    depend on the seed).
 
   **Applicability:** The key is meaningful for ``mode = "FLEX"`` with
   ``calc_scheme = "general"`` only. The default is applied AFTER FLEX
@@ -558,34 +934,24 @@ Parameters
   reduces to a one-body level shift, to an effective ``CoulombIntra``, or
   to identically zero. The error
   message names the row and gives the equivalent declaration for that
-  type. Rewrite the interaction file as the message says, or set
-  ``flex_second_order = "takimoto"`` as an immediate workaround (the
-  legacy expression accepts every row the general path accepted before).
+  type; rewrite the interaction file as the message says.
 
-  **Cost and memory:** Measured with ``tests/sc/second_order_cost.py`` (run
-  from the repository root; the 2-orbital ``tests/rpa/input_2orb`` geometry
-  and transfer, and the synthetic 3-orbital square lattice the script writes,
-  :math:`L = 8`, ``Nmat = 128``, minimum over repeated runs, 2026-09):
-  assembling :math:`V_{\rm eff}` under ``"local"`` costs about 1.3x to 1.6x
-  the legacy expression (2- and 3-orbital inputs; the ratio varies from run
-  to run within that band) and a full FLEX iteration about 1.1x to 1.25x.
-  Memory goes the other way: ``"local"`` accumulates the second order in
-  frequency batches, while the legacy expression materialises three
-  full-size terms, so under ``"takimoto"`` the peak of this step is about
-  three times that of ``"local"`` (:math:`V_{\rm eff} + 3\,C` versus
-  :math:`V_{\rm eff} + C/4 + F`, with :math:`C` the size of
-  :math:`V_{\rm eff}` and :math:`F` the small compiled interaction
-  factors); its transient buffers alone are twelve times larger, so a
-  large reproduction run may need more RAM than the same run under the
-  default.
+  **Cost and memory:** ``"local"`` accumulates the second order in
+  frequency batches, so the peak of this step is :math:`V_{\rm eff} +
+  C/4 + F`, with :math:`C` the size of :math:`V_{\rm eff}` and :math:`F`
+  the small compiled interaction factors. ``tests/sc/second_order_cost.py``
+  (run from the repository root) times one assembly of
+  :math:`V_{\rm eff}` and one FLEX iteration on a 2-orbital and a
+  3-orbital input.
 
-  **Convergence:** The SCF trajectory can change with the kernel. On the
-  2-orbital self-consistency fixture (on-site :math:`U`, :math:`U'`,
-  ``Hund`` plus off-site :math:`V`, Anderson mixing) both values needed
-  the same number of iterations (9 without and 11 with
-  ``flex_hartree_fock = true``), but that is one observation, not a
-  guarantee; see the :ref:`FLEX tutorial <flex_second_order_tutorial>`
-  for what to do when a run that converged before does not.
+  **Convergence:** Compared with H-wave 2.0.0 and earlier (the retired
+  ``"takimoto"`` kernel) the SCF trajectory can change. On the 2-orbital
+  self-consistency fixture (on-site :math:`U`, :math:`U'`, ``Hund`` plus
+  off-site :math:`V`, Anderson mixing) both kernels needed the same
+  number of iterations (9 without and 11 with ``flex_hartree_fock =
+  true``), but that is one observation, not a guarantee; see the
+  :ref:`FLEX tutorial <flex_second_order_tutorial>` for what to do when a
+  run that converged before does not.
 
 - ``matsubara_frequency``
 
@@ -612,6 +978,10 @@ Parameters
 
   **Description :**
   This parameter specifies the coefficient :math:`h` of the external field given by the form :math:`\pm h H_{\alpha\beta}(r_{ij})`. The definition of the matrix :math:`H_{\alpha\beta}(r_{ij})` will be provided by an input file. The sign :math:`+` and :math:`-` correspond to spin up and down, respectively.
+
+  With the default 0.0 an Extern file has no effect; set ``coeff_extern`` (e.g. 1.0) to apply it.
+
+  In spin-orbital mode (``enable_spin_orbital = true``: RPA, the Hartree-Fock FLEX and the Eliashberg solver ``hwave_sc``) the Extern file keeps the physical orbital indices :math:`1, \ldots, N_\text{orbital}` and the same sign rule applies: spin up is shifted by +\ ``coeff_extern``\ ·\ :math:`H_{\alpha\beta}` and spin down by −\ ``coeff_extern``\ ·\ :math:`H_{\alpha\beta}`. The field can be given either here (Extern + ``coeff_extern``) or as on-site entries in the Transfer file, not both: the two add. See :doc:`../inputfiles/interaction`. In spin-orbital mode a value that is not a finite real number (for example ``true`` or ``nan``) is refused by every solver.
   
 
 
@@ -657,9 +1027,17 @@ Parameters
   **Description :**
   Number of worker threads for the spatial FFTs (parallelized via
   ``scipy.fft``). The default 1 keeps the serial numpy path, unchanged
-  from previous releases (opt-in); -1 uses all cores. Ignored on the
-  GPU. Set a smaller number when running several calculations
+  from previous releases (opt-in); -1 uses all cores. The GPU path
+  ignores it for the FFTs and the on-device work (the one exception is
+  described below). Set a smaller number when running several calculations
   concurrently.
+  With ``longitudinal_bond_channels`` the same number also threads the
+  host-side batched dressing (solve, conditioning guard, products) of the
+  bond channels, including the host-side exact decomposition of the GPU
+  conditioning guard; this needs
+  ``threadpoolctl`` (``pip install "hwave[threads]"``; otherwise it stays
+  serial, with a warning). The results
+  agree with the serial ones to rounding error.
 
 - ``mixing_scheme``
 
@@ -685,6 +1063,31 @@ Parameters
   History depth of the Anderson acceleration. Memory grows by 2*depth
   sigma-sized arrays (kept on the device under GPU execution).
 
+- ``flex_sigma_hermitian_projection``
+
+  **Type :**
+  Boolean (default value is true; FLEX mode only)
+
+  **Description :**
+  Projects the self-energy onto
+  :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`
+  after every update of the SCF loop (linear or Anderson mixing, with or
+  without ``flex_hartree_fock``) and on a ``sigma_init`` seed:
+  :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`
+  at every :math:`\mathbf{k}`, on the uniform grid or the IR nodes. The
+  relation holds exactly for the self-energy of a Hermitian problem and the
+  FLEX map preserves it, so a run that is already symmetric changes only at
+  rounding level. Without it, a cold start past the bare Stoner instability
+  can leave a slowly decaying asymmetric remnant in ``sigma.npz``, or
+  converge, with no other signal, to a symmetry-broken, non-causal branch
+  that is not the self-energy of the Hermitian problem; a
+  ``flex_hartree_fock = true`` run refuses such an archive as
+  ``sigma_init``. ``false`` restores the unprojected update, and the run
+  then warns at its end when the final relative deviation exceeds
+  :math:`10^{-6}`. Archives written without the projection (including by
+  earlier versions) can be audited with ``hwave_sigma_split --check
+  sigma.npz``.
+
 
 .. _eliashberg_bond_dynamic_config:
 
@@ -699,7 +1102,41 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
 ``pairing_type``, ``solver_mode``, ``matsubara_basis``, ``ir_tol``,
 ``ir_wmax``, ...) is documented in
 :ref:`the dynamic-frequency section of the Eliashberg solver tutorial
-<sc_dynamic_frequency>`.
+<sc_dynamic_frequency>`. The two keys of the spin-orbital path (static and
+dynamic), ``flex_chiq`` and ``flex_chi0q``, are listed first. Both are read
+with ``chi0q_mode = "flex"`` by the static path (``frequency = "static"``) and
+by the dynamic path (``frequency = "dynamic"``) alike. The estimated peak
+memory of the dynamic path is checked against ``[eliashberg] mem_limit_gb``
+(see :ref:`sc_spin_orbital_dynamic_memory`).
+
+- ``flex_chiq``
+
+  **Type :**
+  String (default value is ``"chiq.npz"``; ``hwave_sc`` with
+  ``[mode] enable_spin_orbital = true`` only)
+
+  **Description :**
+  With ``chi0q_mode = "flex"``, the archive of the spinful susceptibility
+  :math:`\chi` written by a spin-orbital FLEX run (``[file.output] chiq`` of
+  that run), read from ``[file.input] path_to_flex_output`` (falling back to
+  ``[file.output] path_to_output``). The key is case-insensitive. The archive
+  must carry the spin-orbital tags (``chi_convention = "spin_orbital"``,
+  ``index_convention = "spin_block"``); the output of a non-spin-orbital or
+  ``calc_scheme = "reduced"`` run is refused. A FLEX run that recorded
+  ``scf_converged = false`` gives a WARNING. ``flex_chi_s`` / ``flex_chi_c``
+  are refused in spin-orbital mode. See :ref:`sc_spin_orbital`.
+
+- ``flex_chi0q``
+
+  **Type :**
+  String (default value is ``"chi0q.npz"``; ``hwave_sc`` with
+  ``[mode] enable_spin_orbital = true`` only)
+
+  **Description :**
+  With ``chi0q_mode = "flex"``, the :math:`\chi_0` archive of the same FLEX
+  run (``[file.output] chi0q`` of that run). Required: a missing archive is
+  refused. It is used to check that the vertex of this input reproduces the
+  stored :math:`\chi`; a mismatch is refused. The key is case-insensitive.
 
 - ``bond_channels``
 
@@ -714,9 +1151,11 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   instead of ``chiq_s.npz`` / ``chiq_c.npz``. The producing FLEX run must
   have used ``longitudinal_bond_channels = true`` AND
   ``longitudinal_bond_output_full = true`` under a version writing archive
-  schema 2 (see the description of ``longitudinal_bond`` in
+  schema 3 (see the description of ``longitudinal_bond`` in
   ``file.output`` and :ref:`the archive reference <subsec:chiq_rpa>`); an
-  older schema-1 archive is refused with a message asking for a re-run.
+  older schema-1 archive is refused with a message asking for a re-run, and
+  a schema-2 archive is accepted only when the declared off-site
+  interactions are symmetric under :math:`R \to -R` on the run's grid.
   Refused together with ``bond_green`` / ``bond_max_shells`` (the Green
   function and the bond topology come from ``path_to_flex_output`` and the
   archive, not from these static-bond-path keys) and ``zero_chi_s`` /
@@ -726,7 +1165,54 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   second run with its own ``path_to_output``. See :ref:`the FLEX tutorial
   section on pairing with the bond-resolved vertex
   <flex_bond_pairing_tutorial>` for the memory model, the sparse-ir
-  dependency and worked examples.
+  dependency and worked examples. The bond-resolved pairing has no
+  ``norb`` restriction; see :ref:`the scope note <sc_bond_channels_static>`
+  for how multi-orbital results are validated (issue #239).
+
+  With ``frequency = "static"`` (the default) the key selects the static
+  bond-resolved path instead, described in :ref:`the Eliashberg solver
+  tutorial <sc_bond_channels_static>`: ``hwave_sc`` builds the bond-resolved
+  bubble from a Green function itself (the bare one, or the file named by
+  ``bond_green``), with the same bond topology, bond-resolved spin/charge
+  vertices and pairing kernel as the FLEX bond gate and the dynamic path
+  above. Every off-site ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``
+  and ``PairHop`` row is bond-resolved; ``bond_max_shells`` keeps that many
+  off-site shells and refuses a cutoff that would drop a declared nonzero
+  coefficient; a nonzero ``R = 0`` ``CoulombInter`` row of an orbital with
+  itself is refused (declare it as ``CoulombIntra``). The static path has no
+  ``norb`` restriction (single-orbital only before issue #239).
+
+  In spin-orbital mode (``[mode] enable_spin_orbital = true``)
+  ``bond_green`` names the ``green.npz`` of a spin-orbital FLEX run with
+  ``[mode.param] longitudinal_bond_channels = true``. The path is used as
+  given, relative to the working directory (neither ``path_to_input`` nor
+  ``path_to_flex_output`` is prepended). The file must be written in
+  filling mode (``filling`` set, no ``mu``: the Green function of a fixed-μ
+  run is refused because its recorded state differs from this run's) at
+  the identical state point of this run:
+  the same ``Nmat``, ``T``, ``filling``, band, interaction rows and
+  declared bond topology (a row declared with a zero coupling counts).
+  ``bond_max_shells`` may differ from the FLEX run's
+  ``longitudinal_bond_max_shells`` as long as the resolved bond channels
+  agree. When the input conserves :math:`S_z`, a spin-off-diagonal part
+  of the file's Green function up to :math:`10^{-12}` (relative to its
+  largest entry) is projected out with a WARNING, and a larger one is
+  refused. The file's Green function replaces the band's in the bond bubble
+  and in the pair propagator of the gap equation. ``bond_coeff_tail`` is not
+  applied to that Green function (``bond_coeff_tail_applied = 0.0``; an
+  explicit nonzero value gives a WARNING), so check the eigenvalue against
+  ``Nmat``. ``bond_channels = true`` with ``frequency = "dynamic"`` is
+  refused in spin-orbital mode, with or without ``bond_green``. See
+  :ref:`sc_so_bond_green`.
+
+  With ``bond_channels = false`` (both frequencies) an off-site row keeps its
+  density (Hartree) part only, as in the RPA ring and the FLEX general path:
+  its exchange (Fock) crossing has no exact place in the q-only vertex and is
+  left out (earlier versions collapsed it into the vertex, an approximation;
+  issue #239). An off-site inter-orbital ``CoulombInter``, ``Hund`` or
+  ``Ising`` is named in one WARNING; an off-site ``Exchange`` or ``PairHop``,
+  which has no density part, is refused. ``bond_channels = true`` treats every
+  off-site row on its bond exactly.
 
 - ``flex_bond_archive``
 
@@ -737,8 +1223,16 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
   **Description :**
   Filename of the dynamic bond archive read by the ``bond_channels = true``
   dynamic path. A relative name is joined to ``[file.input]
-  path_to_flex_output``; an absolute path is used as given (the same rule
-  ``bond_green`` follows).
+  path_to_flex_output``; an absolute path is used as given
+  (``bond_green``, by contrast, is always used as given, relative to the
+  working directory).
+  The interaction files of ``[file.input.interaction]`` must be those of the
+  FLEX run that wrote the archive: the bond vertices they give on the
+  archive's channels are checked against the archive's, and a difference is
+  refused (the off-site Exchange/PairHop bare pairing term is read from the
+  files, the fluctuations from the archive). A ``longitudinal_bond_max_shells``
+  of the FLEX run needs no setting here: the shell count is taken from the
+  archive's channels.
 
 - ``ir_fit_tol``
 
@@ -793,10 +1287,20 @@ documented here; the full ``[eliashberg]`` table (``frequency``,
 ``longitudinal_bond_pairing`` to something other than ``"none"``, an
 ``[eliashberg]`` table in the SAME input file is optional and configures
 the pairing step at the end of the FLEX solve; every key of the general
-table not listed as post-processing-only above (``solver_mode``,
-``num_eigenvalues``, ``max_iter``, ``alpha``, ``convergence_tol``,
+table not listed as post-processing-only above (``num_eigenvalues``,
+``max_iter``, ``alpha``, ``convergence_tol``, ``spectral_shift``,
 ``matsubara_basis``, ``ir_tol``, ``ir_wmax``, ``ir_keep_static_chi``,
-``fft_workers``, ...) defaults exactly as it does for ``hwave_sc``.
+``fft_workers``, ``solver_mode``, ...) defaults exactly as it does for
+``hwave_sc``; the default ``solver_mode`` of both is ``"eigenvalue"`` (the
+singlet kernel of a repulsive model has a negative dominant eigenvalue,
+which defeats an unshifted power iteration). A power iteration
+(``solver_mode = "iteration"``, opt-in) that does not converge records
+``eigen_converged = false`` and ``NaN`` for the eigenvalue (see the
+Eliashberg tutorial's "Eigen-solver convergence" section); the FLEX run
+itself still exits normally. In ``eigenvalue_bond_<type>.dat`` the line is
+written ``# eigen_converged=<true|false>`` (no spaces; the static
+``eigenvalue.dat`` uses ``# eigen_converged = ...``), so test it
+whitespace-tolerantly.
 ``pairing_type`` is refused (the channel(s) are selected by
 ``longitudinal_bond_pairing`` instead); ``gpu`` / ``gpu_required`` are
 ignored (the kernel runs on the FLEX solve's own backend); ``bond_channels``,
@@ -830,6 +1334,8 @@ They specify the settings of the input and output files, respectively, on the ty
 ``file.input`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+The keys ``chi0q_init``, ``trans_mod``, ``green_init`` and ``sigma_init`` (FLEX mode) are case-insensitive (``Trans_Mod`` is read as ``trans_mod``); giving one of them twice with different spellings is an error.
+
 - ``path_to_input``
 
   **Type :**
@@ -857,13 +1363,15 @@ They specify the settings of the input and output files, respectively, on the ty
   **Description :**
   This parameter specifies the filename of the initial configuration exported from UHFk by the parameter ``file.output.rpa``. It contains the one-body interaction term involving the approximated two-body interaction terms via UHF method.
 
+  The Eliashberg solver ``hwave_sc`` uses the same band for :math:`\chi_0(\mathbf{q})`, the chemical potential and the Green function of the pairing kernel. It accepts only a spin-independent assembled band (absolute tolerance :math:`10^{-10}` in energy units, adjustable with ``[eliashberg] spin_free_tol``, in which case a band within that tolerance is spin-averaged, but only when ``hwave_sc`` computes :math:`\chi_0(\mathbf{q})` itself, i.e. with ``chi0q_mode = "calc"`` or on the bond path; with ``chi0q_mode = "load"`` no spin averaging is applied) and refuses a spin-dependent one (issue #88). With an external ``bond_green`` the band is not used for the Green function. The same rules apply when the band is built from ``green_init`` or includes an ``Extern`` field. In spin-orbital mode (:ref:`sc_so_bond_green`) the band is still compared with the band recorded in the ``bond_green`` file, and it decides, with the interaction rows, whether the input conserves :math:`S_z`. See the ``chi0q_mode`` notes in the Eliashberg tutorial.
+
 - ``green_init``
 
   **Type :**
   String
 
   **Description :**
-  This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used.
+  This parameter specifies the filename of the initial Green's function for RPA calculation. The file format corresponds to the output file of ``green`` of UHFk. When ``trans_mod`` is specified, ``green_init`` is not used. The one-body band is the ``Transfer`` band plus the Hartree-Fock mean field of the Green function (Hartree and Fock terms of every interaction, built as UHFk builds its mean-field Hamiltonian with ``flag_fock = true``), so it equals the band of the ``trans_mod`` that a UHFk run with ``flag_fock = true`` (the default) writes for the same solution (see :ref:`the mean-field band note of the Eliashberg tutorial <sc_mean_field_band_note>`). For a UHFk solution obtained with ``flag_fock = false``, use its ``trans_mod`` (a Hartree-only band); ``green_init`` would add the Fock term. For a ``SubShape`` UHFk state that breaks the translation symmetry of the original lattice, neither the saved ``green`` nor the saved ``trans_mod`` reproduces the converged band when read back (issue #294). Before issue #278 the Fock term was left out.
 
 - ``sigma_init``
 
@@ -879,10 +1387,22 @@ They specify the settings of the input and output files, respectively, on the ty
   loop" for the sweep workflow. With ``flex_hartree_fock = true`` only a
   ``sigma.npz`` written by such a run (``sigma_convention = "split"``,
   carrying ``sigma_static`` and ``sigma_fluct``) is accepted, the two
-  components seed the loop exactly as stored, and a mean field
+  components seed the loop as stored (apart from the projection of
+  ``flex_sigma_hermitian_projection``), and a mean field
   (``trans_mod`` / ``green_init``) given at the same time is refused; a
   legacy or ``"total"`` archive is converted with ``hwave_sigma_split``
   (see :ref:`flex_bond_hf`).
+
+  The seed's relative deviation from :math:`\Sigma(\mathbf{k}, i\omega_n) =
+  \Sigma(\mathbf{k}, -i\omega_n)^\dagger` is measured on loading, and two
+  cases are distinguished. (1) A deviation above :math:`10^{-3}` produces a
+  warning, whether ``flex_sigma_hermitian_projection`` is on (the seed is
+  projected and the deviation removed is logged) or off (the seed is used
+  as is). (2) A non-causal, strongly asymmetric archive that is used as is
+  (projection off) with ``flex_hartree_fock = true`` fails the Hermiticity
+  check of the equal-time density: it is refused at ``flex_hf_density_tol``
+  under ``flex_guard_policy = "refuse"``, and gives a warning under
+  ``"warn"``. Audit an archive beforehand with ``hwave_sigma_split --check``.
 
 
 ``file.input.interaction`` section
@@ -961,7 +1481,13 @@ to the definition files.
   :ref:`flex_bond_hf`). A name without the ``.npz`` suffix gets it
   appended, as for the other ``.npz`` outputs. It must not resolve to the
   same file as any other output of the run (the collision is refused
-  before the calculation starts).
+  before the calculation starts). With ``enable_spin_orbital = true`` it
+  names the spin-orbital bond archive (:ref:`flex_so_bond_archive`):
+  ``[file.output] green`` is then required with
+  ``longitudinal_bond_output_full = true`` (the archive names that file as
+  its companion), the ``green`` file must be in the same directory or
+  below it, and without ``longitudinal_bond_output_full = true`` the key
+  is ignored with an INFO line.
 
 - ``eliashberg_bond_singlet``, ``eliashberg_bond_triplet``,
   ``eigenvalue_bond_singlet``, ``eigenvalue_bond_triplet``,

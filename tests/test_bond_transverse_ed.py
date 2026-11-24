@@ -50,6 +50,7 @@ from hwave.solver import green as _hgreen
 from hwave.solver import rpa as rpa_mod
 from hwave.solver.vertex_table import ring_spin_table
 from tests import ed_oracle_util
+from tests import ed_cache
 from tests.approx_util import assert_approx_array
 from tests.heavy_tests import heavy
 
@@ -239,7 +240,7 @@ def _h2_chi0_solver_frame():
     solver's bare transverse bubble at this on-site fixture."""
     fx, _C, _CD, _H1 = oracle._fx2_state()
     channels = _h2_channels()
-    se = ed_oracle_util.SectorED(fx)
+    se = ed_cache.sector(fx)
     raw = se.bond_correlator_transverse(list(channels))
     return _frame_map(raw, oracle.NORB)
 
@@ -291,10 +292,10 @@ def _h2_ed_derivative_solver_frame(kind, phase=1.0):
         @functools.lru_cache(maxsize=None)
         def X_of_v(v):
             terms = _terms_at(fx, kind, v, phase)
-            full = ed_oracle_util.SectorED(
+            full = ed_cache.sector(
                 fx, terms=terms).bond_correlator_transverse(channels)
             hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
-            hf_only = ed_oracle_util.SectorED(
+            hf_only = ed_cache.sector(
                 fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
             return _frame_map(full - hf_only, norb)
 
@@ -1027,11 +1028,11 @@ def _w0_q_mesh_flat(q_mesh):
     """``(nvol, 3)`` flattened q array, ``q_d = 2*pi*n_d/N_d`` with
     C-order flattening -- the SAME convention the spec's "Gate W0"
     section fixes ("q runs on the reciprocal mesh... the SAME
-    convention sc._build_bond_m0_blocks' phase uses") and
-    ``bond_channels.make_bond_kernel_parts``'s own bond-phase
-    construction (``PH[m] = exp(1j*(KX*dm[0]+KY*dm[1]+KZ*dm[2]))`` on
-    ``meshgrid(kx, ky, kz, indexing='ij')``, reshaped C-order)
-    already uses."""
+    convention the k-grid of hwave.sc uses") and the bond-phase
+    construction of the bond vertex builders
+    (``exp(1j*(KX*dm[0]+KY*dm[1]+KZ*dm[2]))`` on
+    ``meshgrid(kx, ky, kz, indexing='ij')``, reshaped C-order) already
+    uses."""
     Nx, Ny, Nz = q_mesh
     kx = 2.0 * np.pi * np.arange(Nx) / Nx
     ky = 2.0 * np.pi * np.arange(Ny) / Ny
@@ -1115,9 +1116,9 @@ def w_expected_from_records(topo_like, declarations, q_mesh):
        it) FAILED the swapped placement at O(1) (measured 0.12 against
        ``tol=5.6e-4``) and PASSES, at 5.6e-5, the DIRECT placement above
        -- the SAME rule the ALREADY ED-validated longitudinal
-       ``bare_bond_vertices`` Fock-diagonal insertion uses
+       Fock-diagonal insertion of ``build_sc_bond_channel`` uses
        (``bond_channels.py``, ``I = m*nd + l1*norb + l2`` gets
-       ``Re(v_bond[m][l1,l2])`` directly, no channel swap; #151 Finding
+       ``Re(coeffs[m][l1,l2])`` directly, no channel swap; #151 Finding
        1). See ``docs/superpowers/specs/2026-08-15-bond-transverse-
        design.md``, "Cross family", the 2026-08-16 amendment, for the
        full derivation and the coordinator ruling.
@@ -1341,10 +1342,11 @@ def _terms_exchange_offsite(fx, a, b, R, J):
     operator convention (``c^+_{a,up} c_{b,up} c^+_{b,dn} c_{a,dn}``,
     already ED-validated on-site to produce ``ham_pm``'s ``-J`` entry --
     H2's ``test_exchange`` above re-confirms it through this module's
-    own harness) to a nonzero bond displacement ``R``: the ``b``-orbital
-    legs move to site ``j+R``, the ``a``-orbital legs stay at site
-    ``j`` (a bond from site ``j``, orbital ``a``, to site ``j+R``,
-    orbital ``b``). ``coeffs["Exchange"][m][a, b] = J`` fed to
+    own harness) to a nonzero bond displacement ``R``: the row
+    ``(R, a, b)`` sits on the bond of the Transfer row ``(R, a, b)``
+    (issue #232), which in this fixture's frame (``EDFixture.build_h1``
+    puts ``t[(a, b)]`` on ``(j+1, a) <- (j, b)``) has the ``a``-orbital
+    legs on site ``j+R`` and the ``b``-orbital legs on site ``j``. ``coeffs["Exchange"][m][a, b] = J`` fed to
     ``w_expected_from_records`` uses EXACTLY this same operator
     convention, so the ``f_J = -1`` coefficient-table sign is consistent
     between the ED side and the oracle side by construction (never
@@ -1359,10 +1361,10 @@ def _terms_exchange_offsite(fx, a, b, R, J):
     terms = []
     for j in range(fx.L):
         jr = (j + R) % fx.L
-        p = fx.mode(j, a, 0)
-        q = fx.mode(jr, b, 0)
-        r = fx.mode(jr, b, 1)
-        s = fx.mode(j, a, 1)
+        p = fx.mode(jr, a, 0)
+        q = fx.mode(j, b, 0)
+        r = fx.mode(j, b, 1)
+        s = fx.mode(jr, a, 1)
         terms.append((p, q, r, s, J))
         terms.append((s, r, q, p, np.conj(J)))
     return terms
@@ -1372,11 +1374,13 @@ def _terms_ising_offsite(fx, a, b, R, v):
     """Off-site Ising term, generalizing this module's own
     ``_terms_ising_hund``'s ON-SITE (R=0) Ising formula (uhfk.py's
     documented Hamiltonian ``J (n_up - n_down)(n_up - n_down)``) to a
-    nonzero bond displacement ``R``: ``H = v * sum_j (n_{j,a,up} -
-    n_{j,a,dn}) * (n_{j+R,b,up} - n_{j+R,b,dn})``. Manifestly Hermitian
+    nonzero bond displacement ``R``: ``H = v * sum_j (n_{j+R,a,up} -
+    n_{j+R,a,dn}) * (n_{j,b,up} - n_{j,b,dn})`` -- the bond of the
+    Transfer row ``(R, a, b)`` in this fixture's frame (see
+    ``_terms_exchange_offsite``; issue #232). Manifestly Hermitian
     for real ``v`` without any mirrored (-R) declaration -- density
     operators at DIFFERENT sites commute, so
-    ``(n_{j,a,up}-n_{j,a,dn}) @ (n_{j+R,b,up}-n_{j+R,b,dn})`` is
+    ``(n_{j+R,a,up}-n_{j+R,a,dn}) @ (n_{j,b,up}-n_{j,b,dn})`` is
     Hermitian term by term, and the ``j``-sum over one period already
     visits every bond exactly once (the same reasoning
     ``canonical_density_terms``'s off-site branch relies on)."""
@@ -1385,8 +1389,8 @@ def _terms_ising_offsite(fx, a, b, R, v):
         jr = (j + R) % fx.L
         for su, su_sign in ((0, 1.0), (1, -1.0)):
             for sv, sv_sign in ((0, 1.0), (1, -1.0)):
-                p = fx.mode(j, a, su)
-                r = fx.mode(jr, b, sv)
+                p = fx.mode(jr, a, su)
+                r = fx.mode(j, b, sv)
                 terms.append((p, p, r, r, v * su_sign * sv_sign))
     return terms
 
@@ -1427,8 +1431,8 @@ class TestW0TermBuilderHamiltonianPins(unittest.TestCase):
             with np.errstate(all="ignore"):
                 for j in range(fx.L):
                     jr = (j + R) % fx.L
-                    op = (CD[fx.mode(j, a, 0)] @ C[fx.mode(jr, b, 0)]
-                          @ CD[fx.mode(jr, b, 1)] @ C[fx.mode(j, a, 1)])
+                    op = (CD[fx.mode(jr, a, 0)] @ C[fx.mode(j, b, 0)]
+                          @ CD[fx.mode(j, b, 1)] @ C[fx.mode(jr, a, 1)])
                     H = H + J * op + np.conj(J) * op.conj().T
             return H
 
@@ -1453,8 +1457,8 @@ class TestW0TermBuilderHamiltonianPins(unittest.TestCase):
             with np.errstate(all="ignore"):
                 for j in range(fx.L):
                     jr = (j + R) % fx.L
-                    sz_j = _n(j, a, 0) - _n(j, a, 1)
-                    sz_jr = _n(jr, b, 0) - _n(jr, b, 1)
+                    sz_j = _n(j, b, 0) - _n(j, b, 1)
+                    sz_jr = _n(jr, a, 0) - _n(jr, a, 1)
                     H = H + v * (sz_j @ sz_jr)
             return H
 
@@ -1504,10 +1508,10 @@ def _w0_ed_derivative_solver_frame(fx, terms_of_v, delta_r, norb):
     @functools.lru_cache(maxsize=None)
     def X_of_v(v):
         terms = terms_of_v(v)
-        full = ed_oracle_util.SectorED(
+        full = ed_cache.sector(
             fx, terms=terms).bond_correlator_transverse(channels)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
-        hf_only = ed_oracle_util.SectorED(
+        hf_only = ed_cache.sector(
             fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
         diff = full - hf_only
         return diff[:, smap][:, :, smap]
@@ -1525,7 +1529,7 @@ def _w0_chi0_solver_frame(fx, delta_r, norb):
     delta_r_1d = _w0_delta_r_1d(delta_r)
     channels = _w0_channels_for(delta_r_1d, norb)
     smap = transverse_ed_to_solver_map(channels, delta_r_1d, norb)
-    se = ed_oracle_util.SectorED(fx)
+    se = ed_cache.sector(fx)
     raw = se.bond_correlator_transverse(channels)
     return raw[:, smap][:, :, smap]
 
@@ -1689,10 +1693,17 @@ class TestW0Granules(unittest.TestCase):
             def terms_of_v(v, phase=phase):
                 return _terms_exchange_offsite(fx, a, b, R, v * phase)
 
+            # The row (R, a, b) is the bond of the Transfer row (R, a, b)
+            # (issue #232); in the solver's channel layout that operator
+            # is carried by the channel at -R (resolve_bond_topology:
+            # "channel m carries the rows declared at -delta_r[m]"), here
+            # m = 2, with its Hermitian-closed partner at m = 1 (the
+            # representative channel the oracle reads).
             block = np.zeros((2, 2), dtype=complex)
             block[a, b] = phase
             declarations = {"onsite_ham_pm": onsite_ham_pm,
-                             "Exchange": {1: block}}
+                             "Exchange": {2: block,
+                                          1: np.conj(block).T}}
             records[name] = _w0_adjudicate_direction(
                 fx, terms_of_v, topo, declarations, q_mesh,
                 "W0/exchange/{}".format(name))
@@ -1749,7 +1760,7 @@ class TestW0Granules(unittest.TestCase):
         re-declare the mirror as a second physical Hamiltonian term on
         the ED side -- exactly mirroring how off-site Ising already
         works below (single R declaration, no explicit mirror) and
-        `resolve_interactions` (bond_channels.py) itself: when only ONE
+        `resolve_bond_topology` (bond_channels.py) itself: when only ONE
         direction is declared in a real file, the STORED value at that
         channel is the RAW declared value (unaveraged), never doubled.
         A genuinely complex C has ZERO net physical effect here in
@@ -1862,8 +1873,8 @@ class TestW0Granules(unittest.TestCase):
 # .superpowers/sdd/2026-08-16-bond-transverse-phase-w/task-6-report.md) was
 # adjudicated CONFIRMED: the spec's "Cross family" step 2 is AMENDED (see
 # docs/superpowers/specs/2026-08-15-bond-transverse-design.md) to DIRECT
-# placement (no channel swap, matching the longitudinal bare_bond_vertices
-# rule exactly), and BOTH `bond_channels.W_pm_bond` and this module's own
+# placement (no channel swap, matching the longitudinal Fock-diagonal
+# rule of build_sc_bond_channel exactly), and BOTH `bond_channels.W_pm_bond` and this module's own
 # oracle `w_expected_from_records` (Task 1) were corrected identically. The
 # granule below is the PERMANENT regression pin for that fix.
 #
@@ -1974,7 +1985,9 @@ def _terms_hund_offsite(fx, a, b, R, v):
     formula (``_terms_ising_hund``, uhfk.py's documented Hamiltonian
     ``H = -J^Hund (n_up n_up + n_dn n_dn)``, same-spin-only density-density)
     to a nonzero bond displacement ``R``:
-    ``H = -v * sum_j (n_{j,a,up} n_{j+R,b,up} + n_{j,a,dn} n_{j+R,b,dn})``.
+    ``H = -v * sum_j (n_{j+R,a,up} n_{j,b,up} + n_{j+R,a,dn} n_{j,b,dn})``
+    -- the bond of the Transfer row ``(R, a, b)`` in this fixture's frame
+    (see ``_terms_exchange_offsite``; issue #232).
     Same-spin density operators at DIFFERENT sites commute, so this is
     manifestly Hermitian for real ``v`` without a mirrored declaration
     (mirroring ``_terms_ising_offsite``'s own reasoning)."""
@@ -1982,8 +1995,8 @@ def _terms_hund_offsite(fx, a, b, R, v):
     for j in range(fx.L):
         jr = (j + R) % fx.L
         for s in range(2):
-            p = fx.mode(j, a, s)
-            r = fx.mode(jr, b, s)
+            p = fx.mode(jr, a, s)
+            r = fx.mode(j, b, s)
             terms.append((p, p, r, r, -v))
     return terms
 
@@ -1996,17 +2009,19 @@ def _terms_pairlift_offsite(fx, a, b, R, v):
     operator is Sz-BREAKING -- any PairLift ED reference uses the dense
     route, never SectorED"), generalizing the on-site convention
     (``oracle._terms_for``'s PairLift branch, ``H = v*A + conj(v)*A^dagger``)
-    to a nonzero bond displacement ``R`` (orbital ``a`` at site ``j``,
-    orbital ``b`` at site ``j+R``). The dagger term mirrors
+    to a nonzero bond displacement ``R`` (orbital ``a`` at site ``j+R``,
+    orbital ``b`` at site ``j`` -- the bond of the Transfer row
+    ``(R, a, b)`` in this fixture's frame, see ``_terms_exchange_offsite``;
+    issue #232). The dagger term mirrors
     ``_terms_exchange_offsite``'s own ``(s, r, q, p, conj(coeff))``
     pattern exactly."""
     terms = []
     for j in range(fx.L):
         jr = (j + R) % fx.L
-        p = fx.mode(j, a, 0)
-        q = fx.mode(j, a, 1)
-        r = fx.mode(jr, b, 0)
-        s = fx.mode(jr, b, 1)
+        p = fx.mode(jr, a, 0)
+        q = fx.mode(jr, a, 1)
+        r = fx.mode(j, b, 0)
+        s = fx.mode(j, b, 1)
         terms.append((p, q, r, s, v))
         terms.append((s, r, q, p, np.conj(v)))
     return terms
@@ -2438,8 +2453,9 @@ class TestTask6ProductionPipelineGranules(unittest.TestCase):
         SAME physical bond, confirming the vertex's target cells were
         placed at the WRONG channel/orbital pair, not that the ED-side
         term builder was wrong. Cross-checked against the ALREADY
-        ED-validated longitudinal ``bare_bond_vertices`` Fock-diagonal rule
-        (``I=(m,l1,l2)`` gets ``Re(v_bond[m][l1,l2])`` DIRECTLY, no
+        ED-validated longitudinal Fock-diagonal rule of
+        ``build_sc_bond_channel`` (``I=(m,l1,l2)`` gets
+        ``Re(coeffs[m][l1,l2])`` DIRECTLY, no
         ``reverse[]`` swap) -- the "direct placement" hypothesis reproduced
         ED to 5.6e-05 (inside tol), confirming the diagnosis. The
         coordinator CONFIRMED this finding and AMENDED the spec (see the
@@ -2549,7 +2565,7 @@ def _sector_s_minus_correlator(se, channels):
     ``S-_{R,a,b}(q) = sum_j e^{+iqj} c^+_{j+R,a,dn} c_{j,b,up}`` (creation
     DOWN, annihilation UP, the opposite of S+'s creation UP/annihilation
     DOWN). Built directly from ``SectorED``'s own
-    ``_build_operator``/``_lehmann_dagger``/``_thermal_avg`` primitives (the
+    ``_build_operator``/``_lehmann_dagger_matrix``/``_thermal_avg`` primitives (the
     SAME primitives ``bond_correlator_transverse`` uses internally, already
     called directly from this module's own contract tests, e.g.
     ``TestBondCorrelatorTransverseContract.
@@ -2576,21 +2592,22 @@ def _sector_s_minus_correlator(se, channels):
     n_i = len(wrapped)
     out = np.zeros((fx.L, n_i, n_i), dtype=complex)
     for qi in range(fx.L):
-        built = []
+        ops, avgs, delta = [], [], None
         for (R, a, b) in wrapped:
             mode_terms = [
                 (fx.mode((j + R) % fx.L, a, 1), fx.mode(j, b, 0),
                  np.exp(2j * np.pi * qi * j / fx.L))
                 for j in range(fx.L)]
             delta, op = se._build_operator(mode_terms)
-            built.append((delta, op, se._thermal_avg(op, delta)))
-        for i in range(n_i):
-            deltaA, opA, avgA = built[i]
-            for j in range(n_i):
-                deltaB, opB, avgB = built[j]
-                val = se._lehmann_dagger(opA, deltaA, opB, deltaB)
-                val -= fx.beta * avgA * np.conj(avgB)
-                out[qi, i, j] = val
+            ops.append(op)
+            avgs.append(se._thermal_avg(op, delta))
+        if n_i == 0:
+            continue
+        # every (I, J) cell of this q at once (the contraction of
+        # _lehmann_dagger, as one product per sector)
+        avgs = np.asarray(avgs, dtype=complex)
+        out[qi] = (se._lehmann_dagger_matrix(ops, delta)
+                   - fx.beta * np.outer(avgs, np.conj(avgs)))
     return out / fx.L
 
 
@@ -2755,12 +2772,14 @@ class TestTask6ProductionConjugatePairGranule(unittest.TestCase):
 
         def X_of_v(v):
             terms = terms_of_v(v)
+            # the engines come from the shared content-keyed cache: the
+            # Richardson stencils of v1 and v1/2 revisit the same points
             full = _sector_s_minus_correlator(
-                ed_oracle_util.SectorED(fx, terms=terms, h1=h1_zeeman),
+                ed_cache.sector(fx, terms=terms, h1=h1_zeeman).engine(),
                 channels)
             hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_zeeman)
             hf_only = _sector_s_minus_correlator(
-                ed_oracle_util.SectorED(fx, terms=(), h1=hf_h1), channels)
+                ed_cache.sector(fx, terms=(), h1=hf_h1).engine(), channels)
             return full - hf_only
 
         v1 = CAMPAIGN_V1_TASK6

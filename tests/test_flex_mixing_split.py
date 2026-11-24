@@ -101,6 +101,26 @@ class TestSplitMixing(unittest.TestCase):
             self.assertEqual(pc.update(1e-8, 1e-8, 1e-8), expect)
 
 
+class TestAffineCombinationChunks(unittest.TestCase):
+
+    def test_chunked_gemv_equals_the_one_shot_product(self):
+        from hwave.solver import flex_mixing as fm
+        rng = np.random.default_rng(7)
+        n = 2500
+        dX = rng.standard_normal((3, n)) + 1j * rng.standard_normal((3, n))
+        dR = rng.standard_normal((3, n)) + 1j * rng.standard_normal((3, n))
+        gamma = rng.standard_normal(3)
+        ref = (dX + 0.4 * dR).T @ gamma
+        old = fm._GEMV_CHUNK
+        try:
+            for chunk in (1, 7, 1000, 4096):
+                fm._GEMV_CHUNK = chunk
+                np.testing.assert_allclose(
+                    fm._affine_combination(dX, dR, 0.4, gamma), ref, rtol=0, atol=1e-13)
+        finally:
+            fm._GEMV_CHUNK = old
+
+
 class TestResidualDefinitions(unittest.TestCase):
 
     def test_res_sigma_equals_the_legacy_convergence_rule(self):

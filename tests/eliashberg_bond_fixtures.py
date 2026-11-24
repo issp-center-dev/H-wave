@@ -39,12 +39,17 @@ def _tables_from_pairs(inter, U, norb):
     form) plus an on-site CoulombIntra ``U`` -> the ``read_w90`` dict-of-dicts
     ``{type: {(irvec, (a, b)): value}}`` that ``resolve_bond_topology`` and
     ``offsite.split_locality`` both speak. Returns ``(whole, onsite, offsite)``.
+
+    A row at ``R = 0`` is ON-SITE, as ``offsite.split_locality`` files it (its
+    Fock content then reaches the cross slots of the channel-0 block); before
+    issue #262 the fixture filed it off-site, with its Hartree content only.
     """
     onsite_tbl = {"CoulombIntra": {((0, 0, 0), (a, a)): complex(U) for a in range(norb)}}
     offsite_tbl = {}
     for (t, R), mat in inter.items():
         mat = np.asarray(mat)
-        tbl = offsite_tbl.setdefault(t, {})
+        local = tuple(int(x) for x in R) == (0, 0, 0)
+        tbl = (onsite_tbl if local else offsite_tbl).setdefault(t, {})
         for a in range(norb):
             for b in range(norb):
                 if mat[a, b] != 0:

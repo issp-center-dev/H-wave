@@ -30,6 +30,15 @@ TOML形式
 ``mode``\ セクション
 ================================
 
+``mode``\ テーブル自体に書くキーは\ ``mode``\ 、\ ``calc_scheme``\ 、\ ``calc_type``\ 、
+``enable_spin_orbital``\ 、\ ``flag_fock``\ （選んだソルバーが対応しているもの。以下を参照）
+だけで、名前は大文字・小文字も含めてこのとおりに書きます。それ以外のソルバーの
+パラメータは\ ``mode.param``\ に書きます。\ ``mode``\ にそれ以外のキーや大文字・小文字の
+異なるキーがある場合、また\ ``mode.param``\ にこれらのキー（大文字・小文字を問わない）や
+入れ子の\ ``param``\ テーブルがある場合、\ ``hwave``\ はエラーで停止します。また、計算の
+最後に、その計算で読まれなかった\ ``mode.param``\ のキー（綴りの誤りや、現在の設定では
+効かないパラメータ）を警告します。
+
 - ``mode``
 
   **形式 :** string型
@@ -38,7 +47,8 @@ TOML形式
 
 - ``enable_spin_orbital``
 
-  **形式 :** bool型 (デフォルトは false)
+  **形式 :** bool型 (デフォルトは false。\ ``"true"``\ のように解釈できる文字列は
+  警告付きで受け付け、解釈できない値はエラーになります)
 
   **説明 :** スピン軌道相互作用を有効にします。``true``\ にすると、Transfer項の軌道インデックスは
   インターリーブ規約で解釈されます。複合インデックスは\ :math:`2\alpha + s`\ （物理軌道インデックス
@@ -52,6 +62,57 @@ TOML形式
 
      **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数になりました。
      既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
+
+  **FLEX（実験的機能）。** ``mode = "FLEX"``\ では、スピン軌道モードは
+  ``calc_scheme = "general"``\ でのみ動作し、\ ``[mode.param]
+  flex_hartree_fock = true``\ が必要です。1次は全スピン軌道密度の自己無撞着な
+  Hartree-Fock 項、ゆらぎ部分は反対称化したスピンフル頂点による1つのチャネルで
+  総和されます（:ref:`flex_spin_orbital`\ を参照）。この版での要件と制限:
+
+  - ``longitudinal_bond_channels``\ なしでは、オンサイトおよびセル内（\ ``R = 0``\ ）の
+    相互作用のみ（オフサイトの宣言は拒否されます）
+  - ``longitudinal_bond_channels = true``\ に対応しています。すべての型のオフサイトの行を
+    受け付け（複素数の係数は\ ``PairHop``\ のみ）、その交換をボンドチャネルの上で厳密に
+    扱います。CPU で動作し（\ ``gpu = true``\ は WARNING 付きで無視、\ ``gpu_required =
+    true``\ と\ ``longitudinal_bond_store = "device"``\ は拒否）、
+    ``longitudinal_bond_output_full = true``\ では最終 Green 関数のスピン軌道ボンド
+    アーカイブ（スキーマ 4）を書き出し（このとき\ ``[file.output] green``\ が必要。
+    :ref:`flex_so_bond_archive`\ を参照）、プロセス内のペアリングは行わず
+    （\ ``longitudinal_bond_pairing``\ は\ ``"none"``\ のみ）、すべての振動数を検査します
+    （\ ``longitudinal_bond_guard_freqs = "static"``\ は拒否）。\ ``so_bond_layout``\ が
+    レイアウトを選び、\ ``longitudinal_bond_memory_cap_gb``\ はスピン軌道での意味を
+    持ちます。\ :ref:`flex_so_bond_tutorial`\ を参照
+  - ``spinful_vertex_exchange``\ は\ ``true``\ （デフォルト）のままにする必要があります
+  - 初期値の指定はできません。\ ``sigma_init``\ ・\ ``trans_mod``\ ・
+    ``green_init``\ は拒否され、計算は裸の Hartree-Fock 状態から始まります
+  - ``flex_hartree_fock``\ のその他の条件（一様松原格子、副格子なし、偶数の
+    ``Nmat``\ ）も適用されます。Extern 場は受け付けます（物理軌道インデックスで書き、
+    ``coeff_extern``\ 倍されます）
+  - ``calc_scheme = "reduced"``\ はスピン軌道入力を拒否します
+  - 静的な Eliashberg ソルバー（\ ``hwave_sc``\ ）は、\ ``longitudinal_bond_channels``\ を
+    使わない計算の出力を\ ``[eliashberg] chi0q_mode = "flex"``\ で読みます
+    （\ ``[file.output]``\ の\ ``chiq``\ ・\ ``chi0q``\ ・\ ``green``\ を指定してください）。
+    :ref:`sc_spin_orbital`\ を参照。オンサイトの動的ソルバー（\ ``frequency =
+    "dynamic"``\ ）もこれを読みます（\ :ref:`sc_spin_orbital_dynamic`\ を参照）。
+    ``chi0q_mode = "flex"``\ では、\ ``longitudinal_bond_channels = true``\ の計算の出力は
+    ``hwave_sc``\ が拒否します。そのような計算をフィリング指定で実行して得た
+    ``green.npz``\ は、スピン軌道モードの静的なボンド経路で\ ``[eliashberg] bond_green``\ に
+    指定して使います（\ :ref:`sc_so_bond_green`\ を参照）。\ ``hwave_sc``\ はそのボンドアーカイブを後の版で
+    読みます。この版では、ソルバー側の
+    読み込み処理が Python 関数\ ``hwave.solver.so_bond_archive.load_so_bond_archive``\ で
+    読み、スクリプトでは\ ``numpy.load``\ で中身を見ます（\ :ref:`flex_so_bond_archive`\ を
+    参照）。動的なボンド分解の経路と
+    ``run_eliashberg = true``\ の\ ``hwave_tsweep``\ は引き続き
+    ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
+    ``warm_start = false``\ で実行できます。
+
+  **Eliashberg ソルバー。** ``hwave_sc``\ はスピン軌道模型の静的な線形化
+  Eliashberg 方程式を、ひとつの\ :math:`2N \times 2N`\ ギャップ行列（\ ``pairing_type``\ なし）、
+  オンサイトおよびセル内の相互作用、\ ``chi0q_mode = "calc"``\ ・\ ``"load"``\ ・\ ``"flex"``\ で
+  解きます。適用範囲、出力、拒否される組み合わせは\ :ref:`sc_spin_orbital`\ に
+  まとめています。\ ``frequency = "dynamic"``\ では振動数に依存するギャップを
+  求めます（一様格子、\ ``chi0q_mode = "calc"``\ または\ ``"flex"``\ ）。
+  :ref:`sc_spin_orbital_dynamic`\ を参照してください。
 
 .. _rpa_calc_scheme_auto:
 
@@ -194,6 +255,43 @@ TOML形式
   exchange 配線は2つのフェルミオン運動量に依存するためこの再帰和では
   表現できず、（非スピン軌道の ladder と同様に）含まれません。
 
+- ``orbital_site``
+
+  **形式 :** 非負整数のリスト (デフォルトは指定なし)
+
+  **説明 :**
+  元の単位胞の各軌道がどのサイト（原子や分子）に属するかを指定します。
+  同じラベルの軌道は同じサイトに属します。**スピン軌道モード
+  （\ ``mode.enable_spin_orbital = true``\ ）ではこのキーは無視されます。**\ 値は読まれず
+  （不正な値も無視されます）、WARNING が 1 回出て、\ ``R = 0``\ の行はすべて交換交差も含めて
+  厳密に扱われます（\ :ref:`移行上の注意 <so_migration_note>`\ を参照）。以下の説明は
+  非スピン軌道ソルバーについてのものです。\ ``hwave``\ （RPA、FLEX）と\ ``hwave_sc``\ が読み、UHF の
+  ソルバーは使いません。
+
+  ``R = 0``\ の二体項の行のうち、**異なる**\ サイトの軌道を結ぶもの（たとえば
+  単位胞を共有する二量体の2つの分子間の相互作用）はサイト間の相互作用です。
+  このキーを指定すると、そのような行は off-site の行と同じに扱われます。RPA の
+  ring、FLEX の general（バーテックスと2次）、ボンド分解しない\ ``hwave_sc``\ の
+  バーテックスでは、その密度（Hartree）部分だけが入り、交換の寄与は入りません
+  （\ ``R != 0``\ のすべての行と同じです。issue #239）。
+  密度部分を持たない種類の行は off-site の規則に従います。異なるサイト間の
+  ``Exchange``\ と\ ``PairHop``\ は FLEX の general とボンド分解しない\ ``hwave_sc``\ の
+  経路（\ ``bond_channels = false``\ ）では拒否され、\ ``PairHop``\ は RPA で警告と
+  ともに除かれ、\ ``PairLift``\ は\ ``hwave_sc``\ で警告とともに除かれます。
+
+  キーを指定しない場合は全軌道が1つのサイトにあるとみなされ、\ ``R = 0``\ の
+  行はすべてオンサイト（Kanamori）として交換の寄与も含めて扱われます。これは
+  1つの原子の軌道（\ ``U'``\ 、\ ``J``\ ）には正しい扱いですが、軌道が別々の
+  サイトである場合には結果が単位胞の取り方に依存するため、キーがない場合は
+  ``R = 0``\ の軌道間の行を挙げて警告します。原子の多軌道模型では全軌道を1つの
+  サイトに宣言してください（例:\ ``orbital_site = [0, 0]``\ ）。
+
+  影響を受けないもの: ボンド分解の経路（\ ``longitudinal_bond_channels``\ 、
+  ``transverse_bond_channels``\ ）は、単位胞内のものも含めすべてのボンドの交換を
+  分解して扱います。\ ``flex_hartree_fock``\ の Hartree-Fock 自己エネルギーは
+  すべての行の交換を保持します。ボンド分解なしの\ ``calc_type = "ring+ladder"``\ は、
+  異なるサイト間の行を拒否します。
+
 - ``longitudinal_bond_channels``
 
   **形式 :** bool型 (デフォルトは\ ``false``)
@@ -203,21 +301,30 @@ TOML形式
   （または\ ``"auto"``\ がそれに解決される場合）・スピンフリー系で、
   ボンド分解した縦方向（スピン・電荷）チャネルを有効にします
   （:ref:`rpa_longitudinal_bond`\ を参照）。標準の ring では省かれる
-  オフサイト\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ 項の交換
-  （Fock）交差をボンド拡張した対基底の上で取り込み、ドレスされた静的
+  オフサイト\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ 項の
+  交換（Fock）交差をボンド拡張した対基底の上で取り込み、ドレスされた静的
   感受率を\ ``chiq``\ ファイルの\ ``longitudinal_bond_*``\ キーに書き
   出します。ファイル内の配列\ ``chiq``\ は上書きされず、標準の ring の
   結果のままです。少なくとも
-  1つのオフサイト\ ``CoulombInter``/``Hund``/``Ising``\ シェルの宣言
+  1つのオフサイト\ ``CoulombInter``/``Hund``/``Ising``/``Exchange``/``PairHop``\ シェルの宣言
   （係数ゼロの宣言も可）、実数の係数、偶数の\ ``Nmat``\ 、副格子なし、
   ``chi0q_init``\ なし、\ ``enable_spin_orbital``\ なしが必要で、
-  オフサイトの\ ``Exchange``\ または\ ``PairHop``\ の宣言はエラーとして
-  拒否されます。\ ``transverse_bond_channels = true``\ とは併用でき
-  ません。\ ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
-  自己無撞着なボンド分解チャネルを有効にします（実験的機能。
+  オフサイトの\ ``PairHop``\ はボンドの成分のみを通じて入ります
+  （:ref:`rpa_longitudinal_bond`\ を参照）。
+  オフサイトの\ ``Exchange``\ はボンド（Fock）交差のみを通じて入り
+  （Hartree 成分はありません）、スピン反転成分はこのチャネルではなく
+  横チャネル（\ ``transverse_bond_channels``\ ）の扱いです。
+  ``transverse_bond_channels = true``\ とは併用できません。
+  ``mode = "FLEX"``\ では同じキーが Hartree-Fock FLEX の
+  自己無撞着なボンド分解チャネルを有効にします（実験的機能。オフサイトの
+  ``Exchange``\ や\ ``PairHop``\ もそこで受け付けられ、2次は厳密に組み立てられます。ボンドの
+  スピン部分が SU(2) 対称でない場合は警告が出力されます。
   ``flex_hartree_fock = true``\ ・\ ``calc_scheme = "general"``\ ・
-  スピンフリー系・一様松原格子・副格子なし・偶数の\ ``Nmat``
-  が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\
+  スピンフリー系（または\ ``enable_spin_orbital = true``\ では
+  :ref:`flex_so_bond_tutorial`\ のボンドチャネル付きスピン軌道 FLEX を選び、そこでは
+  以下の GPU・ペアリングのオプションは使えず、アーカイブは
+  :ref:`flex_so_bond_archive`\ のスピン軌道ボンドアーカイブです）・一様松原格子・
+  副格子なし・偶数の\ ``Nmat``\ が必要。:ref:`flex_bond_hf`\ を参照）。\ ``longitudinal_bond_channels = true``\
   （\ ``flex_hartree_fock = true``\ が前提）かつ\ ``gpu = true``\ の場合、
   ドレッシング・有効相互作用・自己エネルギーの転送が GPU（CuPy）上で
   実行されます。ボンド配列はホストメモリに置かれ、振動数バッチを1つずつ
@@ -238,12 +345,15 @@ TOML形式
   残します（1以上）。近似のためのパラメータでは **ありません** 。非零の
   係数が宣言されたシェルを落とす切り捨ては拒否されるため、落とせるのは
   係数ゼロで宣言されたシェルだけです。物理的な相互作用を除きたい場合は
-  相互作用ファイルで係数をゼロにしてください。
+  相互作用ファイルで係数をゼロにしてください。FLEX モードでオフサイトの
+  ``Exchange``\ がある場合は、非零のオフサイト\ ``PairLift``\ 行の変位も厳密な
+  2次に必要なため、残す必要があります。
   ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
 
 - ``longitudinal_bond_memory_cap_gb``
 
-  **形式 :** float型 (デフォルトは\ ``8.0``)
+  **形式 :** float型 (デフォルトは\ ``8.0``\ 。\ ``enable_spin_orbital = true``\ の
+  FLEX では、未指定は利用可能なホストメモリの\ ``0.8``\ 倍)
 
   **説明 :**
   ボンド分解した解法の **推定** ピークホスト（CPU）メモリの上限（2進 GiB。
@@ -252,6 +362,10 @@ TOML形式
   その根拠となる配列形状が示されるので、物理メモリに余裕がある計算機では
   上限を引き上げて実行してください。\ ``longitudinal_bond_channels = true``
   でない場合は警告付きで無視されます。
+  ``enable_spin_orbital = true``\ （FLEX）ではスピン軌道での意味を持ちます。未指定は
+  利用可能なホストメモリの\ ``0.8``\ 倍、正の値はその GiB 数、\ ``0``\ は判定を無効に
+  し（WARNING 付き）、負または有限でない値は拒否されます。
+  :ref:`flex_so_bond_tutorial`\ を参照してください。
 
 - ``longitudinal_bond_guard_freqs``
 
@@ -280,6 +394,38 @@ TOML形式
   通過し得ます）、出力にも記録されます
   （``longitudinal_bond_guard_freqs``\ メンバー）。デフォルト値は
   ``gpu``\ に依存しません。\ ``longitudinal_bond_channels = true``
+  でない場合は警告付きで無視されます。\ ``enable_spin_orbital = true``\ の FLEX では
+  ``"all"``\ だけを受け付けます（スピン軌道のドレッシングはすべてのブロックを厳密に
+  分解するため、\ ``"static"``\ は拒否されます）。\ :ref:`flex_so_bond_tutorial`\ を
+  参照してください。
+
+- ``longitudinal_bond_guard_exact``
+
+  **形式 :** str型 (\ ``"decide"``\ または\ ``"always"``\ 、大文字小文字を
+  区別しません。デフォルトは\ ``"decide"``)
+
+  **説明 :**
+  GPU 経路で\ ``longitudinal_bond_guard_freqs = "all"``\ の条件数ガードが
+  ブロックを厳密に分解するタイミングを指定します。デフォルトの
+  ``"decide"``\ では、デバイス上で計算したバウンドだけで全ブロックの
+  合格が証明できる振動数バッチ（全ブロックのバウンドが有効で、スコアの
+  下限の最小値が\ ``2 * longitudinal_bond_cond_tol``\ （に
+  :math:`10^{-12}`\ 程度の丸め誤差の余裕を加えた値）を上回るもの）は、
+  ブロックをホストに集めることも厳密な特異値分解を行うこともなく合格と
+  します。それ以外のバッチは従来どおり厳密に分解するため、拒否、
+  ``flex_guard_policy = "warn"``\ の記録、およびすべての判定は
+  ``"always"``\ と同一であり、変わるのは反復ごとのログと記録される厳密分解のカウントだけです。ある写像の
+  最小値を厳密に計算していない場合、\ ``guards:``\ 行には値の代わりに
+  ``bond cond_min spin in bracket [low, up] (interval bound, no exact
+  SVD; smallest upper end at flat index i)``\ が出力されます。厳密な
+  最小値は\ ``[low, up]``\ の範囲にあり、\ ``i = l * nvol + q``\ は上限が
+  最小となる（ボソン格子インデックス, :math:`q`\ 点）を平坦化した位置です。
+  最後の写像になり得る写像（\ ``IterationMax``\ 回目の写像と、収束判定を
+  満たし得る写像）では必ず厳密な分解を行うため、出力ファイルに書かれる
+  ``longitudinal_bond_cond_min_s`` / ``_c``\ は常に厳密な値です。
+  ``"always"``\ は全ての写像で厳密に分解します（旧バージョンの挙動）。
+  CPU 経路、および\ ``longitudinal_bond_guard_freqs = "static"``\ では
+  この設定は何も変えません。\ ``longitudinal_bond_channels = true``
   でない場合は警告付きで無視されます。
 
 - ``longitudinal_bond_cond_tol``
@@ -301,6 +447,150 @@ TOML形式
   ``longitudinal_bond_channels = true``\ でない場合は警告付きで
   無視されます。
 
+- ``longitudinal_bond_half_grid``
+
+  **形式 :** bool型 (デフォルトは\ ``false``\ 、FLEX モードのみ)
+
+  **説明 :**
+  ボンド分解 FLEX で、ボソン松原振動数のうち非負の半分だけを保存・
+  ドレスします。ボンド写像のボソン量（バブル、ドレスされたスピン・電荷
+  チャネル、有効相互作用、チャネル 0 への縮約）はすべて、同じ
+  :math:`q`\ でボンドペア行列について
+  :math:`X(q, \nu_l) = X(q, -\nu_l)^\dagger`\ を満たします。そこで
+  ``true``\ のときはブロックストアに\ ``Nmat/2 + 1``\ 個の振動数
+  :math:`\nu \ge 0`\ （ゼロ振動数と格子の最後のスロットを含む）だけを
+  保持し、残りは読み出す場所（自己エネルギー、チャネル 0 の感受率、
+  出力）で再構成します。結果は\ ``false``\ と丸め誤差の範囲（相対
+  :math:`10^{-13}`\ 程度）で一致します。条件数ガードは引き続き全振動数を
+  対象とします。\ :math:`-\nu`\ での分母は
+  :math:`1 \mp \bar\chi(q, \nu)^\dagger V(q)`\ であり、その特異値は一般に
+  :math:`+\nu`\ のものと異なるため、負の振動数は\ ``false``\ と同じ検査
+  （条件数ガード、厳密な特異性の検査、\ ``longitudinal_bond_guard_freqs =
+  "static"``\ では解の残差）で別に検査します。\ ``flex_guard_policy =
+  "warn"``\ と\ ``"static"``\ では常にそうします。唯一の例外は、時間反転
+  対称性のもとでの\ ``longitudinal_bond_guard_freqs = "all"``\ かつ
+  ``flex_guard_policy = "refuse"``\ の場合です。バブルとバーテックスが
+  :math:`\bar\chi(q)^T = \bar\chi(-q)`\ と :math:`V(q)^T = V(-q)`\ を満たす
+  とき（実数のホッピングと相互作用。各写像で相対 :math:`10^{-12}`\ で
+  検査します）、\ :math:`(q, -\nu)`\ の分母は :math:`(-q, \nu)`\ の分母の
+  複素共役で同じスコアを持つので、負の振動数は改めて分解しません。最小
+  スコアがしきい値に、この対称性の検査の許容誤差（相対 :math:`10^{-12}`\ ）で
+  判別できる範囲より近いバッチは別に検査し、拒否は
+  保存した違反ブロックの鏡像の位置で報告します。いずれの場合も判定
+  （拒否・警告・通過）は\ ``false``\ と同じで、\ ``cond_min``\ （ログと
+  ``longitudinal_bond_cond_min_s`` / ``_c``\ ）は全振動数についての最小値
+  です。複数のブロックが違反する場合は、拒否が示す位置（最初に見つかった
+  違反）と警告が示すブロック（振動数バッチとチャネルごとに一つ）が
+  ``false``\ と異なることがあります。半分の格子のバッチはゼロ振動数から
+  始まり、振動数のまとめ方が異なるためです。厳密に特異な分母はどちらでも
+  拒否されますが、報告するバッチが異なることがあります。時間反転対称性がある場合、ボンドストアのメモリと、
+  ガードを含むドレスの時間はおよそ半分になります。時間反転対称性が
+  破れている場合もストアは半分になりますが、ドレスの節約は 2 割程度
+  です。バブルと自己エネルギーの輸送は変わりません。ガードの統計
+  （\ ``longitudinal_bond_guard_blocks_per_iteration``\ 、
+  ``longitudinal_bond_guard_exact_blocks_*``\ ）は保存した振動数だけを
+  数えます。このような出力には\ ``longitudinal_bond_half_grid = true``\ が
+  記録されます。\ ``sigma_init``\ の種は
+  :math:`\Sigma(k, -i\omega) = \Sigma(k, i\omega)^\dagger`\ を満たす
+  必要があります。\ ``longitudinal_bond_output_full``\ では、計算中のメモリ上の
+  動的バッファ（\ ``chi_s_w``\ 、\ ``chi_c_w``\ ）は保存した半分だけを保持し、
+  結果の出力時に全振動数へ展開されます。ディスクに書き出すアーカイブは
+  全振動数を保持するので、従来どおり\ ``hwave_sc``\ で読めます。
+  プロセス内ペアリング（\ ``longitudinal_bond_pairing``\ ）も半分の格子で
+  動作します。ペアリングバーテックスも同じ関係を満たすので、保存した
+  振動数だけを再びドレスして足し合わせ、残りはカーネルで再構成します
+  （IR フィットでは折り返して取り込みます）。ペアリングのために残す
+  ストアの 2 つのスロット（バブルと、バーテックスを受け取るスロット）も
+  半分になり、\ ``ND`` = 36、\ ``nvol`` = 1024、\ ``Nmat`` = 1024 では
+  40.5 GiB が 20.3 GiB になります。ペアリングの結果は、バーテックスが
+  ``false``\ と丸め誤差の範囲で一致し、固有値とギャップは固有値ソルバの
+  収束の範囲で一致します。bool 値のみ受け付けます。
+  ``[mode] enable_spin_orbital = true``\ の場合は拒否されます。
+  ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
+
+- ``longitudinal_bond_store``
+
+  **形式 :** 文字列型（\ ``"auto"``\ 、\ ``"host"``\ 、\ ``"device"``\ 。
+  大文字・小文字を区別しません。デフォルトは\ ``"auto"``\ 、FLEX モードのみ）
+
+  **説明 :**
+  GPU 経路（\ ``gpu = true``\ ）で、ボンド分解 FLEX のブロックストアを
+  どこに置くかを指定します。ストアは全振動数・全チャネル対のバブルと
+  有効相互作用を保持します（\ ``longitudinal_bond_pairing``\ ではペアリング
+  バーテックス用にもう 1 スロット、\ ``longitudinal_bond_output_full``\ では
+  動的チャネル用にさらに 2 スロット）。ホストメモリに置くと、各反復で
+  ストア全体がホストとデバイスの間を何度もコピーされます（バブルの
+  ブロックの書き出し、振動数バッチの読み込み、有効相互作用の書き出しと
+  再読み込み）。デバイスメモリに置くとこれらのコピーはなくなり、ホストに
+  戻るのは小さな配列（チャネル 0 への縮約、静的スライス、自己エネルギー）
+  だけになります。\ ``"auto"``\ （デフォルト）は、デバイスに収まるときは
+  デバイスに、収まらないときはホストに置きます。\ ``"host"``\ は常に
+  ホストに置きます（従来の動作）。\ ``"device"``\ は常にデバイスに置き、
+  収まらない場合や GPU バックエンドが有効でない場合は拒否されます
+  （\ ``gpu = false``\ の場合は入力の読み込み時に拒否されます）。
+
+  判定には、ボンドゲートのデバイス側の表にストアを常駐行として加えた
+  ものを使います。
+  ``1.25 * (デバイス常駐行 + ストア + 最大のフェーズ) <= 0.9 *
+  利用可能なデバイスメモリ``\ （最大のフェーズは振動数バッチでの
+  ``max(bubble, dressing + guard, transport)``\ ）を満たせば収まると
+  判定します。\ ``"auto"``\ では、ストアのためにバッチ幅が小さくなりすぎて
+  バッチ化した解法がデバイスを使い切れなくならないよう、バッチ幅
+  ``ceil(4096 / nvol)``\ （ホスト側の表が許す幅を上限とします）で判定します。
+  ``"device"``\ ではバッチ幅 1 で収まれば足ります。
+  ``longitudinal_bond_freq_batch``\ を指定した場合はその幅で判定します。
+  ``longitudinal_bond_pairing``\ を指定した場合は、ホストのストアでは
+  空いていたデバイスメモリを使うペアリングの再ドレス（ペアバブル
+  ``norb^4 * nvol * Nmat * 16``\ バイトと振動数バッチ 2 つ分）も加えて
+  判定します。自己無撞着計算の後、ペアリングカーネルの判定の前に
+  ストアはデバイスメモリから外れます（バブルのスロットは解放し、
+  2 つ目のペアリングチャネルがまだ使う場合はホストメモリへ移します。
+  バーテックスのスロットはホストメモリへ移します）。そのため
+  カーネルは引き続きブロックをデバイスに置けます。
+  空きデバイスメモリを測る前に、メモリプールにキャッシュされたブロックを
+  解放します。判定とその理由はデバイス側の表とともにログに出力されます。
+  ストアの大きさは\ ``n_slots * Nmat_s * nvol * ND^2 * 16``\ バイトです。
+  ここで\ ``Nmat_s = Nmat``\ （\ ``longitudinal_bond_half_grid = true``\ では
+  ``Nmat/2 + 1``\ ）、\ ``ND = B * norb^2``\ 、\ ``n_slots``\ はペアリング
+  なしで 1、ありで 2、\ ``longitudinal_bond_output_full``\ でさらに 2 を
+  加えます。たとえば\ ``ND`` = 36、\ ``nvol`` = 1024、\ ``Nmat`` = 1024
+  では 1 スロットが全振動数で 20.3 GiB、半分の格子で 10.1 GiB なので、
+  シングレットのペアリング（2 スロット）が 40 GB のデバイスに収まるのは
+  半分の格子の場合だけです。ストアをデバイスに置いても、ホストメモリの
+  表（\ ``longitudinal_bond_memory_cap_gb``\ ）は減らしません。
+
+  判定を通ってもデバイス上でのストアの確保がメモリ不足になった場合
+  （断片化や他のプロセス）、\ ``"auto"``\ は警告を出し、ストアをホスト
+  メモリに置き、ホスト用の振動数バッチで計算を続けます。この時点では
+  まだ何も計算していません。\ ``"device"``\ はエラーで停止します。
+  反復中のメモリ不足は再試行しません。ストアがデバイスにある場合、その
+  メッセージは\ ``"host"``\ を勧めます。
+
+  ホストメモリとデバイスメモリの間のストアのコピー（ホストのストアでは
+  各反復、デバイスのストアではペアリングカーネルの前に 1 回）は、
+  再利用する 1 つのページロック（ピン留め）されたステージングバッファ
+  （最大 256 MiB。これより大きい振動数スライスは分けてコピーします）を
+  通して分割して行います。このバッファの分だけホストメモリの使用量が
+  増えます。16 MiB 以上のホスト側のコピー（各分割のホスト側のコピーと、
+  ホストのストアのチャネル対ごとのストライド付きコピー）は最大 8 スレッド
+  （プロセスが使える CPU 数まで）で行います（GPU 経路のみ。CPU での計算は従来どおり 1 スレッドでコピー
+  します）。これらはすべて自動で行われ、設定するキーはありません。
+  ピン留めバッファを確保できない場合（たとえばロックメモリの上限
+  ``ulimit -l``\ による場合）は、そのコピーはステージングを使わない経路で
+  行い、デバッグレベルのログにその旨を出力します。次のコピーでは再び
+  確保を試みます。どちらの経路でもコピーされる値は同じです。
+
+  結果について：変わるのはストアの置き場所だけで、演算は変わりません。
+  同じ振動数バッチ（\ ``longitudinal_bond_freq_batch``\ を指定）では、
+  デバイスのストアはホストのストアと同じ結果を、ビット単位で、または
+  配置の異なる配列に対して GPU ライブラリが異なるカーネルを選んだ場合は
+  丸め誤差の範囲で与えます。\ ``"auto"``\ では、デバイスのストアの方が
+  振動数バッチが小さくなることがあり（ストアがバッチに使えたはずの
+  デバイスメモリを使うため）、バッチ幅が異なると結果は丸め誤差の程度で
+  変わります。CPU 経路は変わりません（ストアは常にホストメモリに
+  あります）。\ ``longitudinal_bond_channels = true``\ でない場合は警告付きで
+  無視されます。
+
 - ``longitudinal_bond_pairing``
 
   **形式 :** str型 (``"none"``\ ・\ ``"singlet"``\ ・\ ``"triplet"``\ ・
@@ -317,7 +607,8 @@ TOML形式
   のインプロセス版に相当します）。ソルバーの制御パラメータは同じ
   入力ファイルの\ ``[eliashberg]``\ テーブルから読み込まれます
   （省略可能。省略したキーは\ ``hwave_sc``\ と同じデフォルト値を
-  取ります。\ ``pairing_type``\ はここでは拒否されます -- チャネルは
+  取ります（\ ``solver_mode = "eigenvalue"``\ を含む）。
+  ``pairing_type``\ はここでは拒否されます -- チャネルは
   代わりにこのキーで選択されます。\ ``gpu``\ は FLEX の計算に
   従います）。結果は\ ``eliashberg_bond_<type>.npz``\ ・
   ``gap_bond_<type>.dat``\ ・\ ``eigenvalue_bond_<type>.dat``
@@ -329,6 +620,10 @@ TOML形式
   によるペアリングの節 <flex_bond_pairing_tutorial>`\ を参照して
   ください。大規模な系では
   ``[eliashberg] matsubara_basis = "ir"``\ を設定してください。
+  ボンド分解した対形成は\ ``norb``\ を制限しません。多軌道の結果の検証方法は
+  :ref:`適用範囲の記述 <sc_bond_channels_static>`\ を参照してください（issue #239）。
+  ペアリングと\ ``longitudinal_bond_half_grid = true``\ の併用に対応して
+  います（そのキーを参照）。
 
 - ``flex_hartree_fock``
 
@@ -340,9 +635,13 @@ TOML形式
   :math:`\Sigma_{\rm HF}[G]`\ を FLEX の自己エネルギーに加えます
   （:math:`\Sigma = \Sigma_{\rm HF} + \Sigma_{\rm fluct}`\ 。毎反復
   ドレスドグリーン関数から再計算。:ref:`flex_bond_hf`\ を参照）。
-  スピンフリー系での\ ``calc_scheme = "general"``\ 、一様松原格子
-  （``matsubara_basis = "ir"``\ は拒否）、副格子なし、外場なし、
-  偶数の\ ``Nmat``\ が必要です。\ ``gpu = true``\ は受理されます。
+  スピンフリー系での\ ``calc_scheme = "general"``\ （\ ``enable_spin_orbital =
+  true``\ の場合は、そのキーの項で説明するスピン軌道 FLEX）、一様松原格子
+  （``matsubara_basis = "ir"``\ は拒否）、副格子なし、外場なし（スピン軌道モードでは受け付けます）、
+  偶数の\ ``Nmat``\ が必要です。オフサイトの\ ``Exchange``\ や\ ``PairHop``\ は単独では拒否されます
+  （Hartree 成分がないため、その1次だけが高次なしに入ることになるため）。
+  ``longitudinal_bond_channels = true``\ と併用する場合は受け付けられます。
+  ``gpu = true``\ は受理されます。
   単独では通常の FLEX の GPU 経路が使われ（下記\ ``gpu``\ を参照）、
   ``longitudinal_bond_channels = true``\ の場合は代わりに
   ``longitudinal_bond_channels``\ の項で説明するボンド分解した
@@ -406,9 +705,20 @@ TOML形式
   ``chi_s_w`` / ``chi_c_w``\ （ボソン振動数上の\ ``ndarray(l, q, I, J)``\ ）
   を、\ ``[file.output] longitudinal_bond``\ で指定した専用アーカイブ
   （デフォルト\ ``longitudinal_bond.npz``\ ）に書き出します。ボンド分解
-  した解法の常駐メモリが2倍になります。アーカイブのサイズは書き出し前に
+  した解法の常駐メモリに\ ``(Nmat, nvol, ND, ND)``\ の複素バッファが2つ
+  加わります（それ以外の常駐分は、バブルとそれを上書きする有効相互作用で
+  1つ、\ ``longitudinal_bond_pairing``\ を使う場合は2つです）。
+  アーカイブのサイズは書き出し前に
   ログに出力されます。\ ``longitudinal_bond_channels = true``\ でない
-  場合は警告付きで無視されます。
+  場合は警告付きで無視されます。\ ``enable_spin_orbital = true``\ では代わりに
+  スピン軌道ボンドアーカイブ（スキーマ 4）を書き出します。追加の感受率パス1回で
+  求めた最終 Green 関数の\ :math:`\chi_B`\ 、ボンドバーテックス、それらの来歴を持ち、
+  ``green.npz``\ を対となるファイルとします（\ ``[file.output] green``\ が必要）。
+  ``IterationMax = 0``\ ではアーカイブは書き出されません。この版の\ ``hwave_sc``\ は
+  このアーカイブを読みません（対となる\ ``green.npz``\ は\ ``[eliashberg] bond_green``\ で
+  読みます。\ :ref:`sc_so_bond_green`\ を参照）。ソルバー側の読み込み処理は
+  ``hwave.solver.so_bond_archive.load_so_bond_archive``\ で読み、スクリプトでは
+  ``numpy.load``\ で中身を見ます。\ :ref:`flex_so_bond_archive`\ を参照してください。
 
 - ``longitudinal_bond_output_layout``
 
@@ -428,10 +738,20 @@ TOML形式
   ``longitudinal_bond_output_full = true``\ のときにのみ意味を持ちます
   （それ以外ではアーカイブは書き出されません）。\ ``longitudinal_bond_output_full``\
   が false のまま\ ``"sidecar"``\ を指定した場合は警告付きで無視されます。
+  ``enable_spin_orbital = true``\ では、サイドカーは\ ``<block>.<archive_nonce>.npy``\
+  （\ ``chi_w``\ のブロックごとに1つ）で、未指定なら自動で選ばれます。\ ``chi_w``\ の
+  メンバーが小配列の上限\ :math:`\min(1\,\mathrm{GiB}, \mathrm{cap}/8)`\ （cap は計算前のメモリ検査で決まった
+  ホストのメモリ上限で、\ ``longitudinal_bond_memory_cap_gb``\ 、未指定なら利用可能なホスト
+  メモリの 0.8 倍。上限なしでは 1 GiB）を超えなければ
+  ``"npz"``\ 、超えれば\ ``"sidecar"``\ です（上限を超えるときの明示的な\ ``"npz"``\ は
+  拒否されます）。\ ``longitudinal_bond_memory_cap_gb``\ が未指定だと、この選択はホストで
+  利用可能なメモリによります。ホストによらないファイルにするには、このキーを明示して
+  ください。\ :ref:`flex_so_bond_archive`\ を参照してください。
 
 - ``longitudinal_bond_freq_batch``
 
-  **形式 :** int型 (デフォルトは自動選択。FLEXモードのみ)
+  **形式 :** int型 (デフォルトは自動選択。\ ``enable_spin_orbital = true``\ では
+  16、8、4、2、1 のうち上限に収まる最大の値。FLEXモードのみ)
 
   **説明 :**
   ボンド分解 FLEX が一度にドレスするボソン振動数の数（``[1, Nmat]``\ ）
@@ -442,15 +762,30 @@ TOML形式
   解法の開始時に計測されるデバイスの空きメモリも対象になり、
   いずれかを超えると拒否されます）。
   ``longitudinal_bond_channels = true``\ でない場合は警告付きで無視されます。
+  ``enable_spin_orbital = true``\ では、自動のバッチは 16、8、4、2、1 のうち
+  （\ ``Nmat``\ を超えない範囲で）上限に収まる最大の値です。
+
+- ``so_bond_layout``
+
+  **形式 :** str型 (デフォルトは\ ``"auto"``\ 。FLEXモードのみ)
+
+  **説明 :**
+  ボンドチャネル付きスピン軌道 FLEX（\ ``enable_spin_orbital = true``\ かつ
+  ``longitudinal_bond_channels = true``\ ）のボンドの量のレイアウトです。\ ``"auto"``\ は
+  入力が\ :math:`S_z`\ を保存するときは\ :math:`S_z`\ でパックしたレイアウト、それ以外は
+  密なレイアウトを使います。\ ``"dense"``\ は密なレイアウトを強制します。\ ``"sz_packed"``\ は
+  強制できず、その他の値は拒否されます。大文字・小文字は区別しません。2つのスイッチが
+  そろっていないときに指定すると、WARNING 付きで無視されます。
+  :ref:`flex_so_bond_tutorial`\ を参照してください。
 
 - ``flex_second_order``
 
-  **形式 :** str型 (デフォルトは\ ``"local"``\ 。FLEXモードで
-  ``calc_scheme = "general"``\ の場合のみ)
+  **形式 :** str型 (デフォルトは\ ``"local"``\ で、受け付けられる唯一の値です。
+  FLEXモードで\ ``calc_scheme = "general"``\ の場合のみ)
 
   **説明 :**
-  一般（フルバーテックス）経路における FLEX 有効相互作用の2次の項を
-  選択します。式は\ :ref:`flex_second_order_kernel`\ を参照してください。
+  一般（フルバーテックス）経路における FLEX 有効相互作用の2次の項です。
+  式は\ :ref:`flex_second_order_kernel`\ を参照してください。
 
   - ``"local"``\ （デフォルト）は厳密な **局所** 2次カーネルを構築します。
     オンサイト相互作用（:math:`R = 0`\ の\ ``CoulombIntra``\ ・
@@ -464,12 +799,19 @@ TOML形式
     スケルトンだけで、これは\ :math:`q`\ のみの頂点では表現できません。
     オフサイト相互作用について2次を完全に取り込むには、さらに
     ``longitudinal_bond_channels = true``\ が必要です。
-  - ``"takimoto"``\ は従来の Takimoto-Hotta-Ueda の式をそのまま保持します。
-    その2次（二重計算の差し引き）の項は
+  - ``"takimoto"``\ は **廃止** されており、起動時に\ ``"local"``\ を案内する
+    メッセージとともに拒否されます。この値は Takimoto-Hotta-Ueda の式を
+    選択するもので、その2次（二重計算の差し引き）の項
     :math:`-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\,\bar\chi\,
-    (\hat{U}^s + \hat{U}^c)`\ で、\ :math:`\bar\chi`\ は裸のバブルです
-    （式の全体は\ :ref:`flex_second_order_kernel`\ を参照）。H-wave 2.0.0 で
-    得られた結果を再現するための経路であり、2.x 系列では常に利用できます。
+    (\hat{U}^s + \hat{U}^c)`\ は多軌道・オフサイト相互作用に対して2次で
+    厳密でなく、ring は保存近似にならない対の向きで縮約されていました
+    （\ :ref:`flex_second_order_kernel`\ を参照）。これは H-wave 2.0.0 以前の
+    カーネルであり、それらのリリースの結果を設定で再現することはもはや
+    できません。再現が必要な場合は以前のリリースを使ってください。
+    ``"takimoto"``\ で記録された\ ``sigma_init``\ の初期値ファイルは、警告付きで
+    引き続き受け付けられます。通常の初期値の検査を通れば初期値としてのみ使われ、
+    各反復は\ ``"local"``\ で計算されます（収束しない計算では結果が初期値に
+    依存し得ます）。
 
   **適用範囲：** このキーが意味を持つのは\ ``mode = "FLEX"``\ かつ
   ``calc_scheme = "general"``\ の場合のみです。デフォルト値は FLEX が
@@ -493,27 +835,20 @@ TOML形式
   このような行は二体項ではありません。一体のレベルシフト、実質的な
   ``CoulombIntra``\ 、あるいは恒等的にゼロのいずれかに帰着するためです。
   エラーメッセージは該当行と、その種類に対する
-  等価な宣言を示します。メッセージに従って相互作用ファイルを書き直すか、
-  当面の回避策として\ ``flex_second_order = "takimoto"``\ を指定して
-  ください（従来の式は一般経路がこれまで受理していた全ての行を受理します）。
+  等価な宣言を示します。メッセージに従って相互作用ファイルを書き直して
+  ください。
 
-  **計算コストとメモリ：** ``tests/sc/second_order_cost.py``\ （リポジトリの
-  ルートで実行。2軌道の\ ``tests/rpa/input_2orb``\ の格子と飛び移り、および
-  スクリプトが生成する合成 3 軌道正方格子、\ :math:`L = 8`\ 、\ ``Nmat = 128``\ 、
-  繰り返し実行の最小値、2026-09）による実測では、\ ``"local"``\ における
-  :math:`V_{\rm eff}`\ の構築コストは従来の式の約 1.3〜1.6 倍（2軌道・3軌道入力。
-  比は実行ごとにこの範囲で変動します）、FLEX の1反復全体では約 1.1〜1.25 倍です。メモリは逆で、
-  ``"local"``\ は2次の項を振動数のバッチで加算するのに対し、従来の式は
-  フルサイズの項を3つ確保するため、\ ``"takimoto"``\ ではこの段階の
-  ピークが\ ``"local"``\ の約3倍になります（:math:`V_{\rm eff} + 3\,C`
-  に対して\ :math:`V_{\rm eff} + C/4 + F`\ 。:math:`C`\ は
-  :math:`V_{\rm eff}`\ のサイズ、\ :math:`F`\ はコンパイル済みの
-  小さな相互作用因子）。一時バッファだけを比べると12倍になるため、
-  大規模な再現計算ではデフォルトより多くの RAM が必要になることがあります。
+  **計算コストとメモリ：** ``"local"``\ は2次の項を振動数のバッチで加算するため、
+  この段階のピークは\ :math:`V_{\rm eff} + C/4 + F`\ です（:math:`C`\ は
+  :math:`V_{\rm eff}`\ のサイズ、\ :math:`F`\ はコンパイル済みの小さな
+  相互作用因子）。\ ``tests/sc/second_order_cost.py``\ （リポジトリのルートで実行）は、
+  2軌道と3軌道の入力について\ :math:`V_{\rm eff}`\ の構築1回と FLEX の1反復の
+  時間を計測します。
 
-  **収束：** SCF の経路はカーネルによって変わり得ます。2軌道の自己無撞着
+  **収束：** H-wave 2.0.0 以前（廃止された\ ``"takimoto"``\ カーネル）と比べて
+  SCF の経路は変わり得ます。2軌道の自己無撞着
   テスト系（オンサイト\ :math:`U`\ ・\ :math:`U'`\ ・\ ``Hund``\ と
-  オフサイト\ :math:`V`\ 、Anderson 混合）では両方の値で反復回数は同じ
+  オフサイト\ :math:`V`\ 、Anderson 混合）では両方のカーネルで反復回数は同じ
   （``flex_hartree_fock = true``\ なしで 9 回、ありで 11 回）でしたが、
   これは1例の観測であって保証ではありません。以前収束していた計算が
   収束しなくなった場合の対処は\ :ref:`FLEX チュートリアル
@@ -539,6 +874,10 @@ TOML形式
 
   **説明 :** 外場の係数\ :math:`h`\ を指定します。外場は\ :math:`\pm h H_{\alpha\beta}(r_{ij})`\ の形式で導入され、行列要素\ :math:`H_{\alpha\beta}(r_{ij})`\ の定義は相互作用入力ファイルで与えます。符号は\ :math:`+(-)`\ が spin up(down) です。
 
+  デフォルトの 0.0 のままでは Extern ファイルは効きません。適用するには\ ``coeff_extern``\ （例えば 1.0）を指定してください。
+
+  スピン軌道モード（\ ``enable_spin_orbital = true``\ 。RPA、Hartree-Fock FLEX、Eliashberg ソルバー\ ``hwave_sc``\ ）でも、Extern ファイルは物理軌道インデックス 1〜\ :math:`N_\text{orbital}`\ で書き、同じ符号の規則が適用されます。上向きスピンは +\ ``coeff_extern``\ ·\ :math:`H_{\alpha\beta}`\ 、下向きスピンは −\ ``coeff_extern``\ ·\ :math:`H_{\alpha\beta}`\ だけずれます。磁場はここ（Extern + ``coeff_extern``\ ）で与えるか、Transfer ファイルのオンサイト項として与えるかのどちらか一方にしてください。両方書くと足し合わされます。\ :doc:`../inputfiles/interaction`\ を参照してください。スピン軌道モードでは、有限の実数でない値（例えば\ ``true``\ や\ ``nan``\ ）はどのソルバーでも拒否されます。
+
 - ``RndSeed``
 
   **形式 :** int型 (デフォルトは1234)
@@ -561,7 +900,9 @@ TOML形式
 
   **形式 :** int型 (デフォルトは 1)
 
-  **説明 :** 空間FFTのワーカースレッド数を指定します（``scipy.fft``\ による並列化）。デフォルトの\ ``1``\ は従来どおりの直列 numpy で、並列化はオプトインです。``-1``\ で全コアを使用します。GPU 実行時は無視されます。複数の計算を同時に実行する場合は小さめの値を指定してください。
+  **説明 :** 空間FFTのワーカースレッド数を指定します（``scipy.fft``\ による並列化）。デフォルトの\ ``1``\ は従来どおりの直列 numpy で、並列化はオプトインです。``-1``\ で全コアを使用します。GPU 実行時は FFT とデバイス上の計算には使われません（例外は次の段落）。複数の計算を同時に実行する場合は小さめの値を指定してください。
+
+  ``longitudinal_bond_channels``\ 使用時は、同じ値がボンドチャネルのホスト側バッチ計算（線形求解・条件数ガード・行列積。GPU 実行時のガードのホスト部分を含む）のスレッド数にも使われます。\ ``threadpoolctl``\ が必要で（\ ``pip install "hwave[threads]"``\ でインストールできます。無い場合は警告を出して直列実行）、結果は直列実行と丸め誤差の範囲で一致します。
 
 - ``mixing_scheme``
 
@@ -574,6 +915,12 @@ TOML形式
   **形式 :** int型 (デフォルトは 5、FLEXモードのみ)
 
   **説明 :** Anderson 加速の履歴の深さを指定します。メモリは自己エネルギーサイズの配列\ :math:`2m`\ 本分増加します（GPU実行時はデバイス上に保持）。
+
+- ``flex_sigma_hermitian_projection``
+
+  **形式 :** bool型 (デフォルトは true、FLEXモードのみ)
+
+  **説明 :** SCF ループで自己エネルギーを更新するたびに（線形混合・Anderson 加速、\ ``flex_hartree_fock``\ の有無によらず）、また\ ``sigma_init``\ の初期値に対して、\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ を満たす部分へ射影します（各\ :math:`\mathbf{k}`\ で\ :math:`\Sigma \leftarrow [\Sigma(i\omega_n) + \Sigma(-i\omega_n)^\dagger]/2`\ 、一様格子でも IR ノード上でも）。この関係はエルミートな問題の自己エネルギーで厳密に成り立ち、FLEX の写像もこれを保つため、既に対称な計算は丸め誤差の範囲でしか変わりません。射影がないと、裸の Stoner 不安定性を超えたコールドスタートで\ ``sigma.npz``\ にゆっくり減衰する非対称な残差が残るか、他に何の兆候もなく、対称性の破れた非因果的な解（エルミートな問題の自己エネルギーではない）に収束することがあり、\ ``flex_hartree_fock = true``\ の計算はそのようなアーカイブを\ ``sigma_init``\ として拒否します。\ ``false``\ で射影しない従来の更新に戻り、最終的な相対偏差が\ :math:`10^{-6}`\ を超えると終了時に警告します。射影なしで（以前のバージョンを含む）書き出したアーカイブは\ ``hwave_sigma_split --check sigma.npz``\ で確認できます。
 
 
 .. _eliashberg_bond_dynamic_config:
@@ -589,7 +936,41 @@ TOML形式
 テーブルの全体（``frequency``\ ・\ ``pairing_type``\ ・\ ``solver_mode``\ ・
 ``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ など）は
 :ref:`Eliashberg ソルバーのチュートリアルの動的振動数の節
-<sc_dynamic_frequency>`\ で説明しています。
+<sc_dynamic_frequency>`\ で説明しています。スピン軌道の経路（静的・動的）の
+2つのキー（\ ``flex_chiq``\ と\ ``flex_chi0q``\ ）を先に示します。どちらも静的な経路
+（\ ``frequency = "static"``\ ）と動的な経路（\ ``frequency = "dynamic"``\ ）の両方が
+``chi0q_mode = "flex"``\ のときに読みます。動的な経路のピークメモリの見積もりは
+``[eliashberg] mem_limit_gb``\ と比較されます
+（:ref:`sc_spin_orbital_dynamic_memory`\ を参照）。
+
+- ``flex_chiq``
+
+  **型 :**
+  文字列（デフォルト値は\ ``"chiq.npz"``\ 。\ ``[mode] enable_spin_orbital = true``\ の
+  ``hwave_sc``\ のみ）
+
+  **説明 :**
+  ``chi0q_mode = "flex"``\ のとき、スピン軌道 FLEX が出力したスピンフル感受率
+  :math:`\chi`\ のアーカイブ（その計算の\ ``[file.output] chiq``\ ）。
+  ``[file.input] path_to_flex_output``\ （なければ\ ``[file.output]
+  path_to_output``\ ）から読みます。キーの大文字・小文字は区別しません。アーカイブは
+  スピン軌道のタグ（\ ``chi_convention = "spin_orbital"``\ 、\ ``index_convention =
+  "spin_block"``\ ）をもつ必要があり、非スピン軌道や\ ``calc_scheme = "reduced"``\ の
+  計算の出力は拒否します。\ ``scf_converged = false``\ を記録した FLEX の出力では
+  WARNING を出します。スピン軌道モードでは\ ``flex_chi_s``\ ・\ ``flex_chi_c``\ は
+  拒否します。\ :ref:`sc_spin_orbital`\ を参照。
+
+- ``flex_chi0q``
+
+  **型 :**
+  文字列（デフォルト値は\ ``"chi0q.npz"``\ 。\ ``[mode] enable_spin_orbital = true``\ の
+  ``hwave_sc``\ のみ）
+
+  **説明 :**
+  ``chi0q_mode = "flex"``\ のとき、同じ FLEX 計算の\ :math:`\chi_0`\ のアーカイブ
+  （その計算の\ ``[file.output] chi0q``\ ）。必須で、ない場合は拒否します。この入力の
+  頂点が保存された\ :math:`\chi`\ を再現することの確認に使い、一致しない場合は
+  拒否します。キーの大文字・小文字は区別しません。
 
 - ``bond_channels``
 
@@ -604,9 +985,11 @@ TOML形式
   ``chi_c_w``\ ）から構築され、\ ``chiq_s.npz`` / ``chiq_c.npz``\ は
   使われません。生成元の FLEX 計算は\ ``longitudinal_bond_channels =
   true``\ **かつ**\ ``longitudinal_bond_output_full = true``\ を、
-  アーカイブスキーマ2を書き出すバージョンで実行している必要があります
+  アーカイブスキーマ3を書き出すバージョンで実行している必要があります
   （``file.output``\ の\ ``longitudinal_bond``\ の説明と
   :ref:`アーカイブの出力リファレンス <subsec:chiq_rpa>`\ を参照）。
+  スキーマ2のアーカイブは、宣言されたオフサイト相互作用が実行時の格子上で
+  :math:`R \to -R`\ について対称な場合にのみ受け付けられます。
   古いスキーマ1のアーカイブは再計算を求めるメッセージとともに拒否
   されます。\ ``bond_green`` / ``bond_max_shells``\ （Green 関数と
   ボンドトポロジーはこれらの静的ボンド経路のキーではなく
@@ -618,7 +1001,52 @@ TOML形式
   それぞれ独自の\ ``path_to_output``\ を持つ別の実行になります。
   メモリモデル・sparse-ir 依存・具体例は\ :ref:`FLEX チュートリアルの
   ボンド分解バーテックスによるペアリングの節
-  <flex_bond_pairing_tutorial>`\ を参照してください。
+  <flex_bond_pairing_tutorial>`\ を参照してください。ボンド分解した
+  対形成は\ ``norb``\ を制限しません。多軌道の結果の検証方法は
+  :ref:`適用範囲の記述 <sc_bond_channels_static>`\ を参照してください（issue #239）。
+
+  ``frequency = "static"``\ （デフォルト）では、このキーは静的なボンド
+  分解経路を選択します（\ :ref:`Eliashberg ソルバーのチュートリアル
+  <sc_bond_channels_static>`\ を参照）。\ ``hwave_sc``\ が Green 関数
+  （裸の Green 関数、または\ ``bond_green``\ で指定したファイル）から
+  ボンド分解したバブルを自ら構築し、ボンドトポロジー・ボンド分解した
+  スピン/電荷バーテックス・対形成カーネルには、FLEX のボンドゲートおよび
+  上記の動的経路と同じものを用います。オフサイトの\ ``CoulombInter``\ ・
+  ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairHop``\ の行は
+  すべてボンド分解されます。\ ``bond_max_shells``\ はオフサイトのシェルを
+  その数だけ残し、宣言された非ゼロの係数を落とすことになるカットオフは
+  拒否します。軌道とそれ自身の間の\ ``R = 0``\ の\ ``CoulombInter``\ の行
+  （非ゼロ）は拒否されます（\ ``CoulombIntra``\ として宣言してください）。
+  静的経路は\ ``norb``\ を制限しません（issue #239 以前は単一軌道のみ）。
+
+  スピン軌道モード（\ ``[mode] enable_spin_orbital = true``\ ）では、\ ``bond_green``\ は
+  ``[mode.param] longitudinal_bond_channels = true``\ のスピン軌道 FLEX の
+  ``green.npz``\ を指定します。パスは\ ``path_to_input``\ とも\ ``path_to_flex_output``\ とも
+  結合されず、そのまま使われます。相対パスは作業ディレクトリ基準です。その FLEX は
+  フィリング指定（\ ``filling``\ を指定し、\ ``mu``\ は指定しない。μ 固定の計算の
+  Green 関数は、記録された状態がこの計算と異なるため拒否されます）で、この計算と
+  同一の状態点で実行したものでなければなりません。\ ``Nmat``\ 、\ ``T``\ 、
+  ``filling``\ 、バンド、相互作用の行、宣言されたボンドトポロジー（結合ゼロで宣言した
+  行も数えます）が同じであることが必要です。\ ``bond_max_shells``\ は、解決された
+  ボンドチャネルが一致する限り、FLEX の\ ``longitudinal_bond_max_shells``\ と異なっても
+  かまいません。入力が\ :math:`S_z`\ を保存するとき、ファイルの Green 関数のスピン
+  非対角の部分は、最大要素に対して\ :math:`10^{-12}`\ までなら WARNING を出して
+  射影で取り除き、それより大きければ拒否します。ファイルの Green 関数は、ボンドの
+  バブルとギャップ方程式の対の伝播関数の両方でバンドの Green 関数を置き換えます。
+  ``bond_coeff_tail``\ はその Green 関数には適用しません（\ ``bond_coeff_tail_applied =
+  0.0``\ 。ゼロでない値を明示すると WARNING）。そのため固有値を\ ``Nmat``\ に対して
+  確かめてください。スピン軌道モードでは、\ ``frequency = "dynamic"``\ の
+  ``bond_channels = true``\ は\ ``bond_green``\ の有無によらず拒否されます。
+  :ref:`sc_so_bond_green`\ を参照してください。
+
+  ``bond_channels = false``\ の場合（静的・動的とも）、オフサイトの行は RPA の
+  ring や FLEX の general と同じく密度（Hartree）部分だけを持ちます。その交換
+  （Fock）の寄与は q だけのバーテックスに厳密な置き場所がないため含まれません
+  （以前の版では近似的にバーテックスへつぶして含めていました。issue #239）。
+  オフサイトの軌道間の\ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ は1回の
+  WARNING で示され、密度部分を持たないオフサイトの\ ``Exchange``\ ・\ ``PairHop``\
+  は拒否されます。\ ``bond_channels = true``\ はすべてのオフサイトの行をその
+  ボンド上で厳密に扱います。
 
 - ``flex_bond_archive``
 
@@ -629,7 +1057,14 @@ TOML形式
   ``bond_channels = true``\ の動的経路が読み込むボンドアーカイブの
   ファイル名です。相対パスは\ ``[file.input] path_to_flex_output``
   と結合されます。絶対パスはそのまま使われます
-  （``bond_green``\ と同じ規則です）。
+  （これに対し\ ``bond_green``\ は\ ``path_to_flex_output``\ とは結合されず、
+  そのまま使われます。相対パスは作業ディレクトリ基準です）。
+  ``[file.input.interaction]``\ の相互作用ファイルは、アーカイブを書き出した
+  FLEX 計算のものでなければなりません。それらがアーカイブのチャネル上で与える
+  ボンドバーテックスをアーカイブのものと照合し、異なる場合は拒否します
+  （オフサイトの Exchange/PairHop の裸の対形成項はファイルから、揺らぎは
+  アーカイブから読むためです）。FLEX 計算の\ ``longitudinal_bond_max_shells``\ を
+  ここで指定する必要はありません。シェル数はアーカイブのチャネルから決まります。
 
 - ``ir_fit_tol``
 
@@ -685,11 +1120,19 @@ TOML形式
 ``longitudinal_bond_pairing``\ を\ ``"none"``\ 以外にすると、同じ
 入力ファイルの\ ``[eliashberg]``\ テーブルは省略可能で、FLEX の
 計算の最後の対形成ステップを設定します。上記で「後処理のみ」と
-記していない一般的なテーブルの各キー（``solver_mode``\ ・
-``num_eigenvalues``\ ・\ ``max_iter``\ ・\ ``alpha``\ ・
-``convergence_tol``\ ・\ ``matsubara_basis``\ ・\ ``ir_tol``\ ・
+記していない一般的なテーブルの各キー（``num_eigenvalues``\ ・
+``max_iter``\ ・\ ``alpha``\ ・\ ``convergence_tol``\ ・
+``spectral_shift``\ ・\ ``matsubara_basis``\ ・\ ``ir_tol``\ ・
 ``ir_wmax``\ ・\ ``ir_keep_static_chi``\ ・\ ``fft_workers``\ など）は
-``hwave_sc``\ と全く同じデフォルト値を取ります。\ ``pairing_type``
+``hwave_sc``\ と全く同じデフォルト値を取ります。\ ``solver_mode``\ の既定も
+``hwave_sc``\ と同じ\ ``"eigenvalue"``\ です（斥力的な模型の一重項カーネルは負の
+支配的固有値を持ち、シフトなしのべき乗反復を破綻させるため）。収束しない
+べき乗反復（\ ``solver_mode = "iteration"``\ 、オプトイン）は\ ``eigen_converged = false``\ と
+固有値\ ``NaN``\ を記録します（Eliashberg チュートリアルの「固有値ソルバーの
+収束」節を参照）。その場合も FLEX の実行自体は正常に終了します。
+``eigenvalue_bond_<type>.dat``\ ではこの行は\ ``# eigen_converged=<true|false>``
+（空白なし。静的な\ ``eigenvalue.dat``\ は\ ``# eigen_converged = ...``\ ）と書かれる
+ので、空白に寛容な方法で判定してください。\ ``pairing_type``
 は拒否されます（チャネルは\ ``longitudinal_bond_pairing``\ で
 選択されます）。\ ``gpu`` / ``gpu_required``\ は無視されます
 （カーネルは FLEX 計算自身のバックエンドで動作します）。
@@ -722,6 +1165,8 @@ TOML形式
 ``file.input``\ セクション
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+キー\ ``chi0q_init``\ 、\ ``trans_mod``\ 、\ ``green_init``\ 、\ ``sigma_init``\ (FLEXモード)は大文字・小文字を区別しません（\ ``Trans_Mod``\ は\ ``trans_mod``\ として読まれます）。同じキーを綴りを変えて2回指定するとエラーになります。
+
 - ``path_to_input``
 
   **形式 :** str型 (デフォルトは "" (空文字列))
@@ -744,18 +1189,28 @@ TOML形式
 
   **説明 :** UHF法で近似した相互作用項を含む一体項を RPA の初期値として利用します。UHFk の\ ``file.output.rpa``\ に指定した出力ファイルのファイル名を指定します。
 
+  Eliashberg ソルバー\ ``hwave_sc``\ は、同じバンドを\ :math:`\chi_0(\mathbf{q})`\ 、化学ポテンシャル、ペアリング核の Green 関数に用います。スピンに依存しない組み立て後のバンド（エネルギーの単位で絶対許容誤差\ :math:`10^{-10}`\ 。\ ``[eliashberg] spin_free_tol``\ で変更でき、その範囲内のバンドはスピン平均されます。ただしスピン平均は\ ``hwave_sc``\ 自身が\ :math:`\chi_0(\mathbf{q})`\ を計算する場合、すなわち\ ``chi0q_mode = "calc"``\ またはボンド経路に限られ、\ ``chi0q_mode = "load"``\ ではスピン平均は行われません）のみに対応し、スピンに依存するバンドは拒否します（issue #88）。外部の\ ``bond_green``\ を指定した場合、このバンドは Green 関数には使われません。\ ``green_init``\ からバンドを作る場合や\ ``Extern``\ 場を含む場合も同様です。スピン軌道モード（\ :ref:`sc_so_bond_green`\ ）では、このバンドは引き続き、\ ``bond_green``\ のファイルに記録されたバンドとの照合と、相互作用の行とあわせて入力が\ :math:`S_z`\ を保存するかどうかの判定に使われます。Eliashberg チュートリアルの\ ``chi0q_mode``\ の注を参照してください。
+
 
 - ``green_init``
 
   **形式 :** str型
 
-  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。
+  **説明 :** RPA の初期値として与える Green 関数を格納したファイルの名前を指定します。UHFk の\ ``green``\ の出力ファイル形式に対応しています。\ ``trans_mod``\ が指定されている場合、\ ``green_init``\ は使われません。一体バンドは\ ``Transfer``\ のバンドに Green 関数の Hartree-Fock 平均場（すべての相互作用の Hartree 項と Fock 項。UHFk が\ ``flag_fock = true``\ で平均場ハミルトニアンを作るのと同じ方法で組み立てます）を加えたもので、``flag_fock = true``\ （既定値）の UHFk 計算が同じ解に対して出力する\ ``trans_mod``\ のバンドと一致します（\ :ref:`Eliashberg チュートリアルの平均場バンドの注 <sc_mean_field_band_note>`\ を参照）。\ ``flag_fock = false``\ で得た UHFk 解には、その\ ``trans_mod``\ （Hartree 項のみのバンド）を使ってください。\ ``green_init``\ では Fock 項が加わります。元の格子の並進対称性を破る\ ``SubShape``\ の UHFk 状態では、保存された\ ``green``\ も\ ``trans_mod``\ も、読み戻したときに収束したバンドを再現しません（issue #294）。issue #278 より前は Fock 項が含まれていませんでした。
 
 - ``sigma_init``
 
   **形式 :** str型（FLEXモードのみ）
 
-  **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。\ ``flex_hartree_fock = true``\ の計算では、同じ設定の計算が出力した\ ``sigma.npz``\ （``sigma_convention = "split"``\ 、\ ``sigma_static``\ と\ ``sigma_fluct``\ を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります。同時に平均場（``trans_mod`` / ``green_init``\ ）を指定すると拒否されます。旧形式または\ ``"total"``\ 形式のアーカイブは\ ``hwave_sigma_split``\ で変換してください（:ref:`flex_bond_hf`\ を参照）。
+  **説明 :** FLEX の SCF ループの初期自己エネルギーとして読み込む\ ``sigma.npz``\ （以前の FLEX 計算の出力）のファイル名を指定します。パスは\ ``path_to_input``\ からの相対で解決されます。``CellShape``\ と\ ``Nmat``\ は現在の計算と一致している必要があります（不一致は即エラー）。詳細は FLEX チュートリアルの「SCFループのウォームスタート」を参照してください。\ ``flex_hartree_fock = true``\ の計算では、同じ設定の計算が出力した\ ``sigma.npz``\ （``sigma_convention = "split"``\ 、\ ``sigma_static``\ と\ ``sigma_fluct``\ を含む）のみが受理され、2つの成分は保存されたままの形でループの初期値になります（\ ``flex_sigma_hermitian_projection``\ の射影を除く）。同時に平均場（``trans_mod`` / ``green_init``\ ）を指定すると拒否されます。旧形式または\ ``"total"``\ 形式のアーカイブは\ ``hwave_sigma_split``\ で変換してください（:ref:`flex_bond_hf`\ を参照）。
+
+  読み込み時に、種の\ :math:`\Sigma(\mathbf{k}, i\omega_n) = \Sigma(\mathbf{k}, -i\omega_n)^\dagger`\ からの
+  相対偏差を測り、次の二つの場合を区別します。(1) 偏差が\ :math:`10^{-3}`\ を超えると、
+  ``flex_sigma_hermitian_projection``\ が有効（種を射影し、除去した偏差をログに出す）でも
+  無効（種をそのまま使う）でも警告します。(2) 射影なしでそのまま使われる、非因果的で強く
+  非対称なアーカイブは、\ ``flex_hartree_fock = true``\ では等時刻密度のエルミート性の
+  検査に失敗します。\ ``flex_guard_policy = "refuse"``\ では\ ``flex_hf_density_tol``\ で拒否され、
+  ``"warn"``\ では警告になります。事前に\ ``hwave_sigma_split --check``\ で確認できます。
 
 
 ``file.input.interaction``\ セクション
@@ -808,7 +1263,7 @@ TOML形式
 
   **形式 :** str型 (デフォルトは\ ``longitudinal_bond.npz``\ 。FLEXモードのみ)
 
-  **説明 :** ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで\ ``longitudinal_bond_channels = true``\ かつ\ ``longitudinal_bond_output_full = true``\ の場合にのみ書き出されます（:ref:`flex_bond_hf`\ を参照）。\ ``.npz``\ 拡張子のない名前には他の\ ``.npz``\ 出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。
+  **説明 :** ボンド分解した動的感受率の専用アーカイブのファイル名です。FLEX モードで\ ``longitudinal_bond_channels = true``\ かつ\ ``longitudinal_bond_output_full = true``\ の場合にのみ書き出されます（:ref:`flex_bond_hf`\ を参照）。\ ``.npz``\ 拡張子のない名前には他の\ ``.npz``\ 出力と同様に拡張子が付加されます。他の出力ファイルと同じファイルに解決される指定は、計算開始前に拒否されます。\ ``enable_spin_orbital = true``\ ではスピン軌道ボンドアーカイブ（\ :ref:`flex_so_bond_archive`\ ）の名前です。このとき\ ``longitudinal_bond_output_full = true``\ では\ ``[file.output] green``\ が必要で（アーカイブはそのファイルを対となるファイルとして記録します）、\ ``green``\ ファイルは同じディレクトリかその下に置く必要があり、\ ``longitudinal_bond_output_full = true``\ がなければこのキーは INFO 付きで無視されます。
 
 - ``eliashberg_bond_singlet``\ 、\ ``eliashberg_bond_triplet``\ 、
   ``eigenvalue_bond_singlet``\ 、\ ``eigenvalue_bond_triplet``\ 、

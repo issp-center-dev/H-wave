@@ -56,6 +56,16 @@ Parameters
 ``mode`` section
 ================================
 
+Only the keys ``mode``, ``calc_scheme``, ``calc_type``,
+``enable_spin_orbital`` and ``flag_fock`` (those the chosen solver supports,
+see below) are written in the ``mode`` table itself, with exactly this
+spelling and case; every other solver parameter goes in ``mode.param``.
+``hwave`` stops with an error when ``mode`` contains any other key or a
+differently cased one, and when ``mode.param`` contains one of these keys (in
+any case) or a nested ``param`` table. At the end of a run it warns about the
+``mode.param`` keys the run did not read: a misspelled name, or a parameter
+that has no effect under the current settings.
+
 - ``mode``
 
   **Type :**
@@ -416,3 +426,16 @@ while the latter on output files, as described below.
   **Description :**
   This parameter specifies the output file for pair-orbital factor :math:`f_{ij}`.
   If it is not given, the output is not exported.
+
+- ``scf_status``
+
+  **Type :**
+  String (default value is ``"scf_status.dat"``)
+
+  **Description :**
+  This parameter specifies the output file for the convergence status of
+  the SCF loop (see :ref:`subsec:scf_status.dat`). Unlike the other keys of
+  this section, it is exported by default; set it to ``""`` to disable the
+  output. The value must be a string, and the file must not be the same file as
+  another result file of the run (as written, including the ``.npz`` suffix
+  and generated names, ignoring case) or the ``print_check`` file. The key is matched exactly.

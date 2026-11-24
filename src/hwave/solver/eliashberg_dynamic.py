@@ -437,8 +437,9 @@ def _reorder_eigenpairs_by_parity_dynamic(vals, vecs, gap_shape, pairing_type):
         else:
             selection = "none"
             logger.warning(
-                "No dynamic eigenpair matches the requested '%s' parity; the "
-                "reported leading gap belongs to the other channel. Increase "
+                "No dynamic eigenpair passed the requested '%s' channel match "
+                "(even-frequency or combined parity); the first computed "
+                "eigenpair is not certified for the channel. Increase "
                 "num_eigenvalues or check pairing_type.", pairing_type)
     idx = np.concatenate([np.where(match)[0], np.where(~match)[0]])
     return vals[idx], vecs[:, idx], match[idx], selection
@@ -455,8 +456,88 @@ def _channel_projection_is_valid(channel_leakage, parity_leakage_tol):
     return channel_leakage is not None and channel_leakage <= parity_leakage_tol
 
 
-def _solve_channel_projected(make_operator, matvec, vec_size, gap_shape,
-                             pairing_type, num_eigenvalues):
+def _channel_sector_basis(gap_shape, pairing_type):
+    """Orthonormal coordinates of the channel's even-frequency sector.
+
+    The momentum/orbital flip ``Pk`` (``_reverse_k_and_orbital_dynamic``)
+    and the frequency flip ``Pw`` (``_reverse_w_dynamic``) are commuting
+    involutions of the flat gap index, so the index set splits into orbits
+    ``{i, Pk i, Pw i, Pk Pw i}`` of one, two or four elements. On each orbit
+    the channel projector ``P`` (``_project_parity_dynamic``) has rank at most
+    one: ``P e_g`` is ``+-P e_r`` for every ``g`` of the orbit of ``r``. One
+    coordinate per orbit, ``q_r = P e_r / ||P e_r||`` with ``r`` the smallest
+    index of the orbit, therefore gives an orthonormal basis of the sector
+    (distinct orbits have disjoint supports); orbits that ``P`` annihilates
+    (a self-paired index of the wrong sign, e.g. ``k = -k`` for the triplet)
+    carry no coordinate. With ``Q = [q_r]``: ``Q^H Q = I`` and ``Q Q^H = P``.
+
+    The sector has about a quarter of the full dimension; the static analogue
+    is ``sc._parity_sector_basis``.
+
+    Returns
+    -------
+    to_full, to_reduced, dim
+        ``to_full(c) = Q c`` (flat, full size), ``to_reduced(v) = Q^H v``,
+        and the sector dimension (0 when the sector is empty on this grid).
+        Q is real and stored as one signed coefficient and one column index
+        per flat entry, so both maps are a single gather or scatter (no
+        projector application per call).
+    """
+    n = int(np.prod(gap_shape))
+    flat = np.arange(n)
+    idx = flat.reshape(gap_shape)
+    pk = np.ascontiguousarray(_reverse_k_and_orbital_dynamic(idx)).ravel()
+    pw = np.ascontiguousarray(_reverse_w_dynamic(idx)).ravel()
+    rep_of = np.minimum(np.minimum(flat, pk), np.minimum(pw, pk[pw]))
+    reps = np.unique(rep_of)
+
+    # P applied to the sum of the representatives' unit vectors: the orbits
+    # are disjoint, so entry j of the result is entry j of P e_r for the
+    # representative r of j's orbit, and the squared norm of each P e_r is
+    # the sum over its own orbit
+    e = np.zeros(n)
+    e[reps] = 1.0
+    pe = np.asarray(_project_parity_dynamic(e.reshape(gap_shape),
+                                            pairing_type)).ravel()
+    norm2 = np.zeros(n)
+    np.add.at(norm2, rep_of, pe ** 2)
+    weight = np.sqrt(norm2[reps])
+    keep = weight > 1.0e-12          # the weights are 0 or >= 1/2 exactly
+    reps, weight = reps[keep], weight[keep]
+    dim = int(reps.size)
+
+    # Q as a signed gather/scatter: entry j of the column of j's orbit is
+    # coef[j] = (P e_r)[j] / ||P e_r||, and slot[j] is that column's index.
+    # Entries of dropped orbits get coef 0 (P e_r vanishes there exactly).
+    col_of_rep = np.full(n, -1, dtype=np.intp)
+    col_of_rep[reps] = np.arange(dim, dtype=np.intp)
+    slot = col_of_rep[rep_of]
+    inside = slot >= 0
+    coef = np.zeros(n)
+    coef[inside] = pe[inside] / weight[slot[inside]]
+    slot[~inside] = 0
+    if dim == 0:
+        coef[:] = 0.0
+
+    def to_full(c):
+        c = np.asarray(c).ravel()
+        if dim == 0:
+            return np.zeros(n, dtype=complex)
+        return coef * c[slot]
+
+    def to_reduced(v):
+        v = np.asarray(v).ravel()
+        if dim == 0:
+            return np.zeros(0, dtype=complex)
+        return (np.bincount(slot, weights=coef * v.real, minlength=dim)
+                + 1j * np.bincount(slot, weights=coef * v.imag,
+                                   minlength=dim))
+
+    return to_full, to_reduced, dim
+
+
+def _solve_channel_projected(matvec, vec_size, gap_shape, pairing_type,
+                             num_eigenvalues, spectral_shift=None):
     """Largest-real eigenpair of the kernel restricted to the channel sector.
 
     Issue #202: a plain ``which='LM'`` ARPACK set asks for the eigenvalues of
@@ -465,65 +546,113 @@ def _solve_channel_projected(make_operator, matvec, vec_size, gap_shape,
     masked by larger-real opposite-sector modes and fall beyond the requested
     ``num_eigenvalues`` -- making the reported value depend on that count. When
     the sector is a valid invariant subspace (see
-    ``_channel_projection_is_valid``) we instead solve the projected operator
-    ``P K P`` with the channel projector ``P`` (``_project_parity_dynamic``, the
-    even-frequency projector of PR #211), whose spectrum on the sector is
-    exactly the channel's, and select the largest real part -- which is
-    ``num_eigenvalues``-independent.
+    ``_channel_projection_is_valid``) the kernel is instead solved on that
+    sector alone, whose spectrum is exactly the channel's, and the largest
+    real part is selected -- which is ``num_eigenvalues``-independent.
 
-    The orthogonal complement (everything ``P`` annihilates) is mapped to a
-    large NEGATIVE eigenvalue rather than left at zero, so the null space cannot
-    win the largest-real selection and mask a repulsive-dominant sector whose
-    own leading eigenvalue is negative; the reported value is then the least
-    repulsive channel eigenvalue, not a spurious zero.
+    The solve runs in the sector's own orthonormal coordinates
+    (``_channel_sector_basis``, issue #318): the reduced operator
+    ``Q^H K Q`` has about a quarter of the full dimension and no complement,
+    so nothing outside the channel can win the selection and a repulsive
+    channel reports its least repulsive eigenvalue. It goes through the shared
+    driver ``sc._solve_leading`` (plain Arnoldi; the user's
+    ``spectral_shift`` when one is set), so the reporting contract is the one
+    of every other Eliashberg solve: a which='LM' set that cannot contain the
+    largest real part is re-solved for it, a failed ARPACK solve falls back to
+    a dense diagonalization of the reduced operator up to
+    ``sc._DENSE_FALLBACK_MAX``, and otherwise reports NaN with the selection
+    ``"not-converged"``.
+
+    The listing (``info["eigenvalues"]``) is therefore the
+    ``num_eigenvalues`` largest-MAGNITUDE eigenvalues of the sector, ordered
+    by real part, as on the static sector solve -- or its largest-real set
+    when a ``spectral_shift`` is given or the driver re-solved for the largest
+    real part. Before issue #318 it was always the largest-real set.
+
+    ``matvec`` applies the kernel to a flat full-size vector of length
+    ``vec_size``.
 
     Returns the same ``(eigenvalue, eigenvector, info)`` triple as
-    ``sc._solve_leading`` (with the complement eigenvalues subtracted back out
-    of range), so the caller reorders and gauge-fixes it exactly as the
-    unprojected result.
+    ``sc._solve_leading``, with the eigenvectors (``info["eigenvectors"]``,
+    columns) lifted back to the full flat gap space, so the caller reorders and
+    gauge-fixes it exactly as the unprojected result.
     """
     import hwave.sc as sc
-    from scipy.sparse.linalg import LinearOperator, eigs
+    from scipy.sparse.linalg import LinearOperator
 
-    # scale of the full kernel, to size the complement penalty relative to the
-    # sector spectrum (a cheap preliminary, like the auto-shift estimate)
-    A0, _ = make_operator()
-    k_pre = min(6, vec_size - 2)
-    rho = 1.0
-    if k_pre >= 1:
-        try:
-            pre_vals, _ = eigs(A0, k=k_pre, which='LM')
-            rho = float(np.max(np.abs(pre_vals)))
-        except Exception:
-            rho = 1.0
-    if not np.isfinite(rho) or rho <= 0.0:
-        rho = 1.0
-    penalty = 4.0 * rho + 1.0
+    to_full, to_reduced, dim = _channel_sector_basis(gap_shape, pairing_type)
+    if dim == 0:
+        # unreachable behind _channel_projection_is_valid, which requires a
+        # nonempty sector
+        raise ValueError(
+            "the '{}' channel sector is empty on this grid".format(
+                pairing_type))
 
-    def _P(flat):
-        return _project_parity_dynamic(
-            np.asarray(flat).reshape(gap_shape), pairing_type).ravel()
+    def reduced_matvec(c):
+        return to_reduced(np.asarray(matvec(to_full(c))).ravel())
 
-    def projected_matvec(v):
-        v = np.asarray(v).ravel()
-        pv = _P(v)
-        kpv = _P(np.asarray(matvec(pv)).ravel())
-        return kpv - penalty * (v - pv)
+    def make_reduced():
+        return (LinearOperator((dim, dim), matvec=reduced_matvec,
+                               dtype=complex), dim)
 
-    def make_projected():
-        return (LinearOperator((vec_size, vec_size), matvec=projected_matvec,
-                               dtype=complex),
-                vec_size)
+    logger.info("projected channel solve on the '%s' sector coordinates "
+                "(dimension %d of %d)", pairing_type, dim, vec_size)
+    # warn_negative_leading=False: the shared driver certifies the largest
+    # real part itself (the LM bound and its re-solve), and in a sector a
+    # negative leader is the channel's own (repulsive) answer
+    eigenvalue, cvec, info = sc._solve_leading(
+        make_reduced, dim, "arnoldi", num_eigenvalues=num_eigenvalues,
+        spectral_shift=spectral_shift, seed_vec=None,
+        warn_negative_leading=False)
+    cvecs = info.get("eigenvectors")
+    if cvecs is not None:
+        cvecs = np.asarray(cvecs)
+        if cvecs.ndim == 1:
+            cvecs = cvecs[:, None]
+        info["eigenvectors"] = np.column_stack(
+            [to_full(cvecs[:, j]) for j in range(cvecs.shape[1])])
+    return eigenvalue, to_full(cvec), info
 
-    # An explicit spectral shift large enough that A + sigma I has an
-    # all-positive-real spectrum (sector eigenvalues >= -rho, complement
-    # -penalty), so ARPACK's which='LR' iteration is well conditioned; it is
-    # subtracted back inside _solve_leading. The tiny-operator dense path
-    # ignores the shift and orders by real part directly, which is equivalent.
-    sigma = 2.0 * penalty + rho + 1.0
-    return sc._solve_leading(
-        make_projected, vec_size, "arnoldi",
-        num_eigenvalues=num_eigenvalues, spectral_shift=sigma, seed_vec=None)
+
+def _projected_listing_note(info, n_rows, pairing_type, spectral_shift):
+    """The ``eigenvalue.dat`` comment line naming the eigenvalue set the
+    projected channel solve listed (``info`` from
+    ``_solve_channel_projected``), or None when there is no listing.
+
+    The plain solve lists the sector's largest-MAGNITUDE set (which='LM');
+    with a user ``spectral_shift``, after the shared driver's re-solve, or
+    from a dense diagonalization, the rows are the sector's largest REAL
+    parts instead. The reported leader is the largest real part either
+    way."""
+    if not n_rows:
+        return None
+    selection = info.get("selection")
+    head = "eigenvalue listing: the {} ".format(n_rows)
+    sector = "eigenvalues of the '{}' channel sector".format(pairing_type)
+    if selection == "LM":
+        return (head + "largest-magnitude " + sector + " (which='LM'), "
+                "ordered by real part; their largest real part is at least "
+                "their smallest magnitude, so it is the sector's largest real "
+                "part")
+    if selection == "LR":
+        return (head + "largest-real-part " + sector + " (spectral_shift = "
+                "{} applied)".format(spectral_shift))
+    if selection == "LR_retry":
+        return (head + "largest-real-part " + sector + ", re-solved with "
+                "spectral_shift='auto': the which='LM' set could not contain "
+                "the largest real part (largest Re(lambda) found = {:.4g} < "
+                "smallest |lambda| found = {:.4g})".format(
+                    info.get("lm_max_real", float("nan")),
+                    info.get("lm_min_abs", float("nan"))))
+    if selection == "dense-LR":
+        return (head + "largest-real-part " + sector + " (dense "
+                "diagonalization of the sector)")
+    if selection == "null-operator":
+        return ("eigenvalue listing: the kernel is exactly zero on the '{}' "
+                "channel sector (ARPACK error -9, confirmed by independent "
+                "probes): every eigenvalue is 0; the {} rows are 0 with "
+                "orthonormal placeholder vectors".format(pairing_type, n_rows))
+    return None
 
 
 def estimate_memory_bytes(norb, Nk, nmat):
@@ -907,6 +1036,14 @@ def calc_g2_dynamic(green_kw, beta):
     # G2[ij, lm, site, n] = A[ij, site, n] * B[lm, site, n]  (no sum over n)
     G2 = A[:, np.newaxis, :, :] * B[np.newaxis, :, :, :]
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz, nmat)
+    # in place when that keeps the dtype ``G2 / beta`` would have (the same
+    # values without a second four-leg-sized buffer, the spin-orbital
+    # solver's memory peak, #284); otherwise (e.g. complex64 G and a float64
+    # beta, or an integer G) out of place, exactly as ``G2 / beta``
+    if (np.issubdtype(G2.dtype, np.inexact)
+            and G2.dtype == np.result_type(G2, beta)):
+        G2 /= beta
+        return G2
     return G2 / beta
 
 
@@ -1065,7 +1202,8 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                           kx_array, ky_array, kz_array, beta,
                           gap_file="gap.dat", npz_file="gap_dynamic.npz",
                           extra_meta=None, sector_weights=None,
-                          selection=None, eigenvalue_selection=None):
+                          selection=None, eigenvalue_selection=None,
+                          eigen_converged=None):
     r"""Write the dynamic-Eliashberg gap outputs.
 
     Produces two files under ``output_dir``:
@@ -1115,6 +1253,16 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         ``run_leading_eigenproblem``'s ``eigenvalue_selection`` (issue #202),
         written under that name when not ``None``. As with ``selection``,
         ``extra_meta`` wins when it already carries the key.
+    eigen_converged : bool, optional
+        Written as the npz key ``eigen_converged`` and as
+        ``eigen_converged=<true|false>`` in the ``gap.dat`` header when not
+        ``None`` (``extra_meta`` wins when it already carries the key).
+        ``False`` in three cases: a power iteration that did not converge (the gap is its
+        last iterate); a failed eigenvalue solve (the gap is a placeholder
+        vector); and an eigenvalue run in which no computed eigenpair passed
+        the requested channel's match (the gap is a computed eigenvector not
+        certified for the channel). ``eigenvalue`` is then NaN and the gap is
+        NOT the channel's eigenvector.
     """
     os.makedirs(output_dir, exist_ok=True)
     norb = gap_w.shape[0]
@@ -1140,6 +1288,8 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
         meta.setdefault("sector_selection", str(selection))
     if eigenvalue_selection is not None:
         meta.setdefault("eigenvalue_selection", str(eigenvalue_selection))
+    if eigen_converged is not None:
+        meta.setdefault("eigen_converged", bool(eigen_converged))
 
     np.savez(
         os.path.join(output_dir, npz_file),
@@ -1167,6 +1317,9 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
                   "pairing_type={}".format(pairing_type),
                   "eigenvalue={:.8e}".format(eigenvalue),
                   "T={:.8e}".format(T)]
+        if "eigen_converged" in meta:
+            header.append("eigen_converged={}".format(
+                str(bool(meta["eigen_converged"])).lower()))
         if extra_meta and (
             extra_meta.get("zero_chi_s") or extra_meta.get("zero_chi_c")
         ):
@@ -1414,11 +1567,12 @@ def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
     evaluating the vertex formula at chi_s = chi_c = 0. For a pure-Hubbard
     (CoulombIntra-only) model the Kuroki matrices have S = C = U on the
     intra-orbital element, so the SINGLET bare term ``0.5 (S + C)`` is the
-    familiar +U while the TRIPLET one ``0.5 (C - S)`` vanishes; the triplet
-    term is nonzero wherever the assembled matrices have C != S, which is
-    the generic outcome of an inter-orbital U', a Hund / Ising term or an
-    off-site density interaction (particular combinations can cancel, e.g.
-    U' = J on the (ab,ab) element). On a frequency-EVEN pair amplitude the flat term is
+    familiar +U while the TRIPLET one ``0.5 (C - S)`` (without its cross
+    elements ``(ab, ab)``, ``a != b``: ``sc._triplet_bare_vertex``, issue
+    #262) vanishes; the triplet term is nonzero wherever the density or
+    diagonal elements have C != S, which is the generic outcome of an
+    inter-orbital U', a Hund / Ising term or an off-site density
+    interaction. On a frequency-EVEN pair amplitude the flat term is
     insensitive to the tau = 0 jump of F (its even-l IR coefficients vanish),
     which is why the issue-#57 defect stayed invisible on the shipped
     fixtures, whose gaps are flat in frequency.
@@ -1517,6 +1671,12 @@ def _load_seed_gap(eli_param, gap_shape, use_ir, axF, nmat):
     from hwave.solver.rpa import (validate_momentum_convention,
                                   check_momentum_marker)
     check_momentum_marker(data, path)   # unconditional (round-10)
+    if "spin_orbital" in data and bool(np.asarray(data["spin_orbital"]).any()):
+        # a spin-orbital gap over N orbitals has the shape of a gap over 2N
+        # orbitals; it is not a seed of a non-spin-orbital run (issue #284)
+        raise ValueError(
+            "seed_eigenvector '{}' is a spin-orbital gap (spin_orbital = True); "
+            "it cannot seed a run without [mode] enable_spin_orbital.".format(path))
     if gap.ndim != 6:
         raise ValueError(
             "seed_eigenvector '{}' has ndim = {} but a gap file is always "
@@ -1565,7 +1725,8 @@ def build_seed(eli_param, pairing_type, norb, kx, ky, kz, gap_shape, use_ir, axF
 
 def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0, seed_vec,
                              use_ir, axF, nmat, logger_label="dynamic kernel",
-                             parity_leakage_policy="warn", parity_leakage_tol=1.0e-8):
+                             parity_leakage_policy="warn", parity_leakage_tol=1.0e-8,
+                             info_out=None):
     """Solve for the leading Eliashberg eigenpair of ``matvec`` and gauge-fix
     (and, on the IR path, densify) the resulting gap onto the uniform grid.
 
@@ -1613,6 +1774,24 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     solver family, which never projects, it is the stage
     ``_reorder_eigenpairs_by_parity_dynamic`` matched with -- and therefore
     what the ``match`` column of ``eigenvalue.dat`` means.
+
+    ``info_out`` (a dict, optional) is updated with ``eigen_converged``
+    (bool), ``n_iter``, ``two_cycle`` and the resolved ``spectral_shift`` of
+    the power iteration (``None`` for the eigenvalue solver family). The
+    return arity is unchanged on purpose. ``eigen_converged`` is False in
+    three cases, all with ``lam`` = NaN: a power iteration
+    (``solver_mode = "iteration"``) that did not converge -- by the
+    iteration cap, a detected sign-alternating two-cycle (a negative
+    dominant eigenvalue) or a failed Rayleigh check -- with ``gap_w`` its
+    last iterate; a failed eigenvalue solve (``eigenvalue_selection =
+    "not-converged"``), with a placeholder ``gap_w``; and an unseeded
+    eigenvalue run in which no computed eigenpair passed the requested
+    channel's (even-frequency or combined-parity) match (``sector_selection
+    = "none"``), with ``gap_w`` a computed eigenvector not certified for the
+    channel. None of these ``gap_w`` is the channel's eigenvector.
+    A converged iteration reports the SIGNED Rayleigh eigenvalue of its
+    iterate. Without an ``[eliashberg] spectral_shift`` the iteration runs
+    with ``spectral_shift = "auto"`` (``"none"`` keeps it unshifted).
     """
     from scipy.sparse.linalg import LinearOperator
     import hwave.sc as sc
@@ -1634,7 +1813,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     leakage = None
 
     vec_size = int(np.prod(gap_shape))
-    solver_mode = eli_param.get("solver_mode", "iteration")
+    solver_mode = eli_param.get("solver_mode", sc.DEFAULT_SOLVER_MODE)
     eigenvalue_method = eli_param.get("eigenvalue_method", "arnoldi")
     num_eigenvalues = eli_param.get("num_eigenvalues", 10)
     max_iter = eli_param.get("max_iter", 1000)
@@ -1684,6 +1863,10 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     # re-solve when an unprojected LM set held no positive channel eigenvalue),
     # "dense-LR" (the tiny-operator dense path), "shift-invert", or "iteration".
     eigenvalue_selection = None
+    # the eigenvalue solver family either returns eigenpairs or raises, so
+    # only the power iteration can end without one (see info_out)
+    eigen_converged = True
+    iter_record = {}
     if solver_mode == "iteration":
         # Mirror the static _solve_iteration: project every iterate onto the
         # requested sector so numerical noise cannot let the power iteration
@@ -1738,7 +1921,10 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
         # flips sign every step and the loop can never converge; iterating on
         # K + sigma*I fixes that and sc._solve_leading subtracts sigma back, so
         # the eigenvalue below is still the signed eigenvalue of K.
-        iteration_spectral_shift = eli_param.get("spectral_shift")
+        # An absent spectral_shift means "auto" here (sc._resolve_spectral_shift);
+        # "none" keeps the historical unshifted iteration.
+        iteration_spectral_shift = sc._resolve_spectral_shift(
+            eli_param.get("spectral_shift"), "iteration")
         eigenvalue, sigma_flat, info = sc._solve_leading(
             make_operator, vec_size, "iteration",
             max_iter=max_iter, convergence_tol=tol, alpha=alpha,
@@ -1746,17 +1932,19 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
             spectral_shift=iteration_spectral_shift)
         eigenvalues_all = None
         eigenvalue_selection = "iteration"
-        if iteration_spectral_shift is not None:
-            # Shifted power iteration: the value is the SIGNED eigenvalue of
-            # the original dynamic kernel only when sc._solve_leading's
-            # Rayleigh check validated it (<v|K|v>/<v|v> with a small
-            # residual). Otherwise ||(K + sigma*I) v|| - sigma is NOT an
-            # eigenvalue at all -- e.g. an insufficient sigma leaves the
-            # dominant shifted eigenvalue negative -- and the shared note
-            # labels it as an estimate so eigenvalue.dat cannot be misread.
+        eigen_converged = bool(info.get("converged"))
+        iter_record = {"n_iter": info.get("n_iter"),
+                       "two_cycle": bool(info.get("two_cycle", False)),
+                       "spectral_shift": iteration_spectral_shift}
+        # The value is the SIGNED Rayleigh eigenvalue of the original dynamic
+        # kernel when the run converged, and NaN otherwise; the shared note
+        # says which, so eigenvalue.dat cannot be misread. An unshifted
+        # converged run (spectral_shift = "none") keeps the historical
+        # note-free file.
+        if iteration_spectral_shift is not None or not eigen_converged:
             eigenvalue_note = sc._shifted_eigenvalue_note(
                 "iteration", iteration_spectral_shift,
-                info.get("converged"), info.get("n_iter"), info,
+                eigen_converged, info.get("n_iter"), info,
                 kernel_label="dynamic kernel")
     else:
         # "eigenvalue" / "both": use the ARPACK/shift-invert eigen family.
@@ -1766,7 +1954,8 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
             logger.warning(
                 "Dynamic solver_mode='both' runs the eigenvalue leg only; "
                 "the power-iteration cross-check is skipped.")
-        user_spectral_shift = eli_param.get("spectral_shift")
+        user_spectral_shift = sc._resolve_spectral_shift(
+            eli_param.get("spectral_shift"), "eigenvalue")
 
         # Issue #202: when the kernel CONSERVES the channel's even-frequency
         # sector, ARPACK's plain which='LM' (largest MAGNITUDE) set can miss the
@@ -1785,11 +1974,14 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                 channel_leak, parity_leakage_tol)
 
         if channel_valid:
-            # Projected solve: P K P restricted to the channel sector, largest
-            # real part. sector_selection is the channel by construction.
+            # Projected solve: the kernel on the channel sector's own
+            # coordinates, largest real part (certified by the shared driver);
+            # the listing is the sector's which='LM' set (or its which='LR'
+            # set with a user spectral_shift or after the driver's re-solve).
+            # sector_selection is the channel by construction.
             eigenvalue, sigma_flat, info = _solve_channel_projected(
-                make_operator, matvec, vec_size, gap_shape, pairing_type,
-                num_eigenvalues)
+                matvec, vec_size, gap_shape, pairing_type, num_eigenvalues,
+                spectral_shift=user_spectral_shift)
             eigenvalues_all = info.get("eigenvalues")
             vecs_all = info.get("eigenvectors")
             if eigenvalues_all is not None and vecs_all is not None:
@@ -1798,7 +1990,23 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                         eigenvalues_all, vecs_all, gap_shape, pairing_type)
                 eigenvalue = eigenvalues_all[0]
                 sigma_flat = vecs_all[:, 0]
-            eigenvalue_selection = "LR_projected"
+            # a failed projected solve keeps its "not-converged" label
+            eigenvalue_selection = (
+                "not-converged"
+                if info.get("selection") == "not-converged"
+                or not np.isfinite(float(np.real(eigenvalue)))
+                else "LR_projected")
+            # what the rows of the listing are: the label stays
+            # "LR_projected" whichever set the sector solve returned
+            if eigenvalue_selection == "LR_projected":
+                listing_note = _projected_listing_note(
+                    info, 0 if eigenvalues_all is None
+                    else len(eigenvalues_all), pairing_type,
+                    user_spectral_shift)
+                if listing_note:
+                    eigenvalue_note = (
+                        listing_note if not eigenvalue_note
+                        else eigenvalue_note + "\n" + listing_note)
         else:
             # Unprojected solve: the general multi-orbital case (the kernel does
             # not conserve the channel) or a seeded / shift-invert run. Here the
@@ -1833,6 +2041,19 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
             # read it, do not infer -- the tiny-operator dense path is a
             # largest-real solve, not "LM").
             eigenvalue_selection = info.get("selection")
+            if eigenvalue_selection == "LR_retry":
+                # the shared driver's LM set could not contain the largest
+                # real part and it re-solved for it; say so in the file
+                retry_note = (
+                    "eigenvalue selection: which='LM' with num_eigenvalues={} "
+                    "could not contain the largest real part (largest "
+                    "Re(lambda) found = {:.4g} < smallest |lambda| found = "
+                    "{:.4g}); the values below come from a second solve with "
+                    "spectral_shift='auto' (largest real part)".format(
+                        num_eigenvalues, info.get("lm_max_real", float("nan")),
+                        info.get("lm_min_abs", float("nan"))))
+                eigenvalue_note = (retry_note if not eigenvalue_note
+                                   else eigenvalue_note + "\n" + retry_note)
 
             if (eigenvalue_selection == "LM" and seed_vec is None
                     and eigenvalues_all is not None):
@@ -1868,19 +2089,98 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                                 pairing_type)
                         eigenvalue = eigenvalues_all[0]
                         sigma_flat = vecs_all[:, 0]
-                    eigenvalue_selection = "LR_retry"
-                    retry_note = (
-                        "eigenvalue selection: which='LM' with "
-                        "num_eigenvalues={} returned no positive '{}' "
-                        "eigenvalue (Re(lambda) = {:.4g}); the values below "
-                        "come from a second solve with spectral_shift='auto' "
-                        "(largest real part)".format(
-                            num_eigenvalues, pairing_type, leading_re))
-                    eigenvalue_note = (retry_note if not eigenvalue_note
-                                       else eigenvalue_note + "\n" + retry_note)
+                    # the selection the second solve actually used: "LR" (or
+                    # the dense fallback) is a successful re-solve; a failed
+                    # one is the "not-converged" NaN sentinel and keeps that
+                    # label, with no note claiming the values come from it
+                    retry_selection = info.get("selection")
+                    retry_failed = (retry_selection == "not-converged"
+                                    or not np.isfinite(
+                                        float(np.real(eigenvalue))))
+                    if retry_failed:
+                        eigenvalue_selection = "not-converged"
+                    else:
+                        eigenvalue_selection = (
+                            "LR_retry" if retry_selection == "LR"
+                            else retry_selection)
+                        retry_note = (
+                            "eigenvalue selection: which='LM' with "
+                            "num_eigenvalues={} returned no positive '{}' "
+                            "eigenvalue (Re(lambda) = {:.4g}); the values "
+                            "below come from a second solve with "
+                            "spectral_shift='auto' (largest real part)".format(
+                                num_eigenvalues, pairing_type, leading_re))
+                        eigenvalue_note = (
+                            retry_note if not eigenvalue_note
+                            else eigenvalue_note + "\n" + retry_note)
 
+    no_channel_pair = False
+    if (solver_mode != "iteration" and sector_selection == "none"
+            and np.isfinite(float(np.real(eigenvalue)))):
+        if seed_vec is None:
+            # No computed eigenpair passed the channel's (even-frequency or
+            # combined-parity) match: either every retained eigenpair is of
+            # the other channel, or the kernel mixes parity. No
+            # channel-certified leader exists (as on the static path with a
+            # non-commuting kernel).
+            no_channel_pair = True
+            eigenvalue = complex(np.nan, np.nan)
+            eigen_converged = False
+            logger.warning(
+                "%s: no computed eigenpair passed the '%s' channel match "
+                "(even-frequency or combined parity) -- either all retained "
+                "eigenpairs are of the other channel, or the kernel mixes "
+                "parity -- so no channel-certified leading eigenvalue is "
+                "reported (NaN, eigen_converged = false). Increase "
+                "num_eigenvalues, or check that the kernel conserves the "
+                "channel's parity (more eigenvalues do not help a "
+                "parity-mixing kernel).",
+                logger_label, pairing_type)
+        else:
+            logger.warning(
+                "%s: the seeded continuation (seed_eigenvector) follows a "
+                "branch that passed neither the '%s' channel's even-frequency "
+                "nor its combined-parity match; its value is reported as the "
+                "continuation's, but it is not certified for the channel.",
+                logger_label, pairing_type)
+    if no_channel_pair and eigenvalue_selection == "null-operator":
+        # the solve found the zero operator, but its placeholder vectors carry
+        # no channel parity, so nothing certified for the channel is
+        # reported: label the run as the failed case, never "null-operator"
+        # next to a NaN
+        eigenvalue_selection = "not-converged"
     lam = float(np.real(eigenvalue))
-    logger.info("%s leading eigenvalue lambda = %.6f", logger_label, lam)
+    if solver_mode != "iteration" and not np.isfinite(lam):
+        # the eigenvalue solver's largest-real-part solve failed on an
+        # operator too large for the dense fallback (sc._solve_leading)
+        eigen_converged = False
+    if not eigen_converged and solver_mode != "iteration" and no_channel_pair:
+        lam = float("nan")
+    elif not eigen_converged and solver_mode != "iteration":
+        lam = float("nan")
+        logger.warning(
+            "%s: the eigenvalue solver could not determine the largest real "
+            "part; the leading eigenvalue is reported as NaN with "
+            "eigen_converged = false and the gap is NOT its eigenvector.",
+            logger_label)
+    elif not eigen_converged:
+        lam = float("nan")
+        logger.warning(
+            "%s: the power iteration did not converge (%s); the leading "
+            "eigenvalue is reported as NaN with eigen_converged = false and "
+            "the returned gap is the last iterate, not an eigenvector. Use "
+            "solver_mode = \"eigenvalue\" or spectral_shift = \"auto\".",
+            logger_label,
+            "sign-alternating two-cycle: negative dominant eigenvalue"
+            if iter_record.get("two_cycle") else
+            "after {} steps".format(iter_record.get("n_iter")))
+    else:
+        logger.info("%s leading eigenvalue lambda = %.6f", logger_label, lam)
+    if info_out is not None:
+        info_out.update({"eigen_converged": bool(eigen_converged),
+                         "n_iter": iter_record.get("n_iter"),
+                         "two_cycle": bool(iter_record.get("two_cycle", False)),
+                         "spectral_shift": iter_record.get("spectral_shift")})
 
     # --- Outputs ---
     # Gauge-fix the eigenvector (deterministic phase/normalization) so the
@@ -1929,7 +2229,8 @@ _MATCH_COLUMN = {
 
 def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note,
                           header_lines=(), sector_weights=None,
-                          selection=None, eigenvalue_selection=None):
+                          selection=None, eigenvalue_selection=None,
+                          eigen_converged=None):
     """Write the ``eigenvalue.dat`` leading-eigenvalue-and-spectrum file.
 
     ``header_lines`` are written as additional ``# ...`` lines right after
@@ -1948,9 +2249,20 @@ def write_eigenvalue_file(path, lam, eigenvalues_all, eigenvalue_match, note,
     different thing in each case: an even-frequency channel match, or only a
     combined-parity one because no even-frequency eigenpair existed. Callers
     that pass nothing keep the historical, unqualified label.
+
+    ``eigen_converged`` (bool), when not ``None``, adds
+    ``# eigen_converged=<true|false>`` right after the fixed first header
+    line. ``false``: the leading value below is NaN (no eigenvalue) and the
+    matching gap is not the channel's eigenvector -- the last iterate of a
+    power iteration that did not converge, a placeholder of a failed
+    eigenvalue solve, or a computed eigenvector not certified for the
+    channel when no computed eigenpair passed the channel's match.
     """
     with open(path, "w") as fw:
         fw.write("# Dynamic Eliashberg leading eigenvalue\n")
+        if eigen_converged is not None:
+            fw.write("# eigen_converged={}\n".format(
+                str(bool(eigen_converged)).lower()))
         for line in header_lines:
             fw.write("# {}\n".format(line))
         if sector_weights is not None:
@@ -2001,13 +2313,20 @@ def solve_dynamic(input_dict):
     Returns
     -------
     float
-        The leading (largest real part) Eliashberg eigenvalue lambda.
+        The leading (largest real part) Eliashberg eigenvalue lambda; NaN
+        (``eigen_converged = false`` in the outputs) when a power iteration
+        did not converge, when the eigenvalue solve failed, or when no
+        computed eigenpair passed the requested channel's match in an
+        unseeded eigenvalue run.
     """
     import hwave.sc as sc
 
-    # spin-orbital mode is unsupported here exactly as on the static path;
-    # solve_dynamic is publicly callable, so guard both entries (issue #83)
-    sc.reject_spin_orbital_mode(input_dict)
+    # spin-orbital mode has its own solver (issue #284); solve_dynamic is
+    # publicly callable, so route a direct call there too (its configuration
+    # checks run first, before any file is read)
+    if sc._resolve_spin_orbital_flag(input_dict):
+        from hwave.solver import eliashberg_dynamic_so
+        return eliashberg_dynamic_so.solve_dynamic_so(input_dict)
     mode_param = input_dict["mode"]["param"]
     T = mode_param["T"]
     # shared validated conversion (round-7 review): an unchecked 1/T here
@@ -2089,8 +2408,12 @@ def solve_dynamic(input_dict):
     kx_array = np.linspace(0, 2.0 * np.pi, Nx, endpoint=False)
     ky_array = np.linspace(0, 2.0 * np.pi, Ny, endpoint=False)
     kz_array = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
-    inter_k = sc._build_interaction_k(kx_array, ky_array, kz_array,
-                                      interactions, norb)
+    sc._check_nonbond_offsite(interactions, "hwave_sc dynamic (bond_channels = false)",
+                              sc._nonbond_site(input_dict, norb))
+    # a spin-orbital archive is refused before the k-space table is built (#271)
+    sc._preflight_refuse_so_archives(input_dict, "flex")
+    inter_k = sc._build_interaction_k_for_sites(kx_array, ky_array, kz_array,
+                                                interactions, norb, input_dict)
 
     # --- FLEX inputs (full frequency) ---
     if use_ir:
@@ -2325,12 +2648,14 @@ def solve_dynamic(input_dict):
 
     # the on-site path keeps the historical "warn" policy and its default
     # tolerance; the measured leakage is not part of its output format
+    eig_info = {}
     lam, gap_w, eigenvalues_all, eigenvalue_match, dynamic_eigenvalue_note, \
         _leakage, sector_weights, sector_selection, eigenvalue_selection = \
         run_leading_eigenproblem(
             _matvec, gap_shape, eli_param, pairing_type, phi0=phi0,
             seed_vec=seed_vec, use_ir=use_ir, axF=axF, nmat=nmat,
-            logger_label="Dynamic Eliashberg")
+            logger_label="Dynamic Eliashberg", info_out=eig_info)
+    eigen_converged = bool(eig_info["eigen_converged"])
 
     # --- Outputs ---
     output_dir = input_dict["file"]["output"]["path_to_output"]
@@ -2344,7 +2669,8 @@ def solve_dynamic(input_dict):
                 str(zero_chi_s).lower(), str(zero_chi_c).lower())]
             if (zero_chi_s or zero_chi_c) else []),
         sector_weights=sector_weights, selection=sector_selection,
-        eigenvalue_selection=eigenvalue_selection)
+        eigenvalue_selection=eigenvalue_selection,
+        eigen_converged=eigen_converged)
 
     gap_file = eli_param.get("output_gap", "gap.dat")
     # Provenance metadata is added ONLY on the opt-in IR path: the default
@@ -2376,6 +2702,7 @@ def solve_dynamic(input_dict):
         sector_weights=sector_weights,
         selection=sector_selection,
         eigenvalue_selection=eigenvalue_selection,
+        eigen_converged=eigen_converged,
     )
 
     return lam

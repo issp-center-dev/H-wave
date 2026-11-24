@@ -22,19 +22,31 @@ delta_nmat)):
       CoulombInter R=2   S PASS (7.3e-4, 0.135)             C PASS (2.0e-3, 0.275)
       Hund         R=1   S PASS (1.2e-3, 0.219)             C PASS (1.2e-3, 0.219)
       Ising        R=1   S PASS (2.4e-3, 0.437)             C PASS (7.3e-4, 0.135)
+      Exchange     R=1   S PASS                             C PASS
+      PairHop      R=1   S PASS (7.3e-4, 0.135)             C PASS
       G3 (bond blocks zeroed): CoulombInter/Hund/Ising all FAIL with
-        95-125 failing cells each -- the bond blocks are load-bearing.
+        95-125 failing cells each -- the bond blocks are load-bearing
+        (Exchange added to the G3 check when it was promoted).
     fx3 (L=3, norb=2, inter-orbital (0,1) bond, shell +-1)
       CoulombInter       S PASS (7.3e-4, 0.138)             C PASS (1.4e-3, 0.246)
       Hund               S PASS (7.3e-4, 0.137)             C PASS (7.3e-4, 0.137)
       Ising              S PASS (1.4e-3, 0.246)             C PASS (7.3e-4, 0.138)
+      Exchange           S PASS                             C PASS
+      PairHop            S PASS (7.0e-4, 0.124)             C PASS
 
-The Exchange direction is ORACLE-ONLY -- production refuses an off-site
-Exchange declaration -- and its verdict is recorded, not asserted: the
-(+1, +1) bond-diagonal rule for a REAL off-site J is PASS on both fx5
-(a == b) and fx3 (a != b), S and C (same tolerances as CoulombInter).
-That is the recorded input for the follow-up "Exchange promotion" of
-issue #181; it does not change Tier 2's finding (no q-ONLY content).
+Exchange (the "Exchange promotion" of issue #181): the (+1, +1)
+bond-diagonal rule for a REAL off-site J is PASS on both fx5 (a == b) and
+fx3 (a != b), S and C (same tolerances as CoulombInter), and the RPA gate
+now accepts an off-site Exchange as a bond source. This does not change
+Tier 2's finding: an off-site Exchange has no q-ONLY (channel-0) content,
+so with the bond blocks zeroed its prediction is zero and G3 misses the
+ED data.
+
+PairHop (Phase C of issue #181): an off-site pair hopping couples a bond pair
+to the pair of the same orientation with the other spin -- in the bond frame
+the REVERSED channel with the orbitals swapped, ``J e^{-i q.delta_r[m]}`` at
+``(m, a, b) -> (reverse[m], b, a)``, S and C coefficient +1 (read off the ED
+response entry by entry, then asserted here through the production builder).
 """
 import functools
 import unittest
@@ -45,6 +57,7 @@ from hwave.solver import bond_channels as bc
 from hwave.solver import bubble
 from hwave.solver.offsite import split_locality, sc_matrices_from_split
 from tests import ed_oracle_util
+from tests import ed_cache
 from tests.heavy_tests import heavy
 from tests.test_bond_transverse_ed import (
     _terms_exchange_offsite, _terms_hund_offsite, _terms_ising_offsite)
@@ -52,7 +65,22 @@ from tests.test_bond_vs_ed_oracle import (
     CAMPAIGN_V1, NMAT, ed_to_solver_bond_map, free_green, fx3, fx5,
     pred_first_order)
 
-_ALL = ("CoulombInter", "Hund", "Ising", "Exchange")
+_ALL = ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop")
+
+
+def _terms_pairhop_offsite(fx, a, b, R, v):
+    """Off-site PairHop ``v c+_{a up} c_{b up} c+_{a dn} c_{b dn} + h.c.`` in the
+    frame of the other off-site builders (``a``-legs on site ``j + R``,
+    ``b``-legs on site ``j``); PairHop's partner row is its Hermitian
+    conjugate, so the row and the ``+ h.c.`` are the declared pair."""
+    terms = []
+    for j in range(fx.L):
+        jr = (j + R) % fx.L
+        p, q = fx.mode(jr, a, 0), fx.mode(j, b, 0)
+        r, s = fx.mode(jr, a, 1), fx.mode(j, b, 1)
+        terms.append((p, q, r, s, v))
+        terms.append((s, r, q, p, np.conj(v)))
+    return terms
 
 
 def _decls(t, R, a, b, v, shells):
@@ -71,7 +99,8 @@ def _terms(t, fx, a, b, R, v):
     if t == "CoulombInter":
         return ed_oracle_util.canonical_density_terms(fx, [(a, b, R, v)])
     return {"Hund": _terms_hund_offsite, "Ising": _terms_ising_offsite,
-            "Exchange": _terms_exchange_offsite}[t](fx, a, b, R, v)
+            "Exchange": _terms_exchange_offsite,
+            "PairHop": _terms_pairhop_offsite}[t](fx, a, b, R, v)
 
 
 class _Side:
@@ -110,10 +139,11 @@ class _Side:
         S0, C0 = self.w0(0.0)
         t1, t0 = self.topo(1.0), self.topo(0.0)
         types = (self.t,) if bond_blocks else ()
-        dS = (bc.build_sc_bond_channel(t1, S1, "S", types=types)
-              - bc.build_sc_bond_channel(t0, S0, "S", types=types))
-        dC = (bc.build_sc_bond_channel(t1, C1, "C", types=types)
-              - bc.build_sc_bond_channel(t0, C0, "C", types=types))
+        shape = (self.fx.L, 1, 1)
+        dS = (bc.build_sc_bond_channel(t1, S1, "S", types=types, spatial_shape=shape)
+              - bc.build_sc_bond_channel(t0, S0, "S", types=types, spatial_shape=shape))
+        dC = (bc.build_sc_bond_channel(t1, C1, "C", types=types, spatial_shape=shape)
+              - bc.build_sc_bond_channel(t0, C0, "C", types=types, spatial_shape=shape))
         return dS, dC
 
     def view(self):
@@ -179,8 +209,8 @@ def _chi_hf_sub(fx, t, a, b, R, channels, v):
     if v == 0:
         n = len(channels)
         return np.zeros((fx.L, 2, 2, n, n), dtype=complex)
-    full = ed_oracle_util.SectorED(fx, terms=terms).bond_correlator(list(channels))
-    hf = ed_oracle_util.SectorED(
+    full = ed_cache.sector(fx, terms=terms).bond_correlator(list(channels))
+    hf = ed_cache.sector(
         fx, terms=(), h1=ed_oracle_util.hf_h1_from_terms(fx, terms)
     ).bond_correlator(list(channels))
     return full - hf
@@ -271,7 +301,7 @@ class TestFramePins(unittest.TestCase):
 
 class TestLongitudinalBondGranulesFx5(unittest.TestCase):
     """G2 on the one-orbital ring (a == b bonds): CoulombInter g1/g2,
-    Hund g1, Ising g1 -- PASS asserted; Exchange g1 recorded."""
+    Hund g1, Ising g1, Exchange g1 -- PASS asserted."""
 
     def _assert_pass(self, rec_S, rec_C):
         self.assertEqual(rec_S["status"], "PASS", rec_S)
@@ -300,7 +330,7 @@ class TestLongitudinalBondGranulesFx5(unittest.TestCase):
         response is reproduced at the granule tolerance; with them zeroed
         (Tier 1's Hartree-only reading embedded in the bond frame) the
         SAME ED data is missed by at least 10 x tol."""
-        for t in ("CoulombInter", "Hund", "Ising"):
+        for t in ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop"):
             with self.subTest(t=t):
                 rec_S, rec_C, (E_S, E_C, _, _) = adjudicate("fx5", t, 0, 0, 1, (1, 2))
                 self._assert_pass(rec_S, rec_C)
@@ -311,18 +341,19 @@ class TestLongitudinalBondGranulesFx5(unittest.TestCase):
                 self.assertGreaterEqual(miss, 10.0 * tol, (t, miss, tol))
 
     @heavy
-    def test_exchange_g1_oracle_only_recorded(self):
+    def test_exchange_g1(self):
         rec_S, rec_C, _ = adjudicate("fx5", "Exchange", 0, 0, 1, (1, 2))
-        print("ORACLE-ONLY Exchange fx5 R=1 (0,0):",
-              rec_S["status"], rec_C["status"],
-              "tol", rec_S["tol"], rec_C["tol"],
-              "max_signal", rec_S["max_signal"], rec_C["max_signal"])
-        self.assertIn(rec_S["status"], ("PASS", "PASS-ZERO", "FAIL", "INCONCLUSIVE"))
+        self._assert_pass(rec_S, rec_C)
+
+    @heavy
+    def test_pairhop_g1(self):
+        rec_S, rec_C, _ = adjudicate("fx5", "PairHop", 0, 0, 1, (1, 2))
+        self._assert_pass(rec_S, rec_C)
 
 
 class TestLongitudinalBondGranulesCaseM(unittest.TestCase):
     """G2 on the two-orbital case-M ring (a != b bond, R = +1, single
-    shell): CoulombInter, Hund, Ising -- PASS asserted; Exchange recorded."""
+    shell): CoulombInter, Hund, Ising, Exchange -- PASS asserted."""
 
     def _assert_pass(self, rec_S, rec_C):
         self.assertEqual(rec_S["status"], "PASS", rec_S)
@@ -345,7 +376,7 @@ class TestLongitudinalBondGranulesCaseM(unittest.TestCase):
 
     @heavy
     def test_g3_bond_blocks_are_load_bearing_interorbital(self):
-        for t in ("CoulombInter", "Hund", "Ising"):
+        for t in ("CoulombInter", "Hund", "Ising", "Exchange", "PairHop"):
             with self.subTest(t=t):
                 rec_S, rec_C, (E_S, E_C, _, _) = adjudicate("fx3", t, 0, 1, 1, (1,))
                 self._assert_pass(rec_S, rec_C)
@@ -356,13 +387,14 @@ class TestLongitudinalBondGranulesCaseM(unittest.TestCase):
                 self.assertGreaterEqual(miss, 10.0 * tol, (t, miss, tol))
 
     @heavy
-    def test_exchange_interorbital_oracle_only_recorded(self):
+    def test_exchange_interorbital(self):
         rec_S, rec_C, _ = adjudicate("fx3", "Exchange", 0, 1, 1, (1,))
-        print("ORACLE-ONLY Exchange fx3 R=1 (0,1):",
-              rec_S["status"], rec_C["status"],
-              "tol", rec_S["tol"], rec_C["tol"],
-              "max_signal", rec_S["max_signal"], rec_C["max_signal"])
-        self.assertIn(rec_S["status"], ("PASS", "PASS-ZERO", "FAIL", "INCONCLUSIVE"))
+        self._assert_pass(rec_S, rec_C)
+
+    @heavy
+    def test_pairhop_interorbital(self):
+        rec_S, rec_C, _ = adjudicate("fx3", "PairHop", 0, 1, 1, (1,))
+        self._assert_pass(rec_S, rec_C)
 
 
 if __name__ == "__main__":

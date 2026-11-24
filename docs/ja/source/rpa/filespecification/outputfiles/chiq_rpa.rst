@@ -34,9 +34,22 @@ chiq, chi0q
 
   スピン軌道の軸が spin*norb+orb（スピンブロック）順で並んでいることを示す文字列マーカー(常に\ ``"spin_block"``)です。これは UHFk のインターリーブ(2*orb+spin)出力とは異なります。このマーカーを持たない\ ``chi0q``\ ファイル(規約修正前に出力されたもの)は、スピン軌道モードで再読み込みする際に拒否されます。
 
+- ``spin_orbital``:
+
+  真偽値のマーカー\ ``spin_orbital = True``\ です。\ ``enable_spin_orbital = true``\ の計算だけが書き込みます。スピン軌道でない計算はこのキーを書き込まないため、そのファイルのメンバーはマーカー導入前と同じです。chi0q を読み込むスピン軌道の計算（\ ``chi0q_init``\ 、またはメモリ上で引き継いだ chi0q）は、マーカーを付与するのではなく引き継ぎます。読み込んだ chi0q が\ ``spin_orbital = True``\ を持つ場合に限り\ ``spin_orbital = True``\ を書き込みます。マーカーのない chi0q の場合は計算を続けますが、マーカーは書き込みません（INFO メッセージで通知します）。\ ``spin_orbital = False``\ または不正なマーカーの場合は、計算前にエラーで停止します。\ ``index_convention``\ マーカーはすべての計算が書き込むため、軌道数が偶然一致する非スピン軌道ファイル(:math:`2N`\ 軌道とスピン付き\ :math:`N`\ 軌道)とスピン軌道ファイルを区別できません。スピン軌道モードで\ ``chi0q_mode = "load"``\ を指定した\ ``hwave_sc``\ は\ ``spin_orbital = True``\ を要求し、これを持たないファイルを拒否します。このマーカーの導入前に出力されたファイルはこのキーを持たないため、その用途には再生成が必要です。逆に、\ ``enable_spin_orbital``\ を指定しない\ ``hwave_sc``\ は、\ ``spin_orbital = True``\ （または不正なマーカー）をもつファイルを計算前に拒否します。\ ``[mode] enable_spin_orbital``\ を有効にするか、非スピン軌道の計算でファイルを作り直してください。
+
 - ``coeff_tail``:
 
   感受率の計算時に使用された\ ``coeff_tail``\ パラメータ(Matsubara 高周波数裾補正)の値です。裾補正は中程度の\ ``Nmat``\ において\ :math:`\chi_0(\mathbf{q})`\ を\ :math:`O(1)`\ で変えるため、このファイルを読み込む計算(``hwave_sc``\ など)は、自身の\ ``coeff_tail``\ 設定が記録値と異なる場合に警告を出します。事前計算した\ ``chi0q_init``\ ファイルをそのまま出力する場合には入力ファイルの値が引き継がれます。生成元がこの値を記録していない場合(旧バージョン)、および一様格子の裾補正が適用されない IR 松原基底(``matsubara_basis = "ir"``\ 、densified 出力を含む)での FLEX 出力の場合には、キー自体が省略されます。
+
+- ``block_layout``:
+
+  ボンドチャネル付きのスピン軌道 FLEX（\ ``[mode] enable_spin_orbital = true``\ と
+  ``[mode.param] longitudinal_bond_channels = true``\ ）だけが書き出します。計算の
+  レイアウト\ ``"dense"``\ または\ ``"sz_packed"``\ （0 次元の文字列）です。配列は
+  どちらでも密なオンサイトの形で、この経路のファイルにこのキーがなければスピン軌道の
+  読み込み側は拒否します（\ :ref:`flex_so_bond_tutorial`\ を参照）。他の計算はこのキーを
+  書き出しません。
 
 副格子を指定している場合は、出力されるデータは副格子を単位とした感受率の値です。波数ベクトルおよび軌道のインデックスは副格子に読み替えます。
    
@@ -62,7 +75,8 @@ chiq, chi0q
 densified 出力の双方）にさらに2つのフィールドが書き出されます。
 
 - ``flex_second_order``: その計算が用いた有効相互作用の2次カーネル
-  （``local`` | ``takimoto``\ ）。0 次元の\ ``<U8``\ 文字列配列として格納されます
+  （常に\ ``local``\ 。以前の開発版のアーカイブには廃止された\ ``takimoto``\ が
+  記録されていることがあります）。0 次元の\ ``<U8``\ 文字列配列として格納されます
   （読み込みには\ ``str(...)``\ または\ ``.item()``\ を使用してください）。
   設定ファイルの\ ``[mode.param]``\ セクションの\ ``flex_second_order``\ 、
   および\ :ref:`flex_second_order_kernel`\ を参照してください。
@@ -73,9 +87,12 @@ densified 出力の双方）にさらに2つのフィールドが書き出され
 導入前（H-wave 2.0.0 以前）に出力されたアーカイブには、これらのフィールドは
 **ありません** 。フィールドが
 無いことがエラーになることはなく、H-wave の読み込み側はそのようなファイルも受理
-します。\ ``sigma_init``\ に指定された初期自己エネルギー（シード）が現在の計算と
-異なるカーネルで作られている場合は WARNING レベルの警告が1度出力されます
-（記録自体が無い場合は INFO レベルの情報メッセージが1度出力されます）。
+します。\ ``sigma_init``\ に指定された初期自己エネルギー（シード）が廃止された
+``takimoto``\ カーネルで作られている場合も、そのシードは受け付けられ（通常の
+シードの検査を通れば初期値としてのみ使われ、各反復は\ ``local``\ で計算されます）、
+その旨の WARNING レベルの
+警告が1度出力されます（記録自体が無い場合は INFO レベルの情報メッセージが1度
+出力されます）。
 アーカイブのメンバー一覧（``numpy.load``\ が返すオブジェクトの\ ``files``\ 属性）を
 厳密に比較するスクリプトでは、この2つの名前が増えることを許容してください。
 
@@ -180,14 +197,19 @@ chiq のデータ形式
   ``longitudinal_bond_spin_mode``\ （文字列、\ ``spin-free``\ ）、
   ``longitudinal_bond_normalization``\ （文字列:
   ``chi_bar = -(T/N) sum_k G G, per site``\ ）、
-  ``longitudinal_bond_types``\ （文字列配列。常に\ ``CoulombInter, Hund, Ising``\ の
+  ``longitudinal_bond_types``\ （文字列配列。\ ``CoulombInter, Hund, Ising``\ の
   3種で、宣言の有無によらずボンドブロックを構成する種類の組。未宣言の種類の
-  ブロックはゼロ）、\ ``longitudinal_bond_max_shells``\ （整数。未指定なら\ ``-1``\ ）、
+  ブロックはゼロ。RPA モードでオフサイトの\ ``Exchange``\ が宣言されている場合は
+  その後ろに\ ``Exchange``\ が加わります）、\ ``longitudinal_bond_max_shells``\ （整数。未指定なら\ ``-1``\ ）、
   ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c``\ （浮動小数。
   スピン／電荷の RPA 分母の\ :math:`q`\ にわたる最小の条件数スコア。不安定性の
   下限に達すると実行は拒否されます。\ ``longitudinal_bond_guard_freqs = "static"``\ の
   場合はゼロ振動数スライスのみにわたる最小値を報告します）、
-  ``longitudinal_bond_schema``\ （整数、\ ``1``\ ）。
+  ``longitudinal_bond_schema``\ （整数、\ ``2``\ 。issue #232 のボンド配置の
+  修正より前は\ ``1``\ で、そのときチャネル\ ``m``\ には\ ``-delta_r[m]``\ では
+  なく\ ``+delta_r[m]``\ で宣言された行が入っていました。キーと配列の形状は
+  同じで、H-wave の読み込み処理はこの刻印を検査しません。外部での後処理のための
+  ものです）。
 
 ``mode = "FLEX"``\ で\ ``longitudinal_bond_channels = true``\ の場合（:ref:`flex_bond_hf`\ の
 Hartree-Fock FLEX）、同じ16個のキーは **最後の** 自己無撞着写像を記述し
@@ -213,7 +235,10 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 （整数。いずれか1回の反復で厳密に分解されたブロック数の最大値）、
 ``longitudinal_bond_guard_blocks_per_iteration``\ （整数。1回の反復で
 ガードが判定対象とするブロック数 -- 上記2つのカウントの分母）が
-格納されます。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
+格納されます。最終マップが静的 RPA 極を越えたときに限り、
+``longitudinal_bond_rpa_past_pole``\ （\ ``True``\ ）、\ ``longitudinal_bond_rpa_pole_indicator_spin``\ /
+``_charge``\ （実数）、\ ``longitudinal_bond_rpa_pole_q_spin``\ / ``_charge``\ （実数\ ``(3,)``\ 、
+逆格子ベクトル単位）も格納されます（\ :ref:`bond_rpa_pole`\ ）。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
 ``chiq_c``\ 配列は、ボンド分解した量の全ボソン振動数における
 :math:`(m = 0, m' = 0)`\ ブロックです。\ ``flex_hartree_fock = true``\ の計算の全ての
 アーカイブ（``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ ・\ ``chiq``\ ・\ ``sigma``\ ・
@@ -235,8 +260,9 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 ``"refuse"``\ では常に\ ``0``\ ）が含まれます。
 ``longitudinal_bond_output_full = true``\ の場合、専用アーカイブ
 （``[file.output] longitudinal_bond``\ 、デフォルト\ ``longitudinal_bond.npz``\ ）に
-``bond_archive_schema``\ （``2``\ 。以下のボンド分解した動的 Eliashberg
-対形成ソルバーが追加されたことによるもので、この段落末尾の注を参照）、
+``bond_archive_schema``\ （``3``\ 。issue #232 のボンド配置の修正より前は
+``2``\ 、以下のボンド分解した動的 Eliashberg 対形成ソルバーが追加される前は
+``1``\ です。この段落末尾の注を参照）、
 動的な\ ``chi_s_w``\ と\ ``chi_c_w``
 （``ndarray(l, q, I, J)``\ 、\ ``freq_axis = "bosonic l -> 2l - nmat"``\ ）、
 瞬時のボンドバーテックス\ ``S_bond``\ と\ ``C_bond``\ （複素\ ``ndarray(nvol,
@@ -255,7 +281,12 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 （``bond_archive_schema = 1``\ 、``S_bond`` / ``C_bond`` / ``norb``\ を
 含まない）は、そのソルバーによって、このバージョンでの再計算を求める
 メッセージとともに拒否されます。スキーマ1の各キーの値と意味は
-スキーマ2でも変わりません。
+スキーマ2でも変わりません。また、スキーマ3はスキーマ2と同じキーと配列の形状を
+もちます。スキーマ2のアーカイブは、各オフサイト行を
+トランスファーの行とは逆向きのボンドのチャネルに置いていました。対形成
+ソルバーは、相互作用が実行時の格子上で\ :math:`R \to -R`\ について対称で
+ないオフサイト行を宣言している場合には、FLEX の再計算を求めるメッセージとともに
+これを拒否し、それ以外では受け付けます。
 
 アーカイブには\ ``[mode.param] longitudinal_bond_output_layout``\ で選択した
 ディスク上のレイアウトを表す\ ``bond_archive_layout``\ （文字列）も記録されます。
@@ -273,13 +304,31 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 （INFO ログに一覧が出ます）、初期状態の\ ``sigma``\ ・\ ``green``\ ・\ ``energy``\ のみが
 書き出されます。
 
+**スピン軌道ボンドアーカイブ（スキーマ 4）。** ``[mode] enable_spin_orbital = true``\ 、
+``longitudinal_bond_channels = true``\ 、\ ``longitudinal_bond_output_full = true``\ （アーカイブの
+対となる\ ``[file.output] green``\ が必要）では、同じ\ ``[file.output] longitudinal_bond``\ の
+ファイルは別のアーカイブになります。\ ``bond_archive_schema = 4``\ 、\ ``spin_orbital =
+True``\ です。追加の感受率パス1回で求めた\ **最終**\ の Green 関数（最後の SCF 反復ではない）の
+:math:`\chi_B`\ である\ ``chi_w``\ と、\ ``Gamma_bond``\ を、\ ``block_layout``\ が記録する
+密（\ ``chi_w``\ 、\ ``Gamma_bond``\ ）または\ :math:`S_z`\ パック（\ ``chi_w@0``\ 、
+``chi_w@+1``\ 、\ ``chi_w@-1``\ 、\ ``Gamma_bond``\ も同様）のレイアウトで持ちます。
+``"sidecar"``\ のレイアウトでは\ ``chi_w``\ のブロックはファイル
+``<block>.<archive_nonce>.npy``\ で、\ ``<block>_file``\ がその名前を、
+``<block>_nbytes``\ がその大きさを示します。\ ``Gamma_bond``\ は常にインデックスに
+置かれます。\ ``green_file``\ はインデックスのディレクトリからの相対パスで対となる
+``green.npz``\ を示し、アーカイブの\ ``fp_green``\ はそのファイルのものに等しくなります。
+``chi_s_w``\ 、\ ``chi_c_w``\ 、\ ``S_bond``\ 、\ ``C_bond``\ はなく、非スピン軌道の
+ボンドの読み込み側はこのアーカイブを拒否します。メンバーの一覧、レイアウトの規則、
+移動と再実行、書き出しが失敗したときの振る舞いは\ :ref:`flex_so_bond_archive`\ に
+あります。
+
 
 .. _subsec:eliashberg_bond_outputs:
 
 ボンド分解した動的 Eliashberg 対形成の出力
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``longitudinal_bond.npz``\ （スキーマ2、前述）のボンド分解した動的
+``longitudinal_bond.npz``\ （スキーマ3、前述）のボンド分解した動的
 対形成バーテックスを用いて線形化 Eliashberg 方程式を解く経路は2つ
 あります。後処理の\ ``hwave_sc``\ （``[eliashberg] bond_channels =
 true``\ と\ ``frequency = "dynamic"``\ ）と、FLEX の計算の最後に
@@ -319,14 +368,22 @@ longitudinal_bond_pairing``\ 。設定リファレンスを参照）です。
 いずれか。カーネルが選んだメモリ配置）、\ ``bond_parity_leakage``
 （実測されたパリティ交換の漏れ。\ ``[eliashberg]
 parity_leakage_tol``\ を参照）、\ ``gap_bond_projection``\ （各ボンド
-形状因子へ射影したギャップ。複素\ ``ndarray(B, norb, norb, Nmat)``\ ）
-を追加で持ちます。\ ``matsubara_basis = "ir"``\ の場合はさらに
+形状因子へ射影したギャップ。複素\ ``ndarray(B, norb, norb, Nmat)``\ 。
+``gap_bond_projection[m, a, b]``\ は、軌道\ ``a``\ が原点のセルに、軌道\ ``b``\ が
+:math:`+R_m`\ のセル（``R_m = delta_r[m]``\ ）にある対の実空間ギャップ振幅
+:math:`\Delta_{ab}(+R_m)`\ 、すなわち Transfer 行\ :math:`(+R_m, a, b)`\ のボンド上の
+振幅で、\ :math:`\Delta_{ab}(\mathbf{k}) = \sum_R e^{+i\mathbf{k}\cdot R}
+\Delta_{ab}(R)`\ とします）を追加で持ちます。\ ``matsubara_basis = "ir"``\ の場合はさらに
 ``matsubara_basis``\ ・\ ``ir_tol``\ ・\ ``ir_wmax``\ ・\ ``ir_L``\ ・
 ``bond_ir_fit_residual_rel``\ （ボンドバーテックスの成分ごとの IR
 フィット残差。実数\ ``ndarray(B, B)``\ 。\ ``[eliashberg]
 ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
 ``# bond_channels=true``\ ・\ ``# residency=<...>``\ 、計算された
 場合は\ ``# parity_leakage=<...>``\ のヘッダー行が追加されます。
+アーカイブの状態が静的 RPA 極を越えているときに限り、両ファイルに
+``rpa_past_pole``\ 、\ ``rpa_pole_indicator_spin``\ / ``_charge``\ 、\ ``rpa_pole_q_spin``\ /
+``_charge``\ （npz のキー、および\ ``eigenvalue.dat``\ の\ ``# key=value``\ ヘッダー行）も
+加わります。値はアーカイブの dress した感受率から復元します（\ :ref:`bond_rpa_pole`\ ）。
 
 動的ソルバーの\ ``eigenvalue.dat``\ は、オンサイトのものも含めて
 ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
@@ -364,14 +421,25 @@ longitudinal_bond_pairing``\ ）。リクエストされたチャネル
   しなくても実行されます（コストはすでに払われているため）。この
   ラベルは\ ``scf_converged = false``\ とともに、結果が自己無撞着な
   対形成固有値ではなく SCF の軌跡上の診断値であることを示します。
+  すべての動的ギャップアーカイブと同様に\ ``eigen_converged``\ も持ちます。
+  べき乗反復（\ ``solver_mode = "iteration"``\ ）が収束しなかったときは
+  ``False``\ で、このとき\ ``eigenvalue``\ は\ ``NaN``\ 、\ ``gap``\ は最後の反復
+  ベクトルであり固有ベクトルではありません。
 - ``gap_bond_<type>.dat``\ は\ ``gap.dat``\ と同じ単一周波数の
   テキストスライスです。
 - ``eigenvalue_bond_<type>.dat``\ は\ ``eigenvalue.dat``\ と同じ
-  形式で、\ ``# bond_channels=true``\ ・
+  形式で、\ ``# eigen_converged=<true|false>``\ ・\ ``# bond_channels=true``\ ・
   ``# scf_converged=<true|false>``\ ・\ ``# state=<...>``\ ・
   ``# residency=<...>``\ 、計算された場合は\ ``#
   parity_leakage=<...>``\ 、および上記の\ ``# gap_sector_weights ...``
-  と\ ``# sector_selection=...``\ のヘッダー行を持ちます。
+  と\ ``# sector_selection=...``\ のヘッダー行を持ちます。最終 FLEX マップが静的 RPA 極を
+  越えたときは、\ ``eliashberg_bond_<type>.npz``\ とこのヘッダーに\ ``rpa_past_pole``\ 、
+  ``rpa_pole_indicator_<channel>``\ 、\ ``rpa_pole_q_<channel>``\ も加わります
+  （\ :ref:`bond_rpa_pole`\ ）。
+  ``# eigen_converged=<true|false>``\ は\ ``=``\ の前後に空白がなく、静的な
+  ``eigenvalue.dat``\ では\ ``# eigen_converged = true``\ と書かれるため、パイプラインは
+  空白に寛容な方法（\ ``eigen_converged``\ の後の文字列から\ ``=``\ と空白を取り除く）
+  で判定してください。
 
 失敗したチャネル（メモリの拒否、条件数または IR フィットの拒否、
 固有値ソルバーの失敗、書き出しの失敗のいずれか）は3つのファイルの

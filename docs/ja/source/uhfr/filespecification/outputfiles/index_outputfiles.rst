@@ -15,4 +15,5 @@ UHFrでは固有エネルギー, 固有ベクトル, 一体グリーン関数の
    energy
    eigen
    green
+   scf_status
 

@@ -30,11 +30,29 @@ from unittest import mock
 import numpy as np
 
 from tests.heavy_tests import heavy
-from tests.test_flex_bond_dressing import _problem
+from tests.test_flex_bond_dressing import _onsite_factors, _problem
 
 #: Print the measured deviations. Opt-in so the normal run is quiet.
 _REPORT = os.environ.get("HWAVE_GPU_EQUIV_REPORT", "").strip().lower() \
     not in ("", "0", "false", "no", "off")
+
+
+def _onsite_factors_on(xp):
+    """The on-site factor pack of :func:`tests.test_flex_bond_dressing.
+    _onsite_factors` (``nd = 4``), mirrored onto the array module ``xp``
+    the way ``FLEX.solve`` mirrors the solver's pack onto the device."""
+    from hwave.solver.second_order import SecondOrderFactors
+    f = _onsite_factors()
+    if xp is np:
+        return f
+    return SecondOrderFactors(
+        norb=f.norb, nd=f.nd, nvol=f.nvol, triples=f.triples,
+        A_on=tuple(xp.asarray(a) for a in f.A_on),
+        B_on=tuple(xp.asarray(b) for b in f.B_on),
+        vpair=None if f.vpair is None else xp.asarray(f.vpair),
+        nbytes=f.nbytes, off_triples=f.off_triples,
+        A_off=None if f.A_off is None else tuple(xp.asarray(a) for a in f.A_off),
+        B_off=None if f.B_off is None else tuple(xp.asarray(b) for b in f.B_off))
 
 
 def _cond_max(mat):
@@ -302,17 +320,15 @@ class TestDressAndBuildWEquivalence(_GpuCase):
         from hwave.solver import flex_bond as fb
         chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=5)
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
-        S_on = np.ascontiguousarray(S[:, :nd, :nd])
-        C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
 
         def run(xp, nb):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=nb, output_full=False, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                           second_order="takimoto")
+                                           factors=_onsite_factors_on(xp))
                 return store.get_freq_batch("W", 0, nmat).copy(), res
 
         W_ref, r_ref = run(np, nmat)
@@ -337,6 +353,35 @@ class TestDressAndBuildWEquivalence(_GpuCase):
                 self.assertAlmostEqual(r.cond_min_s, r_ref.cond_min_s, delta=1e-10)
                 self.assertAlmostEqual(r.cond_min_c, r_ref.cond_min_c, delta=1e-10)
 
+    def test_local_ring_orientation_matches_the_host(self):
+        """The conserving ring orientation (issue #251) is a device-side
+        fancy index; with the exact
+        bond-enlarged second order (``bond_w2``) no factor pack is needed,
+        so a synthetic problem reaches it. Device equals host."""
+        from hwave.solver import flex_bond as fb
+        chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=7)
+        nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
+        view = types.SimpleNamespace(n_channels=ND // nd)
+        rng = np.random.default_rng(251)
+        Af = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
+        Bf = rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND))
+
+        def run(xp):
+            w2 = [((0, 0, 0), xp.asarray(Af), xp.asarray(Bf))]
+            with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
+                    fb.BondDeviceContext.for_view(xp, S, C, view, 2) as dev:
+                store.put_freq_batch("chibar", 0, nmat, chi_bar)
+                fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
+                                     nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
+                                     bond_w2=w2)
+                return store.get_freq_batch("W", 0, nmat).copy()
+
+        W_ref = run(np)
+        W = run(self.cupy)
+        cm = _cond_max(np.eye(ND)[None, None] - chi_bar @ S[None])
+        _deviation("W local (bond_w2)", W, W_ref)
+        np.testing.assert_allclose(W, W_ref, rtol=1e-10 * cm, atol=1e-12 * np.max(np.abs(W_ref)))
+
     def test_output_full_susceptibilities_match(self):
         """``output_full=True`` (issue #198 item 3): the batched dressed
         susceptibilities ``chi_s_w`` / ``chi_c_w`` the store writes alongside
@@ -346,18 +391,16 @@ class TestDressAndBuildWEquivalence(_GpuCase):
         from hwave.solver import flex_bond as fb
         chi_bar, S, C = _problem(nmat=8, nvol=4, nd=4, B=3, seed=5)
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
-        S_on = np.ascontiguousarray(S[:, :nd, :nd])
-        C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
 
         def run(xp, nb):
             with fb.BondBlockStore(nmat, nvol, ND, nd,
                                    ("chibar", "W", "chi_s_w", "chi_c_w")) as store, \
-                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=nb, output_full=True, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                           second_order="takimoto")
+                                           factors=_onsite_factors_on(xp))
                 return (store.get_freq_batch("W", 0, nmat).copy(),
                         store.get_freq_batch("chi_s_w", 0, nmat).copy(),
                         store.get_freq_batch("chi_c_w", 0, nmat).copy(), res)
@@ -403,15 +446,15 @@ class TestDressAndBuildWEquivalence(_GpuCase):
         # vacuous (interval decomposes the same 64 of 64 blocks as svd).
         chi_bar[0, 0] *= 100.0
         nmat, nvol, ND, nd = chi_bar.shape[0], chi_bar.shape[1], S.shape[-1], 4
-        S_on = np.ascontiguousarray(S[:, :nd, :nd]); C_on = np.ascontiguousarray(C[:, :nd, :nd])
         view = types.SimpleNamespace(n_channels=ND // nd)
         def run(xp, method):
             with fb.BondBlockStore(nmat, nvol, ND, nd, ("chibar", "W")) as store, \
-                    fb.BondDeviceContext.for_view(xp, S, C, S_on, C_on, view, 2) as dev:
+                    fb.BondDeviceContext.for_view(xp, S, C, view, 2) as dev:
                 store.put_freq_batch("chibar", 0, nmat, chi_bar)
                 res = fb.dress_and_build_w(store, dev, nb=3, output_full=False, nmat=nmat,
                                            nvol=nvol, nd=nd, spatial_shape=(nvol, 1, 1),
-                                           second_order="takimoto", guard_method=method)
+                                           factors=_onsite_factors_on(xp),
+                                           guard_method=method)
                 return store.get_freq_batch("W", 0, nmat).copy(), res
         W_ref, r_ref = run(self.cupy, "svd")
         W, r = run(self.cupy, "interval")
@@ -542,6 +585,219 @@ class TestEndToEndEquivalence(_GpuCase):
         self.assertAlmostEqual(ma, mb, delta=1e-9)
         np.testing.assert_allclose(sb, sa, rtol=1e-8, atol=1e-10)
         np.testing.assert_allclose(xb, xa, rtol=1e-8, atol=1e-10)
+
+
+def _same_or_roundoff(test, label, out, ref, rtol=1e-14):
+    """Device store vs host store (issue #275): bitwise equality is expected
+    at a pinned batch, but cuBLAS / cuSOLVER may pick kernels by pointer
+    alignment, and a view into the store is aligned differently from a
+    fresh pool block, so the contract is round-off: assert ``rtol``
+    (relative to the largest entry) and report which of the two held."""
+    out = np.asarray(out)
+    ref = np.asarray(ref)
+    test.assertEqual(out.shape, ref.shape, label)
+    if np.array_equal(out, ref, equal_nan=out.dtype.kind in "fc"):
+        if _REPORT:
+            print("[device-store] {}: bitwise equal".format(label))
+        return True
+    scale = float(np.max(np.abs(ref))) if ref.size else 0.0
+    amax = float(np.max(np.abs(out - ref)))
+    if _REPORT:
+        print("[device-store] {}: NOT bitwise, max|dev - host| = {:.3e} (scale {:.3e})"
+              .format(label, amax, scale))
+    test.assertLessEqual(amax, rtol * max(scale, 1e-300), label)
+    return False
+
+
+class TestDeviceStoreEquivalence(_GpuCase):
+    """The bond block store on the device (issue #275) against the host
+    store, both on the GPU path, at a pinned frequency batch: the kernels
+    receive the same values in the same shapes, so the results agree bit
+    for bit or to round-off (``_same_or_roundoff``)."""
+
+    def _store(self, nmat, nvol, ND, nd, names, aliases=None, half=False, device=True):
+        from hwave.solver import flex_bond as fb
+        return fb.BondBlockStore(nmat, nvol, ND, nd, names, aliases, half_grid=half,
+                                 xp=self.cupy if device else np)
+
+    def test_store_lives_on_the_device(self):
+        with self._store(4, 2, 4, 2, ("chibar",)) as st:
+            self.assertEqual(st.resident, "device")
+            v = st.get_freq_batch("chibar", 0, 2)
+            self.assertEqual(type(v).__module__.split(".")[0], "cupy")
+            st.put_freq_batch("chibar", 0, 4, np.ones((4, 2, 4, 4), complex))
+            self.assertEqual(float(self.cupy.abs(st.get_pair("chibar", 1, 0)).max()), 1.0)
+            full = st.get_pair_full("chibar", 1, 0, xp=np)
+            self.assertIsInstance(full, np.ndarray)
+
+    def test_bubble(self):
+        from hwave.solver import backend as bk, flex_bond as fb
+        fx, green, tail = _bubble_fixture()
+        nmat, nvol, nd, ND, B = fx["nmat"], fx["nvol"], fx["nd"], fx["ND"], fx["B"]
+        for half in (False, True):
+            out = {}
+            for device in (False, True):
+                with self._store(nmat, nvol, ND, nd, ("chibar",), half=half,
+                                 device=device) as st, \
+                        fb.BondDeviceContext(self.cupy, fx["S"], fx["C"],
+                                             green0_tail=tail) as ctx:
+                    fb.assemble_bubble(st, bk.to_device(green, self.cupy), ctx.green0_tail,
+                                       fx["beta"], fx["view"], fx["spatial_shape"], 1)
+                    out[device] = {(a, b): bk.to_host(st.get_pair("chibar", a, b)).copy()
+                                   for a in range(B) for b in range(B)}
+            for k in out[False]:
+                _same_or_roundoff(self, "bubble {} half={}".format(k, half), out[True][k],
+                                  out[False][k])
+
+    def test_dressing(self):
+        from hwave.solver import backend as bk, flex_bond as fb, half_grid as hg
+        from tests.test_bond_half_grid import _hermitian_in_frequency
+        nmat, nvol, nd, B = 8, 4, 4, 3
+        ND = B * nd
+        _x, S, C = _problem(nmat=nmat, nvol=nvol, nd=nd, B=B, seed=5)
+        x = 0.05 * _hermitian_in_frequency(nmat, nvol, ND, seed=5)
+        view = types.SimpleNamespace(n_channels=B)
+        rng = np.random.default_rng(251)
+        Af = 0.1 * (rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND)))
+        Bf = 0.1 * (rng.normal(size=(nvol, ND, ND)) + 1j * rng.normal(size=(nvol, ND, ND)))
+        for half in (False, True):
+            for aliased in (True, False):
+                for w2 in (False, True):
+                    for guard_exact in ("always", "decide"):
+                        res = {}
+                        for device in (False, True):
+                            kw = ({"bond_w2": [((0, 0, 0), self.cupy.asarray(Af),
+                                                self.cupy.asarray(Bf))]}
+                                  if w2 else {"factors": _onsite_factors_on(self.cupy)})
+                            names = ("chibar",) if aliased else ("chibar", "W")
+                            with self._store(nmat, nvol, ND, nd, names,
+                                             {"W": "chibar"} if aliased else None, half=half,
+                                             device=device) as st, \
+                                    fb.BondDeviceContext.for_view(self.cupy, S, C, view,
+                                                                  2) as dev:
+                                st.put_freq_batch("chibar", 0, st.nslices,
+                                                  hg.half_from_full(x, nmat) if half else x)
+                                r = fb.dress_and_build_w(
+                                    st, dev, nb=3, output_full=False, nmat=nmat, nvol=nvol,
+                                    nd=nd, spatial_shape=(nvol, 1, 1),
+                                    guard_exact=guard_exact, **kw)
+                                res[device] = (bk.to_host(st.get_freq_batch("W", 0, st.nslices))
+                                               .copy(), r)
+                        label = "dressing half={} aliased={} w2={} guard_exact={}".format(
+                            half, aliased, w2, guard_exact)
+                        (Wh, rh), (Wd, rd) = res[False], res[True]
+                        _same_or_roundoff(self, label + " W", Wd, Wh)
+                        for name in ("collapse0", "collapse_s", "collapse_c", "static_s",
+                                     "static_c"):
+                            _same_or_roundoff(self, label + " " + name, getattr(rd, name),
+                                              getattr(rh, name))
+                        if rh.cond_bracket_s is None:
+                            self.assertAlmostEqual(rd.cond_min_s, rh.cond_min_s,
+                                                   delta=1e-14 * abs(rh.cond_min_s))
+
+    def test_transport(self):
+        from hwave.solver import backend as bk, flex_bond as fb, half_grid as hg
+        from tests.test_bond_half_grid import _hermitian_in_frequency
+        from tests.test_flex_bond_sigma_transport import _transport_problem_multichannel
+        st0, G, beta, view, shape, norb = _transport_problem_multichannel()
+        with st0:
+            nmat, nvol, ND, nd = st0.nmat, st0.nvol, st0.ND, st0.nd
+        W = 0.1 * _hermitian_in_frequency(nmat, nvol, ND, seed=9)
+        for half in (False, True):
+            out = {}
+            for device in (False, True):
+                with self._store(nmat, nvol, ND, nd, ("W",), half=half, device=device) as st:
+                    st.put_freq_batch("W", 0, st.nslices,
+                                      hg.half_from_full(W, nmat) if half else W)
+                    out[device] = bk.to_host(fb.calc_self_energy_bond(
+                        st, bk.to_device(G, self.cupy), beta, view, shape, norb, 1,
+                        xp=self.cupy))
+            _same_or_roundoff(self, "transport half={}".format(half), out[True], out[False])
+
+    def _solve(self, store, pairing, half):
+        from tests.test_bond_half_grid import _ELI_UNIFORM, _run
+        s, gi, files = _run("UV", {"gpu": True, "longitudinal_bond_store": store,
+                                   "longitudinal_bond_pairing": pairing},
+                            half=half, eli=None if pairing == "none" else _ELI_UNIFORM)
+        self.assertEqual(str(s._bond_xp_name), "cupy")
+        self.assertEqual(s._bond_store_resident, store)
+        return s, gi, files
+
+    def test_end_to_end_pinned_batch(self):
+        """Whole solves of the half-grid oracle's "UV" fixture (frequency batch
+        pinned to 3, three SCF iterations): every archive member, pairing
+        none and singlet, full and half grid. Bitwise is expected; otherwise
+        the FLEX outputs agree to 1e-12 relative (the round-off of one map,
+        carried through three iterations), round-off diagnostics (the
+        Hermiticity error, ...) to 1e-12 absolutely, and the eigensolver's
+        outputs to 1e-10 (the gap modulo its global phase)."""
+        from tests.test_bond_half_grid import _is_roundoff_diagnostic
+        for pairing in ("none", "singlet"):
+            for half in (False, True):
+                (sh, gh, fh), (sd, gd, fd) = (self._solve("host", pairing, half),
+                                              self._solve("device", pairing, half))
+                self.assertEqual(sh._bond_nb, sd._bond_nb)
+                self.assertEqual(sorted(fh), sorted(fd))
+                for fn in fh:
+                    gap_h, gap_d = fh[fn].get("gap"), fd[fn].get("gap")
+                    phase = 1.0
+                    if gap_h is not None:
+                        ov = np.vdot(gap_d.ravel(), gap_h.ravel())
+                        phase = ov / abs(ov) if abs(ov) > 0 else 1.0
+                    for m in fh[fn]:
+                        a, b = fh[fn][m], fd[fn][m]
+                        label = "e2e {} half={} {}:{}".format(pairing, half, fn, m)
+                        if a.dtype.kind not in "fc":
+                            self.assertTrue(np.array_equal(a, b), label)
+                        elif _is_roundoff_diagnostic(m) or m.endswith("parity_leakage"):
+                            self.assertLessEqual(float(np.max(np.abs(a - b))), 1e-12, label)
+                        elif fn.startswith("eliashberg_bond_"):
+                            if m in ("gap", "gap_bond_projection"):
+                                b = b * phase
+                            _same_or_roundoff(self, label, b, a, rtol=1e-10)
+                        else:
+                            _same_or_roundoff(self, label, b, a, rtol=1e-12)
+
+    def test_auto_admission_and_refusal_on_the_device(self):
+        from hwave.solver import backend as bk
+        s, _gi, _f = self._solve("device", "none", False)
+        self.assertEqual(s._bond_est["store_resident"], "device")
+        from tests.test_flex_bond_gate import _flex
+        s, r = _flex({"gpu": True, "IterationMax": 1, "longitudinal_bond_store": "device"})
+        with mock.patch.object(bk, "device_available_bytes", lambda: 1 << 20):
+            with tempfile.TemporaryDirectory() as out:
+                with self.assertRaises(ValueError):
+                    s.solve(r.get_param("green"), out)
+
+    def test_out_of_memory_fallback(self):
+        """``cupy.zeros`` raising OutOfMemoryError once (the store is the first
+        bond allocation): "auto" continues on the host store."""
+        from tests.test_bond_half_grid import _run
+        real = self.cupy.zeros
+        calls = []
+        # one slot of the fixture's store (Nmat 8, nvol 16, ND 20): the first
+        # request of that size is the store's
+        slot = 8 * 16 * 20 * 20 * 16
+
+        def zeros(shape, *a, **k):
+            n = int(np.prod(shape)) * np.dtype(k.get("dtype", a[0] if a else float)).itemsize
+            if not calls and n >= slot:
+                calls.append(1)
+                raise self.cupy.cuda.memory.OutOfMemoryError(n, 0)
+            return real(shape, *a, **k)
+        ref = _run("UV", {"gpu": True, "longitudinal_bond_store": "host"}, half=False)
+        with mock.patch.object(self.cupy, "zeros", zeros):
+            with self.assertLogs("hwave.solver.flex", level="WARNING") as cm:
+                s, gi, files = _run("UV", {"gpu": True, "longitudinal_bond_store": "auto"},
+                                    half=False)
+        self.assertEqual(calls, [1])
+        self.assertEqual(s._bond_store_resident, "host")
+        self.assertTrue(any("allocating the bond block store on the device failed" in m
+                            for m in cm.output), cm.output)
+        for fn in ref[2]:
+            for m in ref[2][fn]:
+                if ref[2][fn][m].dtype.kind in "fc":
+                    np.testing.assert_array_equal(files[fn][m], ref[2][fn][m])
 
 
 if __name__ == "__main__":

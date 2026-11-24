@@ -24,10 +24,13 @@ from hwave.solver.rpa import validate_chi0q_index_convention
 from hwave.sc import _load_chi0q
 
 
-def _write_npz(path, with_convention, convention="spin_block"):
+def _write_npz(path, with_convention, convention="spin_block",
+               spin_orbital=None):
     kwargs = dict(chi0q=np.zeros((1, 1, 2, 2), dtype=complex))
     if with_convention:
         kwargs["index_convention"] = convention
+    if spin_orbital is not None:
+        kwargs["spin_orbital"] = spin_orbital
     np.savez(path, **kwargs)
 
 
@@ -81,8 +84,30 @@ class TestLoadChi0qSC(unittest.TestCase):
 
     def test_so_spin_block_accepted(self):
         tmp = tempfile.mkdtemp()
-        _write_npz(os.path.join(tmp, "chi0q.npz"), with_convention=True)
+        _write_npz(os.path.join(tmp, "chi0q.npz"), with_convention=True,
+                   spin_orbital=True)
         chi0q, _ = _load_chi0q(self._input_dict(tmp, enable_spin_orbital=True))
+        self.assertEqual(chi0q.shape, (1, 1, 2, 2))
+
+    def test_so_needs_spin_orbital_marker(self):
+        # every RPA run writes index_convention = "spin_block", so the tag
+        # alone does not identify a spin-orbital chi0q
+        for marker, pattern in ((None, "no spin_orbital marker"),
+                                (False, "spin_orbital = False"),
+                                ("true", "malformed spin_orbital"),
+                                (np.array([True]), "malformed spin_orbital")):
+            with self.subTest(marker=marker):
+                tmp = tempfile.mkdtemp()
+                _write_npz(os.path.join(tmp, "chi0q.npz"), with_convention=True,
+                           spin_orbital=marker)
+                with self.assertRaisesRegex(ValueError, pattern):
+                    _load_chi0q(self._input_dict(tmp, enable_spin_orbital=True))
+
+    def test_non_so_ignores_spin_orbital_marker(self):
+        tmp = tempfile.mkdtemp()
+        _write_npz(os.path.join(tmp, "chi0q.npz"), with_convention=True,
+                   spin_orbital=False)
+        chi0q, _ = _load_chi0q(self._input_dict(tmp, enable_spin_orbital=False))
         self.assertEqual(chi0q.shape, (1, 1, 2, 2))
 
     def test_non_so_missing_convention_accepted(self):

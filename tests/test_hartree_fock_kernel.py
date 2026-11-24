@@ -23,10 +23,10 @@ def exit(code):  # the legacy body calls exit(1) on the ambiguous Coulomb case
     raise SystemExit(code)
 
 
-#: A (3, 1, 1) chain declaration: ``+x`` is NOT its own reverse there, so
-#: the documented-orientation step of ``build_interaction_tables`` is
-#: visible on it (on the ``(2, 2, 1)`` shapes of :func:`_cases` every
-#: declared displacement is self-reverse and the step is the identity).
+#: A (3, 1, 1) chain declaration: ``+x`` is NOT its own reverse there, so a
+#: reversal of the off-site tables would be visible on it (on the
+#: ``(2, 2, 1)`` shapes of :func:`_cases` every declared displacement is
+#: self-reverse and the two readings coincide).
 #: Used by
 #: :class:`TestDocumentedOrientationOnAThreeSiteChain`.
 offsite3 = {
@@ -39,22 +39,12 @@ offsite3 = {
 class _LegacyUHFk:
     """Just enough state for the two legacy methods (normal mode only).
 
-    Since the orientation fix of issue #193 this frozen pre-refactor code
-    models the REVERSED declaration of an off-site row: on a displacement
-    that is not its own reverse, ``hwave.solver.hartree_fock`` reads
-    ``(r, a, b, v)`` in the documented orientation (orbital ``a`` in the
-    original cell) while the legacy body reads it the other way round, so
-    the two agree on ``_LegacyUHFk(reverse(ham))``, not on
-    ``_LegacyUHFk(ham)`` -- see
-    :class:`TestDocumentedOrientationOnAThreeSiteChain`. On every other
-    declaration this module exercises the step is the identity, for one of
-    two reasons: the ``(2, 2, 1)`` shapes of :func:`_cases` make every
-    declared displacement its own reverse (the Hermitian closure has then
-    already made ``T[r] = conj(T[r].T)``), and the solver fixtures of
-    :class:`TestUHFkSolverBitIdentity` declare single-orbital REAL
-    couplings, whose conjugate transpose is themselves. That is why the
-    bit-identity claim is unaffected -- and it is measured by those classes
-    passing, not assumed here."""
+    This frozen pre-refactor code reads an off-site row ``(r, a, b, v)``
+    with orbital ``a`` in the original cell and ``b`` at ``r`` -- the bond of
+    a Transfer row ``(r, a, b)`` -- and ``hwave.solver.hartree_fock`` reads
+    it the same way (issue #232), so the two agree on ``_LegacyUHFk(ham)``
+    itself; :class:`TestDocumentedOrientationOnAThreeSiteChain` checks that
+    on a shape where the reversed reading would differ."""
 
     def __init__(self, param_ham, norb, shape, iflag_fock):
         self.param_ham = param_ham
@@ -548,21 +538,20 @@ class TestKernelBitIdentity(unittest.TestCase):
 
 
 class TestDocumentedOrientationOnAThreeSiteChain(unittest.TestCase):
-    """On (3, 1, 1) the displacement +x is not its own reverse, so the
-    orientation step is visible: the tables equal the legacy closed tables
-    of the REVERSED declaration (F^rev), and differ from the legacy tables
-    of the declaration itself.
+    """On (3, 1, 1) the displacement +x is not its own reverse, so a
+    reversal of the off-site tables would be visible: the tables equal the
+    legacy closed tables of the declaration ITSELF -- the legacy reading puts
+    a row (r, a, b) on the bond of a Transfer row (r, a, b), as Wannier90 /
+    RESPACK do (issue #232) -- and differ from those of the reversed
+    declaration (F^rev).
 
     Every other fixture in this module lives on a shape where each declared
-    displacement IS its own reverse; there the Hermitian closure already
-    makes ``T[r] = conj(T[r].T)`` and the step is the identity, which is
-    why the bit-identity classes above still hold verbatim. This class is
-    the one that can see the step at all, and it is two-sided: matching the
-    reversed declaration is asserted, and NOT matching the declaration
-    itself is asserted as well, so a kernel that quietly stopped reorienting
-    would fail here."""
+    displacement IS its own reverse, where the two readings coincide. This
+    class is two-sided: matching the declaration itself is asserted, and NOT
+    matching the reversed declaration is asserted as well, so a reversal
+    step that crept back in would fail here."""
 
-    def test_tables_equal_legacy_of_the_reversed_declaration(self):
+    def test_tables_equal_legacy_of_the_declaration_itself(self):
         from hwave.solver import hartree_fock as hf
         shape = (3, 1, 1)
         ham = offsite3
@@ -576,9 +565,9 @@ class TestDocumentedOrientationOnAThreeSiteChain(unittest.TestCase):
         for t in ("CoulombInter", "Hund", "PairHop"):
             self.assertGreater(np.abs(new.inter_table[t]).max(), 1e-3, t)
             np.testing.assert_array_equal(new.inter_table[t],
-                                          leg_rev.inter_table[t], t)
+                                          leg_same.inter_table[t], t)
             self.assertFalse(np.array_equal(new.inter_table[t],
-                                            leg_same.inter_table[t]), t)
+                                            leg_rev.inter_table[t]), t)
 
 
 class TestUHFkSolverBitIdentity(unittest.TestCase):

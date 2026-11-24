@@ -50,6 +50,8 @@ version, e.g. `pip install cupy-cuda12x` for CUDA 12.x (see the
 Without CuPy, `gpu = true` falls back to the CPU path with a warning.
 Optional (IR Matsubara basis): `pip install "hwave[ir]"` (sparse-ir >= 2) for
 `matsubara_basis = "ir"` in the dynamic Eliashberg solver.
+Optional (threaded bond-channel dressing): `pip install "hwave[threads]"`
+(threadpoolctl) for `fft_workers > 1` with `longitudinal_bond_channels`.
 
 ## Quick Start
 

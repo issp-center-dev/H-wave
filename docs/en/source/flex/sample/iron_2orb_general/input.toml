@@ -6,6 +6,7 @@
   calc_scheme = "general"
 
 [mode.param]
+  orbital_site = [0, 0]  # both orbitals belong to one atom (Kanamori U', J)
   T = 0.1
   CellShape = [16, 16, 1]
   SubShape = [1, 1, 1]

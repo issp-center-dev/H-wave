@@ -56,9 +56,11 @@ def _run_flex_to(outdir, gpu=False, nmat=NMAT):
 
 
 def _eliashberg_input(outdir, extra=None):
+    # ARPACK: the dominant eigenvalue of this repulsive kernel is negative,
+    # so an unshifted power iteration never converges (it used to report the
+    # two-cycle artefact |lambda_-| (1 - alpha)/(1 + alpha) ~ 0.395 here)
     eli = {"chi0q_mode": "flex", "frequency": "dynamic",
-           "solver_mode": "iteration", "max_iter": 200,
-           "convergence_tol": 1e-7}
+           "solver_mode": "eigenvalue", "num_eigenvalues": 4}
     if extra:
         eli.update(extra)
     return {
@@ -198,11 +200,11 @@ def test_solve_dynamic_ir_matches_uniform_lambda(flex_outdir, tmp_path):
     """End-to-end: the IR and uniform leading eigenvalues are two
     discretizations of the same continuum answer, and their difference is
     bounded by the input-data quality (the finite-Nmat artifacts of the
-    uniform-FFT FLEX output): percent-level at Nmat=128 and shrinking
-    systematically as the input Nmat grows (measured 1.5e-2/0.395 at 128
-    with the issue-#57 dispersion-based auto wmax, previously 1.0e-2 with
-    the inflated pre-#57 estimate whose extra bandwidth over-resolved the
-    input artifacts). The IR run writes the gap on the SAME uniform
+    uniform-FFT FLEX output): small at Nmat=128 and shrinking
+    systematically as the input Nmat grows (measured 1.9e-6/0.0680 at 128
+    and 2.2e-8/0.0684 at 512 on the ARPACK leading eigenvalue; the earlier
+    "1.5e-2/0.395" came from a non-converged power iteration whose 0.395 was
+    the two-cycle artefact of the negative dominant eigenvalue). The IR run writes the gap on the SAME uniform
     grid/metadata, with IR provenance recorded."""
     from hwave.solver import eliashberg_dynamic as ed
 
@@ -227,9 +229,8 @@ def test_solve_dynamic_ir_matches_uniform_lambda(flex_outdir, tmp_path):
     lam_u5 = ed.solve_dynamic(inp_u)
     lam_i5 = ed.solve_dynamic(inp_i)
     diff_512 = abs(lam_i5 - lam_u5)
-    # measured 1.7e-3/0.398 with the dispersion-based auto wmax (5.4e-4
-    # under the inflated pre-#57 estimate); the systematic-shrink assertion
-    # below is the strong claim.
+    # measured 2.2e-8/0.0684 (ARPACK leading eigenvalue); the
+    # systematic-shrink assertion below is the strong claim.
     assert diff_512 < 5e-3 * abs(lam_u5)
     assert diff_512 < 0.5 * diff_128, (
         "no Nmat convergence: {} vs {}".format(diff_512, diff_128))

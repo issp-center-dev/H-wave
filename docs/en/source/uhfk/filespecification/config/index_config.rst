@@ -30,6 +30,16 @@ Parameters
 ``mode`` section
 ================================
 
+Only the keys ``mode``, ``calc_scheme``, ``calc_type``,
+``enable_spin_orbital`` and ``flag_fock`` (those the chosen solver supports,
+see below) are written in the ``mode`` table itself, with exactly this
+spelling and case; every other solver parameter goes in ``mode.param``.
+``hwave`` stops with an error when ``mode`` contains any other key or a
+differently cased one, and when ``mode.param`` contains one of these keys (in
+any case) or a nested ``param`` table. At the end of a run it warns about the
+``mode.param`` keys the run did not read: a misspelled name, or a parameter
+that has no effect under the current settings.
+
 - ``mode``
 
   **Type :**
@@ -51,7 +61,8 @@ Parameters
 - ``enable_spin_orbital`` (default value is ``false``)
 
   **Type :**
-  Boolean
+  Boolean (a recognized string such as ``"true"`` is accepted with a warning;
+  an unrecognized value is an error)
 
   **Description :**
   This parameter specifies whether to allow spin-orbital interaction.
@@ -200,6 +211,11 @@ Parameters
 
   Relax the checks that the distances of hopping and interaction are within the halves of ``CellShape``;
   if true, warn and continue execution, otherwise stop.
+  When true, a translation vector outside ``CellShape`` is folded back into the cell
+  (component-wise modulo ``CellShape``), and entries that fold onto the same vector are summed.
+  On the ``CellShape`` k-mesh this gives the same Hamiltonian as the unfolded table.
+  The type of each row is still judged on the vector as written: for example, an inter-site
+  row whose vector folds to zero remains an inter-site interaction with a periodic image.
 
 ``log`` section
 ================================
@@ -408,6 +424,19 @@ to the definition files.
   no header). ``geometry_uhf`` and ``onebodyg_uhf`` in ``file.input`` are required.
   Under ``SubShape`` larger than ``[1, 1, 1]`` the elements keep the sublattice resolution of the
   converged state. If it is not set, no output will be generated.
+
+- ``scf_status``
+
+  **Type :**
+  String (default value is ``"scf_status.dat"``)
+
+  **Description :**
+  This parameter specifies the name of the file to store the convergence
+  status of the SCF loop (see :ref:`subsec:scf_status_uhfk.dat`). It is
+  written by default; if it is set to an empty string, no output will be
+  generated. The value must be a string, and the file must not be the same file as
+  another result file of the run (as written, including the ``.npz`` suffix
+  and generated names, ignoring case) or the ``print_check`` file. The key is matched exactly.
 
 - ``rpa``
 

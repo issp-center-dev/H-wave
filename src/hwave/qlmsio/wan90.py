@@ -13,6 +13,8 @@ write_geom(name_out, info_geometry)
     Write geometry data to file.
 read_w90(name_in)
     Read Wannier90 Hamiltonian data from file.
+read_w90_header_dim(name_in)
+    Read the orbital count declared on line 2 of a Wannier90 file.
 write_w90(name_in, info_int, info_geometry, interact_shape)
     Write Wannier90 Hamiltonian data to file.
 """
@@ -151,6 +153,43 @@ def write_geom(name_out, info_geometry):
         for idx in range(n_orb):
             pos = idx*1.0/(n_orb+1)
             fw.write("{} {} {}\n".format(pos, pos, pos))
+
+def read_w90_header_dim(name_in):
+    """Orbital count declared in the header of a Wannier90 file.
+
+    The first line of the file is a comment; line 2 (0-based line index 1)
+    is the number of orbitals (Wannier90 ``num_wann``). :func:`read_w90`
+    skips this line, so the declared dimension is otherwise lost; it is
+    read here, separately, so callers can check a table against it.
+
+    Parameters
+    ----------
+    name_in : str
+        Input filename
+
+    Returns
+    -------
+    int
+        The declared number of orbitals (a positive integer).
+
+    Raises
+    ------
+    ValueError
+        If line 2 is missing, blank, not an integer, or not positive.
+    """
+    with open(name_in, 'r') as f:
+        lines = f.readlines()
+    raw = lines[1].strip() if len(lines) > 1 else None
+    try:
+        dim = int(raw)
+    except (TypeError, ValueError):
+        dim = None
+    if dim is None or dim <= 0:
+        raise ValueError(
+            "{}: line 2 must be the number of orbitals (a positive integer), "
+            "got {!r}".format(name_in, raw))
+    return dim
+
 
 def read_w90(name_in):
     """Read Wannier90 Hamiltonian data from file.

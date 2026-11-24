@@ -37,9 +37,23 @@ The file contains several arrays bound to the following keys:
 
   A string marker (always ``"spin_block"``) recording that the spin-orbital axes are ordered as spin*norb+orb (spin-block), distinct from UHFk's interleaved 2*orb+spin output. A ``chi0q`` file lacking this marker (produced before the convention fix) is rejected when reloaded in spin-orbital mode.
 
+- ``spin_orbital``:
+
+  A boolean marker ``spin_orbital = True``, written ONLY by a run with ``enable_spin_orbital = true``; a non-spin-orbital run does not write the key, so its archive has the same members as before the marker existed. A spin-orbital run that reads its chi0q (``chi0q_init``, or a chi0q passed on in memory) propagates the marker instead of asserting it: it writes ``spin_orbital = True`` only if that chi0q carries ``spin_orbital = True``. With an unmarked chi0q the run proceeds but writes no marker (an INFO line says so). With ``spin_orbital = False`` or a malformed marker it stops with an error before solving. The ``index_convention`` marker is written by every run, so it cannot distinguish a spin-orbital file from a non-spin-orbital one whose orbital count happens to match (:math:`2N` orbitals versus :math:`N` orbitals with spin). ``hwave_sc`` in spin-orbital mode with ``chi0q_mode = "load"`` requires ``spin_orbital = True`` and refuses a file without it. Files written before this marker existed lack it and must be regenerated for that use. Conversely, ``hwave_sc`` without ``enable_spin_orbital`` refuses a file carrying ``spin_orbital = True`` (or a malformed marker) before any work; enable ``[mode] enable_spin_orbital`` or regenerate the file with a non-spin-orbital run.
+
 - ``coeff_tail``:
 
   The value of the ``coeff_tail`` parameter (Matsubara high-frequency tail correction) used when the susceptibility was computed. The tail correction changes :math:`\chi_0(\mathbf{q})` at :math:`O(1)` for moderate ``Nmat``, so runs that consume this file (e.g. ``hwave_sc``) warn when their own ``coeff_tail`` setting differs from the recorded value. When a pre-computed ``chi0q_init`` file is passed through, the input file's value is re-saved. The key is omitted when the producing run did not record one (older versions) and for FLEX output on the IR Matsubara basis (``matsubara_basis = "ir"``, including densified output), where the uniform-grid tail correction does not apply.
+
+- ``block_layout``:
+
+  Written only by the spin-orbital FLEX with bond channels (``[mode]
+  enable_spin_orbital = true`` with ``[mode.param]
+  longitudinal_bond_channels = true``): the layout of the solve,
+  ``"dense"`` or ``"sz_packed"`` (a 0-d string). The arrays have the dense
+  on-site shape in both cases, and the spin-orbital readers refuse a file
+  of that path without it (see :ref:`flex_so_bond_tutorial`). Other runs
+  do not write the key.
 
 When the sublattice is considered, the indices of the wave numbers and the orbitals are
 regarded as those of the sublattice.
@@ -67,7 +81,8 @@ every archive it produces (``chi0q.npz``, ``chiq.npz``, ``chiq_s.npz``,
 archive; IR-native and densified variants alike):
 
 - ``flex_second_order``: the second-order kernel of the effective
-  interaction the run used (``local`` | ``takimoto``), stored as a 0-d
+  interaction the run used (always ``local``; archives of earlier
+  development versions may carry the retired ``takimoto``), stored as a 0-d
   ``<U8`` string array (use ``str(...)`` or ``.item()``). See
   ``flex_second_order`` in the ``[mode.param]`` section of the
   configuration reference and :ref:`flex_second_order_kernel`.
@@ -78,9 +93,12 @@ Both fields are ABSENT from ``calc_scheme = "reduced"`` archives, from RPA
 archives, and from any archive written before this key was introduced
 (H-wave 2.0.0 and earlier). A missing field is
 never an error: every H-wave reader accepts such a file. When the initial
-self-energy given by ``sigma_init`` (the seed) records a different kernel
-from the current run, the solver logs one warning at WARNING level (and
-one message at INFO level when the seed carries no record at all); scripts
+self-energy given by ``sigma_init`` (the seed) records the retired
+``takimoto`` kernel, the seed is still accepted (if it passes the usual
+seed checks it is the initial value only, and every iteration uses
+``local``), and the solver
+logs one warning at WARNING level saying so (and one message at INFO level
+when the seed carries no record at all); scripts
 that compare the member list of an archive strictly (the ``files``
 attribute of the object returned by ``numpy.load``) must allow the two
 additional names.
@@ -185,16 +203,21 @@ on-site :math:`R = 0`), :math:`n_d = n_{\rm orb}^2` and :math:`N_D = B\, n_d`:
   ``q = 2*pi*(n_x/N_x, n_y/N_y, n_z/N_z), C-order flattened``),
   ``longitudinal_bond_spin_mode`` (string, ``spin-free``),
   ``longitudinal_bond_normalization`` (string: ``chi_bar = -(T/N) sum_k G G,
-  per site``), ``longitudinal_bond_types`` (string array, always
+  per site``), ``longitudinal_bond_types`` (string array,
   ``CoulombInter, Hund, Ising`` -- the types whose bond blocks the channel
-  builds, declared or not; an undeclared type contributes zero blocks),
+  builds, declared or not; an undeclared type contributes zero blocks --
+  followed by ``Exchange`` in RPA mode when an off-site Exchange is
+  declared),
   ``longitudinal_bond_max_shells`` (integer, ``-1`` when unset),
   ``longitudinal_bond_cond_min_s`` / ``longitudinal_bond_cond_min_c`` (float:
   the smallest conditioning score of the spin / charge RPA denominator over
   :math:`q`; the run is refused when it reaches the instability floor; with
   ``longitudinal_bond_guard_freqs = "static"`` these report the minimum over
   the zero-frequency slice only) and ``longitudinal_bond_schema`` (integer,
-  ``1``).
+  ``2``; ``1`` before the bond-placement correction of issue #232, under
+  which channel ``m`` carried the rows declared at ``+delta_r[m]`` instead
+  of ``-delta_r[m]``; the keys and array shapes are the same, and no H-wave
+  reader checks this stamp -- it is there for external post-processing).
 
 In ``mode = "FLEX"`` with ``longitudinal_bond_channels = true`` (the
 Hartree-Fock FLEX of :ref:`flex_bond_hf`) the same sixteen keys describe the
@@ -222,7 +245,12 @@ of blocks decomposed exactly over the whole solve),
 count reached in any one iteration) and
 ``longitudinal_bond_guard_blocks_per_iteration`` (integer, the number of
 blocks the guard covers in one iteration -- the denominator the previous
-two counts are measured against). The
+two counts are measured against). When the final map is past the static
+RPA pole, and only then, it also carries ``longitudinal_bond_rpa_past_pole``
+(``True``), ``longitudinal_bond_rpa_pole_indicator_spin`` /
+``_charge`` (float) and ``longitudinal_bond_rpa_pole_q_spin`` / ``_charge``
+(float ``(3,)``, in units of the reciprocal lattice vectors); see
+:ref:`bond_rpa_pole`. The
 ordinary ``chi0q``, ``chiq_s`` and ``chiq_c`` arrays of such a run are the
 :math:`(m = 0, m' = 0)` blocks of the bond-resolved objects at every bosonic
 frequency. Every archive of a run with ``flex_hartree_fock = true`` (``chi0q``,
@@ -245,9 +273,10 @@ several; ``0`` when no violation occurred, and always ``0`` under
 ``"refuse"``, which ends the run at the first one).
 With ``longitudinal_bond_output_full = true`` the dedicated archive
 (``[file.output] longitudinal_bond``, default ``longitudinal_bond.npz``)
-holds ``bond_archive_schema`` (``2``, since the bond-resolved dynamic
-Eliashberg pairing solver below was added; see the note at the end of this
-paragraph), the full dynamic ``chi_s_w`` and ``chi_c_w`` (``ndarray(l, q, I,
+holds ``bond_archive_schema`` (``3``; ``2`` before the bond-placement
+correction of issue #232, ``1`` before the bond-resolved dynamic Eliashberg
+pairing solver below was added; see the note at the end of this paragraph),
+the full dynamic ``chi_s_w`` and ``chi_c_w`` (``ndarray(l, q, I,
 J)``, ``freq_axis = "bosonic l -> 2l - nmat"``), the instantaneous bond
 vertices ``S_bond`` and ``C_bond`` (complex ``ndarray(nvol, ND, ND)``, the
 same bond-major layout as ``chi_s_w`` / ``chi_c_w``) and ``norb``, ``beta``,
@@ -266,7 +295,12 @@ bond-resolved dynamic Eliashberg pairing solver needs in addition to
 version (``bond_archive_schema = 1``, without ``S_bond`` / ``C_bond`` /
 ``norb``) is refused by that solver with a message asking for a re-run
 under this version. Every schema-1 key keeps its value and meaning
-unchanged under schema 2.
+unchanged under schema 2, and schema 3 has the same keys and array shapes
+as schema 2. A schema-2 archive filed each off-site row on the channel of
+the bond opposite its transfer row; the pairing solver refuses it, with a
+message asking for a re-run of FLEX, when the interaction declares an
+off-site row that is not symmetric under :math:`R \to -R` on the run's
+grid, and accepts it otherwise.
 
 The archive also records ``bond_archive_layout`` (string), the on-disk
 layout selected by ``[mode.param] longitudinal_bond_output_layout``. With
@@ -284,6 +318,25 @@ With ``IterationMax = 0`` no map is executed and every last-map archive is
 omitted (an INFO line lists them); only ``sigma``, ``green`` and ``energy``
 of the seed state are written.
 
+**Spin-orbital bond archive (schema 4).** With ``[mode]
+enable_spin_orbital = true``, ``longitudinal_bond_channels = true`` and
+``longitudinal_bond_output_full = true`` (which requires ``[file.output]
+green``, the archive's companion) the same ``[file.output] longitudinal_bond`` file is a different archive:
+``bond_archive_schema = 4`` and ``spin_orbital = True``. It holds
+``chi_w``, :math:`\chi_B` of the **final** Green function from one extra
+susceptibility pass (not of the last SCF iteration), and ``Gamma_bond``, in the
+dense (``chi_w``, ``Gamma_bond``) or the :math:`S_z`-packed
+(``chi_w@0``, ``chi_w@+1``, ``chi_w@-1`` and the same for ``Gamma_bond``)
+layout recorded by ``block_layout``. In the ``"sidecar"`` layout the
+``chi_w`` blocks are the files ``<block>.<archive_nonce>.npy``, named by
+``<block>_file`` with their size ``<block>_nbytes``; ``Gamma_bond`` is
+always stored in the index. ``green_file`` names the companion ``green.npz``
+relative to the index's directory, and the archive's ``fp_green`` equals
+that file's. There is no ``chi_s_w``, ``chi_c_w``, ``S_bond`` or
+``C_bond``, and the non-spin-orbital bond consumers refuse the archive.
+The full member list, the layout rule, moving and re-running, and the
+behaviour on a failed write are in :ref:`flex_so_bond_archive`.
+
 
 .. _subsec:eliashberg_bond_outputs:
 
@@ -291,7 +344,7 @@ Bond-resolved dynamic Eliashberg pairing outputs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Two entries solve the linearized Eliashberg equation with the bond-resolved,
-dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 2,
+dynamic pairing vertex built from ``longitudinal_bond.npz`` (schema 3,
 above): ``hwave_sc`` (post-processing, ``[eliashberg] bond_channels = true``
 with ``frequency = "dynamic"``) and ``hwave`` itself at the end of a FLEX
 solve (``[mode.param] longitudinal_bond_pairing``, see the configuration
@@ -329,12 +382,22 @@ above), ``bond_archive`` (the resolved archive path), ``bond_residency``
 chose), ``bond_parity_leakage`` (the measured parity-commutation leakage;
 see ``[eliashberg] parity_leakage_tol``) and ``gap_bond_projection`` -- the
 gap projected onto each bond form factor, complex ``ndarray(B, norb, norb,
-Nmat)``. With ``matsubara_basis = "ir"`` it additionally carries
+Nmat)``: ``gap_bond_projection[m, a, b]`` is the real-space gap amplitude
+:math:`\Delta_{ab}(+R_m)` of the pair with orbital ``a`` in the origin cell
+and orbital ``b`` in the cell at :math:`+R_m` (``R_m = delta_r[m]``), i.e.
+on the bond of the transfer row :math:`(+R_m, a, b)`, with
+:math:`\Delta_{ab}(\mathbf{k}) = \sum_R e^{+i\mathbf{k}\cdot R}
+\Delta_{ab}(R)`. With ``matsubara_basis = "ir"`` it additionally carries
 ``matsubara_basis``, ``ir_tol``, ``ir_wmax``, ``ir_L`` and
 ``bond_ir_fit_residual_rel`` (the componentwise IR fit residual of the bond
 vertex, real ``ndarray(B, B)``; see ``[eliashberg] ir_fit_tol``).
 ``eigenvalue.dat`` gains the header lines ``# bond_channels=true``,
 ``# residency=<...>`` and, when computed, ``# parity_leakage=<...>``.
+When the archive's state is past the static RPA pole, and only then, both
+files also carry ``rpa_past_pole``, ``rpa_pole_indicator_spin`` /
+``_charge`` and ``rpa_pole_q_spin`` / ``_charge`` (npz keys, and
+``# key=value`` header lines of ``eigenvalue.dat``), recovered from the
+archived dressed susceptibilities; see :ref:`bond_rpa_pole`.
 
 Every dynamic-solver ``eigenvalue.dat`` -- the on-site one included -- also
 carries one ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
@@ -369,15 +432,28 @@ of the pairing step never costs the FLEX results:
   it did not: the pairing step still runs on a non-converged FLEX solve
   (the cost is sunk), and this label, together with
   ``scf_converged = false``, marks the result as a diagnostic of the SCF
-  trajectory rather than a self-consistent pairing eigenvalue.
+  trajectory rather than a self-consistent pairing eigenvalue. Like every
+  dynamic gap archive it also carries ``eigen_converged``: ``False`` when a
+  power iteration (``solver_mode = "iteration"``) did not converge -- the
+  ``eigenvalue`` is then ``NaN`` and ``gap`` is the last iterate, not an
+  eigenvector.
 - ``gap_bond_<type>.dat`` is the same single-frequency text slice as
   ``gap.dat``.
 - ``eigenvalue_bond_<type>.dat`` is the same format as ``eigenvalue.dat``,
-  with header lines ``# bond_channels=true``,
+  with header lines ``# eigen_converged=<true|false>``,
+  ``# bond_channels=true``,
   ``# scf_converged=<true|false>``, ``# state=<...>``,
   ``# residency=<...>``, when computed ``# parity_leakage=<...>``, and the
   ``# gap_sector_weights ...`` / ``# sector_selection=...`` lines
-  described above.
+  described above. When the final FLEX map is past the static RPA pole,
+  both ``eliashberg_bond_<type>.npz`` and this header also carry
+  ``rpa_past_pole``, ``rpa_pole_indicator_<channel>`` and
+  ``rpa_pole_q_<channel>`` (see :ref:`bond_rpa_pole`).
+  ``# eigen_converged=<true|false>`` has no spaces around
+  ``=``, while the static ``eigenvalue.dat`` writes
+  ``# eigen_converged = true``; a pipeline should test it
+  whitespace-tolerantly (take the text after ``eigen_converged``, strip
+  ``=`` and blanks).
 
 A channel that fails (a memory refusal, a conditioning or IR-fit refusal,
 an eigensolver failure, a write failure) writes none of its three files;

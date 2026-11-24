@@ -150,7 +150,7 @@ H-wave は両方の和を保持します。バンド添字は現れた直後に�
     X^{\alpha\alpha', \beta\beta'}(q)&=
     X^{(0)\alpha\alpha', \beta\beta'}(q) - \sum_{\alpha_1,\alpha_1', \beta_1,\beta_1'}
     X^{(0)\alpha\alpha', \beta_1\beta_1'}(q)
-    W^{\beta_1'\beta_1, \alpha_1'\alpha_1}_{\bf q}
+    W^{\alpha_1\alpha_1', \beta_1\beta_1'}_{\bf q}
     X^{\alpha_1 \alpha_1' , \beta \beta'}(q),
     \end{aligned}
 
@@ -166,13 +166,10 @@ H-wave は両方の和を保持します。バンド添字は現れた直後に�
     
 .. note::
 
-   **相互作用と感受率の添字対の規約について。**
-   上の2つの量は、各ペアの内部で互いに逆向きの添字順序を用いており、
-   その変換は RPA 方程式の一部です。
+   **相互作用が RPA 方程式に入る形について。** バーテックスは添字対の位置
+   ではなく、運動量の対応から決まります。
 
    既約感受率の2つのペアスロットには以下の双一次形式が対応します。
-   左のペアは生成演算子の添字が **後**、右のペアは生成演算子の添字が
-   **前** です。
 
    .. math::
       X^{(0)\alpha\alpha',\beta\beta'}(q) \;\sim\;
@@ -180,29 +177,66 @@ H-wave は両方の和を保持します。バンド添字は現れた直後に�
       \big(c^{\dagger}_{\beta}c^{\mathstrut}_{\beta'}\big)(q)\Big\rangle
 
    これは上の Green 関数の積 :math:`G^{\alpha\beta}(k+q)
-   G^{\beta'\alpha'}(k)` が表すものです。一方、相互作用
-   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}`\ が掛かる演算子は
-   :math:`c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'}
-   c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta}` であり、**どちらのペアでも**
-   感受率とは逆の順序になっています。したがって上の RPA 方程式に入る
-   バーテックスは、相互作用テンソルの **各ペア内で添字を入れ替えた**
-   もの（式中の\ :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}`\ ）
-   であり、行列としては次のように書けます。
+   G^{\beta'\alpha'}(k)` が表すもので、左のペアは\ :math:`-{\bf q}`\ での応答、
+   右のペアは\ :math:`+{\bf q}`\ の場です。ハミルトニアンでは
+   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q}`\ が
+   :math:`(c^{\dagger}_{\alpha}c^{\mathstrut}_{\alpha'})(+{\bf q})\,
+   (c^{\dagger}_{\beta'}c^{\mathstrut}_{\beta})(-{\bf q})`\ に掛かり、
+   その\ **第2ペア**\ が\ :math:`+{\bf q}`\ を、\ **第1ペア**\ が
+   :math:`-{\bf q}`\ を運びます。したがって連鎖
+   :math:`X^{(0)\,\cdot,\beta_1\beta_1'}\,W\,X^{\alpha_1\alpha_1',\cdot}`\ では、
+   :math:`X^{(0)}`\ の場の双一次形式
+   :math:`c^{\dagger}_{\beta_1}c^{\mathstrut}_{\beta_1'}`\ には\ :math:`W`\ の
+   第2ペア（\ :math:`\alpha\alpha' = \beta_1\beta_1'`\ ）が、\ :math:`X`\ の応答の
+   双一次形式\ :math:`c^{\dagger}_{\alpha_1'}c^{\mathstrut}_{\alpha_1}`\ には
+   第1ペア（\ :math:`\beta\beta' = \alpha_1\alpha_1'`\ ）が対応し、上の頂点
+   :math:`W^{\alpha_1\alpha_1',\beta_1\beta_1'}_{\bf q}`\ が得られます。
+   行列としては次のように書けます。
 
    .. math::
       \hat{W}(q)_{(\beta\beta'),(\alpha\alpha')}
-      = W^{\beta'\beta,\,\alpha'\alpha}_{\bf q}
+      = W^{\alpha\alpha',\,\beta\beta'}_{\bf q}
 
-   この変換は密度型（ペア対角）成分に対しては恒等変換であり、より一般に
-   実数のエルミート閉じた宣言に対しても値が変わりません（転置先のスロットが
-   同じ値を持つため）。効いてくるのは **複素の** ペア交差型相互作用、
-   すなわち複素のエルミート閉じた\ ``PairHop``\ の場合だけで、変換を省くと
-   複素共役なハミルトニアンに対する感受率が得られてしまいます。
-   H-wave は ring の求解でバーテックスを組み立てる際にこの変換を適用します。
-   transverse (ladder) の組み立てはこの変換を通しません。こちらは相互作用
-   テンソル自身を組み替えるため、ハミルトニアン規約のまま受け取ります。
-   保存される\ ``chiq``/``chi0q``\ と相互作用ファイルの規約は、それぞれの節に
-   記載のとおりで変わりません。
+   これは相互作用テンソルの2つのペアを入れ替えたもので、ペア内の並べ替えは
+   行いません。ハミルトニアンの2つの双一次形式を入れ替える（あわせて
+   :math:`{\bf q} \to -{\bf q}`\ と付け替える）と恒等式
+   :math:`W^{\beta\beta',\alpha\alpha'}_{\bf q} =
+   W^{\alpha'\alpha,\beta'\beta}_{-{\bf q}}`\ が得られるので、同じ頂点は
+   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{-{\bf q}}`\ （ペアの位置は
+   そのままで各ペア内を並べ替え、\ :math:`-{\bf q}`\ で評価したもの）とも
+   書けます。ソルバーが組み立てるのはこの形です。上の式で第1の形を用いるのは、
+   そこでは運動量の対応が明示的になるからです。ソルバーが第2の形を用いるのは、
+   フーリエ変換した相互作用テーブルからペアごとに読み取れるからです。
+
+   **訂正（issue #232）。** このページの以前の版と手法論文
+   （arXiv:2308.00324）の Eq. (20) は、代わりにペアを位置で割り当てて
+   いました。このページは頂点を
+   :math:`W^{\beta_1'\beta_1,\alpha_1'\alpha_1}_{\bf q}`\ （上の並べ替えた形を
+   :math:`+{\bf q}`\ で評価したもの）と書いていました。論文（その Eq. (16) は
+   :math:`+{\bf q}`\ のペアを先に置きます）は、Eq. (16) と Eq. (19) からは
+   :math:`W^{\beta_1\beta_1',\alpha_1'\alpha_1}_{\bf q}`\ が得られるところを
+   :math:`W^{\alpha_1\alpha_1',\beta_1'\beta_1}_{\bf q}`\ と書いていました
+   （掲載された成分は正しい成分のエルミート共役です。同論文 Eq. (21) の下の
+   行列表記\ :math:`[\boldsymbol{W}(q)]^{ab} = W^{ba}_{\bf q}`\ は Eq. (20) と
+   整合しています）。実数の結合では、どちらも\ :math:`+{\bf q}`\ の代わりに
+   :math:`-{\bf q}`\ の相互作用を使うことに相当し、相互作用ファイルの
+   オフサイト行\ :math:`(R, a, b)`\ を、トランスファーの行\ :math:`(R, a, b)`\ が
+   作用するボンドとは逆向きのボンドに置いてしまいます。修正前のリリースは
+   この形を実装していたため、\ :math:`R \to -R`\ について対称でないオフサイト
+   相互作用を全て誤ったボンドに置いていました（\ :ref:`相互作用指定ファイルの注意書き
+   <rpa_interaction_orientation>`\ を参照）。
+   :math:`X_{ab}(R) = X_{ab}(-R)`\ を満たすテーブル（オンサイト相互作用、
+   実数の1軌道のボンド、鏡映対称な多軌道のボンド）では2つの形は一致します。
+
+   並べ替えた形において、ペア内の並べ替えは密度型（ペア対角）成分に対しては
+   恒等変換であり、より一般に実数のエルミート閉じた宣言に対しても値が
+   変わりません（転置先のスロットが同じ値を持つため）。効いてくるのは
+   **複素の** ペア交差型相互作用、すなわち複素のエルミート閉じた\ ``PairHop``\ の
+   場合だけで、並べ替えを省くと複素共役なハミルトニアンに対する感受率が
+   得られてしまいます。transverse (ladder) の組み立てはこの変換を通しません。
+   こちらは相互作用テンソル自身を組み替えるため、ハミルトニアン規約のまま
+   受け取ります。保存される\ ``chiq``/``chi0q``\ と相互作用ファイルの規約は、
+   それぞれの節に記載のとおりで変わりません。
 
 上記の実装では、軌道とスピンを統一した一般化軌道として取り扱いました。計算の実行に必要な配列のうち、 感受率( :math:`X^{(0)\alpha\alpha', \beta\beta'}({\bf q},i\omega_m), X^{\alpha\alpha', \beta\beta'}({\bf q},i\omega_m)` )が一番大きなサイズの多次元配列となり、そのサイズは\ :math:`N_{\rm orb}^4 N_{\rm spin}^4 N_k N_{\omega}`\ で与えられ、サイズが大きくなるとメモリコスト、計算量が増大します。以下で説明するように、軌道とスピンを分離することで感受率の多次元配列のサイズを減らすことができます。
 H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピンを分離することで、
@@ -232,11 +266,17 @@ H-waveのRPAモードで取り扱う二体相互作用では、軌道とスピ�
     - \sum_{\alpha_2,\alpha_3}
       \sum_{\sigma_2\sigma_2'\sigma_3\sigma_3'}
     X^{(0)\alpha, \alpha_2}_{\sigma\sigma'\sigma_2\sigma_2'}(q)
-    W^{\alpha_2, \alpha_3}_{\sigma_2'\sigma_2, \sigma_3'\sigma_3}({\bf q})
+    W^{\alpha_3\sigma_3\sigma_3', \alpha_2\sigma_2'\sigma_2}_{\bf q}
     X^{\alpha_3, \beta}_{\sigma_3\sigma_3',\sigma_1\sigma_1'}(q),
     \end{aligned}
 
-となります。\ :math:`\alpha\sigma\sigma'`\ を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、
+となります。一般化軌道の場合と同様に、この頂点は\ :math:`X^{(0)}`\ の場の双一次形式
+:math:`c^{\dagger}_{\alpha_2\sigma_2'}c^{\mathstrut}_{\alpha_2\sigma_2}`\ （\ :math:`+{\bf q}`\ ）を相互作用の第2ペアに、
+:math:`X`\ の応答の双一次形式
+:math:`c^{\dagger}_{\alpha_3\sigma_3'}c^{\mathstrut}_{\alpha_3\sigma_3}`\ （\ :math:`-{\bf q}`\ ）を第1ペアに対応させたものです
+（issue #232。以前の版では\ :math:`W^{\alpha_2,\alpha_3}_{\sigma_2'\sigma_2,\sigma_3'\sigma_3}({\bf q})`\ と書いており、
+2つのペアの役割が逆でした）。
+\ :math:`\alpha\sigma\sigma'`\ を一つのindexとみなせば、行列形式にすることができ、一般化軌道の場合と同様に、
 
 .. math::
     \begin{aligned}
@@ -513,8 +553,9 @@ Ising ファイルを読みます。UHFk の因子 1/4 の不一致はバージ�
    ペアホッピング型の双線形であり、表現するには双線形基底の拡張が必要だから
    です。通常の計算では、これらのエントリは相互作用の読み込み時にこの検査より
    前に破棄されるため、拒否も反映もされません（破棄した宣言を列挙する警告が
-   ログに出力されます）。RPA 計算でオフサイトの\ ``PairHop``\ に依存しないで
-   ください。実験的なボンド分解横方向チャネル
+   ログに出力されます）。通常の RPA 計算でオフサイトの\ ``PairHop``\ に依存
+   しないでください。その縦（スピン・電荷）成分はボンド分解した縦チャネル
+   （\ ``longitudinal_bond_channels = true``\ ）で表現されます。実験的なボンド分解横方向チャネル
    （\ ``transverse_bond_channels = true``\ ）では、オフサイトの
    ``PairHop``\ の宣言は代わりに **エラーとして拒否** されます。これは、
    不完全な横方向の結果が黙って生成されることを防ぐためです。オンサイトの
@@ -586,9 +627,13 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 - ハミルトニアンはスピン保存を仮定せず、
   完全な\ :math:`2n_{\rm orb} \times 2n_{\rm orb}`\ 空間で構成されます。
 - 全ての相互作用型（\ ``CoulombIntra``\ 、\ ``CoulombInter``\ 、\ ``Hund``\ 、\ ``Exchange``\ 、
-  ``Ising``\ 、\ ``PairLift``\ 、\ ``PairHop``\ ）がサポートされます。
+  ``Ising``\ 、\ ``PairLift``\ 、\ ``PairHop``\ ）がサポートされます。\ ``CoulombInter``\ ・
+  ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairLift``\ の係数に虚部があると拒否されます
+  （複素の\ ``PairHop``\ は受け入れられます）。
 - 可能な場合、ブロック分解が自動的に適用されます。
-- ``reduced``\ と\ ``general``\ の両計算スキームがスピン軌道系で利用可能です。
+- RPA では\ ``reduced``\ と\ ``general``\ の両計算スキームがスピン軌道系で利用可能です。
+  FLEX がスピン軌道モードに対応するのは\ ``flex_hartree_fock = true``\ の
+  ``general``\ スキームのみです。\ :ref:`flex_spin_orbital`\ を参照してください。
 - 幾何情報ファイル（``geom.dat``\ ）の\ ``Norbit``\ はスピン軌道の総数
   （= 物理軌道数 × 2 = Wannier90 の\ ``num_wann``\ ）を表し、UHFk と同じ規約です。
 
@@ -596,6 +641,52 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 
    **移行上の注意（RPA）：** スピン軌道入力の幾何\ ``Norbit``\ はスピン軌道数になりました。
    既存の RPA スピン軌道計算の\ ``geom.dat``\ の\ ``Norbit``\ は2倍にしてください。
+
+.. _so_migration_note:
+
+.. important::
+
+   **リリース・移行上の注意: スピン軌道モード。** スピン軌道モードでは次のとおりです。
+
+   (1) ``[mode.param] orbital_site``\ は無視されます。異なるサイトの軌道とラベル
+       付けされた軌道間の行も含め、すべての R = 0 の行の交換が厳密に
+       取り込まれます。\ ``orbital_site``\ とそのような行を併用する入力では、
+       SO RPA、SO FLEX、SO hwave_sc の結果が変わります。
+   (2) PairHop 以外の係数に虚部があると拒否されます（以前は虚部が黙って畳み込まれて
+       いました。複素 Exchange は issue #302 を参照）。
+   (3) このバージョンより前に書かれたスピン軌道のアーカイブ（fingerprint version 1
+       またはなし）は作り直す必要があります（どのコマンドがどのファイルを書くかは
+       :ref:`sc_so_archive_checks`\ を参照）。
+
+   以前の結果を再現するには、該当する行や虚部を取り除くか、非スピン軌道の
+   ソルバーを使ってください。
+
+   スピン軌道モードでは\ ``orbital_site``\ の値は読まれず、不正な値も無視されます。
+   キーが指定されていると、計算ごとに WARNING が 1 回出ます: ``orbital_site is
+   ignored in spin-orbital mode; all R=0 rows are treated exactly (see migration
+   note)``
+
+.. _rpa_so_offsite:
+
+**スピン軌道 RPA のオフサイトの行。** RPA のリング和のスピンフル頂点は反対称化した
+頂点、すなわち直接項にその交換交差を加えたものです。オンサイトの行と、セル内
+（\ :math:`\mathbf{R} = 0`\ ）の異なる軌道間の行では、交換交差を厳密に含めます。
+オフサイトの行（\ :math:`\mathbf{R} \neq 0`\ ）の交換交差は 2 つのフェルミオン
+運動量の両方に依存し、移行運動量\ :math:`\mathbf{q}`\ だけの関数としては書けないため、
+オフサイトの行は非スピン軌道の RPA と同じく、直接（Hartree 型）部分
+:math:`V(\mathbf{q})`\ だけでリング和に入ります。入力にオフサイトの行があると、
+スピン軌道 RPA は 1 回の計算につき 1 回、INFO レベルで次の行を記録します::
+
+   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static") or FLEX with [mode.param] longitudinal_bond_channels = true.
+
+``<types>``\ は、オフサイトの行がゼロでない相互作用の種類を、並べ替えてコンマで
+区切ったリストです。\ ``PairHop``\ はこのリストには挙がりません。この行は FLEX
+（スピン軌道モードでは、\ ``longitudinal_bond_channels``\ なしではオフサイトの行を拒否し、
+ありではその交換を厳密に扱います。\ :ref:`flex_spin_orbital`\ を参照）と、\ ``hwave_sc``\ が
+内部で実行する RPA では記録されません。\ ``hwave_sc``\ の静的なボンド経路は、ボンドの
+バブルを裸のバンドから、または\ ``[eliashberg] bond_green``\ で指定したボンドチャネル付きの
+スピン軌道 FLEX の\ ``green.npz``\ から作ります（\ :ref:`sc_so_bond_green`\ を参照）。
+その FLEX のボンドアーカイブは\ ``hwave_sc``\ では読みません。
 
 
 .. _flex_second_order_kernel:
@@ -616,12 +707,28 @@ H-wave はスピン軌道モードをサポートしています。このモー�
 から構築されます。ここで\ :math:`\bar\chi`\ は裸のバブル、
 :math:`\hat{U}^s`\ ・\ :math:`\hat{U}^c`\ は ring のスピン・電荷頂点です。
 この形では最初の2項が3次以上の ring 級数であり、理論の2次は全て
-:math:`W^{(2)}`\ に含まれます。\ :math:`W^{(2)}`\ にどの式を使うかは
-``[mode.param]``\ の\ ``flex_second_order``\ で選択します（設定ファイルの
-説明を参照）。
+:math:`W^{(2)}`\ に含まれます。\ :math:`W^{(2)}`\ は以下で説明する厳密な
+局所2次です（\ ``[mode.param]``\ の\ ``flex_second_order = "local"``\ 。
+デフォルトであり、受け付けられる唯一の値です。設定ファイルの説明を参照）。
+ring は次の段落の対の向きで縮約されます。
 
-``flex_second_order = "local"``\ （デフォルト）
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+自己エネルギーは\ :math:`\Sigma_{mn}(\mathbf{k}, i\omega) = (T/N)
+\sum V_{(\mu m),(\nu n)}(\mathbf{q}, i\nu)\, G_{\mu\nu}(\mathbf{k} -
+\mathbf{q}, i\omega - i\nu)`\ です。ring の項はバブルの対の並びでの行列積であり、
+この和に\ **両方の**\ 対の2つの軌道を入れ替えた向き
+:math:`(\mu m) \leftrightarrow (m \mu)`\ で入ります。この向きでは ring の
+各次数が\ :math:`\mathrm{Tr}\,(\bar\chi \hat{U})^n`\ の汎関数微分になり、
+自己エネルギーは保存近似（Luttinger-Ward 汎関数から導かれる）になります。
+厳密な2次\ :math:`W^{(2)}`\ もこの向きです。以前のバージョンでは3次以上の
+ring を入れ替えずに縮約していました（issue #251）。軌道間の相互作用
+（CoulombInter、Hund、Exchange、Ising、PairHop）を含む多軌道模型では結果が変わり、
+軌道内の相互作用（CoulombIntra）のみの場合は変わりません。ボンド分解チャネル
+（\ ``longitudinal_bond_channels``\ ）も各チャネルブロックの中で同じ規則に従います。
+（廃止された Takimoto-Hotta-Ueda カーネル（この節の末尾を参照）は以前の向きのまま
+であったため、軌道間の相互作用に対しては保存近似ではありませんでした。）
+
+``flex_second_order = "local"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 一般化した添字\ :math:`p = (\text{サイト}, \text{軌道}, \text{スピン})`
 を用いて相互作用を\ :math:`{\cal H}_{\rm int} = \tfrac{1}{2}\sum
@@ -667,11 +774,12 @@ V_{pq,rs} c^{\dagger}_p c^{\dagger}_q c_s c_r`\ と書き、反対称化して
 となります。ここで\ :math:`v^{\sigma\sigma'}_{\alpha\beta}(\mathbf{q}) = \sum_R
 V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
 ファイル自身の向き（:math:`\alpha`\ が元のセル）でのフーリエ変換です。密度
-スロット上には、ring の頂点と同じく軌道添字を転置して
-（:math:`\alpha \leftrightarrow \beta`\ ）
+スロット上には、ring の頂点と同じく軌道添字を転置し
+（:math:`\alpha \leftrightarrow \beta`\ ）、\ :math:`-\mathbf{q}`\ で
+（上の注意書き「相互作用が RPA 方程式に入る形について」を参照）
 :math:`[A_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
 [B_v^{\sigma}]_{(\alpha\alpha),(\beta\beta)} =
--\,v^{\sigma\sigma'}_{\beta\alpha}(\mathbf{q})`\ として入ります。これは ring の
+-\,v^{\sigma\sigma'}_{\beta\alpha}(-\mathbf{q})`\ として入ります。これは ring の
 頂点が使うものと同じ行列で、対基底の密度スロット上の行列（それ以外の
 スロットではゼロ）であり、以下で\ :math:`\bar\chi`\ と取る積は
 :math:`A^{\sigma}_{\rm on}`\ ・
@@ -735,10 +843,10 @@ V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
 :math:`2 U V(\mathbf{q}) \bar\chi`\ が生じますが、これは Hartree 部分のみから
 作った\ :math:`q`\ 依存頂点には含まれません。
 
-``flex_second_order = "takimoto"``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+廃止：\ ``flex_second_order = "takimoto"``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-この値では、従来の Takimoto-Hotta-Ueda の形の有効相互作用
+H-wave 2.0.0 以前は、一般経路を Takimoto-Hotta-Ueda の形の有効相互作用
 
 .. math::
 
@@ -747,14 +855,17 @@ V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
    - \tfrac{1}{4}\left(\hat{U}^s + \hat{U}^c\right) \bar\chi
      \left(\hat{U}^s + \hat{U}^c\right)
 
-をそのまま使います。すなわち\ :math:`W^{(2)} = \tfrac{3}{2}\hat{U}^s
+から構築していました。すなわち\ :math:`W^{(2)} = \tfrac{3}{2}\hat{U}^s
 \bar\chi \hat{U}^s + \tfrac{1}{2}\hat{U}^c \bar\chi \hat{U}^c -
-\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`\ です。
-これは単一バンドの Hubbard 相互作用については2次で厳密ですが、その他の項に
-ついては近似であり、H-wave 2.0.0 以前のリリースで得られた結果を再現するために
-残されています。
+\tfrac{1}{4}(\hat{U}^s + \hat{U}^c)\bar\chi(\hat{U}^s + \hat{U}^c)`\ で、
+ring は以前の対の向きで縮約されていました。これは単一バンドの Hubbard
+相互作用については2次で厳密ですが、その他の項については近似です。この式は
+``flex_second_order = "takimoto"``\ として選択できましたが、廃止されました
+（issue #253）。現在この値は起動時に拒否され、エラーメッセージは\ ``"local"``\ を
+案内します。したがって H-wave 2.0.0 以前の結果を設定で再現することはもはや
+できません。再現が必要な場合は以前のリリースを使ってください。
 
-したがって、\ ``CoulombIntra``\ のみの単一バンド入力では両方の値が丸め誤差の
+``CoulombIntra``\ のみの単一バンド入力では、それらのリリースと丸め誤差の
 範囲で一致し、多軌道のオンサイト相互作用（:math:`U'`\ ・\ ``Hund``\ ・
 ``Ising``\ ・\ ``Exchange``\ ・\ ``PairHop``\ ・\ ``PairLift``\ ）と
 オフサイト相互作用では一般経路の結果が変わります。
@@ -762,8 +873,8 @@ V^{\sigma\sigma'}_{\alpha\beta}(R)\, e^{i\mathbf{q}\cdot R}`\ は、相互作用
 .. note::
 
    ``longitudinal_bond_channels = true``\ では、ボンド分解した有効相互作用の
-   チャネル0ブロックも同じカーネルで構築されるため、単一バンドの
-   :math:`U + V`\ 入力でも2つの値は一致します（ボンド分解チャネルは
+   チャネル0ブロックも同じカーネルで構築され、単一バンドの
+   :math:`U + V`\ 入力では廃止された式とも一致します（ボンド分解チャネルは
    もともと直接\ :math:`V`\ の2次を厳密に含んでいました）。ボンド分解ブロックは、
    軌道間のものも含め全てのボンドで2次まで厳密です（オンサイトとボンドの
    混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。
@@ -794,9 +905,13 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)`\ 、
 置いたものです。ここで\ :math:`w_t`\ はオンサイトの交換スロットと同じ
 種類ごとの係数（スピン・電荷チャネルについて\ ``CoulombInter``
 :math:`(+1, -1)`\ 、\ ``Hund`` :math:`(-1, +1)`\ 、\ ``Ising``
-:math:`(+1, -1)`\ ）です。相互作用ファイルの向きでは、宣言された行
-:math:`V_{ab}(R_m)`\ はスロット\ :math:`(m, a, b)`\ に、その逆向きの行
-:math:`V_{ba}(-R_m)`\ はスロット\ :math:`(-m, b, a)`\ に入ります。
+:math:`(+1, -1)`\ 、\ ``Exchange`` :math:`(+1, +1)`\ ）です。相互作用ファイルで宣言された行
+:math:`V_{ab}(R)`\ は、\ :math:`R_m = -R`\ のチャネルのスロット
+:math:`(m, a, b)`\ に、その逆向きの行\ :math:`V_{ba}(-R)`\ はスロット
+:math:`(-m, b, a)`\ に入ります。これは、その交換交差がトランスファーの行
+:math:`(R, a, b)`\ のボンドに作用するチャネルです（issue #232。以前の
+リリースはこの行を\ :math:`R_m = R`\ のチャネル、すなわち逆向きのボンドに
+置いていました）。
 ドレスされた
 :math:`\chi_s = [1 - \bar\chi S]^{-1}\bar\chi`\ と
 :math:`\chi_c = [1 + \bar\chi C]^{-1}\bar\chi`\ 、およびその
@@ -805,13 +920,17 @@ e^{ik\cdot(R_m - R_{m'})} G_{l_1 l_3}(k+q)\, G_{l_4 l_2}(k)`\ 、
 上書きされず、標準の ring の結果のままです。オフサイト係数が全てゼロなら縮約ブロックは
 標準の ring の静的スピン・電荷チャネルと一致し、非零なら交換交差の分だけ
 異なります。ボンドブロックはオフサイトの\ ``CoulombInter``\ ・
-``Hund``\ ・\ ``Ising``\ （同一軌道・軌道間ボンド）について結合の1次
-まで厳密対角化と照合され、Hartree のみの頂点では同じデータを再現
-できないことも確認されています。
+``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairHop``\ （同一軌道・軌道間ボンド）について
+結合の1次まで厳密対角化と照合され、Hartree のみの頂点では同じデータを再現
+できないことも確認されています。オフサイトの\ ``Exchange``\ は Hartree
+（チャネル0）成分を持たず、縦成分はボンド対角の Fock 交差のみで、スピン反転
+成分は横チャネルに属します。オフサイトの\ ``PairHop``\ （\ :math:`J P^\dagger_i P_j`\ ）
+も Hartree 成分を持ちません。これはボンド対を、同じ向きで逆スピンのボンド対、
+すなわち\ :math:`-R_m`\ のチャネルの軌道を入れ替えたものと結合させ、スピン・電荷の
+両チャネルで\ :math:`(m, a, b) \to (-m, b, a)`\ に\ :math:`J e^{-i q\cdot R_m}`\ を
+与えます（厳密対角化の応答から成分ごとに読み取ったもの）。
 
-このバージョンの制限: オフサイト係数は実数のみ。オフサイトの
-``Exchange``\ と\ ``PairHop``\ の宣言は拒否されます（ボンド基底での
-取り込みは今後の予定）。副格子折り畳み・\ ``chi0q_init``\ ・
+このバージョンの制限: オフサイト係数は実数のみ。副格子折り畳み・\ ``chi0q_init``\ ・
 ``enable_spin_orbital``\ は非対応。\ ``Nmat``\ は偶数である必要が
 あります。\ ``transverse_bond_channels``\ とは併用できず、
 ``mode = "FLEX"``\ では同じキーが :ref:`flex_bond_hf`\ の自己無撞着な
@@ -827,7 +946,7 @@ Hartree-Fock 繰り込み付きボンド分解 FLEX（実験的機能）
 ----------------------------------------------------------
 
 ``flex_hartree_fock = true``\ （``mode = "FLEX"``\ 、\ ``calc_scheme = "general"``\ 、
-スピンフリー系）では、FLEX の自己エネルギーは同時に反復される2つの成分の和
+スピンフリー系。スピン軌道入力については\ :ref:`flex_spin_orbital`\ を参照）では、FLEX の自己エネルギーは同時に反復される2つの成分の和
 
 .. math::
 
@@ -862,13 +981,10 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
    W = \tfrac{3}{2} S (\chi_s - \bar\chi) S + \tfrac{1}{2} C (\chi_c - \bar\chi) C + W^{(2)}
 
 すなわち3次以上の ring 級数と厳密な2次項\ :math:`W^{(2)}`\ の和です。\ :math:`W^{(2)}`\ は、
-チャネル0ブロックでは標準の一般経路の2次カーネルそのもので、同じ加算器で構築されるため
-同じ\ ``flex_second_order``\ キーで選択されます（:ref:`flex_second_order_kernel`\ を参照）。
+チャネル0ブロックでは標準の一般経路の2次カーネルそのもので、同じ加算器で構築されます
+（:ref:`flex_second_order_kernel`\ を参照）。
 これによりオフサイト係数が全てゼロなら計算は標準の Hartree-Fock FLEX と同一になります。
-``flex_second_order = "takimoto"``\ では、このブロックは従来の
-:math:`[\tfrac{3}{2} S \bar\chi S + \tfrac{1}{2} C \bar\chi C]_{00}
-- \tfrac{1}{4}(S_{\rm on} + C_{\rm on}) \bar\chi_{00} (S_{\rm on} + C_{\rm on})`
-になります。チャネル0とボンドの混合ブロックでは
+チャネル0とボンドの混合ブロックでは
 :math:`\tfrac{1}{4}(S \bar\chi S + C \bar\chi C)`\ （オフサイト相互作用の交換スケルトンを
 1回）、ボンド–ボンドブロックではゼロ（その ring の2次は直接スケルトンの重複）です。
 自己エネルギーは
@@ -883,12 +999,36 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 :math:`(m, m')`\ はバブルのブロック\ :math:`(m', m)`\ の位相と対になります）、実空間では
 :math:`G`\ の roll として実装されています。結合の2次では、オフサイト相互作用の直接・交換
 スケルトンを\ :math:`UV`\ 交差項も含めて厳密に再現します（独立な実空間列挙で固定）。
-標準の一般経路も\ ``flex_second_order = "local"``\ では直接スケルトンと
-:math:`UV`\ 交差項を厳密に含み、欠けるのは2つのオフサイト頂点の交換スケルトンだけです。
-従来の\ ``"takimoto"``\ の式では、2次で直接\ :math:`V^2`\ 項の半分のみを持ち、
-:math:`UV`\ 交差項を持ちません。（``longitudinal_bond_channels = true``\ では、
+標準の一般経路も直接スケルトンと
+:math:`UV`\ 交差項を厳密に含み、欠けるのは2つのオフサイト頂点の交換スケルトンだけです
+（廃止された Takimoto-Hotta-Ueda の式は、2次で直接\ :math:`V^2`\ 項の半分のみを持ち、
+:math:`UV`\ 交差項を持ちませんでした）。（``longitudinal_bond_channels = true``\ では、
 ボンド分解ブロックは軌道間のものも含め全てのボンドで2次まで厳密です。オンサイトと
 ボンドの混合ブロックは、ボンド側を転置した軌道対で読みます。issue #192）。
+
+オフサイトの\ ``Exchange``\ （\ :math:`-J S^+_i S^-_j`\ ）や\ ``PairHop``\
+（\ :math:`J P^\dagger_i P_j`\ ）はボンド分解チャネルで受け付けられます
+（\ ``flex_hartree_fock``\ のみでは、その1次だけが高次なしに入ることになるため
+拒否されます）。どちらも以下と同じ方法で扱われます。Exchange の縦成分はボンド（Fock）交差
+（PairHop では縦ボンドチャネルの、逆向きボンドで軌道を入れ替えた結合）であり、2次は
+ボンドをまたいでスピン反転頂点と密度頂点が混ざるため、上の規則では表せません。
+そこでオフサイトの\ ``Exchange``\ や\ ``PairHop``\ が宣言されている場合は、全ブロックの2次を
+ボンド拡張基底で直接、\ :math:`W^{(2)} = \tfrac{1}{2}\sum A(q)\,\bar\chi(q, i\nu)\,B(q)`\
+（スピンの添字についての和）として、反対称化した相互作用の全ての要素の組から
+全ての配置について組み立てます。2次の自己エネルギーは、試した全ての組み合わせ
+（Exchange 単独、オンサイトの Kanamori 項との組、同じボンドや別のボンドの密度項
+との組、Heisenberg 型のボンド）で独立な実空間の数え上げと一致します。2次より
+高い次数では、FLEX は横方向のスピンゆらぎを縦方向の2つのコピーとして数えるため、
+これが厳密なのはスピン回転（SU(2)）対称な相互作用の場合だけです。ボンドについて
+これは\ :math:`J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm Ising}`\ （各行とその相方）を
+意味し、これを満たさないボンドがあると警告が出力されます。厳密な2次には専用の
+係数（寄与するスピンの組ごとに\ ``(nvol, ND, ND)``\ の配列2つ。
+``longitudinal_bond_memory_cap_gb``\ の見積もりに含まれます）と、各
+:math:`(q, i\nu)`\ で組ごとに2回の\ ``ND x ND``\ 行列積が加わるため、オフサイトの
+``Exchange``\ を宣言すると写像のコストは目に見えて増えます。非零のオフサイト
+``PairLift``\ 行もこの2次に入り、その変位は\ ``longitudinal_bond_max_shells``\ で
+残しておく必要があります。
+
 このような計算の通常の
 ``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ 出力は、最後の写像のボンド分解した量の
 :math:`(m = 0, m' = 0)`\ ブロックです。前節の16個の\ ``longitudinal_bond_*``\ 静的キーも
@@ -899,8 +1039,135 @@ Hartree-Fock 自己エネルギーで、UHFk ソルバーと同じカーネル�
 （``--zero-static``\ 、\ ``--static static.npz``\ 、または UHFk 平均場からは
 ``--uhfk-trans-mod trans_mod.npz --bare-transfer transfer.dat``\ ）。このバージョンの
 適用範囲: スピンフリーの一般スキーム、一様松原格子、CPU、副格子なし、外場なし、実数の
-オフサイト係数、オフサイト\ ``Exchange`` / ``PairHop``\ は拒否。解法全体の推定ピーク
+オフサイト係数、オフサイトの\ ``Exchange``\ と\ ``PairHop``\ は
+``longitudinal_bond_channels = true``\ の場合のみ。解法全体の推定ピーク
 メモリは\ ``longitudinal_bond_memory_cap_gb``\ と照合され、振動数バッチはそれに収まる
 ように選ばれます。
+
+.. _flex_spin_orbital:
+
+スピン軌道 FLEX（実験的機能）
+--------------------------------
+
+``enable_spin_orbital = true``\ 、\ ``mode = "FLEX"``\ 、\ ``calc_scheme =
+"general"``\ 、\ ``flex_hartree_fock = true``\ のとき、FLEX は全スピン軌道空間で
+動作します。グリーン関数・自己エネルギー・感受率は次元
+:math:`n_d = 2 n_{\rm orb}`\ の一般化インデックス\ :math:`p = s\, n_{\rm orb} + a`\
+（スピンブロック順。\ ``index_convention = "spin_block"``\ で表示）を持ち、
+一体ハミルトニアンはたまたまスピン対角であってもこの\ :math:`n_d \times n_d`\ の
+形のまま保持されます。自己エネルギーはここでも
+:math:`\Sigma = \Sigma_{\rm HF}[G] + \Sigma_{\rm fluct}[G]`\ です
+（:ref:`flex_bond_hf`\ を参照）。\ :math:`\Sigma_{\rm HF}`\ は全ての相互作用の
+Hartree-Fock 項（Fock 項を含む）で、スピン非対角ブロックを含む全スピン軌道の
+同時刻密度で評価されます。UHFk のスピン軌道モードと同じカーネルで構築されます。
+
+ゆらぎ部分は1つの粒子-正孔チャネルです。\ :math:`\Gamma`\ を反対称化した
+スピンフル頂点（直接相互作用にそのオンサイト交換交差を加えたもの。スピンフル
+RPA が総和する頂点。\ ``spinful_vertex_exchange``\ ）、\ :math:`\bar\chi`\ を
+スピン軌道の対基底上の裸のバブルとすると、
+
+.. math::
+
+   \chi = \left[\hat{I} + \bar\chi\,\Gamma\right]^{-1} \bar\chi, \qquad
+   V = P\left[\Gamma\left(\chi - \tfrac{1}{2}\bar\chi\right)\Gamma\right]
+     = P\left[\Gamma\left(\chi - \bar\chi\right)\Gamma
+       + \tfrac{1}{2}\,\Gamma\bar\chi\Gamma\right]
+
+です。第1項は3次以上の ring 級数です。第2項は厳密な2次です。反対称化した頂点は
+2次の直接ダイアグラムと交換ダイアグラムを同じように生成するため、係数
+:math:`\tfrac{1}{2}`\ が付きます。別個の2次カーネルは必要ありません。
+:math:`P`\ は両方の対の2つの軌道を入れ替えます
+（:math:`(\mu m) \leftrightarrow (m \mu)`\ ）。これは
+:ref:`flex_second_order_kernel`\ の向きであり、この向きでは\ :math:`n`\ 次の項が
+:math:`\mathrm{Tr}\,(\bar\chi \Gamma)^n`\ の汎関数微分になるため、近似は保存近似
+です。この1つのチャネルが、電荷・縦スピン・横スピンと、スピン軌道相互作用による
+それらの混成という全てのスピン構造を同時に担います。スピン・電荷の分離はないため、
+:math:`\chi`\ は\ ``chiq.npz``\ に\ ``chiq``\ として、
+``chi_convention = "spin_orbital"``\ とともに書き出されます。
+
+実装は次の2つの方法で検証されています。
+
+- *厳密対角化との2次の比較。* 3軌道の1サイト模型にランダムなスピン混成一体項を
+  加えた系で、ゆらぎ自己エネルギーの\ :math:`O(x^2)`\ 係数が厳密な残差
+  :math:`\Sigma_{\rm ED} - \Sigma_{\rm HF}[\rho_{\rm ED}]`\ の係数と、全ての
+  相互作用型（``CoulombIntra``\ 、\ ``CoulombInter``\ 、\ ``Hund``\ 、\ ``Ising``\ 、
+  ``Exchange``\ 、\ ``PairHop``\ 、\ ``PairLift``\ ）について相対
+  :math:`2 \times 10^{-3}`\ 以内で一致します（スピン非対角ブロックを含む）。
+- *スピン保存極限。* スピン対角な模型をスピン軌道の表記で書き、スピン回転不変な
+  オンサイト相互作用（``CoulombIntra``\ 、\ ``CoulombInter``\ 、\ ``Hund``\ 、
+  ``Exchange``\ 、\ ``Ising``\ 、\ ``PairHop``\ 。
+  :math:`J_{\rm Exchange} = J_{\rm Hund} - 2 J_{\rm Ising}`\ ）を与えると、その
+  自己無撞着解はスピンフリーの Hartree-Fock FLEX の解と丸め誤差の範囲で一致します
+  （自己エネルギーの両成分、\ :math:`\mu`\ 、\ :math:`N`\ ）。
+
+スピン回転不変性がない場合、2つの FLEX の形は2次では一致しますが、それより高次で
+異なります。スピンフリーの形\ :math:`\tfrac{3}{2}\hat{U}^s \chi_s \hat{U}^s`\ は
+2つの横スピンゆらぎを縦スピンゆらぎの複製として数えます。これが厳密なのは
+SU(2) 対称な相互作用の場合だけです。一方\ :math:`\Gamma`\ は横チャネルを実際の
+頂点で総和します。そのため\ ``Hund``\ 、\ ``Ising``\ 、\ ``Exchange``\ を単独で
+宣言した場合や、\ :math:`J_{\rm Exchange} \neq J_{\rm Hund} - 2 J_{\rm Ising}`\ と
+なる組では、3次以降で結果が異なります。\ ``PairLift``\
+（:math:`\Delta S_z = 2`\ ）はそもそもスピンを保存しません。スピンフリーの一般経路は
+その厳密な2次を保持しますが、それより高次の横成分を担うチャネルを持ちません。
+スピン軌道 FLEX はこれを含みます。
+
+この版の適用範囲:
+
+- ``flex_hartree_fock = true``\ の一般スキーム（このスイッチのその他の条件も適用）
+- ``longitudinal_bond_channels``\ なしでは、オンサイトおよびセル内
+  （\ :math:`\mathbf{R} = 0`\ ）の相互作用のみ（オフサイト相互作用の交換交差は
+  :math:`\mathbf{q}`\ のみの頂点では表せないため。オフサイトの行は拒否されます）。
+  ``longitudinal_bond_channels = true``\ ではオフサイトの行を受け付けます（下の
+  「ボンドチャネル」を参照）
+- \ ``CoulombInter``\ ・\ ``Hund``\ ・\ ``Ising``\ ・\ ``Exchange``\ ・\ ``PairLift``\ の
+  係数の虚部は拒否されます
+- ``spinful_vertex_exchange = true``
+- ``sigma_init``\ ・\ ``trans_mod``\ ・\ ``green_init``\ はなし（計算は裸の
+  Hartree-Fock 状態から始まります）
+- Extern 場を受け付けます。ファイルは物理軌道の添字で書き、バンドに
+  ``coeff_extern``\ :math:`\cdot H_1 \otimes \sigma^z`\ （上向きスピンが
+  :math:`+`\ 、下向きスピンが\ :math:`-`\ ）を加えます。\ :math:`H_1`\ がオンサイトなら
+  Zeeman 場です（\ :ref:`sc_spin_polarized`\ を参照）。
+
+reduced スキームはスピン軌道入力を拒否します。Eliashberg ソルバー
+（\ ``hwave_sc``\ ）は、ボンドチャネルを使わない計算のスピン軌道 FLEX の出力を
+``frequency = "static"``\ （\ :ref:`sc_spin_orbital`\ を参照）でも
+``frequency = "dynamic"``\ （\ :ref:`sc_spin_orbital_dynamic`\ を参照）でも読みます。動的なボンド分解の経路と\ ``run_eliashberg = true``\ の
+``hwave_tsweep``\ は引き続き\ ``enable_spin_orbital``\ を拒否します。FLEX のみの\ ``hwave_tsweep``\ は
+``warm_start = false``\ で実行できます（スピン軌道 FLEX は初期値を受け付けないため）。
+
+**ボンドチャネル。** ``longitudinal_bond_channels = true``\ では、1つのスピンフルな
+チャネルをスピン軌道 Eliashberg のボンド経路（\ :ref:`sc_so_bond_static`\ ）と同じ
+（スピン軌道の対）\ :math:`\times`\ （ボンド）基底の上で総和します。\ :math:`B`\ 個の
+ボンドチャネル\ :math:`m`\ （オンサイト点と、宣言されたすべてのオフサイトの変位。反転に
+ついて閉じています）で、スロットは\ ``ND = B n_d^2``\ 個です。ボンド頂点\ :math:`\Gamma_B`\ は、
+各行をそれ自身のボンドに置いた反対称化スピンフル頂点です。オフサイトの行の直接部分は
+:math:`\mathbf{q}`\ の関数としてオンサイトのチャネルに、交換交差はその変位のチャネルに
+入ります。ドレスした Green 関数から作ったボンド分解バブル\ :math:`\bar\chi_B(q, i\nu)`\ を
+すべてのボソン振動数で用いて、
+
+.. math::
+
+   \chi_B = \left[\hat{I} + \bar\chi_B\,\Gamma_B\right]^{-1} \bar\chi_B, \qquad
+   W = P_B\left[\Gamma_B\left(\chi_B - \tfrac{1}{2}\bar\chi_B\right)\Gamma_B\right]
+
+となり、自己エネルギーはスピン軌道インデックス上での\ :ref:`flex_bond_hf`\ のボンド輸送
+（\ :math:`W`\ の両端で内線にボンドの形状因子が付く）です。\ :math:`P_B`\ はオンサイトの
+経路の軌道の入れ替え\ :math:`P`\ を各ボンドチャネル内で行うもので、
+:math:`P_B[M]_{(m;\,x y),(m';\,z w)} = M_{(m;\,y x),(m';\,w z)}`\ です（チャネルの反転も
+位相もありません）。厳密な部分は、すべての行（オフサイトの行と複素数の\ ``PairHop``\ を
+含む）の\ :math:`\Sigma_{\rm HF}[G]`\ 、すべての行の直接・交換の2次
+（\ :math:`\tfrac{1}{2}\Gamma_B\bar\chi_B\Gamma_B`\ の項）、それより高次ではボンド分解した
+スピンフルチャネルの ring 級数です。\ :math:`B = 1`\ ではオンサイトのスピン軌道 FLEX に
+なり、SU(2) 極限では\ :ref:`flex_bond_hf`\ の非スピン軌道のボンド FLEX を再現します
+（自己エネルギーはスピンの単位行列との積になり、感受率はその電荷・縦スピン・横スピンの
+チャネルに射影されます）。計算、キー、メモリ、出力は\ :ref:`flex_so_bond_tutorial`\ に
+まとめています。この版では CPU で動作し、\ ``chi0q``\ /\ ``chiq``\ を最後の SCF 反復の
+チャネル 0 ブロックとして書き出します。\ ``longitudinal_bond_output_full = true``\ では、
+最終 Green 関数のスピン軌道ボンドアーカイブも書き出します（\ :ref:`flex_so_bond_archive`\ ）。
+``hwave_sc``\ はその\ ``green.npz``\ を静的なボンド経路で\ ``[eliashberg] bond_green``\ により
+読みます（\ :ref:`sc_so_bond_green`\ ）。この版ではボンドアーカイブは読みません（後の版で
+読みます）。FLEX のみの\ ``hwave_tsweep``\ は、上と同じく\ ``warm_start = false``\ で
+これを実行します。
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_

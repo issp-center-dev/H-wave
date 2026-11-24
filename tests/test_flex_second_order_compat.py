@@ -1,12 +1,14 @@
 """Compatibility contract (spec 2026-09-08 section 3, extended by spec
-2026-09-16 section 2.4): 'takimoto' without the Hartree-Fock term keeps
-every numerical archive member of the general path np.array_equal to the
-reference revision's, and so does 'local' on an input with no off-site
-two-body row; the Hartree-Fock map on a declaration F reproduces the
-reference revision's map on the REVERSED declaration F^rev exactly; 'local'
-on CoulombIntra-only input agrees with 'takimoto' to 1e-14 with the
-archive-scale floor; the factors are built at construction under 'local'
-only; the D7 refusal fires at construction.
+2026-09-16 section 2.4): 'local' on an input with no off-site two-body row
+keeps every numerical archive member of the general path equal to the
+reference revision's (exactly with numpy >= 2; floating-point members to
+round-off with numpy < 2, see _assert_same_to_roundoff); the Hartree-Fock
+map on a declaration F reproduces the reference revision's map on the REVERSED declaration F^rev
+exactly; 'local' on a one-band Hubbard input agrees with the reference
+revision's retired 'takimoto' kernel to 1e-14 with the archive-scale floor,
+and so does the method-level assembly with the Takimoto-Hotta-Ueda formula;
+the factors are built at construction; the D7 refusal fires at
+construction, after the refusal of the retired kernel.
 
 What is NOT here: the paths the interaction-row orientation change moved
 (the Hartree-Fock term, the local kernel's off-site vertex, the bond gate).
@@ -14,6 +16,17 @@ They cannot be compared to the reference revision on the same declaration
 by construction; their numerical state is pinned as committed fixed state
 by tests/test_flex_orientation_baseline.py, and their CORRECTNESS by the
 ED/oracle modules that file names.
+
+Removed with the retirement of flex_second_order = "takimoto" (issue #253):
+the end-to-end identity of a 'takimoto' run with the reference revision's,
+on the same on-site declaration and on the REVERSED off-site declaration
+F^rev. This tree no longer runs that kernel, and the 'local' kernel cannot
+take its place in the off-site leg: its exact second order reads the
+off-site rows on the moved bond in a way no reversal of the declaration
+undoes (measured: up to 4e-3 in sigma on input_2orb's CoulombInter). The
+on-site leg is the 'local' identity that remains below; the bond placement
+of the q-space vertex is pinned by tests/test_sc_vertex_adjudicated.py and
+tests/test_flex_orientation_baseline.py.
 
 THE REFERENCE CHECKOUT IS PROVISIONED IN CI. Both test jobs of
 .github/workflows/ci-python39.yml materialise DEVELOP_COMMIT as a detached
@@ -46,7 +59,12 @@ idict = {"path_to_input": path, "Geometry": "geom.dat", "Transfer": "transfer.da
 idict.update(inter)
 r = read_input_k.QLMSkInput({"path_to_input": path, "interaction": idict})
 par = {"T": 2.0, "filling": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 16,
-       "IterationMax": 3, "Mix": 0.5, "EPS": 1e-12}
+       "IterationMax": 3, "Mix": 0.5, "EPS": 1e-12,
+       # the reference revision predates the Hermitian projection of the
+       # self-energy (issue #281), which changes a symmetric run at round-off
+       # only (pinned in tests/test_flex_sigma_hermitian.py); switched off so
+       # that this comparison with the reference stays about the code it names
+       "flex_sigma_hermitian_projection": False}
 par.update(json.loads(extra_json))
 if so != "absent":
     par["flex_second_order"] = so
@@ -70,25 +88,127 @@ _FILES = ("chi0q.npz", "chiq.npz", "chiq_s.npz", "chiq_c.npz", "sigma.npz", "gre
 _COVERAGE_ENV = ("COV_CORE_SOURCE", "COV_CORE_CONFIG", "COV_CORE_DATAFILE")
 
 
+#: Thread counts pinned to one in every comparison subprocess. The
+#: comparisons against the reference revision require exact numerical
+#: equality, with non-finite values in the same component positions (with
+#: numpy < 2 two of them allow round-off in finite floating-point
+#: components, see :func:`_assert_same_to_roundoff`), and a multithreaded BLAS or OpenMP
+#: reduction may sum in a different order from one process to the next: a
+#: CI run once saw two identical UHFk calculations differ by one unit in
+#: the last place of an energy.
+_SINGLE_THREAD_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1",
+                      "MKL_NUM_THREADS": "1", "VECLIB_MAXIMUM_THREADS": "1",
+                      "BLIS_NUM_THREADS": "1"}
+
+
+def own_tree_subprocess_env(checkout):
+    """Environment for a subprocess that runs THIS tree in a comparison:
+    its ``src`` first on ``PYTHONPATH``, pytest-cov's hooks kept (this tree
+    stays measured) and the BLAS/OpenMP thread counts pinned to one."""
+    return dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(checkout, "src"), checkout)),
+                **_SINGLE_THREAD_ENV)
+
+
 def reference_subprocess_env(checkout):
     """Environment for a subprocess that runs the REFERENCE checkout: its
-    ``src`` first on ``PYTHONPATH`` and pytest-cov's subprocess hooks
+    ``src`` first on ``PYTHONPATH``, the BLAS/OpenMP thread counts pinned to
+    one (as for this tree's run), and pytest-cov's subprocess hooks
     removed, so the reference tree is never measured as part of this
     tree's coverage (it is a different revision; measuring it halves the
     reported total)."""
-    env = dict(os.environ, PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join((os.path.join(checkout, "src"), checkout)),
+               **_SINGLE_THREAD_ENV)
     for key in _COVERAGE_ENV:
         env.pop(key, None)
     return env
 
 
+#: Issue #251 changed, on purpose, the pair orientation in which the default
+#: "local" kernel of the general FLEX path contracts its ring (third order
+#: and up): it is now the conserving one, that of the exact second order (the
+#: reference revision's "takimoto" kernel, retired since by issue #253, is
+#: left in the earlier one). The reference revision
+#: predates the change, so a comparison against it gets exactly that one
+#: change applied to the reference run before the run starts
+#: (:func:`reference_script` prefixes it to the script): the ring is
+#: transposed before the exact second order is added, in the same batches
+#: and the same operations as this tree, so every other number still has to
+#: equal the reference's exactly (to round-off with numpy < 2, see
+#: :func:`_assert_same_to_roundoff`). The patch is skipped when the
+#: reference already carries the change (it then defines
+#: ``_pair_transpose_into``).
+REFERENCE_RING_ORIENTATION = r"""
+import numpy as _np
+import hwave.solver.flex as _F
+
+
+def _ring_pair_transposed(v, no):
+    lead = v.shape[:-2]
+    nl = len(lead)
+    return _np.ascontiguousarray(v.reshape(*lead, no, no, no, no).transpose(
+        *range(nl), nl + 1, nl, nl + 3, nl + 2)).reshape(v.shape)
+
+
+_reference_veff = _F.FLEX._calc_veff_general
+
+
+def _veff_issue_251(self, chi0q, chi_s, chi_c, Us, Uc, factors=None, second_order="takimoto"):
+    no = chi0q.shape[2]
+    if second_order != "local":
+        # the legacy "takimoto" kernel keeps the earlier orientation
+        return _reference_veff(self, chi0q, chi_s, chi_c, Us, Uc, factors=factors,
+                               second_order=second_order)
+    # the reference method's own entry line, so that a log comparison sees
+    # the same stream
+    _F.logger.debug(">>> FLEX._calc_veff_general")
+    from hwave.solver.second_order import accumulate_batch
+    nmat, nvol = chi0q.shape[0], chi0q.shape[1]
+    ndx = no * no
+    chi0_2d = chi0q.reshape(nmat, nvol, ndx, ndx)
+    chis_2d = chi_s.reshape(nmat, nvol, ndx, ndx)
+    chic_2d = chi_c.reshape(nmat, nvol, ndx, ndx)
+    v_eff = _np.zeros((nmat, nvol, ndx, ndx), dtype=_np.complex128)
+    nb = max(1, nmat // 8)
+    T1 = _np.empty((nb, nvol, ndx, ndx), dtype=_np.complex128)
+    T2 = _np.empty((nb, nvol, ndx, ndx), dtype=_np.complex128)
+    for l0 in range(0, nmat, nb):
+        l1 = min(nmat, l0 + nb)
+        n = l1 - l0
+        out = v_eff[l0:l1]
+        for chi_2d, UB, w in ((chis_2d, Us[None], 1.5), (chic_2d, Uc[None], 0.5)):
+            _np.subtract(chi_2d[l0:l1], chi0_2d[l0:l1], out=T1[:n])
+            _np.matmul(UB, T1[:n], out=T2[:n])
+            _np.matmul(T2[:n], UB, out=T1[:n])
+            T1[:n] *= w
+            T2[:n] = _ring_pair_transposed(T1[:n], no)
+            out += T2[:n]
+        accumulate_batch(out, chi0_2d[l0:l1], l0, factors, work=(T1[:n], T2[:n]))
+    return v_eff
+
+
+if not hasattr(_F, "_pair_transpose_into"):
+    _F.FLEX._calc_veff_general = _veff_issue_251
+"""
+
+
+def reference_script(script):
+    """``script`` for a run of the REFERENCE checkout: issue #251's
+    orientation change applied first (:data:`REFERENCE_RING_ORIENTATION`).
+    The reference environment (:func:`reference_subprocess_env`) already
+    puts the reference ``src`` first on ``PYTHONPATH``, so the prefix
+    patches the reference revision's own module."""
+    return REFERENCE_RING_ORIENTATION + script
+
+
 def _run(checkout, path, inter, out, so, extra=None):
     if checkout == os.getcwd():
         # this tree's own run: keep it measured
-        env = dict(os.environ, PYTHONPATH=os.path.join(checkout, "src") + ":" + checkout)
+        env = own_tree_subprocess_env(checkout)
+        script = _RUN
     else:
         env = reference_subprocess_env(checkout)
-    subprocess.run([sys.executable, "-B", "-c", _RUN, path, json.dumps(inter), out, so,
+        script = reference_script(_RUN)
+    subprocess.run([sys.executable, "-B", "-c", script, path, json.dumps(inter), out, so,
                     json.dumps(extra or {})],
                    env=env, check=True, capture_output=True, cwd=checkout)
 
@@ -96,17 +216,97 @@ def _run(checkout, path, inter, out, so, extra=None):
 #: The commit the compatibility harnesses compare against: the merge that
 #: precedes this branch (``develop`` at the time the branch was cut -- the
 #: merge of the local second-order kernel, #191). The contract these
-#: harnesses assert is BYTE identity with that revision, so the revision has
+#: harnesses assert is exact numerical equality with that revision, with
+#: non-finite values in the same component positions (except that with
+#: numpy < 2 the finite floating-point components of two of them agree to
+#: round-off; see :func:`_assert_same_to_roundoff`), so the revision has
 #: to be named -- comparing against "whatever the reference directory
 #: happens to contain" turns a failed comparison into a puzzle and a passing
 #: one into nothing at all.
 #:
 #: The reference revision already HAS ``flex_second_order`` (it is the merge
-#: that added it) and already defaults it to ``"local"``, so every harness
-#: below names the kernel on BOTH sides. Leaving the reference side to its
-#: default would compare ``"local"`` against ``"takimoto"`` and report the
-#: difference between two kernels as a compatibility break.
+#: that added it) and already defaults it to ``"local"``; every harness below
+#: names the kernel on both sides. This tree accepts ``"local"`` only (issue
+#: #253); the one harness that runs the reference revision's ``"takimoto"``
+#: compares it with this tree's ``"local"`` where the two kernels are the
+#: same (a one-band Hubbard model).
 DEVELOP_COMMIT = "add6dc44d930e1c11cdfb3c70df7ae28bd3b95be"
+
+
+#: Version stamps that this branch deliberately moves relative to the
+#: reference revision: ``{member: (reference value, this tree's value)}``.
+#: ``sc_vertex_version`` 3 marks the bond placement of issue #232.
+MOVED_STAMPS = {"sc_vertex_version": (2, 3)}
+
+
+#: numpy major version of this interpreter: the round-off allowance of
+#: :func:`_assert_same_to_roundoff` applies below 2 only
+NUMPY_BELOW_2 = int(np.__version__.split(".")[0]) < 2
+
+#: relative tolerance (to the array's scale) of the floating-point members
+#: of the two develop comparisons on numpy < 2. Since #309 the Matsubara
+#: transforms return C-ordered arrays, and with numpy < 2 the downstream FFT
+#: and BLAS calls then take other memory paths. Measured on a Linux
+#: numpy 1.26 host: up to ~2.2e-16 relative to the array's scale (green
+#: 2.2e-16, sigma 1.6e-16, chiq_c 2.5e-17, chi0q 4e-18), i.e. last-bit
+#: drift; 1e-12 leaves margin while still failing any physics change.
+ROUNDOFF_RTOL = 1e-12
+
+
+def _float_components(a):
+    """The real floating-point components of ``a``: ``[a]`` for a real
+    array, ``[a.real, a.imag]`` for a complex one."""
+    return [a.real, a.imag] if a.dtype.kind == "c" else [a]
+
+
+def _assert_same_to_roundoff(test, x, y, label):
+    """Assert that archive member ``x`` equals the reference's ``y``.
+
+    Shape and dtype always match exactly; integers, booleans and strings
+    exactly. Floating-point arrays are compared per real component (the real
+    and imaginary parts of a complex array independently, so that e.g.
+    nan+1j and nan+2j, or nan+1j and 2+nanj, are different): every component
+    must be NaN, +inf or -inf in exactly the same positions, and the finite
+    components must be
+
+    * exactly equal with numpy >= 2: there the C-ordered Matsubara
+      transforms of #309 are a no-op for the downstream FFT/BLAS results,
+      so any difference is a real change;
+    * within ROUNDOFF_RTOL times the largest finite component magnitude of
+      the two arrays with numpy < 2, where the C-ordered layout sends those
+      calls down other memory paths that move the last bits."""
+    x, y = np.asarray(x), np.asarray(y)
+    test.assertEqual(x.shape, y.shape, label)
+    test.assertEqual(x.dtype, y.dtype, label)
+    if x.dtype.kind not in "fc":
+        test.assertTrue(np.array_equal(x, y), label)
+        return
+    cx, cy = _float_components(x), _float_components(y)
+    for a, b in zip(cx, cy):
+        for cls in (np.isnan, np.isposinf, np.isneginf):
+            test.assertTrue(np.array_equal(cls(a), cls(b)), (label, cls.__name__))
+    fins = [np.isfinite(a) for a in cx]
+    if not NUMPY_BELOW_2:
+        for a, b, fin in zip(cx, cy, fins):
+            test.assertTrue(np.array_equal(a[fin], b[fin]), label)
+        return
+    scale = max(float(np.abs(c[fin]).max(initial=0.0))
+                for comps in (cx, cy) for c, fin in zip(comps, fins))
+    for a, b, fin in zip(cx, cy, fins):
+        test.assertLessEqual(float(np.abs(a[fin] - b[fin]).max(initial=0.0)),
+                             ROUNDOFF_RTOL * scale, label)
+
+
+def moved_stamp(member, reference, mine):
+    """True for a member listed in :data:`MOVED_STAMPS`, after checking that
+    the two values are exactly the recorded pair; False otherwise."""
+    if member not in MOVED_STAMPS:
+        return False
+    got = (int(np.asarray(reference)), int(np.asarray(mine)))
+    if got != MOVED_STAMPS[member]:
+        raise AssertionError("{}: expected the stamp pair {} (reference, this tree), "
+                             "got {}".format(member, MOVED_STAMPS[member], got))
+    return True
 
 
 #: When this is set to a true-ish value, a reference checkout that is
@@ -200,31 +400,80 @@ def _hermitian_density(shape, norb, seed):
                         axes=(0, 1, 2)).reshape(nvol, norb, norb)
 
 
-def _legacy_tables(tables):
-    """``tables`` with the documented-orientation step UNDONE, i.e. the
-    tables the reference revision builds from the same declaration.
-
-    :func:`hwave.solver.hartree_fock._orient_documented` is an involution
-    (the conjugate transpose at fixed ``r``, with ``r = 0`` untouched), so
-    applying it a second time to each oriented type restores the reference
-    revision's table exactly -- no second source tree and no
-    re-implementation of the old builder."""
-    from hwave.solver import hartree_fock as hf
-    inter = dict(tables.inter_table)
-    # the source's own list, not a copy of it: the undo has to cover exactly
-    # the set the builder orients (hartree_fock._ORIENTED_TYPES)
-    for t in hf._ORIENTED_TYPES:
-        if inter.get(t) is not None:
-            inter[t] = hf._orient_documented(inter[t])
-    return hf.InteractionTables(inter, tables.spin_table, tables.discarded)
-
-
 def _members(d, files=_FILES):
     out = {}
     for f in files:
         z = np.load(os.path.join(d, f))
         out[f] = {k: z[k] for k in z.files}
     return out
+
+
+class TestAssertSameToRoundoff(unittest.TestCase):
+    """The comparison helper of the develop comparisons, on both sides of
+    its numpy version gate (patched)."""
+
+    def _check(self, x, y, below_2):
+        mod = sys.modules[__name__]
+        saved = mod.NUMPY_BELOW_2
+        mod.NUMPY_BELOW_2 = below_2
+        try:
+            _assert_same_to_roundoff(self, np.asarray(x), np.asarray(y), "case")
+        finally:
+            mod.NUMPY_BELOW_2 = saved
+
+    def _passes(self, x, y):
+        for below_2 in (False, True):
+            with self.subTest(below_2=below_2):
+                self._check(x, y, below_2)
+
+    def _fails(self, x, y, below_2=(False, True)):
+        for b2 in below_2:
+            with self.subTest(below_2=b2):
+                with self.assertRaises(AssertionError):
+                    self._check(x, y, b2)
+
+    def test_identical_arrays_pass(self):
+        nan, inf = np.nan, np.inf
+        self._passes([1.0, nan, inf, -inf], [1.0, nan, inf, -inf])
+        self._passes([1 + 2j, complex(nan, 1), complex(2, -inf)],
+                     [1 + 2j, complex(nan, 1), complex(2, -inf)])
+        self._passes([nan, inf, -inf], [nan, inf, -inf])          # all non-finite
+        self._passes([complex(nan, inf)], [complex(nan, inf)])
+
+    def test_roundoff_only_below_numpy_2(self):
+        x = np.array([1.0, 2.0, -3.0])
+        y = x * (1 + 2.2e-16 * np.array([1, 0, 1]))
+        y[0] = np.nextafter(1.0, 2.0)
+        self._check(x, y, True)
+        self._fails(x, y, below_2=(False,))
+        z = np.array([1 + 1j, 2 - 3j])
+        self._check(z, z + complex(0, 4.4e-16), True)
+        self._fails(z, z + complex(0, 4.4e-16), below_2=(False,))
+
+    def test_real_change_fails_both(self):
+        self._fails([1.0, 2.0], [1.0, 2.0 * (1 + 1e-9)])
+        self._fails([1 + 1j], [1 + 1.000001j])
+
+    def test_nonfinite_placement(self):
+        nan, inf = np.nan, np.inf
+        self._fails([nan, 1.0], [1.0, nan])
+        self._fails([inf], [-inf])
+        self._fails([inf], [nan])
+        self._fails([complex(nan, 1)], [complex(nan, 2)])
+        self._fails([complex(nan, 1)], [complex(2, nan)])
+        self._fails([complex(1, inf)], [complex(1, -inf)])
+        self._fails([nan, inf], [nan, -inf])                         # all non-finite
+
+    def test_dtype_and_shape_mismatch(self):
+        self._fails(np.array([1.0], np.float64), np.array([1.0], np.float32))
+        self._fails(np.array([1.0]), np.array([1.0 + 0j]))
+        self._fails(np.array([1, 2]), np.array([1.0, 2.0]))
+        self._fails(np.array([1.0, 2.0]), np.array([[1.0, 2.0]]))
+
+    def test_non_float_exact(self):
+        self._passes(np.array(["local"]), np.array(["local"]))
+        self._fails(np.array(["local"]), np.array(["takimoto"]))
+        self._fails(np.array([1, 2]), np.array([1, 3]))
 
 
 class TestCompatibility(unittest.TestCase):
@@ -235,66 +484,18 @@ class TestCompatibility(unittest.TestCase):
             self.skipTest(why)
         return dev
 
-    def test_takimoto_numerical_members_equal_develop(self):
-        """The paths this branch did NOT move: every numerical archive
-        member of a ``"takimoto"`` run without the Hartree-Fock term is
-        ``np.array_equal`` to the reference revision's, on a fixture with
-        INTER-ORBITAL off-site rows and on an on-site one.
-
-        Scope, after the interaction-row orientation change (issue #193,
-        spec 2026-09-16 section 2.4): reading an off-site row ``(r, a, b, v)``
-        in the documented orientation changes three paths -- the FLEX
-        Hartree-Fock term (``flex_hartree_fock``), the local second-order
-        kernel's off-site vertex (``flex_second_order = "local"``) and the
-        bond gate, which reads the rows through the Hartree-Fock term. The
-        legacy kernel ``"takimoto"`` without the Hartree-Fock term is not
-        one of them: its vertex is the q-space density block, which the
-        orientation of the real-space row does not enter. That is the
-        identity asserted here, and its counterpart -- what the moved paths
-        DO produce -- is recorded as fixed state in
-        ``tests/test_flex_orientation_baseline.py`` (the gate-on case that
-        used to sit in this list is its ``smoke`` vector, under both
-        kernels) and pinned against develop at the Hartree-Fock map itself
-        by :meth:`test_hf_map_equals_develop_on_the_reversed_declaration`
-        below and by
-        ``tests/test_flex_hf_scf.py::TestG0Off::
-        test_first_map_static_equals_develop_on_the_reversed_declaration``.
-        """
-        dev = self._develop()
-        here = os.getcwd()
-        compared = 0
-        for path, inter, extra, files in (
-                (_IN2, {"CoulombInter": "coulombinter.dat"}, None, _FILES),
-                (_IN2, {"CoulombInter": "onsite_inter.dat",
-                        "CoulombIntra": "coulombintra.dat"}, None, _FILES)):
-            with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-                # "takimoto" on BOTH sides: the reference revision defaults
-                # the key to "local" (see DEVELOP_COMMIT)
-                _run(dev, os.path.abspath(path), inter, a, "takimoto", extra)
-                _run(here, os.path.abspath(path), inter, b, "takimoto", extra)
-                ma, mb = _members(a, files), _members(b, files)
-                for f in ma:
-                    for k, v in ma[f].items():
-                        self.assertIn(k, mb[f], (f, k))
-                        # "b" too: boolean members such as density_target_enforced
-                        # are part of the archive and must not drift either
-                        if np.asarray(v).dtype.kind in "fciub":
-                            np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
-                                                          err_msg=str((f, k)))
-                            compared += 1
-        # anti-vacuity: the member list must not be empty
-        self.assertGreater(compared, 10)
-
     def test_local_on_onsite_only_input_equals_develop(self):
         """The other unmoved path: ``flex_second_order = "local"`` on an
-        input with NO off-site two-body row is byte-identical to the
-        reference revision's.
+        input with NO off-site two-body row equals the reference revision's
+        (exactly with numpy >= 2; with numpy < 2 integers exactly and
+        floating-point values to round-off since #309, see
+        :func:`_assert_same_to_roundoff`).
 
         The orientation change touches the kernel's OFF-SITE vertex only
         (``second_order.accumulate_batch``'s ``vpair`` terms), so on an
         on-site fixture the exact local kernel must be untouched. Without
         this case the identity above would leave the impression that only
-        the legacy kernel is unchanged."""
+        the Hartree-Fock map is unchanged."""
         dev = self._develop()
         here = os.getcwd()
         inter = {"CoulombInter": "onsite_inter.dat", "CoulombIntra": "coulombintra.dat"}
@@ -306,18 +507,25 @@ class TestCompatibility(unittest.TestCase):
             for f in ma:
                 for k, v in ma[f].items():
                     self.assertIn(k, mb[f], (f, k))
+                    if moved_stamp(k, v, mb[f][k]):
+                        continue
                     if np.asarray(v).dtype.kind in "fciub":
-                        np.testing.assert_array_equal(np.asarray(mb[f][k]), np.asarray(v),
-                                                      err_msg=str((f, k)))
+                        _assert_same_to_roundoff(self, mb[f][k], v, (f, k))
                         compared += 1
             self.assertGreater(compared, 10)
             # anti-vacuity: the kernel really ran on a non-trivial sigma
             self.assertGreater(np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max(), 1e-6)
 
-    def test_local_equals_takimoto_on_hubbard_only(self):
+    def test_local_equals_the_retired_takimoto_on_hubbard_only(self):
+        """On a one-band Hubbard model the exact local second order IS the
+        Takimoto-Hotta-Ueda one, so this tree's ``"local"`` run reproduces
+        the reference revision's ``"takimoto"`` run (the kernel of H-wave
+        2.0.0 and earlier, retired by issue #253) to round-off. One orbital:
+        the ring's pair orientation (issue #251) is the identity there."""
+        dev = self._develop()
         here = os.getcwd()
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
-            _run(here, os.path.abspath(_IN1), {"CoulombIntra": "coulombintra.dat"}, a, "takimoto")
+            _run(dev, os.path.abspath(_IN1), {"CoulombIntra": "coulombintra.dat"}, a, "takimoto")
             _run(here, os.path.abspath(_IN1), {"CoulombIntra": "coulombintra.dat"}, b, "local")
             ma, mb = _members(a), _members(b)
             compared = 0
@@ -325,6 +533,8 @@ class TestCompatibility(unittest.TestCase):
                 scale = max([1.0] + [np.abs(np.asarray(v)).max() for v in ma[f].values()
                                      if np.asarray(v).dtype.kind in "fc"])
                 for k, v in ma[f].items():
+                    if moved_stamp(k, v, mb[f][k]):
+                        continue
                     if np.asarray(v).dtype.kind in "fc":
                         np.testing.assert_allclose(np.asarray(mb[f][k]), np.asarray(v), rtol=1e-14,
                                                    atol=1e-14 * scale, err_msg=str((f, k)))
@@ -333,14 +543,13 @@ class TestCompatibility(unittest.TestCase):
             # anti-vacuity: the kernel actually ran on a non-trivial sigma
             self.assertGreater(np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max(), 1e-6)
 
-    def test_calc_veff_general_local_equals_takimoto_on_hubbard(self):
+    def test_calc_veff_general_equals_takimoto_formula_on_hubbard(self):
         """The Hubbard-only identity of spec section 3 at the METHOD level:
         with CoulombIntra as the only interaction the local kernel's
         3/2 Us (chi_s - chibar) Us + 1/2 Uc (chi_c - chibar) Uc + W2 equals the
-        legacy assembly element-wise. In-process, no subprocess, and it is the
-        only direct exercise of _calc_veff_general(second_order="local") --
-        every other caller in the suite omits the keyword and takes
-        "takimoto"."""
+        Takimoto-Hotta-Ueda assembly 3/2 Us chi_s Us + 1/2 Uc chi_c Uc
+        - 1/4 (Us + Uc) chibar (Us + Uc) (the retired kernel, formed here)
+        element-wise. In-process, no subprocess."""
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.flex as flex_mod
         beta = 0.5
@@ -364,20 +573,22 @@ class TestCompatibility(unittest.TestCase):
                 chi0q, Us, Uc = s._inflate_chi0q_and_ham_general(
                     chi0q_raw, s.ham_info.ham_inter_q)
                 chi_s, chi_c = s._solve_channels_general(chi0q, Us, Uc)
-                v_thu = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc,
-                                             second_order="takimoto")
+                ndx = norb * norb
+                shape = (s.nmat, s.lattice.nvol, ndx, ndx)
+                c0 = chi0q.reshape(shape)
+                UsB, UcB, UpB = Us[np.newaxis], Uc[np.newaxis], (Us + Uc)[np.newaxis]
+                v_thu = (1.5 * (UsB @ chi_s.reshape(shape) @ UsB)
+                         + 0.5 * (UcB @ chi_c.reshape(shape) @ UcB)
+                         - 0.25 * (UpB @ c0 @ UpB))
                 v_loc = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc,
-                                             factors=s._second_order_factors,
-                                             second_order="local")
+                                             factors=s._second_order_factors)
                 scale = np.abs(v_thu).max()
                 self.assertGreater(scale, 1e-6)        # anti-vacuity
                 self.assertEqual(v_loc.shape, v_thu.shape)
                 np.testing.assert_allclose(v_loc, v_thu, rtol=1e-14, atol=1e-14 * scale)
-                # the two branches really are different code paths
+                # the kernel needs its compiled factors
                 with self.assertRaises(ValueError):
-                    s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, second_order="local")
-                with self.assertRaises(ValueError):
-                    s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, second_order="nonsense")
+                    s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc)
 
     def test_calc_veff_general_batch_path_equals_the_dense_assembly(self):
         """The local branch's frequency batching (spec 2.3): whatever nb the
@@ -417,48 +628,42 @@ class TestCompatibility(unittest.TestCase):
                     chi0q, Us, Uc = s._inflate_chi0q_and_ham_general(
                         s._calc_chi0q(G, np.zeros_like(G), beta)[0], s.ham_info.ham_inter_q)
                     chi_s, chi_c = s._solve_channels_general(chi0q, Us, Uc)
-                    v = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=f,
-                                             second_order="local")
+                    v = s._calc_veff_general(chi0q, chi_s, chi_c, Us, Uc, factors=f)
                     ndx = s.norb ** 2
                     shape = (s.nmat, s.lattice.nvol, ndx, ndx)
                     c0 = chi0q.reshape(shape)
                     UsB, UcB = Us[np.newaxis], Uc[np.newaxis]
-                    ref = (1.5 * (UsB @ (chi_s.reshape(shape) - c0) @ UsB)
-                           + 0.5 * (UcB @ (chi_c.reshape(shape) - c0) @ UcB)
-                           + dense_w2(c0, f))
+                    ring = (1.5 * (UsB @ (chi_s.reshape(shape) - c0) @ UsB)
+                            + 0.5 * (UcB @ (chi_c.reshape(shape) - c0) @ UcB))
+                    no = s.norb
+                    # the ring in the kernel's pair orientation (issue #251)
+                    ring = ring.reshape(*shape[:2], no, no, no, no).transpose(
+                        0, 1, 3, 2, 5, 4).reshape(shape)
+                    ref = ring + dense_w2(c0, f)
                     scale = np.abs(ref).max()
                     self.assertGreater(scale, 1e-6)                 # anti-vacuity
                     np.testing.assert_allclose(v, ref, rtol=0, atol=1e-13 * scale)
 
-    def test_hf_map_equals_develop_on_the_reversed_declaration(self):
-        """Spec 2.4: ``hf_map_new(F, rho) == hf_map_develop(F^rev, rho)`` at a
-        fixed density (``np.array_equal``).
-
-        This is the COMPATIBILITY statement of the orientation change for the
-        mean-field term: nothing is lost, the same physics is now written the
-        documented way round. An off-site row ``(r, a, b, v)`` that used to
-        mean ``v n_{j,b} n_{j+r,a}`` means ``v n_{j,a} n_{j+r,b}`` here, so a
-        user who wants the OLD result reverses the displacement of every
-        off-site row (``F -> F^rev``) and gets it back exactly.
-
-        The reference map is reproduced in process rather than through a
-        second source tree: it is today's map on the LEGACY tables of
-        ``F^rev``, i.e. ``build_flex_hf_tables(F^rev)`` with the orientation
-        step undone (:func:`_legacy_tables`; ``_orient_documented`` is an
-        involution). The end-to-end version of the same statement, against
-        the real reference tree and through ``solve``, is
+    def test_hf_map_reads_the_declaration_as_develop_did(self):
+        """``hf_map(F, rho)`` is the map of the declaration ITSELF, as on the
+        reference revision: an off-site row ``(r, a, b, v)`` means
+        ``v n_{j,a} n_{j+r,b}`` -- the bond of a Transfer row ``(r, a, b)``
+        (Wannier90 / RESPACK, issue #232). The tables are compared with an
+        independent closure of the declaration, and the fixture is checked to
+        tell ``F`` from its reversal ``F^rev``, so a reversal step that crept
+        back in would fail here. The end-to-end version, against the real
+        reference tree and through ``solve``, is
         ``tests/test_flex_hf_scf.py::TestG0Off::
-        test_first_map_static_equals_develop_on_the_reversed_declaration``.
+        test_first_map_static_equals_develop_on_the_same_declaration``.
         """
         import hwave.qlmsio.read_input_k as read_input_k
         from hwave.solver import flex_hf
+        from hwave.solver import hartree_fock as hf
         from hwave.solver.kgrid import reverse_fft_axes
         shape, norb = (4, 4, 1), 2
-        # the fixture's declaration, read once; its off-site content carries
-        # the INTER-ORBITAL rows v_12(-x) = 1 / v_21(+x) = 1, which is what
-        # makes F^rev a different declaration at all (reversing the
-        # displacement of an orbital-DIAGONAL row is the identity on the
-        # Hermitian-closed table)
+        # the fixture's off-site content carries the INTER-ORBITAL rows
+        # v_12(-x) = 1 / v_21(+x) = 1, which is what makes F^rev a different
+        # declaration at all
         idict = {"path_to_input": _IN2, "Geometry": "geom.dat",
                  "Transfer": "transfer.dat", "CoulombInter": "coulombinter.dat"}
         rows = read_input_k.QLMSkInput(
@@ -468,34 +673,29 @@ class TestCompatibility(unittest.TestCase):
                                   for (ir, ov), v in rows.items()}}
         self.assertNotEqual(F["CoulombInter"], F_rev["CoulombInter"])   # anti-vacuity
         rho = _hermitian_density(shape, norb, seed=20260916)
-        # the density really is in the convention hf_map requires
         rev = np.conjugate(np.swapaxes(
             reverse_fft_axes(rho.reshape(*shape, norb, norb), (0, 1, 2)), -1, -2))
         self.assertLess(np.abs(rho - rev.reshape(rho.shape)).max(), 1e-14)
         t_new = flex_hf.build_flex_hf_tables(F, norb, shape)
-        t_rev = flex_hf.build_flex_hf_tables(F_rev, norb, shape)
+        # the independent closure of F (the reference revision's builder)
+        tab = np.zeros((*shape, norb, norb), dtype=np.complex128)
+        for (irvec, orbvec), v in rows.items():
+            tab[(*irvec, *orbvec)] += v
+        np.testing.assert_array_equal(t_new.inter_table["CoulombInter"],
+                                      hf._reverse_closed(tab))
         new = flex_hf.hf_map(rho, t_new, shape, norb)
-        reference = flex_hf.hf_map(rho, _legacy_tables(t_rev), shape, norb)
+        on_rev = flex_hf.hf_map(rho, flex_hf.build_flex_hf_tables(F_rev, norb, shape),
+                                shape, norb)
         self.assertGreater(np.abs(new).max(), 1e-6)                    # anti-vacuity
-        np.testing.assert_array_equal(new, reference)
-        # anti-vacuity of the REVERSAL: today's map on F differs from the
-        # reference map on F (the legacy tables of the SAME declaration), so
-        # the equality above is a property of F^rev, not of the map
-        legacy_on_F = flex_hf.hf_map(rho, _legacy_tables(t_new), shape, norb)
-        gap = np.abs(new - legacy_on_F).max() / np.abs(new).max()
+        gap = np.abs(new - on_rev).max() / np.abs(new).max()
         self.assertGreater(gap, 1e-3,
-                           "the orientation step does not change this fixture's "
-                           "Hartree-Fock map ({:.3e} relative); the equivalence "
-                           "above would be vacuous".format(gap))
+                           "the fixture's Hartree-Fock map does not see the reversal "
+                           "({:.3e} relative); the check above would be vacuous".format(gap))
 
     def test_factors_lifecycle_and_d7_at_construction(self):
-        from tests.test_second_order_factors import _split_for
         import hwave.solver.flex as flex_mod
         import hwave.qlmsio.read_input_k as read_input_k
         from hwave.solver.second_order import DegenerateRowError
-        s, _ = _split_for({"CoulombIntra": [(0, 0, 0, 1, 1, 1.0, 0.0)]})   # takimoto in the helper
-        self.assertIsNone(s._second_order_factors)
-        self.assertIsNone(s._second_order_device)
         idict = {"path_to_input": _IN2, "Geometry": "geom.dat", "Transfer": "transfer.dat",
                  "CoulombInter": "coulombinter.dat"}
         r = read_input_k.QLMSkInput({"path_to_input": _IN2, "interaction": idict})
@@ -505,8 +705,9 @@ class TestCompatibility(unittest.TestCase):
                                                     "enable_spin_orbital": False,
                                                     "calc_scheme": "general"})
         self.assertIsNotNone(s._second_order_factors)
+        self.assertIsNone(s._second_order_device)       # mirrored per solve only
         self.assertFalse(s._second_order_factors.A_on[0].flags.writeable)
-        # D7 at construction, 'local' only
+        # D7 at construction
         with tempfile.TemporaryDirectory() as d:
             for f in ("geom.dat", "transfer.dat", "coulombintra.dat"):
                 shutil.copy(os.path.join(_IN2, f), d)
@@ -520,11 +721,13 @@ class TestCompatibility(unittest.TestCase):
                 flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par,
                                                         "enable_spin_orbital": False,
                                                         "calc_scheme": "general"})
+            # the retired kernel (issue #253), which used to skip the
+            # factors, is refused before them
             par2 = dict(par, flex_second_order="takimoto")
-            s2 = flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par2,
-                                                         "enable_spin_orbital": False,
-                                                         "calc_scheme": "general"})
-            self.assertIsNone(s2._second_order_factors)
+            with self.assertRaisesRegex(ValueError, "was retired"):
+                flex_mod.FLEX(r.get_param("ham"), {}, {"mode": "FLEX", "param": par2,
+                                                        "enable_spin_orbital": False,
+                                                        "calc_scheme": "general"})
 
 
 
@@ -615,6 +818,27 @@ class TestDevelopCheckoutGuard(unittest.TestCase):
             self.skipTest(why)
         self.assertIsNone(dev)
         self.assertIn("cannot read the revision", why)
+
+
+class TestComparisonThreadPinning(unittest.TestCase):
+    """Both sides of an exact comparison run with one BLAS/OpenMP thread,
+    whatever the caller's environment says."""
+
+    def test_both_helpers_pin_the_thread_counts(self):
+        with mock.patch.dict(os.environ, {"OPENBLAS_NUM_THREADS": "8",
+                                          "OMP_NUM_THREADS": "8"}):
+            for env in (own_tree_subprocess_env("/tmp/here"),
+                        reference_subprocess_env("/tmp/reference")):
+                for key in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS",
+                            "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+                            "BLIS_NUM_THREADS"):
+                    self.assertEqual(env[key], "1", key)
+
+    def test_own_tree_env_keeps_coverage_hooks(self):
+        with mock.patch.dict(os.environ, {"COV_CORE_SOURCE": "src/hwave"}):
+            env = own_tree_subprocess_env("/tmp/here")
+        self.assertEqual(env["COV_CORE_SOURCE"], "src/hwave")
+        self.assertEqual(env["PYTHONPATH"].split(os.pathsep), ["/tmp/here/src", "/tmp/here"])
 
 
 class TestReferenceSubprocessEnv(unittest.TestCase):

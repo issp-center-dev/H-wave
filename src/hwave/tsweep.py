@@ -95,11 +95,12 @@ def preflight(base, cont):
         # The per-rung summary reports the parity-selected leading eigenpair
         # (Re/Im/parity), which sc.py writes to eigenvalue.dat only in the
         # "# Eigenvalue analysis" block -- present only for solver_mode
-        # "eigenvalue"/"both".  The default "iteration" writes a bare leading
+        # "eigenvalue"/"both".  The opt-in "iteration" writes a bare leading
         # value with no parity/Im and no index-0 row, which parse_leading_eig
         # cannot read.  Require an eigenvalue-analysis mode up front rather than
         # failing on rung 0.
-        smode = str(base["eliashberg"].get("solver_mode", "iteration"))
+        from hwave.sc import DEFAULT_SOLVER_MODE
+        smode = str(base["eliashberg"].get("solver_mode", DEFAULT_SOLVER_MODE))
         if smode not in ("eigenvalue", "both"):
             raise ValueError(
                 "[eliashberg] solver_mode = %r cannot drive a temperature "
@@ -107,12 +108,24 @@ def preflight(base, cont):
                 "eigenpair from the eigenvalue-analysis block, which is only "
                 "written for solver_mode 'eigenvalue' or 'both'. Set "
                 "[eliashberg] solver_mode = \"eigenvalue\"." % smode)
-        # The Eliashberg solver rejects spin-orbital mode (#83); fail in
-        # preflight rather than after every expensive FLEX rung has run
+        # The temperature sweep rejects spin-orbital mode (#83; the static
+        # and the on-site dynamic hwave_sc entries support it, the sweep's
+        # seed chaining does not yet, #284); fail in preflight rather than
+        # after every expensive FLEX rung has run
         # (with keep_going, ALL rungs would run before ALL rejections).
         # FLEX-only sweeps (run_eliashberg = false) stay allowed.
         from hwave.sc import reject_spin_orbital_mode
         reject_spin_orbital_mode(base)
+    # A FLEX-only spin-orbital sweep runs every rung from the bare state: the
+    # spin-orbital FLEX accepts no sigma_init seed (#83), so the warm start
+    # that chains each rung's self-energy into the next would refuse rung 1
+    # after rung 0 has run. Fail here instead, naming the setting.
+    from hwave.sc import _resolve_spin_orbital_flag
+    if _resolve_spin_orbital_flag(base) and cont.get("warm_start", True):
+        raise ValueError(
+            "[mode] enable_spin_orbital = true: the spin-orbital FLEX accepts no "
+            "sigma_init seed, so a temperature sweep cannot warm-start one rung from "
+            "the previous one; set [continuation] warm_start = false.")
 
 
 def make_rung_dicts(base, T, rung_out, run_eliashberg,
@@ -142,10 +155,30 @@ def make_rung_dicts(base, T, rung_out, run_eliashberg,
 
 
 def parse_leading_eig(path):
+    """``(Re, Im, match)`` of the reported leading eigenpair of an eigenvalue
+    file: the ``# leading_eigenvalue = <Re> <Im>`` line of the static solver
+    when present (``match`` 1), else the index-0 row of the table (dynamic
+    files and files written before that line existed).
+
+    Raises ``ValueError`` when the file records ``eigen_converged = false`` or
+    the leading eigenpair is not finite: such a rung has no eigenvalue, and
+    its gap (a placeholder) must not seed the next rung."""
     if not os.path.exists(path):
         raise ValueError("eigenvalue file not found: %s" % path)
+    leading = None
     for line in open(path, encoding="utf-8"):
         s = line.strip()
+        if s.startswith("#") and "leading_eigenvalue" in s:
+            # the static solver's machine-readable reported leader (it is
+            # also row 0 of the table); preferred over the table
+            parts = s.split("leading_eigenvalue", 1)[1].strip(" =").split()
+            if len(parts) >= 2:
+                leading = (float(parts[0]), float(parts[1]))
+        if s.startswith("#") and "eigen_converged" in s:
+            flag = s.split("eigen_converged", 1)[1].strip(" =").split()
+            if flag and flag[0].lower() == "false":
+                raise ValueError("%s records eigen_converged = false: the "
+                                 "eigen-solver did not converge" % path)
         if not s or s.startswith("#"):
             continue
         cols = s.split()
@@ -157,6 +190,11 @@ def parse_leading_eig(path):
             continue
         re, im = float(cols[1]), float(cols[2])
         match = int(cols[4]) if len(cols) >= 5 else -1
+        if leading is not None:
+            re, im, match = leading[0], leading[1], 1
+        if not (math.isfinite(re) and math.isfinite(im)):
+            raise ValueError("the leading eigenpair in %s is not finite "
+                             "(%r, %r)" % (path, re, im))
         return re, im, match
     raise ValueError("no leading (index 0) eigenpair row in %s" % path)
 

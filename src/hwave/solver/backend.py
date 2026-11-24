@@ -30,6 +30,30 @@ def as_bool(value):
     return bool(value)
 
 
+def strict_bool(value, name):
+    """Strictly parse a physics-relevant boolean config switch.
+
+    :func:`as_bool` reads any unrecognized string ("ture", "garbage") as
+    False and any nonzero integer as True -- for a switch that changes the
+    physics (or gates a rejection), a spelling error must fail loudly
+    instead of silently flipping the behavior. Accepted: real booleans,
+    integers 0/1, and the strings true/false/yes/no/on/off/0/1 (case- and
+    whitespace-insensitive).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "yes", "on", "1"):
+            return True
+        if v in ("false", "no", "off", "0"):
+            return False
+    raise ValueError(
+        "{} = {!r} is not a recognized boolean; use "
+        "true/false (or yes/no, on/off, 0/1).".format(name, value))
+
 def _import_cupy():
     """Import and return cupy (separated out so tests can monkeypatch a
     missing installation)."""

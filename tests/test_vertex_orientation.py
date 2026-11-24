@@ -364,12 +364,12 @@ class TestBuildersAgreeOnTheDensityBlock(unittest.TestCase):
             np.max(np.abs(sc_V - sc_V.transpose(0, 2, 1))), 1e-6)
         np.testing.assert_allclose(sc_V, rpa_V, rtol=0.0,
                                    atol=1e-12 * np.max(np.abs(rpa_V)))
-        # ...and both are the orientation the exact tests above selected.
-        # Production labels q with the documented e^{+iqR} sign since #133,
-        # while v_of_q (shared with the self-contained ED tests above)
-        # keeps its internal e^{-iqR}; the analytic expectation at
-        # production's q is therefore v_of_q(-q).
-        want = np.array([v_of_q(-q).T for q in qs])
+        # ...and both carry v_of_q(q)^T, the vertex the exact tests above
+        # select, at production's q. That is the row on the bond of its
+        # Transfer row, verified end to end against independent real-space
+        # references in tests/test_two_body_placement.py (issue #232; an
+        # earlier revision pinned v_of_q(-q), the opposite bond).
+        want = np.array([v_of_q(q).T for q in qs])
         np.testing.assert_allclose(sc_V, want, rtol=0.0, atol=1e-12)
 
 
@@ -402,9 +402,9 @@ class TestAllInteractionTypesTransposed(unittest.TestCase):
 
         qs = 2.0 * np.pi * np.arange(NSITE) / NSITE
         vr = {((R, 0, 0), (a, b)): v for (R, a, b), v in BONDS.items()}
-        # production q labels follow the documented e^{+iqR} since #133;
-        # v_of_q keeps its internal e^{-iqR}, so evaluate it at -q
-        want = np.array([v_of_q(-q).T for q in qs])
+        # the vertex at production's q is v_of_q(q) -- see the comment at
+        # the end of TestBuildersAgreeOnTheDensityBlock (issue #232)
+        want = np.array([v_of_q(q).T for q in qs])
         self.assertGreater(np.max(np.abs(want - want.transpose(0, 2, 1))), 1e-6)
 
         for itype in self.TRANSPOSED:

@@ -148,11 +148,23 @@ The file contains the following sections:
 
 This section controls the Eliashberg solver. Key parameters:
 
-- ``solver_mode``: ``"iteration"`` (self-consistent power iteration),
-  ``"eigenvalue"`` (Arnoldi eigenvalue analysis), or ``"both"``.
+- ``solver_mode``: ``"eigenvalue"`` (Arnoldi eigenvalue analysis; the
+  default -- of ``hwave_sc`` since this version, and of the in-process FLEX
+  bond pairing step, ``[mode.param] longitudinal_bond_pairing``),
+  ``"iteration"`` (self-consistent power iteration; opt-in, to follow one
+  symmetry sector deliberately), or ``"both"``. The power iteration runs
+  with ``spectral_shift = "auto"`` unless told otherwise, and reports an
+  eigenvalue only when it converged; see :ref:`sc_eigen_convergence`.
 - ``chi0q_mode``: ``"load"`` reads :math:`\chi_0(\mathbf{q})` from the RPA output
   file; ``"calc"`` computes it internally; ``"flex"`` reads the dressed
-  susceptibilities from a FLEX run (required for ``frequency = "dynamic"``).
+  susceptibilities from a FLEX run (required for ``frequency = "dynamic"``
+  outside spin-orbital mode; see :ref:`sc_spin_orbital_dynamic`).
+  ``"calc"`` evaluates :math:`\chi_0(\mathbf{q})` at the zero bosonic
+  frequency only, the one frequency the static solve uses, so its memory is
+  :math:`O(N_k\,n_d^4)` instead of :math:`O(N_\mathrm{mat} N_k\,n_d^4)`
+  (:math:`N_k` k points, :math:`n_d` orbitals, :math:`2N` in spin-orbital
+  mode); the result equals the zero-frequency slice of the full-frequency
+  bubble to round-off. It writes no chi0q file.
 
   .. note::
 
@@ -165,6 +177,74 @@ This section controls the Eliashberg solver. Key parameters:
      can be poorly converged; production RPA/FLEX runs typically use
      ``coeff_tail = 1.0``. The chi0q file records the value it was produced
      with, and ``hwave_sc`` warns on a mismatch when loading.
+
+  .. _sc_mean_field_band_note:
+
+  .. note::
+
+     **Mean-field one-body band: assembly.** ``[file.input] trans_mod`` (the
+     one-body Hamiltonian written by UHFk) replaces the ``Transfer`` band;
+     ``green_init`` adds the Hartree-Fock mean field of its Green function to
+     the ``Transfer`` band; an
+     ``Extern`` field (``coeff_extern`` times the table) is added on top. With
+     ``chi0q_mode = "calc"`` or ``"load"`` (including
+     ``bond_channels = true`` without an external ``bond_green``),
+     ``hwave_sc`` uses this assembled band for
+     :math:`\chi_0(\mathbf{q})`, for the chemical potential and for the Green
+     function of the pairing kernel, so all three describe the same
+     Hamiltonian. The keys are case-insensitive. Only a spin-independent band
+     is supported, because the singlet/triplet pairing kernel has no spin
+     index.
+
+     **Spin check and** ``spin_free_tol``. A spin-dependent band (a magnetic
+     ``trans_mod`` or ``green_init``, or a finite ``Extern`` field) is refused
+     with an error before :math:`\chi_0(\mathbf{q})` is computed or loaded.
+     The check is made on the assembled one-body band (``trans_mod``, or the
+     ``Transfer`` band plus the Hartree-Fock term of ``green_init``, plus
+     ``coeff_extern`` times ``Extern``): its up-up and down-down blocks may
+     differ, and its spin-mixing blocks may be nonzero, by at most an
+     absolute :math:`10^{-10}` in energy units. This tolerance is the default
+     of ``spin_free_tol`` (below), which can raise or lower it. All entries
+     must be finite. A band whose :math:`\max|H - H^\dagger|` exceeds
+     :math:`\max(10^{-10}, 10^{-6}\max|H|)` is refused; a smaller deviation
+     above :math:`10^{-10}` (for example :math:`\pm R` rows rounded
+     independently) is replaced by the Hermitian part
+     :math:`(H + H^\dagger)/2`, with a warning. The ``green_init`` Green
+     function itself must also be spin-independent in every cell (up-up equal
+     to down-down, no spin-mixing block) within
+     :math:`\max(10^{-10}, \texttt{spin\_free\_tol})` on its dimensionless
+     entries: a magnetic ``green_init`` describes a magnetic state, whatever
+     the spin direction, and is refused (a magnetic mean-field input is not
+     supported by the spin-orbital route either yet, issue #273). A paramagnetic UHF
+     solution converged only loosely (for example ``EPS = 6`` from a random
+     start) can retain a splitting of order :math:`10^{-5}`; tighten the UHF
+     convergence, start UHF from a spin-symmetric state, or raise
+     ``spin_free_tol``. A state polarized by a Zeeman field runs with
+     ``[mode] enable_spin_orbital = true``; see :ref:`sc_spin_polarized`.
+
+     **Behaviour with** ``load``, **bond and FLEX inputs.** For ``"load"``,
+     give the same ``trans_mod`` / ``green_init`` / ``Extern`` as the RPA run
+     that wrote the chi0q file; there any deviation from Hermiticity above
+     :math:`10^{-10}` is refused instead of being replaced by the Hermitian
+     part, because the loaded chi0q was computed on the raw band. With
+     ``chi0q_mode = "flex"``, with ``frequency = "dynamic"``, and with an
+     external ``bond_green``, these keys are not used and a warning says so:
+     the susceptibilities and the Green function come from the FLEX run or
+     from the ``bond_green`` file.
+
+     ``green_init`` **and** ``trans_mod``. The ``green_init`` band is
+     :math:`T + \Sigma_{\rm HF}[G]`, the Hartree and Fock terms of every
+     interaction built exactly as UHFk builds its mean-field Hamiltonian
+     (with ``flag_fock = true``), so ``green_init`` and the ``trans_mod``
+     that a UHFk run with ``flag_fock = true`` (the default) writes for the
+     same solution define the same band. For a UHFk solution obtained with
+     ``flag_fock = false``, use its ``trans_mod`` (a Hartree-only band):
+     ``green_init`` would add the Fock term. For a ``SubShape`` UHFk state
+     that breaks the translation symmetry of the original lattice, neither
+     the saved ``green`` nor the saved ``trans_mod`` reproduces the converged
+     band when read back (issue #294). (Before issue #278 the ``green_init``
+     band left out the Fock term, and ``hwave_sc`` warned when a
+     Fock-carrying interaction was present.)
 
   .. warning::
 
@@ -183,9 +263,22 @@ This section controls the Eliashberg solver. Key parameters:
   equation with a frequency-dependent pairing vertex
   :math:`V(\mathbf{q}, i\omega_l)` and gap :math:`\phi(\mathbf{k}, i\omega_n)`;
   it requires ``chi0q_mode = "flex"`` (see
-  :ref:`the dynamic-frequency section <sc_dynamic_frequency>` below).
-- ``pairing_type``: ``"singlet"`` or ``"triplet"``.
-- ``init_gap``: Initial gap symmetry for iteration.
+  :ref:`the dynamic-frequency section <sc_dynamic_frequency>` below), except
+  in spin-orbital mode, which also accepts ``"calc"`` (see
+  :ref:`sc_spin_orbital_dynamic`).
+- ``pairing_type``: ``"singlet"`` or ``"triplet"``. Not set in spin-orbital
+  mode, where the gap is one spin-orbital matrix (see :ref:`sc_spin_orbital`).
+- ``init_gap``: Initial gap symmetry for iteration. The power iteration
+  stays in the lattice-symmetry sector of this seed and reports the largest
+  real part *of that sector* (see :ref:`sc_eigen_convergence`): set it to
+  the form factor of the symmetry you want to follow (``"d_x2y2"`` for a
+  :math:`d_{x^2-y^2}` singlet, ``"p_x"``/``"p_y"`` for a triplet, ...), or
+  use ``solver_mode = "eigenvalue"``, which is seed-independent, when the
+  leading symmetry is not known in advance. A form factor that is itself an
+  exact eigenvector of the kernel (possible on small or highly symmetric
+  lattices) gives ``NaN`` with the iteration, because the iteration then
+  cannot search its sector (see :ref:`sc_eigen_convergence`); use another
+  form factor, ``"random"``, or the eigenvalue solver.
   Options include ``"cos"`` (:math:`\cos(k_x+k_y+k_z)`),
   ``"d_x2y2"`` (:math:`\cos k_x - \cos k_y`), ``"random"``, etc.
   The full set of valid form factors is
@@ -199,17 +292,56 @@ This section controls the Eliashberg solver. Key parameters:
   ``"p_y"``/``"p_z"`` for the triplet channel, and ``"d_y2z2"`` — which has
   opposite-sign anti-nodes at :math:`(\pi,0)` and :math:`(0,\pi)`, unlike the
   nodal ``"d_yz"`` that vanishes there — for the in-plane :math:`d`-wave.
-- ``max_iter``: Maximum number of self-consistent iterations.
-- ``alpha``: Mixing parameter (0 = no mixing, 1 = full mixing of old solution).
+- ``max_iter``: Maximum number of self-consistent iterations (default
+  ``1000``). A power iteration that reaches it without converging reports no
+  eigenvalue (``NaN`` with ``eigen_converged = false``, see
+  :ref:`sc_eigen_convergence`). The shifted iteration (the default
+  ``spectral_shift = "auto"``) converges more slowly when the leading
+  eigenvalue is close to the next one relative to the spectral radius; raise
+  ``max_iter`` or use ``solver_mode = "eigenvalue"`` then.
+- ``alpha``: Mixing parameter of the power iteration (0 = no mixing, 1 = full
+  mixing of old solution). It is applied only without a spectral shift
+  (``spectral_shift = "none"``). With a shift (``"auto"``, the iteration's
+  default, or a number) it is not applied: the mixing acts as a second
+  shift and only slows the run (about twice as many steps at
+  ``alpha = 0.5``).
 - ``convergence_tol``: Convergence criterion on the gap function.
 - ``num_eigenvalues``: Number of eigenvalues to compute in eigenvalue mode.
-  On the dynamic path this now controls only how many eigenvalues are listed,
-  not which one is reported as leading: when the kernel conserves the channel's
-  even-frequency sector, the leading eigenvalue is taken from a symmetry-valid
-  solve restricted to that sector (see ``spectral_shift`` below), whose
-  largest-real eigenvalue does not depend on ``num_eigenvalues``.
+  It controls only how many eigenvalues are listed, not which one is
+  reported as leading. On the dynamic path, when the kernel conserves the
+  channel's even-frequency sector, the leading eigenvalue is taken from a
+  symmetry-valid solve restricted to that sector (see ``spectral_shift``
+  below). On the static non-spin-orbital path, when the kernel commutes with
+  parity, it is taken from a solve on the channel's parity sector; a
+  successful sector solve prepends that leader as one row to the global
+  eigenpairs, which follow parity-reordered (channel parity first) and not
+  merged -- normally ``num_eigenvalues`` of them, fewer when the operator
+  dimension limits the count (at most the dimension minus 2), so the leader's
+  state may appear twice. In both cases the leading largest-real
+  eigenvalue does not depend on ``num_eigenvalues``.
 - ``eigenvalue_method``: ``"arnoldi"`` (default), ``"subspace"``, or
   ``"shift-invert-gmres"`` / ``"shift-invert-bicgstab"`` / ``"shift-invert-lgmres"``.
+- ``spin_free_tol``: absolute tolerance, in energy units, of the
+  spin-independence check of the mean-field one-body band (see the
+  ``chi0q_mode`` note above; default ``1e-10``, a finite number
+  :math:`\geq 0`). When the measured up/down difference or spin mixing lies
+  above ``1e-10`` but within ``spin_free_tol``, ``hwave_sc`` uses the
+  spin-averaged band :math:`(H_\uparrow + H_\downarrow)/2`, drops the
+  spin-mixing blocks, and logs a warning with both discarded magnitudes.
+  Above ``spin_free_tol`` the band is refused. The spin-averaged band is
+  available only when ``hwave_sc`` computes :math:`\chi_0(\mathbf{q})` itself
+  (``chi0q_mode = "calc"``, or ``bond_channels = true``); with
+  ``chi0q_mode = "load"`` a band beyond ``1e-10`` is refused, because the
+  loaded chi0q was computed by the RPA run on its own band (use
+  ``"calc"``, or regenerate chi0q from a spin-symmetric band). A value
+  below ``1e-10`` (for example ``0``) tightens this band check.
+  ``spin_free_tol`` has a second use with ``green_init``: the Green function
+  itself is checked on its dimensionless entries with the tolerance
+  :math:`\max(10^{-10}, \texttt{spin\_free\_tol})`, so the G check is
+  floored at ``1e-10`` and is never tightened below it. A ``green_init``
+  within that tolerance can still give a band whose spin splitting exceeds
+  the band tolerance at large interaction strengths; such a band is refused
+  with the band-level message.
 - ``g2_tail``: Apply the analytic Matsubara tail correction to the pair
   bubble :math:`G^{(2)}` (default ``true``; as of version 2.0). The bare truncated
   frequency sum misses the leading identity tail (an
@@ -229,16 +361,33 @@ This section controls the Eliashberg solver. Key parameters:
   :math:`\sigma` for the shift-invert eigensolver; eigenvalues near
   :math:`\sigma` are found first. Ignored (with a warning) for the plain
   ``"arnoldi"`` method -- use ``spectral_shift`` there instead.
-- ``spectral_shift`` (``eigenvalue_method = "arnoldi"`` only): a positive number,
-  or ``"auto"``. The default ARPACK selection (``which='LM'``) returns the
+- ``spectral_shift`` (used by the Arnoldi eigenvalue solver,
+  ``eigenvalue_method = "arnoldi"``; and by the power iteration,
+  ``solver_mode = "iteration"`` / ``"both"``): a positive number, ``"auto"``, or
+  ``"none"``. **Default:** ``"auto"`` for the power iteration
+  (``solver_mode = "iteration"``, and the iteration leg of ``"both"``); no
+  shift for the eigenvalue solver. ``"none"`` switches the shift off for
+  both (the unshifted power iteration of earlier versions, which follows the
+  eigenvalue of largest *magnitude* and cannot converge when that eigenvalue
+  is negative). The plain ARPACK selection (``which='LM'``) returns the
   eigenvalues of largest *magnitude*; far from a pairing instability, a small
   positive (attractive) leading eigenvalue can be masked by much larger negative
-  (repulsive) eigenvalues, so the reported leading value comes out negative and
-  unphysical. Setting ``spectral_shift`` makes the solver request the eigenvalue
-  of largest *real* part (``which='LR'``; the physical SC eigenvalue,
+  (repulsive) eigenvalues. Without ``spectral_shift`` the solver checks whether
+  the returned set can contain the largest real part (its largest real part
+  must not be below its smallest magnitude) and otherwise re-solves for it
+  (``eigenvalue_selection = "LR_retry"``). Setting ``spectral_shift`` makes
+  the solver request the eigenvalue of largest *real* part directly
+  (``which='LR'``; the physical SC eigenvalue,
   :math:`\lambda \to 1` at :math:`T_c`) on the shifted operator
   :math:`A + \sigma I`; the shift is subtracted internally, so the eigenvalues
-  you receive/save are the true unshifted ones. Use ``"auto"`` to set
+  you receive/save are the true unshifted ones. In the power iteration the
+  shift moves the whole spectrum into the right half-plane so that the
+  largest-real-part eigenvalue becomes the dominant one; ``"auto"`` sets
+  :math:`\sigma = 1.05\,\rho` from a short power estimate of the spectral
+  radius :math:`\rho`. For a strongly complex spectrum (eigenvalues with
+  :math:`|\mathrm{Im}\,\lambda|` comparable to :math:`\rho`) a shift of that
+  size does not guarantee the largest real part dominates; use
+  ``solver_mode = "eigenvalue"`` there. Use ``"auto"`` to set
   :math:`\sigma` from the spectral radius automatically, or give an explicit
   positive :math:`\sigma` larger than the *absolute value* of the most negative
   eigenvalue (so :math:`A + \sigma I` has an all-positive-real spectrum).
@@ -248,13 +397,14 @@ This section controls the Eliashberg solver. Key parameters:
   dynamic path (``frequency = "dynamic"``) the largest-real selection is applied
   automatically for the channel (issue #202): when the kernel conserves the
   channel's even-frequency sector, the leading eigenvalue comes from a
-  symmetry-valid solve restricted to that sector (``eigenvalue_selection =
+  symmetry-valid solve on that sector's own coordinates (``eigenvalue_selection =
   "LR_projected"``), whose largest-real eigenvalue is num_eigenvalues-
   independent; when it does not conserve the sector and a plain ``arnoldi`` set
   holds no positive channel eigenvalue, the solver instead re-solves once with
   ``spectral_shift = "auto"`` (``"LR_retry"``). Both are recorded in
-  ``eigenvalue_selection`` (see below). A user-supplied ``spectral_shift`` still
-  applies to the unprojected path; a seeded (eigenvector-continuation) run is
+  ``eigenvalue_selection`` (see below). A user-supplied ``spectral_shift``
+  applies to the projected and the unprojected solve alike; a seeded
+  (eigenvector-continuation) run is
   never re-solved, so a repulsive-dominant temperature scan should set
   ``spectral_shift = "auto"`` for every point to keep the seeded continuation
   consistent with the leading value.
@@ -380,12 +530,12 @@ The output log shows the iteration progress:
 .. code-block:: text
 
     hwave_sc: === Self-consistent iteration ===
-    hwave_sc: Iteration    0: eigenvalue = 0.924446, diff = 3.544353e-01
-    hwave_sc: Iteration    1: eigenvalue = 0.817270, diff = 7.893848e-02
+    hwave_sc: Iteration    0: eigenvalue = 0.925449, diff = 3.540384e-01
+    hwave_sc: Iteration    1: eigenvalue = 0.818387, diff = 7.885727e-02
     ...
-    hwave_sc: Iteration  192: eigenvalue = 0.959725, diff = 9.900091e-06
+    hwave_sc: Iteration  192: eigenvalue = 0.961078, diff = 9.752299e-06
     hwave_sc: Converged at iteration 193
-    hwave_sc: Iteration result: eigenvalue = 0.959725, converged = True, n_iter = 193
+    hwave_sc: Iteration result: eigenvalue = 0.961078, converged = True, n_iter = 193
 
 followed by the eigenvalue analysis:
 
@@ -393,23 +543,30 @@ followed by the eigenvalue analysis:
 
     hwave_sc: === Eigenvalue analysis ===
     hwave_sc: Leading eigenvalues:
-    hwave_sc:     0: 0.959725 (|ev| = 0.959725)
-    hwave_sc:     1: 0.836778 (|ev| = 0.836778)
-    hwave_sc:     2: 0.810959 (|ev| = 0.810959)
-    hwave_sc:     3: -0.887954 (|ev| = 0.887954)
-    hwave_sc:     4: -1.071303 (|ev| = 1.071303)
-    hwave_sc:     5: -1.349775 (|ev| = 1.349775)
-    hwave_sc:     6: 0.976353 (|ev| = 0.976353)  [opposite-parity sector]
-    hwave_sc:     7: 0.823774 (|ev| = 0.823774)  [opposite-parity sector]
+    hwave_sc:     0: 0.961079 (|ev| = 0.961079)
+    hwave_sc:     1: 0.837896 (|ev| = 0.837896)
+    hwave_sc:     2: 0.812195 (|ev| = 0.812195)
+    hwave_sc:     3: -0.889340 (|ev| = 0.889340)
+    hwave_sc:     4: -1.072771 (|ev| = 1.072771)
+    hwave_sc:     5: -1.351573 (|ev| = 1.351573)
+    hwave_sc:     6: 0.977706 (|ev| = 0.977706)  [opposite-parity sector]
+    hwave_sc:     7: 0.824931 (|ev| = 0.824931)  [opposite-parity sector]
     ...
 
 An eigenvalue :math:`\lambda > 1` (positive) indicates a superconducting instability
 at the given temperature. Negative eigenvalues correspond to sign-changing gap symmetries
 but do not indicate SC instability.
 
-The eigenpairs are ordered so that those with the **channel parity** come first
-(even for singlet, odd for triplet): the leading one (index 0) is the physical
-solution and matches the self-consistent iteration result. Eigenvalues tagged
+Row 0 of the table is the reported leader of the requested channel, and it
+agrees with a converged self-consistent iteration started in the same
+symmetry. On the static non-spin-orbital path with a parity-commuting kernel
+a successful parity-sector solve (see :ref:`sc_eigen_convergence`) puts the
+reported leader in row 0 (``match`` 1), and the following rows are the same
+global eigenpairs, parity-reordered and not merged -- normally
+``num_eigenvalues`` rows, fewer when the operator dimension limits the count
+-- so the leader may appear twice; when the sector solve fails, no row is
+prepended. The global eigenpairs are listed with those of the **channel
+parity** (even for singlet, odd for triplet) first. Eigenvalues tagged
 ``[opposite-parity sector]`` belong to the other parity sector; for a given
 spin channel they are forbidden by the Pauli principle and do **not** represent
 a physical instability (see the note on parity below). The last column of
@@ -466,8 +623,9 @@ for both singlet and triplet channels.
    Filled markers are the **physical** eigenvalues (the gap has the channel
    parity: even for singlet, odd for triplet); open markers are **spurious**
    opposite-parity modes. All physical eigenvalues lie below 1. The two open
-   markers above 1 are even-parity solutions of the *triplet* kernel, which the
-   Pauli principle forbids for spin-triplet pairing (see the parity note below).
+   markers above 1 are even-parity solutions of the
+   *triplet* kernel, which the Pauli principle forbids for spin-triplet pairing
+   (see the parity note below).
 
 The Arnoldi eigenvalue analysis finds multiple eigenvalues.
 The figure shows only positive eigenvalues, which are relevant for the
@@ -477,12 +635,11 @@ For the singlet channel, the leading **physical** (even-parity) eigenvalue is
 result, so there is no singlet SC instability at this temperature.
 
 For the triplet channel, the leading **physical** (odd-parity) eigenvalue is
-:math:`\lambda_T \approx 0.97 < 1`. The larger values near :math:`1.58` and
-:math:`1.09` that appear in the triplet calculation are even-parity (spurious)
-modes and are **not** triplet instabilities. The two physical channels are thus
-very close (:math:`\lambda_T \gtrsim \lambda_S`), placing this temperature near
-the singlet--triplet crossover; the actual SC transition (:math:`\lambda = 1`)
-is reached at lower temperature.
+:math:`\lambda_T \approx 0.97 < 1`. The larger values near
+:math:`1.58` and :math:`1.10` that appear in the triplet calculation are
+even-parity (spurious) modes and are **not** triplet instabilities. The triplet
+leads narrowly (:math:`\lambda_T > \lambda_S`); both channels lie somewhat
+below the threshold at this temperature.
 
 Plotting script
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -522,17 +679,367 @@ The eigenvalues of the linearized Eliashberg equation:
 .. code-block:: text
 
     # Iteration eigenvalue
-    9.59724792e-01
+    # iteration_converged = true
+    # solver_mode='both' with spectral_shift='auto': ... (abridged)
+    9.61078331e-01
+    # eigen_converged = true
+    # leading value: the largest real part of the 'singlet' parity sector, ...
+    # leading_eigenvalue = 9.61078596e-01 -3.64174908e-12
     # Eigenvalue analysis
     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=channel-parity)
-       0  9.59725061e-01 -3.63739178e-12  9.59725061e-01 1
-       1  8.36778019e-01 -3.64670431e-12  8.36778019e-01 1
+       0  9.61078596e-01 -3.64174908e-12  9.61078596e-01 1
+       1  8.37896272e-01 -3.65082177e-12  8.37896272e-01 1
        ...
 
-The trailing ``match`` column is ``1`` when the eigenvector has the channel's
+(``solver_mode = "both"``: the scalar under ``# Iteration eigenvalue`` is the
+iteration's value; the reported leader is the ``# leading_eigenvalue`` line,
+i.e. row 0 of the table.) The ``# leading_eigenvalue = <Re> <Im>`` line uses
+the static file's ``key = value`` style with spaces; ``hwave_tsweep`` reads it
+first and falls back to row 0 for files without it (dynamic files, older
+outputs). The trailing ``match`` column is ``1`` when the eigenvector has the channel's
 parity (a physical singlet/triplet gap) and ``0`` for a spurious opposite-parity
 mode (see the parity note above). Older output files without this column are
-read unchanged.
+read unchanged. The ``# eigen_converged = <true|false>`` line follows the
+first header line; see :ref:`sc_eigen_convergence`.
+
+.. _sc_eigen_convergence:
+
+Eigen-solver convergence (``eigen_converged``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every solver path -- static and dynamic ``hwave_sc``, the bond entries
+(``bond_channels = true``, and the in-process FLEX pairing step), the IR
+basis and the spin-orbital solvers -- reports the leading eigenvalue under one
+contract.
+
+**What is reported.**
+
+- **The largest real part** of the kernel's spectrum (the physical pairing
+  eigenvalue, :math:`\lambda \to 1` at :math:`T_c`), not the largest
+  magnitude. The eigenvalue solver (``solver_mode = "eigenvalue"``) re-solves
+  for it when its largest-magnitude set cannot contain it
+  (``eigenvalue_selection = "LR_retry"``). If an ARPACK solve fails (does
+  not converge, stops with another ARPACK error, or returns non-finite
+  eigenvalues) -- the first largest-magnitude solve, the shift-invert
+  preliminary or solve, or the largest-real-part (re-)solve with its auto
+  shift probe -- an operator of dimension at most 2000 is diagonalized
+  densely (``"dense-LR"``); a larger one reports ``NaN`` with
+  ``eigen_converged = false`` and ``eigenvalue_selection = "not-converged"``
+  -- the largest-magnitude value is never passed off as the leading one. The
+  dynamic projected channel solve follows the same contract on the channel
+  sector's own coordinates (the dense fallback diagonalizes the sector, whose
+  dimension is about a quarter of the full one). An exactly zero kernel is not a
+  failure: when ARPACK stops with its "starting vector is zero" error and
+  three independent random vectors all have exactly zero images, the static,
+  spin-orbital and projected dynamic solvers report every eigenvalue as 0 and
+  converged at any dimension, with the selection ``"null-operator"`` (a
+  projected dynamic run keeps ``"LR_projected"`` and says so in its
+  ``# eigenvalue listing`` line). An unseeded unprojected dynamic run
+  (shift-invert) on such a kernel still reports ``NaN`` with
+  ``eigen_converged = false`` and ``"not-converged"`` when its placeholder
+  vectors carry no channel parity; a seeded run reports 0 as an uncertified
+  continuation (``sector_selection = "none"``). On
+  the static non-spin-orbital path with a parity-commuting kernel a failed
+  global solve only empties the listing: the leader still comes from the
+  parity-sector solve. A seeded run (``seed_eigenvector``) follows its continuation branch by
+  design.
+- **The requested channel** (``pairing_type``). On the static
+  non-spin-orbital path, when the kernel commutes with parity (the
+  centrosymmetric case):
+
+  *How the leader is obtained.* The reported leader and its gap always come
+  from a separate solve on the channel's parity sector, in that sector's
+  own coordinates, with the same largest-real-part rules -- whatever the
+  global eigen-analysis set holds (it may contain a channel eigenpair of
+  large magnitude but not the channel's leader). The sector solve is a
+  largest-real-part Arnoldi solve that honours ``spectral_shift``; with
+  ``eigenvalue_method = "subspace"`` or a shift-invert method, only the
+  global table uses that method.
+
+  *How it is recorded.* The leader is written as row 0 of the table of
+  ``eigenvalue.dat`` (``match`` 1) and as the machine-readable line
+  ``# leading_eigenvalue = <Re> <Im>``; the ``# leading value: ...`` comment
+  line says where it comes from. The global eigenpairs follow with their
+  ``match`` column, parity-reordered (channel parity first) and not merged:
+  normally ``num_eigenvalues`` rows, fewer when the operator dimension
+  limits the count, so the leader's state appears again when the global set
+  contains it. When the sector solve fails, no row is prepended.
+
+  When the
+  kernel does not commute with parity, the sector cannot be solved on its
+  own: the leader is the computed eigenpair that is dominantly of the
+  requested parity, or ``NaN`` with ``eigen_converged = false`` if there is
+  none -- never an opposite-parity value. The dynamic solvers select within
+  the channel as described in :ref:`sc_dynamic_channels` (an unseeded
+  eigenvalue run whose computed eigenpairs include none of the channel
+  reports ``NaN``), and the
+  spin-orbital solvers work on the antisymmetric space.
+- **A power iteration reports a value only when it converged.** The value is
+  the *signed* Rayleigh quotient
+  :math:`\langle\phi|K\phi\rangle/\langle\phi|\phi\rangle` of the converged
+  iterate (validated by its residual), equal to the eigenvalue solver's
+  result to the iteration's tolerance -- never the unsigned norm of the
+  iterate. The stopping rule takes the contraction rate into account: the
+  remaining distance to the fixed point is estimated as
+  ``diff / (1 - rate)`` from the last few iterate differences, and the run
+  stops only when that estimate is below ``convergence_tol`` (a difference
+  that is not shrinking -- a slow drift -- never stops it). A residual
+  check scaled by the kernel's spectral radius, not by the value being
+  checked, rejects Rayleigh values that are not eigenvalues; a value beyond
+  the spectral radius is never reported.
+- **The initial gap must be able to search its sector.** If ``init_gap``
+  (after the channel's parity projection) is an exact eigenvector of the
+  kernel (residual below ``1e-8`` of the spectral radius) or is annihilated
+  by it, the power iteration can never leave that mode and cannot tell
+  whether another mode of the same symmetry has a larger real part. It is
+  not perturbed (a perturbation would leave the lattice-symmetry sector of
+  ``init_gap``); the run reports ``NaN`` with ``eigen_converged = false``
+  and the WARNING "the initial gap is an eigenvector of the kernel
+  (lambda = ...); the power iteration cannot search its symmetry sector".
+  Use ``solver_mode = "eigenvalue"`` or a different ``init_gap`` (one that
+  mixes several modes of the symmetry, e.g. ``"random"``, or a form factor
+  that is not an exact eigenvector). A converged vector that the kernel
+  annihilates is not a pairing eigenvalue either and is reported as ``NaN``.
+- **When the power iteration does not converge** -- it reached ``max_iter``,
+  or the converged vector failed the residual check -- the eigenvalue is
+  written as ``NaN`` and ``eigen_converged = false`` is recorded. Where it
+  is recorded:
+
+  * static ``eigenvalue.dat``: the line ``# eigen_converged = false`` (with
+    spaces around ``=``);
+  * dynamic ``eigenvalue.dat`` (on-site, bond and spin-orbital) and the
+    in-process ``eigenvalue_bond_<type>.dat``: the line
+    ``# eigen_converged=false`` (no spaces), and the token
+    ``eigen_converged=false`` in the first line of the dynamic ``gap.dat``;
+  * the npz key ``eigen_converged`` of ``gap_dynamic.npz``,
+    ``eliashberg_bond_<type>.npz`` and the spin-orbital ``gap.npz``;
+  * the in-process FLEX pairing step: ``pairing_<type>_eigen_converged``
+    next to ``pairing_<type>_eigenvalue``.
+
+  A converged run records ``true`` in the same places. Because the static
+  and dynamic text files differ in spacing, test the line with a
+  whitespace-tolerant check: take the text after ``eigen_converged``, strip
+  ``=`` and blanks, and compare with ``true``/``false``.
+- **What the WARNING and the written gap mean.** The WARNING states why no
+  value was reported, and a comment line in ``eigenvalue.dat`` repeats it.
+  The gap written with a ``NaN`` is the last iterate and **not an
+  eigenvector**. When ``max_iter`` ran out while the iterate was still
+  converging, the WARNING gives the estimated number of steps needed (from
+  the observed convergence rate); when it was not converging at all, it says
+  so -- a leading eigenvalue that is itself complex (a complex-conjugate
+  pair) can never be reached by a power iteration, and ends in ``NaN`` at
+  ``max_iter`` whatever its value. If the iterate was then in a
+  sign-alternating two-cycle, the WARNING says so: the dominant eigenvalue of
+  the iterated operator is negative. This only happens without a sufficient
+  shift (``spectral_shift = "none"`` or a small explicit one); the run is
+  not stopped early on it, because a tiny component of a positive dominant
+  mode may still be growing. Use ``solver_mode = "eigenvalue"`` in these
+  cases.
+
+**Defaults and why.** ``hwave_sc`` and the in-process FLEX bond pairing
+step both default to ``solver_mode = "eigenvalue"`` (``hwave_sc``'s default
+was ``"iteration"`` before this version). The ARPACK solver searches the
+whole spectrum for the largest real part and needs no shift, no seed and no
+iteration budget. The power iteration is kept as an opt-in. When used, it
+runs with ``spectral_shift = "auto"`` by default: without a shift it follows
+the eigenvalue of largest *magnitude*, which for a repulsive interaction is
+a negative mode, so it either never converges or converges to the wrong
+mode. The shift :math:`\sigma \approx 1.05\,\rho` (:math:`\rho` the
+spectral radius) makes the largest real part dominant, at the cost of a
+slower iteration when the leading eigenvalue is close to the next one
+compared with :math:`\rho` (roughly
+:math:`(\lambda_1+\sigma)/(\lambda_1-\lambda_2)\,\ln(1/\mathrm{tol})` steps;
+``alpha`` is not applied on top of a shift).
+
+**What the power iteration guarantees.** A value it reports with
+``eigen_converged = true`` is the largest real part of the kernel *within
+the symmetry sector of its initial gap*, to the stated tolerance -- except
+when a mode with a larger real part is present in the seed only at a tiny
+level and grows slowly (a small gap, a large shift, or a strongly
+non-normal kernel): no finite number of steps can exclude such a
+component. The way to hit this is a seed that is already close to an
+eigenvector of a *non-leading* mode (but not an exact one): on randomized
+test kernels, 4--6 % of the runs started from such near-eigenvector seeds
+(residuals between 1e-10 and 1e-1) converged to the seed's mode instead of
+the largest real part at ``convergence_tol = 1e-5`` (8--9 % at ``1e-3``).
+Near-eigenvector seeds of a non-leading mode are the main risk; from generic
+seeds a wrong value is rare and limited to a nearly degenerate pair or a
+slowly growing component -- for example the second member of a nearly
+degenerate pair, within about ``10 * convergence_tol`` of the leader.
+Whenever the iteration cannot certify its value by the rules above (exact
+eigenvector seed, no convergence by ``max_iter``, failed residual check), it
+reports ``NaN``.
+
+**Iteration or eigenvalue solver?** Use ``solver_mode = "eigenvalue"`` (the
+default) for production values of :math:`\lambda` and for :math:`T_c` scans
+(``hwave_tsweep`` requires it). It searches the whole spectrum. The power
+iteration finds the largest real part **only within the symmetry sector of
+its initial gap** (``init_gap``): a mode of another lattice symmetry is never
+reached from that seed, and an ``init_gap`` that is itself an eigenvector
+gives ``NaN`` (see above). Example: on the static test model of
+``tests/sc/legacy_golden`` -- one orbital on a 4x4 square lattice with
+nearest-neighbour hopping 1 and a diagonal hopping 0.5 along (1, 1), on-site
+``U = 4``, half filling, ``T = 1``, ``Nmat = 128``, singlet channel -- the
+default ``init_gap = "cos"`` makes the iteration converge to 0.17551, while
+the eigenvalue solver reports 0.23771, the singlet leader of another lattice
+symmetry. Use the iteration to follow one symmetry deliberately: set
+``init_gap`` to that symmetry's form factor (``"d_x2y2"``, ``"p_x"``, ...;
+see ``init_gap`` above), and check its result against ``solver_mode =
+"both"`` or ``"eigenvalue"`` once. Only the channel parity is re-projected
+at every step; for a kernel with the lattice's point-group symmetry, the
+point-group symmetry of ``init_gap`` is also preserved in exact arithmetic,
+but round-off can seed another irreducible representation, which then grows
+if its eigenvalue is larger. In practice the seed's symmetry decides: on a
+two-orbital 32x32 model
+the default s-like seed (``"cos"``) has no overlap with the
+:math:`d_{x^2-y^2}`-like singlet leader 36.82, so the iteration converged to
+34.108, the second eigenvalue of the even (singlet) parity; started from
+``init_gap = "d_x2y2"`` it gives 36.82.
+
+**Exit status.** The ``hwave_sc`` command exits with status ``3`` when the
+reported leading eigenvalue is ``NaN`` -- after writing every output. One
+``hwave_sc`` run solves exactly one pairing channel (``pairing_type``), so
+the status refers to that channel. With the default ``solver_mode =
+"eigenvalue"`` the status is ``3`` only when an ARPACK solve (the first
+largest-magnitude solve or the largest-real-part solve) failed on an
+operator too large for the dense fallback, or no eigenpair of the channel
+could be obtained (for the dynamic solver: no computed eigenpair of the
+channel, ``sector_selection = "none"``, in an unseeded run). With
+``solver_mode = "iteration"`` it is
+``3`` whenever the iteration could not certify a value. With ``solver_mode
+= "both"`` the reported value, ``eigen_converged`` and the exit status
+follow the eigenvalue analysis (its leading eigenvector is the written
+gap); the iteration's own verdict is recorded as ``# iteration_converged =
+<true|false>`` in its block, and a non-converged iteration alone does not
+change the exit status. ``hwave_tsweep`` treats a rung whose leading
+eigenvalue is ``NaN`` (or that records ``eigen_converged = false``) as an
+Eliashberg error and does not chain its gap as the next rung's seed. To
+solve singlet and triplet, run ``hwave_sc`` once per channel and test each
+status. The ``hwave`` command of a FLEX run with the in-process pairing step
+keeps exit status ``0`` whatever the pairing result -- the FLEX results are
+valid -- even when one or both requested channels
+(``longitudinal_bond_pairing = "both"``) did not converge: each channel then
+records its own ``eigen_converged`` and logs its WARNING, and a pipeline
+must test ``eigen_converged`` per channel.
+
+**Blocks of the static** ``eigenvalue.dat`` **per solver_mode** (as written
+by this version):
+
+- ``"eigenvalue"`` (the default): ``# Iteration eigenvalue`` (kept for
+  compatibility; the value under it is the eigenvalue analysis' leader),
+  ``# eigen_converged = ...``, on the static non-spin-orbital path a
+  ``# leading value: ...`` line naming the channel's parity-sector solve,
+  the value (the leader from the eigenvalue analysis), ``# leading_eigenvalue = <Re> <Im>``, then
+  ``# Eigenvalue analysis`` and the spectrum table (row 0 = the leader).
+- ``"iteration"``: ``# Iteration eigenvalue``, ``# eigen_converged = ...``,
+  comment lines describing the value (shift, convergence), the value. No
+  spectrum table.
+- ``"both"``: ``# Iteration eigenvalue``, ``# iteration_converged = ...``,
+  the iteration's comment lines and value, then ``# eigen_converged = ...``
+  (the eigenvalue analysis'), the ``# leading value: ...`` line,
+  ``# leading_eigenvalue = <Re> <Im>``, ``# Eigenvalue analysis`` and the
+  spectrum table (row 0 = the leader). With bond channels, the
+  ``lambda_rayleigh_gap_source`` provenance line says which gap
+  ``lambda_rayleigh`` was evaluated at.
+
+The dynamic ``eigenvalue.dat`` files (on-site, bond, spin-orbital) and
+``eigenvalue_bond_<type>.dat`` have one layout for every solver_mode:
+``# Dynamic Eliashberg leading eigenvalue``, ``# eigen_converged=...``,
+further ``#`` header and comment lines, the leading value, and the spectrum
+table only for the eigenvalue solver.
+
+.. important::
+
+   **Migration and default changes**
+
+   Earlier versions reported the *unsigned norm* of the last power iterate as
+   the eigenvalue even when the iteration did not converge. On a
+   repulsive-dominant kernel -- the singlet channel of the repulsive Hubbard
+   model, whose largest-magnitude eigenvalue is a negative on-site s-wave
+   mode -- the unshifted damped iteration falls into a sign-alternating
+   two-cycle and wrote :math:`|\lambda_-|\,(1-\alpha)/(1+\alpha)` (one third
+   of the negative mode's magnitude at the default ``alpha = 0.5``) with the
+   repulsive mode as the gap.
+
+   **Affected results.** Runs with ``solver_mode = "iteration"`` -- before
+   this version the default of ``hwave_sc`` and of the in-process FLEX bond
+   pairing step, so every input without an explicit ``solver_mode`` -- and
+   no ``spectral_shift``. Indicators in old output files: no
+   ``eigen_converged`` entry at all (every output written before this
+   version); a log line ``Failed to converge after N iterations`` (with
+   ``N = max_iter``); a gap whose on-site (``R = 0``) component is large and
+   does not decay at high Matsubara frequency, or whose sign pattern is that
+   of the repulsive s-wave mode; and a value close to one third of the
+   magnitude of the most negative eigenvalue (compare with an ``solver_mode
+   = "eigenvalue"`` run with ``num_eigenvalues`` large enough to list it).
+   Results from ``solver_mode = "eigenvalue"`` (or ``"both"``, whose
+   eigenvalue block is independent) are unaffected.
+
+   **What to rerun.** The ``hwave_sc`` step (or, for the in-process step,
+   the FLEX run with its ``[eliashberg]`` table) with ``solver_mode =
+   "eigenvalue"`` -- now the default, so rerunning an input that does not
+   set ``solver_mode`` is enough. The FLEX outputs themselves are not
+   affected and can be reused through ``hwave_sc`` (``bond_channels = true``
+   with ``frequency = "dynamic"`` for the bond kernel).
+
+   **Default change.** ``hwave_sc``'s default ``solver_mode`` is now
+   ``"eigenvalue"``. An input that relied on the old default and wants the
+   power iteration (to follow one symmetry from its ``init_gap``) must set
+   ``solver_mode = "iteration"`` explicitly. The static ``eigenvalue.dat``
+   keeps its ``# Iteration eigenvalue`` header line under every solver_mode
+   (see the block list above), so a script that reads the first value after
+   it keeps working; with the eigenvalue solver that value is now the
+   eigenvalue analysis' leader, and the ``# Eigenvalue analysis`` table
+   follows.
+
+   **Exit status 3.** ``hwave_sc`` now exits with status ``3`` when no
+   leading eigenvalue was obtained (see "Exit status" above); job scripts
+   that treat any non-zero status as a crash should check the written
+   outputs first.
+
+   **Mixing with a spectral shift.** ``alpha`` is no longer applied when a
+   spectral shift is active, including the power iteration's default
+   ``spectral_shift = "auto"``: the mixing only slowed the shifted iteration
+   (about twice as many steps). To get the ``alpha`` damping, set
+   ``spectral_shift = "none"``.
+
+   **Static table layout.** On the static non-spin-orbital path with a
+   parity-commuting kernel, the ``# Eigenvalue analysis`` table of
+   ``eigenvalue.dat`` starts with one extra row: row 0 is the reported
+   leader (``match`` 1), followed by the same global eigenpairs,
+   parity-reordered (channel parity first) and not merged -- normally
+   ``num_eigenvalues + 1`` rows in all, fewer when the operator dimension
+   limits the count -- so the leader may appear twice. Scripts that
+   assumed ``num_eigenvalues`` rows, or that row 0 is the first global
+   eigenpair, should read ``# leading_eigenvalue`` instead.
+
+   **Dynamic eigenvalue solver without a channel eigenpair.** Earlier
+   versions could report a value that is not a channel eigenvalue as the
+   leading eigenvalue of the dynamic eigenvalue solver when no computed
+   eigenpair passed the requested channel match (``sector_selection =
+   "none"``). Such a run now reports ``NaN`` with ``eigen_converged = false``
+   (unless seeded), and ``hwave_sc`` exits with status ``3``. Increase
+   ``num_eigenvalues``, or check that the kernel conserves the channel's
+   parity -- more eigenvalues do not help a parity-mixing kernel (see
+   :ref:`sc_dynamic_channels`).
+
+   **Dynamic projected listing.** For dynamic runs with ``eigenvalue_selection
+   = "LR_projected"``, no ``spectral_shift`` and no automatic re-solve (the
+   largest-magnitude set is re-solved for the largest real parts when its
+   largest real part is below its smallest magnitude), the rows of the
+   ``eigenvalue.dat`` listing are now the ``num_eigenvalues``
+   largest-magnitude eigenvalues of the channel sector (ordered by real
+   part); earlier versions listed its ``num_eigenvalues`` largest real parts,
+   so rows after the leader can differ (for example a negative channel
+   eigenvalue of large magnitude now appears). The leading eigenvalue and the
+   gap are unchanged. A comment line ``# eigenvalue listing: ...`` in
+   ``eigenvalue.dat`` names the set each run listed. Set ``spectral_shift =
+   "auto"`` to list the largest real parts.
+
+   **Python API.** ``hwave.sc.calc_eliashberg`` now returns the reported
+   leading eigenvalue on the static path as well (it returned ``None``
+   there before). The value can be ``NaN``: test it with ``math.isnan`` or
+   ``numpy.isnan``, not by truthiness or ``is None``.
 
 
 Physical interpretation
@@ -556,10 +1063,9 @@ By varying the temperature and finding the point where the largest
 positive eigenvalue reaches :math:`\lambda = 1`, one can determine
 the superconducting transition temperature :math:`T_c`.
 
-In this example, at :math:`T = 0.1` both physical channels are just below the
+In this example, at :math:`T = 0.1` both physical channels are below the
 instability threshold, with :math:`\lambda_S \approx 0.96` (singlet, even) and
-:math:`\lambda_T \approx 0.97` (triplet, odd). They are nearly degenerate, with
-the triplet marginally leading.
+:math:`\lambda_T \approx 0.97` (triplet, odd); the triplet leads narrowly.
 
 .. note::
 
@@ -578,7 +1084,7 @@ the triplet marginally leading.
    ``hwave_sc`` therefore projects each self-consistent iterate onto the
    channel's parity sector, and the eigenvalue analysis labels each mode as
    physical (``match = 1``) or spurious (``match = 0``). The large values
-   :math:`\lambda \approx 1.58,\ 1.09` seen in the triplet calculation are such
+   :math:`\lambda \approx 1.58,\ 1.10` seen in the triplet calculation are such
    spurious even-parity modes, **not** triplet instabilities.
 
 Singlet vs. triplet comparison
@@ -594,12 +1100,21 @@ error rather than converging to an unphysical sector. Equivalently, omit
 ``init_gap`` entirely to let the solver pick the channel's parity automatically.
 At :math:`T = 0.1` with the same parameters, the leading physical eigenvalues are
 :math:`\lambda_T \approx 0.97` (triplet) and :math:`\lambda_S \approx 0.96`
-(singlet): both are below 1, and the triplet marginally leads. This places the
-sample near the singlet--triplet crossover of Ref. [1]_, where the triplet SC
-state competes with the singlet for :math:`T > 0.05`, while the singlet SC
-transition dominates at lower temperatures (:math:`T < 0.05`) due to the
-enhancement of spin fluctuations. The actual transition
-(:math:`\lambda = 1`) is reached on lowering the temperature.
+(singlet): the triplet leads narrowly, in line with Ref. [1]_, where the
+triplet SC state competes with the singlet for :math:`T > 0.05`.
+
+The two molecules of the unit cell are different sites, which the input
+declares with ``orbital_site = [0, 1]``: their in-cell interaction (the
+``R = 0`` inter-orbital ``CoulombInter`` row) then enters, like every other
+inter-molecule interaction, through its density-density (Hartree) part only,
+as in Ref. [1]_. Without the key it would be treated as an interaction within
+one site, with its exchange crossing (see ``orbital_site`` in the
+configuration reference). Since issue #239 the pairing vertex of
+``hwave_sc`` (``bond_channels = false``) also keeps only the Hartree part of
+the inter-cell interactions, as Ref. [1]_ does; earlier versions added their
+exchange in an approximate, collapsed form. The numbers quoted in this section
+are computed with the current treatment (earlier versions gave
+:math:`\lambda_S \approx 0.94` and :math:`\lambda_T \approx 1.00`).
 
 
 .. _sc_dynamic_frequency:
@@ -631,8 +1146,16 @@ different Matsubara frequencies.
 FLEX prerequisite
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The dynamic mode needs frequency-resolved input that only the FLEX solver
-produces, so it **must** be run with ``chi0q_mode = "flex"``. Before calling
+This section describes the dynamic solver without ``enable_spin_orbital``.
+In spin-orbital mode the dynamic solver also accepts ``chi0q_mode =
+"calc"``, which builds the Green function and :math:`\chi_0` from the band
+and needs no FLEX output, and with ``"flex"`` it reads the ``chiq``,
+``chi0q``, ``green`` and ``sigma`` archives of a spin-orbital FLEX run
+instead of the files below (see :ref:`sc_spin_orbital_dynamic`).
+
+Without ``enable_spin_orbital``, the dynamic mode needs frequency-resolved
+input that only the FLEX solver produces, so it **must** be run with
+``chi0q_mode = "flex"``. Before calling
 ``hwave_sc`` you must run a FLEX calculation (``mode = "FLEX"``) that writes,
 into the directory read by the Eliashberg step:
 
@@ -716,7 +1239,11 @@ mode writes:
    - ``T``: temperature.
    - ``pairing_type``: ``"singlet"`` or ``"triplet"``.
    - ``frequency``: ``"dynamic"``.
-   - ``eigenvalue``: the leading :math:`\lambda`.
+   - ``eigenvalue``: the leading :math:`\lambda` (``NaN`` when
+     ``eigen_converged`` is false).
+   - ``eigen_converged``: ``True`` when the eigen-solver converged; ``False``
+     when a power iteration did not (the eigenvalue is ``NaN`` and ``gap`` is
+     the last iterate, not an eigenvector). See :ref:`sc_eigen_convergence`.
    - ``axis_order``: ``"(orb1, orb2, kx, ky, kz, iomega)"``.
    - ``normalization``: the gauge convention -- the gap is L2-normalized over
      all components and its largest-magnitude component is rotated
@@ -741,7 +1268,8 @@ mode writes:
      ``"LM"`` (plain ``arnoldi``, largest magnitude), ``"LR"`` (``spectral_shift``
      set by the user, largest real part), ``"LR_retry"`` (the automatic
      largest-real re-solve when an unprojected ``"LM"`` set held no positive
-     channel eigenvalue), ``"dense-LR"`` (the tiny-operator dense largest-real
+     channel eigenvalue, or could not contain the largest real part),
+     ``"dense-LR"`` (the tiny-operator dense largest-real
      path), ``"shift-invert"``, or ``"iteration"`` (the power iteration). Also
      written as the ``# eigenvalue_selection: ...`` header line of
      ``eigenvalue.dat``.
@@ -751,7 +1279,8 @@ mode writes:
    frequency (index ``Nmat//2``), in the same column layout as the static
    ``gap.dat`` (``kx ky kz`` then ``Re``/``Im`` per orbital pair). Its first
    line is a ``#``-prefixed header carrying ``frequency=dynamic`` together with
-   the slice index and its :math:`\omega_n`.
+   the slice index and its :math:`\omega_n`, the eigenvalue and
+   ``eigen_converged=<true|false>``.
 
 Channel-parity selection
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -837,8 +1366,18 @@ the requested channel, and the weights say what it is instead.
    that sector (``sector_selection = "channel"``, issue #202); otherwise the
    computed eigenpairs are ordered, preferring the channel's even-frequency
    sector and falling back to its combined-parity sector only if no eigenpair
-   lies in it. There ``sector_selection`` names the stage that matched, which is
-   also what the ``match`` column of ``eigenvalue.dat`` is labelled with.
+   lies in it. For the eigenvalue solver, ``sector_selection`` records the
+   stage that matched, which also labels the ``match`` column of
+   ``eigenvalue.dat``. When no computed eigenpair passed the requested channel
+   match, even-frequency or combined-parity (``sector_selection = "none"``),
+   either all retained eigenpairs are of the other channel or the kernel
+   mixes parity, and no channel-certified leader exists: an unseeded run
+   reports ``NaN`` with ``eigen_converged = false`` (exit status ``3``) and a
+   WARNING naming the cause. Increase ``num_eigenvalues``, or check that the
+   kernel conserves the channel's parity (more eigenvalues do not help a
+   parity-mixing kernel). A seeded continuation (``seed_eigenvector``)
+   keeps the value of the branch it follows, with a WARNING that this value is
+   not certified for the channel.
 
 .. note::
 
@@ -849,10 +1388,19 @@ the requested channel, and the weights say what it is instead.
    modes -- and the reported leading value would then depend on
    ``num_eigenvalues``. When the kernel conserves the channel's even-frequency
    sector, the dynamic solver instead solves the kernel *restricted to that
-   sector* (the same projector the power iteration uses), whose largest-real
-   eigenvalue is the channel's Tc eigenvalue independent of ``num_eigenvalues``;
-   if that sector is repulsive the answer is its least-repulsive (largest-real)
-   eigenvalue. When the kernel does not conserve the sector, an unprojected
+   sector* (the sector of the projector the power iteration uses), in the
+   sector's own orthonormal coordinates, with the shared largest-real-part
+   driver: the reported leader is the sector's largest real part (without a
+   ``spectral_shift``, a largest-magnitude set whose largest real part is
+   below its smallest magnitude is re-solved for the largest real parts, as
+   described under ``spectral_shift``), the channel's Tc eigenvalue
+   independent of ``num_eigenvalues``; if that sector is repulsive the answer
+   is its least-repulsive (largest-real) eigenvalue. The listing of
+   ``eigenvalue.dat`` holds the ``num_eigenvalues`` largest-magnitude
+   eigenvalues of the sector, ordered by real part (the largest real parts
+   instead with a ``spectral_shift``, after the re-solve, or from a dense
+   diagonalization), as on the static sector solve; the comment line
+   ``# eigenvalue listing: ...`` above the listing names which set it is. When the kernel does not conserve the sector, an unprojected
    ``"LM"`` set holding no positive channel eigenvalue is re-solved **once** with
    ``spectral_shift = "auto"`` (largest real part) as a best effort. Which
    criterion was used is recorded as ``eigenvalue_selection`` --
@@ -914,6 +1462,21 @@ fluctuations:
    from the RPA/FLEX static susceptibility and does not use them when
    constructing the kernel; setting one with ``frequency = "static"`` has no
    effect and logs a warning.
+
+.. note::
+
+   **Triplet bare term (issue #262).** In :math:`\tfrac{1}{2}(\hat C - \hat S)`
+   the cross elements :math:`(ab, ab)`, :math:`a \neq b`, are left out. There an
+   inter-orbital density-type term (``CoulombInter``, ``Hund`` or ``Ising``)
+   is the exchange image of its density element :math:`(aa, bb)`, and on a gap
+   of triplet parity the two would count it twice. Earlier versions kept those
+   elements: the first-order triplet pairing of an on-site inter-orbital
+   ``CoulombInter`` (:math:`U'`), ``Hund`` or ``Ising`` term was twice its value, and that of an
+   off-site inter-orbital one on the non-bond path (``bond_channels = false``,
+   which collapses its Fock content onto these elements) was off by up to a
+   factor of three. Multi-orbital triplet results with such terms change (the
+   singlet channel and single-orbital models are unaffected) and should be
+   recomputed.
 
 For example, a spin-channel diagnostic uses:
 
@@ -1469,6 +2032,118 @@ with four-index vertex structure.
    spin-resolved content, and the responsibility is the user's.
 
 
+.. _sc_bond_channels_static:
+
+Bond-resolved static pairing (``bond_channels``)
+--------------------------------------------------
+
+The pairing vertex of the default path depends on the momentum transfer
+:math:`\mathbf{q}` only. The exchange (Fock) crossing of an off-site
+interaction pairs a particle-hole pair on the bond :math:`(i, i+R)`, which
+has no exact place in such a vertex. ``[eliashberg] bond_channels = true``
+(with the default ``frequency = "static"``) gives every off-site bond its own
+channel instead: the pairing vertex is built on the enlarged
+(orbital-pair) :math:`\times` (bond) basis, and the exchange crossing of
+each off-site row acts on the bond it was declared on.
+
+- **Which interactions are bond-resolved.** Every off-site ``CoulombInter``,
+  ``Hund``, ``Ising``, ``Exchange`` and ``PairHop`` row: its exchange
+  crossing (for ``PairHop``, its pair-hopping entry) sits on its bond
+  channel, while the Hartree part of the density types ``CoulombInter``,
+  ``Hund`` and ``Ising`` stays in the momentum-dependent on-site block. An
+  off-site ``PairLift`` carries no spin/charge content and is not part of
+  the bond channels. A nonzero ``R = 0`` ``CoulombInter`` row of an orbital
+  with itself is refused: declare an on-site same-orbital interaction as
+  ``CoulombIntra``. The topology, the bond-resolved spin/charge vertices
+  and the pairing kernel are the ones of the FLEX bond gate
+  (``longitudinal_bond_channels``) and of the dynamic bond pairing, so the
+  static path is their zero-bosonic-frequency member.
+- **The bubble.** ``hwave_sc`` builds the bond-resolved bubble itself from a
+  Green function: the bare one built from the transfer integrals, or the
+  file named by ``bond_green`` (for example a FLEX ``green.npz``; in
+  spin-orbital mode the ``green.npz`` of a spin-orbital FLEX run with bond
+  channels, see :ref:`sc_so_bond_green`).
+  ``chi0q_mode`` and ``chi0q_tensor`` are not used, and
+  ``chi0q_mode = "flex"`` is refused. ``bond_coeff_tail`` (default ``1.0``)
+  is the Matsubara tail coefficient of that bubble for the bare Green
+  function (it is not applied to the Green function of ``bond_green``).
+- **Keys.** ``bond_max_shells`` keeps that many off-site shells (ordered by
+  bond length; shell 0 is the on-site point) and refuses a cutoff that would
+  drop a declared nonzero coefficient (declared-zero shells may be cut).
+  ``bond_memory_cap_gb`` (default 8 GB on this path) caps the estimated
+  peak memory.
+  ``bond_diagnostics = true`` adds the character analysis of the leading
+  state to ``eigenvalue.dat``; its degeneracy
+  (``bond_diagnostics_leading_cluster``) is read off the spectrum of the
+  channel's parity-sector solve when the leader came from it
+  (``bond_diagnostics_leading_cluster_source``), and is ``n/a`` when no
+  leader was obtained. ``bond_precondition_atol`` /
+  ``bond_precondition_rtol`` / ``bond_precondition_dense_limit`` tune the
+  Hermiticity check of the kernel.
+- **Outputs.** ``eigenvalue.dat`` carries the bond provenance (number of
+  channels, displacements, the Green function used) and the split
+  :math:`\lambda = \lambda^{pp} + \lambda^{fl}` of the leading eigenvalue
+  into its bare and its fluctuation part.
+- **The static RPA pole.** The run logs the indicator
+  :math:`\max_{\mathbf{q}}\mathrm{eig}[-s\,\bar\chi W]` of the spin and
+  charge denominators at INFO level. Past the pole (indicator
+  :math:`\ge 1`), which the conditioning guard does not refuse, it logs one
+  WARNING and ``eigenvalue.dat`` gains ``# rpa_past_pole = true``,
+  ``# rpa_pole_indicator_<channel> = ...`` and ``# rpa_pole_q_<channel> =
+  (...)``; :math:`\lambda` and ``eigen_converged`` are unchanged. See
+  :ref:`bond_rpa_pole`.
+- **Scope.** The static and the dynamic bond pairing (``frequency =
+  "dynamic"``, and the in-process ``longitudinal_bond_pairing`` of FLEX) no
+  longer restrict ``norb`` (earlier versions refused ``norb > 1`` on the
+  static path and warned on the dynamic one). Two-orbital results are
+  validated by supercell equivalence -- a single-band model written on a
+  two-site cell reproduces the single-band static and dynamic kernels to
+  machine precision for every bond-resolved type and both channels
+  (``tests/test_bond_supercell.py``, issue #239) -- and by the first-order and
+  exact-diagonalization oracles of genuinely inequivalent two-orbital chains.
+  Every model remains subject to the documented topology, memory, parity and
+  Hermiticity checks.
+
+.. note::
+
+   **Limitations of the bond pairing kernel** (static and dynamic alike).
+   Its bare (first-order) pairing vertex is exact for every bond-resolved
+   off-site type (``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``,
+   ``PairHop``; an off-site ``PairLift`` is not part of the bond channels):
+   the density content of the off-site rows (``CoulombInter``, ``Hund``,
+   ``Ising``), plus, in the singlet channel, the pairing of an off-site
+   ``Exchange`` (spin flip, on the bond of the row) and ``PairHop``
+   (transfer of an on-site pair along the bond), which have no density
+   content (included since issue #239; earlier versions left it out). Its
+   triplet channel is the equal-spin component, where ``Exchange`` and
+   ``PairHop`` have no first-order pairing. The spin and charge fluctuations are combined with the coefficients
+   of a spin-rotation-invariant interaction, so for a coupling that breaks
+   that symmetry on its own (an off-site ``Hund`` or ``Ising`` without the
+   matching ``Exchange``) the fluctuation part is an approximation. The
+   static bond path, the dynamic bond path and the in-process
+   ``longitudinal_bond_pairing`` of FLEX log a WARNING reporting the bonds
+   (the first four by name) where ``J_Exchange != J_Hund - 2 J_Ising`` (each row taken with its
+   partner); the run is not refused and no number changes. The
+   spin-orbital route (:ref:`sc_spin_orbital`) treats such couplings
+   exactly, for on-site interactions and, with ``bond_channels = true``
+   and ``frequency = "static"``, for off-site rows as well
+   (:ref:`sc_so_bond_static`). These
+   statements are pinned against an independent spin-orbital construction
+   in ``tests/test_sc_bond_pairing_oracle.py``.
+
+.. note::
+
+   **Migration.** Before this version the static bond path resolved only
+   off-site ``CoulombInter``; the other off-site types entered the on-site
+   block in the momentum-only form, which for a single-orbital model left
+   them out entirely. Results for input with off-site ``Hund``, ``Ising``,
+   ``Exchange`` or ``PairHop`` therefore change; results for
+   ``CoulombInter``-only input are unchanged (they agree to round-off). A
+   ``bond_max_shells`` cutoff that drops a declared nonzero shell, which was
+   silently applied before, is now refused, and so is a nonzero ``R = 0``
+   ``CoulombInter`` row of an orbital with itself.
+
+
 What each mode accepts
 ----------------------------
 
@@ -1497,10 +2172,14 @@ was checked by running the combination.
      - **spin-free only**
      - general raises for a polarized one-body Hamiltonian
    * - ``enable_spin_orbital``
-     - accepted by FLEX
      - rejected
-     - ``hwave_sc`` refuses the configuration outright (as of version 2.0); see
-       *Spin structure* below
+     - accepted with ``flex_hartree_fock = true`` (on-site and in-cell
+       interactions; off-site rows with ``longitudinal_bond_channels = true``)
+     - the static and the on-site dynamic ``hwave_sc`` read the output of
+       a run without ``longitudinal_bond_channels`` with ``chi0q_mode =
+       "flex"`` (see :ref:`sc_spin_orbital` and
+       :ref:`sc_spin_orbital_dynamic`); the outputs of a run with bond
+       channels are refused (see :ref:`flex_so_bond_archive`)
    * - susceptibility stored
      - density-density only, ``chi_{(a,a),(b,b)}``
      - full orbital-pair
@@ -1552,6 +2231,53 @@ Interactions reaching the Eliashberg vertex
 ``PairLift`` contributes ``S = C = 0`` to the particle-hole vertex and is inert
 on every route (ignored with a warning).
 
+Interaction rows in spin-orbital mode (``enable_spin_orbital = true``)
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 24 24 24
+
+   * - interaction rows
+     - RPA
+     - FLEX (``general``, ``flex_hartree_fock = true``)
+     - ``hwave_sc`` (static and dynamic)
+   * - on-site rows, and in-cell (:math:`\mathbf{R} = 0`) rows between
+       different orbitals, whatever ``orbital_site`` says
+     - accepted; direct part and exchange crossing, exactly
+     - accepted; direct part and exchange crossing, exactly
+     - accepted; direct part and exchange crossing, exactly
+   * - ``[mode.param] orbital_site``
+     - ignored; one WARNING per run
+     - ignored; one WARNING per run
+     - ignored; one WARNING per run
+   * - off-site rows (:math:`\mathbf{R} \neq 0`)
+     - accepted through their direct (Hartree-like) part only; an INFO line
+       names the types (see :ref:`off-site rows in spin-orbital RPA <rpa_so_offsite>`)
+     - refused
+     - static with ``bond_channels = true``: accepted; direct part and
+       exchange crossing, exactly, each on its bond
+       (:ref:`sc_so_bond_static`). Static without bond channels: refused;
+       the message names ``bond_channels = true``. Dynamic: refused; the
+       message asks to remove the off-site rows
+   * - imaginary part on ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``
+       or ``PairLift``
+     - refused
+     - refused
+     - refused
+   * - imaginary part on ``PairHop``
+     - not refused by this check
+     - as for RPA
+     - as for RPA
+
+Spin-orbital FLEX accepts the bond-resolved channels
+(``longitudinal_bond_channels = true``, :ref:`flex_so_bond_tutorial`);
+``hwave_sc`` reads its ``green.npz`` through ``[eliashberg] bond_green`` on
+the static bond path (:ref:`sc_so_bond_green`); it does not read the bond
+archive (``longitudinal_bond.npz``) or the susceptibilities of that run.
+Spin-orbital
+``hwave_sc`` accepts ``bond_channels = true`` with ``frequency = "static"``
+(:ref:`sc_so_bond_static`) and refuses it with ``frequency = "dynamic"``.
+
 
 Spin structure
 ----------------------------
@@ -1568,7 +2294,9 @@ transfer term has spin-off-diagonal blocks (in ``enable_spin_orbital`` mode) and
 from whether an external field is present. It is also **independent of**
 ``calc_scheme``, which selects the orbital tensor rank rather than the spin
 structure; the one link between them is that ``calc_scheme = "general"`` FLEX
-accepts ``spin-free`` only and rejects the other two outright.
+accepts ``spin-free`` only without ``enable_spin_orbital`` (with it, the
+spin-orbital FLEX of ``flex_hartree_fock = true`` keeps every model in the
+full ``spinful`` form; see :ref:`flex_spin_orbital`).
 
 
 - **Paramagnetic** (``spin_mode = "spin-free"``) -- fully supported. A reduced
@@ -1588,23 +2316,2218 @@ accepts ``spin-free`` only and rejects the other two outright.
 - **Spin-orbital representation** (``mode.enable_spin_orbital = true``,
   whatever spin mode the Hamiltonian then classifies as -- a spin-diagonal
   or even spin-free model can be written in this representation) --
-  **not supported.** ``hwave_sc`` rejects the configuration up front with
-  an explicit error, on both the static and the dynamic entry, and
-  ``hwave_tsweep`` rejects it in preflight before any FLEX rung runs
-  (as of version 2.0): before this guard, the internally computed :math:`\chi_0`
-  path ran to completion and printed eigenvalues built on inconsistent
-  index/orbital-count conventions -- a silently wrong result, not an
-  approximation. (The chi shape-mismatch diagnostic for spin-orbital FLEX
-  files remains in the low-level loader for direct helper calls and
-  malformed input; it is no longer reachable through the guarded public
-  entries.)
+  **supported by the static solver and by the on-site dynamic solver**
+  (``frequency = "dynamic"``), with a full spin-matrix gap function and the
+  spinful (charge, longitudinal and transverse spin) susceptibility; see
+  :ref:`sc_spin_orbital` and :ref:`sc_spin_orbital_dynamic` for the scope.
+  The static bond path (``bond_channels = true``) supports it
+  (:ref:`sc_so_bond_static`); the dynamic bond path rejects the
+  configuration up front, and ``hwave_tsweep`` with ``run_eliashberg = true`` rejects it in
+  preflight before any FLEX rung runs (a FLEX-only sweep runs it, with
+  ``warm_start = false``).
 
-Supporting either spin-polarized case would require an
-:math:`S_z`-resolved pairing vertex (and, for spin-orbit, a full spin-matrix
-gap function), together with the transverse susceptibility
-:math:`\chi^{+-}`, which the reduced scheme does not store. That is a feature
-addition rather than a configuration change.
+Supporting a spin-polarized model in the singlet/triplet channels would
+require an :math:`S_z`-resolved pairing vertex together with the transverse
+susceptibility :math:`\chi^{+-}`, which the reduced scheme does not store.
+That is a feature addition rather than a configuration change; the
+spin-orbital representation above is the route for spin-mixing models and
+for spin-polarized (Zeeman-field) models (see :ref:`sc_spin_polarized`).
 
+
+.. _sc_spin_orbital:
+
+Spin-orbital models (``enable_spin_orbital``)
+--------------------------------------------------
+
+With ``[mode] enable_spin_orbital = true`` the solver treats the gap
+as one general matrix :math:`\Delta_{AB}(\mathbf{k})` over the :math:`2N`
+spin-orbitals (:math:`N` physical orbitals) instead of separate singlet and
+triplet channels. Spin-orbit coupling and other spin-mixing one-body terms in
+the Transfer file are then included exactly, and the singlet and triplet
+components of the gap mix as the model dictates.
+
+.. important::
+
+   **Release and migration note: spin-orbital mode.** In spin-orbital mode:
+
+   (1) ``[mode.param] orbital_site`` is ignored. The exchange of every
+       R = 0 row, including rows between orbitals labelled as different
+       sites, is included exactly. SO RPA, SO FLEX and SO hwave_sc results
+       change for inputs that combine ``orbital_site`` with such rows;
+       inputs without such rows give the same numbers as before. Removing
+       ``orbital_site`` from the input silences the WARNING below.
+   (2) An imaginary part on any coefficient other than PairHop is refused
+       (it was silently folded before; see issue #302 for complex
+       Exchange).
+   (3) Spin-orbital archives written before this version (fingerprint
+       version 1 or none) must be regenerated (which command writes which
+       file: see :ref:`sc_so_archive_checks`).
+   (4) Off-site rows (:math:`\mathbf{R} \neq 0`) are accepted by the static
+       ``hwave_sc`` with ``[eliashberg] bond_channels = true``
+       (:ref:`sc_so_bond_static`); earlier versions refused ``bond_channels
+       = true`` and every off-site row in spin-orbital mode. Without bond
+       channels an off-site row is still refused, and the message now
+       names ``bond_channels = true``. The dynamic solver refuses both as
+       before.
+
+   To reproduce an earlier result, remove the affected rows or imaginary
+   parts, or run the non-spin-orbital solver.
+
+   In spin-orbital mode the value of ``orbital_site`` is not read; an
+   invalid value is ignored too. One WARNING is logged per run when the key
+   is present: ``orbital_site is ignored in spin-orbital mode; all R=0 rows
+   are treated exactly (see migration note)``.
+
+Scope
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``frequency = "static"`` (the default; this section) or ``"dynamic"``
+  (the frequency-resolved gap of :ref:`sc_spin_orbital_dynamic`);
+- on-site and in-cell (:math:`\mathbf{R} = 0`) two-body interactions: a
+  row between two different orbitals of the cell is treated exactly,
+  exchange crossing included, whatever ``orbital_site`` says. Off-site rows
+  (:math:`\mathbf{R} \neq 0`) need the bond-resolved channels below and are
+  refused otherwise (see *Refused combinations*);
+- ``bond_channels = false`` (the default) for the on-site path described in
+  this section, or, with ``frequency = "static"``, ``bond_channels = true``
+  for the bond-resolved path of :ref:`sc_so_bond_static`, which also takes
+  the off-site rows;
+- ``chi0q_mode = "calc"`` (the spinful :math:`\chi_0` is computed
+  internally), ``"load"`` (the general four-index chi0q written by a
+  spin-orbital RPA run; **static only**) or ``"flex"`` (the outputs of a
+  spin-orbital FLEX run, which must be a ``calc_scheme = "general"`` run with
+  ``[mode.param] flex_hartree_fock = true`` and without
+  ``longitudinal_bond_channels``; see :ref:`flex_spin_orbital`). The dynamic solver needs ``chi0q_mode`` set
+  explicitly to ``"flex"`` or ``"calc"``: ``"load"`` and an unset key (whose
+  default is ``"load"``) are refused;
+- ``solver_mode = "iteration"``, ``"eigenvalue"`` or ``"both"`` with
+  ``eigenvalue_method = "arnoldi"``.
+
+The input files follow the spin-orbital conventions of RPA and FLEX: the
+Geometry ``norb`` is the spin-orbital count :math:`2N`, the Transfer file
+uses the interleaved index :math:`2\alpha + s`, and the interaction files use
+the **physical** orbital indices :math:`1 \ldots N`. ``pairing_type`` is not
+set: there is only one gap.
+
+Pairing vertex
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The pairing vertex is built from the antisymmetrized spinful vertex
+:math:`\Gamma` (the direct term plus its on-site exchange crossing) -- the
+same :math:`\Gamma` that spin-orbital RPA and FLEX use, which is why
+``[mode.param] spinful_vertex_exchange`` must stay ``true`` -- and the
+spinful susceptibility :math:`\chi`:
+
+.. math::
+
+   V = \tfrac{1}{2}\,\Gamma \;-\; \Gamma\,\chi(\mathbf{q})\,\Gamma ,
+   \qquad
+   \chi = \left[1 + \chi_0 \Gamma\right]^{-1} \chi_0 ,
+
+at zero bosonic frequency. For ``"calc"`` and ``"load"`` :math:`\chi` is the
+RPA expression on the right; for ``"flex"`` it is the susceptibility stored
+by the FLEX run. :math:`\chi` carries the charge, longitudinal and
+transverse spin channels and their mixing in one object.
+
+Pauli projection
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A gap must be fermion-antisymmetric,
+:math:`\Delta_{AB}(\mathbf{k}) = -\Delta_{BA}(-\mathbf{k})`. The solver
+works in an orthonormal basis of this subspace: one coordinate per pair
+:math:`\{(A, B, \mathbf{k}), (B, A, -\mathbf{k})\}` (the elements with
+:math:`A = B` and :math:`\mathbf{k} = -\mathbf{k}` are forced to zero),
+and both the power iteration and the Arnoldi solver, with or without
+``spectral_shift``, act on the kernel restricted to it (the initial gap is
+projected as well). The Pauli-forbidden modes of the symmetric sector,
+which would otherwise appear in the spectrum and could be selected, are
+therefore not part of the problem; the eigenvalues of the antisymmetric
+sector are not changed. Every reported eigenvector is checked to be
+antisymmetric to round-off.
+
+Gap convention and spin decomposition
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The spin-orbital index of the gap is in **spin-block** order,
+:math:`A = s N + \alpha` (spin :math:`s = 0` is up, :math:`s = 1` down;
+``index_convention = spin_block``), not the interleaved order of the
+Transfer file. For each orbital pair :math:`(a, b)` the :math:`2\times 2`
+spin block :math:`[\Delta_{ab}]_{st} = \Delta_{(s,a),(t,b)}` is decomposed as
+
+.. math::
+
+   \Delta_{ab}(\mathbf{k}) =
+   \left[\psi_{ab}(\mathbf{k}) + \mathbf{d}_{ab}(\mathbf{k})\cdot
+   \boldsymbol{\sigma}\right] i\sigma_y ,
+
+that is
+:math:`\psi = (\Delta_{\uparrow\downarrow} - \Delta_{\downarrow\uparrow})/2`,
+:math:`d_x = (\Delta_{\downarrow\downarrow} - \Delta_{\uparrow\uparrow})/2`,
+:math:`d_y = (\Delta_{\uparrow\uparrow} + \Delta_{\downarrow\downarrow})/(2i)`,
+:math:`d_z = (\Delta_{\uparrow\downarrow} + \Delta_{\downarrow\uparrow})/2`.
+:math:`\psi` is the spin-singlet and :math:`\mathbf{d}` the spin-triplet
+component. The four spin weights are
+
+.. math::
+
+   w_\psi = \frac{1}{W}\sum_{\mathbf{k},a,b} |\psi_{ab}(\mathbf{k})|^2 ,
+   \qquad
+   w_{d_j} = \frac{1}{W}\sum_{\mathbf{k},a,b} |d_{ab,j}(\mathbf{k})|^2 ,
+   \qquad
+   W = \sum_{\mathbf{k},a,b}
+   \left(|\psi_{ab}(\mathbf{k})|^2 + |\mathbf{d}_{ab}(\mathbf{k})|^2\right),
+
+so that :math:`w_\psi + w_{d_x} + w_{d_y} + w_{d_z} = 1`. Without spin-orbit
+coupling a pure singlet gives :math:`w_\psi = 1` and a pure triplet
+:math:`w_{d_x} + w_{d_y} + w_{d_z} = 1`; spin-orbit coupling mixes them. The
+weights do not depend on the phase or the normalization of the gap.
+
+Outputs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- ``gap.dat`` has the usual layout over the :math:`2N` spin-orbital indices
+  (``sigma_ij`` is :math:`\Delta_{ij}` in spin-block order), preceded by the
+  comment lines ``# spin_orbital = true``, ``# index_convention =
+  spin_block`` and ``# gap_layout = ...``.
+
+- ``eigenvalue.dat`` starts with ``# key = value`` comment lines, among them
+  ``# spin_orbital = true``, ``# index_convention = spin_block``, the gap
+  layout, the decomposition formula and ``gap_spin_weights`` (the weights of
+  the gap written to ``gap.dat``). Each eigenpair row carries the four
+  weights after the ``match`` column, which is ``1`` for a
+  fermion-antisymmetric eigenvector:
+
+  .. code-block:: text
+
+     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=fermion-antisymmetric)  w_psi  w_dx  w_dy  w_dz
+        0  3.15509804e-01  7.35115141e-15  3.15509804e-01 1  1.00000000e+00  1.58260973e-33  2.03409188e-33  2.94567224e-32
+        ...
+        4 -1.06188646e-01 -3.28383154e-15  1.06188646e-01 1  7.10085111e-31  5.45001702e-01  2.16795802e-01  2.38202496e-01
+
+  (In the spin-rotation invariant limit a triplet eigenvalue is threefold
+  degenerate, so how its weight splits among :math:`d_x, d_y, d_z` depends
+  on the eigenvector the solver returns; only the sum is meaningful.)
+
+- ``gap.npz`` (the gap file name with its extension replaced by ``.npz``)
+  holds the gap at full precision:
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 30 70
+
+     * - key
+       - content
+     * - ``gap``
+       - :math:`\Delta_{AB}(\mathbf{k})`, shape ``(2N, 2N, Nx, Ny, Nz)``,
+         spin-block order (the gap of ``gap.dat``)
+     * - ``index_convention``
+       - ``"spin_block"``
+     * - ``spin_orbital``, ``norb_phys``
+       - ``True``; the number :math:`N` of physical orbitals
+     * - ``kx``, ``ky``, ``kz``
+       - the k grid
+     * - ``spin_components``, ``gap_spin_weights``
+       - ``["psi", "dx", "dy", "dz"]`` and the four weights of ``gap``
+     * - ``eigenvalues``, ``eigenvectors``, ``eigenvector_spin_weights``,
+         ``eigenvalue_match``
+       - with an eigenvalue analysis only: the eigenvalues, the eigenvectors
+         (shape ``(n, 2N, 2N, Nx, Ny, Nz)``), their weights ``(n, 4)`` and
+         the ``match`` flags
+
+Reading the outputs of a spin-orbital FLEX run
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+With ``chi0q_mode = "flex"`` the solver reads four archives of a FLEX run
+with ``enable_spin_orbital = true``, ``calc_scheme = "general"`` and
+``[mode.param] flex_hartree_fock = true`` (a run with
+``longitudinal_bond_channels = true`` is refused: its archives carry
+``producer_stage = "flex_so_bond"`` and describe the bond-resolved run; the
+message names the file, see the troubleshooting table of
+:ref:`sc_so_archive_checks` and :ref:`flex_so_bond_archive`), from ``[file.input]
+path_to_flex_output`` (falling back to ``[file.output] path_to_output``):
+
+- ``[eliashberg] flex_chiq`` (default ``"chiq.npz"``): the spinful
+  susceptibility :math:`\chi`; the FLEX run writes it when ``[file.output]
+  chiq`` is set;
+- ``[eliashberg] flex_chi0q`` (default ``"chi0q.npz"``): the FLEX
+  :math:`\chi_0`; **required** -- write it with ``[file.output] chi0q`` in
+  the FLEX run. It is used to check that the vertex of this input reproduces
+  the stored :math:`\chi`, :math:`(1 + \chi_0\Gamma)\chi = \chi_0`; a
+  mismatch is refused (a changed interaction file is already caught by the
+  interaction check of :ref:`sc_so_archive_checks`);
+- ``[eliashberg] flex_green`` (default ``"green.npz"``): the dressed Green
+  function, also required; the FLEX run writes it only when ``[file.output]
+  green`` is set. A spin-orbital FLEX run records ``green_layout =
+  "b_f_k_o_o_v1"`` and ``spin_orbital = True`` in it;
+- ``[eliashberg] flex_sigma`` (default ``"sigma.npz"``): the self-energy of
+  the same FLEX run, also required (write it with ``[file.output] sigma``;
+  it carries ``spin_orbital = True``). Its static part gives the closure density of the borrowed Green function,
+  which the gap archive records (see :ref:`sc_so_archive_checks`).
+
+All four archives must be written by a run of this version (fingerprint
+version 2); older ones are refused with a message that asks to regenerate
+them (see :ref:`sc_so_archive_checks`).
+
+``flex_chiq``, ``flex_chi0q`` and ``flex_sigma`` are used only in
+spin-orbital mode; the keys are case-insensitive. ``flex_chi_s`` and ``flex_chi_c`` are refused,
+because a spin-orbital FLEX run stores one spinful channel rather than
+separate spin and charge channels. If the FLEX archive records
+``scf_converged = false``, a WARNING is logged: the stored :math:`\chi` and
+Green function agree only at convergence.
+
+.. _sc_spin_polarized:
+
+Spin-polarized states (Zeeman field)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A spin-orbital ``hwave_sc`` run (static or dynamic) can be put in a Zeeman
+field :math:`h`. One sign convention holds throughout: the field shifts the
+up-spin level by :math:`+h` and the down-spin level by :math:`-h` (the
+:math:`\sigma^z` sign of the Extern term). Both routes below need
+``[mode] enable_spin_orbital = true``, the Geometry ``norb`` equal to
+:math:`2N`, and the Transfer file in the interleaved spin-orbital indices
+(1-based file index :math:`2a + s + 1`, :math:`s = 0` for up and
+:math:`s = 1` for down).
+
+- **Route 1: Zeeman in Transfer.** Add on-site entries for each orbital
+  :math:`a` (1-based file indices)::
+
+     0 0 0  2a+1 2a+1  +h 0.0     # up:   +h
+     0 0 0  2a+2 2a+2  -h 0.0     # down: -h
+
+- **Route 2: Extern + coeff_extern.** The Extern file uses the
+  **physical** orbital indices: an :math:`N \times N` matrix per
+  :math:`R`, indices :math:`1, \ldots, N`, in the same Wannier90 format as
+  without ``enable_spin_orbital``. It does not use the
+  :math:`1, \ldots, 2N` spin-orbital indices of the Transfer file; an index
+  outside the physical range, a header (line 2) that declares another
+  orbital count, or a malformed header is rejected before any calculation,
+  in every ``chi0q_mode``. The operator is
+  :math:`\sum H_{ab}(R)\,\sigma^z_{ss'}\,c^\dagger_{as} c_{bs'}`, scaled by
+  ``[mode.param] coeff_extern`` (default 0.0, so the Extern file has no
+  effect until ``coeff_extern`` is set, e.g. to 1.0); :math:`H_{aa}(0) = h`
+  with ``coeff_extern = 1.0`` equals Route 1. The band of ``hwave_sc`` then
+  equals the band of the spin-orbital RPA and FLEX runs with the same
+  input.
+
+Side by side, for two orbitals and :math:`h = 0.1`::
+
+   # Route 1 -- Transfer, spin-orbital indices 1..4       # Route 2 -- Extern, physical indices 1..2; coeff_extern = 1.0
+   0 0 0  1 1   0.1 0.0     # orbital 1 up   +h           0 0 0  1 1   0.1 0.0
+   0 0 0  2 2  -0.1 0.0     # orbital 1 down -h           0 0 0  2 2   0.1 0.0
+   0 0 0  3 3   0.1 0.0     # orbital 2 up   +h           # down gets -h from sigma^z
+   0 0 0  4 4  -0.1 0.0     # orbital 2 down -h
+
+Use one route, not both: the two fields add (a WARNING is logged when an
+active Extern field meets spin-dependent on-site Transfer entries). For
+:math:`h > 0` the down spin is favoured, so at fixed filling the field
+polarizes the electrons toward spin down; the log states the convention
+(``Zeeman sign: +h raises spin-up (favours spin-down occupation)``).
+
+The field enters every input the solver uses:
+
+- ``chi0q_mode = "calc"``: the band, the chemical potential, the Green
+  function and the internally computed spinful :math:`\chi_0` all include
+  it;
+- ``chi0q_mode = "flex"``: run the spin-orbital FLEX with the same field
+  (see :ref:`flex_spin_orbital`); its :math:`\chi` and Green function
+  already include it;
+- ``chi0q_mode = "load"`` needs spin-mixing hopping: without it the
+  spin-orbital RPA reduces the model to the spin-diagonal form and writes a
+  physical-orbital chi0q, which this mode refuses. For Zeeman-only models
+  use ``"calc"`` or ``"flex"``. With spin-mixing hopping, give the same
+  field as the RPA run that wrote the chi0q file.
+
+A producer (RPA or FLEX) and the ``hwave_sc`` run that reuses its archives
+must use the same route: both Transfer, or both Extern with the same file
+and ``coeff_extern``. The archive check compares the Transfer and Extern
+tables and ``coeff_extern``, not the resulting band, so the same field
+written along the other route is refused as a band difference.
+
+Each field value is its own state point. An RPA or FLEX archive written at
+another field value (another ``coeff_extern`` or Extern table) describes
+another state and is refused (see :ref:`sc_so_archive_checks`): for a field
+sweep, rerun the RPA or FLEX producer at every value. Spontaneous magnetic order (a ferro- or antiferromagnetic mean
+field) is not covered: ``trans_mod`` and ``green_init`` are refused in
+spin-orbital mode (issue #273).
+
+**S_z-resolved weights.** Every spin-orbital run (static and dynamic) also
+reports the :math:`S_z` content of each eigenvector. Up and down refer to the
+**input quantization axis**: the :math:`\sigma^z` basis of the spin-block
+index, which is the axis of the Transfer spin labels and of Extern's
+:math:`\sigma^z`. The weights are not rotated to a field or magnetization
+axis. With the spin blocks :math:`D_{st}` of the gap,
+:math:`\psi = (D_{\uparrow\downarrow} - D_{\downarrow\uparrow})/2` and
+:math:`d_z = (D_{\uparrow\downarrow} + D_{\downarrow\uparrow})/2`,
+
+.. math::
+
+   w_{\uparrow\uparrow} = \frac{\sum |D_{\uparrow\uparrow}|^2}{W_\text{tot}},\quad
+   w_{\downarrow\downarrow} = \frac{\sum |D_{\downarrow\downarrow}|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{singlet} = \frac{2\sum |\psi|^2}{W_\text{tot}},\quad
+   w^{S_z=0}_\text{triplet} = \frac{2\sum |d_z|^2}{W_\text{tot}},\qquad
+   W_\text{tot} = \sum |\Delta|^2 ,
+
+summed over the orbital pairs, k (and the Matsubara frequencies of a dynamic
+run). The four weights sum to 1. They refine the weights above:
+:math:`w^{S_z=0}_\text{singlet} = w_\psi`,
+:math:`w^{S_z=0}_\text{triplet} = w_{d_z}` and
+:math:`w_{\uparrow\uparrow} + w_{\downarrow\downarrow} = w_{d_x} + w_{d_y}`.
+The log has one line per eigenvector (in ``solver_mode = "iteration"``, the
+one gap as eigenvector 0)::
+
+   S_z decomposition of eigenvector 0: up-up = 0.000000, down-down = 0.000000, S_z=0 singlet = 0.999999, S_z=0 triplet = 0.000001 (the four sum to 1)
+
+The gap archive (``gap.npz``, or ``gap_dynamic.npz`` for a dynamic run)
+holds ``sz_weight_upup``, ``sz_weight_dndn``, ``sz_weight_singlet0`` and
+``sz_weight_triplet0`` (float64, one entry per eigenvector),
+``sz_conservation_residual`` and ``sz_conserved``. The residual measures
+whether the inputs conserve :math:`S_z`:
+:math:`r = \max(r_V, r_G)`, where :math:`r_V` is
+:math:`\max|V_\text{off}| / \max|V|` over the pairing-vertex entries
+:math:`V_{abcd}` with :math:`S_z(a) + S_z(d) \neq S_z(b) + S_z(c)` (all k
+and frequencies), :math:`r_G` the same ratio for the spin-off-diagonal
+blocks of the Green function, and ``sz_conserved`` is :math:`r \le 10^{-12}`.
+A Zeeman field without spin-orbit coupling gives exactly 0. When
+:math:`S_z` is not conserved (spin-orbit coupling, a spin-flip hopping) the
+weights are still an exact decomposition, and one WARNING is logged::
+
+   S_z is not conserved (residual 5.215e-01): the S_z weights describe the composition of each eigenvector in the input quantization axis, not separate pairing channels.
+
+.. _sc_so_archive_checks:
+
+Archive checks: exact state-point reuse only
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**An archive is reused only at the identical state point.** It is not a
+warm start across a sweep: a chi0q, chiq, green or sigma archive written at
+another field, filling, temperature, band or interaction is refused, and the
+producer has to be rerun with this input. The one exception is ``Nmat`` in
+``chi0q_mode = "load"`` (the state check below): there a chi0q archive from another
+``Nmat`` is accepted with a WARNING.
+
+Every spin-orbital archive is written with version-2 provenance members:
+``chi0q.npz`` and ``chiq.npz`` by the spin-orbital RPA and FLEX runs,
+``green.npz`` and ``sigma.npz`` by the spin-orbital FLEX run, the
+spin-orbital bond archive (``longitudinal_bond.npz``,
+:ref:`flex_so_bond_archive`) by the spin-orbital FLEX with bond channels, and
+``gap.npz`` / ``gap_dynamic.npz`` by ``hwave_sc``. The members are
+
+- ``fingerprint_version = 2``, ``producer_stage``, ``producer_label`` and
+  ``producer_version``;
+- the band digests ``fp_transfer``, ``fp_extern``, ``fp_meta`` and
+  ``fp_band``, and the Green-function digest ``fp_green``;
+- the interaction digest ``fp_interaction`` (over the interaction rows of
+  the input, compiled to operator terms) and the topology digest
+  ``fp_topology`` (over the declared displacements of those rows);
+- ``fp_capability`` (``"so_onsite"``: the archive does not resolve bond
+  channels) and ``fp_resolved_topology`` (the literal ``"none:onsite"``);
+- the copies ``prov_*`` of the band and interaction input, and the realized
+  state ``state_*``.
+
+The gap archive of a bond-resolved run (``producer_stage =
+"sc_so_bond_static"``, :ref:`sc_so_bond_static`) records ``fp_capability =
+"so_bond"`` and, as ``fp_resolved_topology``, the digest of its resolved
+bond channels, and adds the members ``delta_r``, ``reverse``,
+``slot_convention`` and ``max_shells`` (``-1`` without a
+``bond_max_shells`` cutoff) and ``block_layout`` (``"dense"`` or
+``"sz_packed"``).
+
+In ``chi0q_mode = "load"`` and ``"flex"``, and with ``bond_green`` on the
+bond path, the spin-orbital ``hwave_sc``
+checks each archive it reads against its own input, before any large array
+is read. The ``prov_*`` copies only word the difference in a message: no
+digest is recomputed from them. The stored digests are compared with the
+digests of **this run's own** Transfer, Extern and interaction input.
+
+**Version.** Within this check the version is read first (the loader's
+own tag checks, such as ``chi_convention`` and the ``spin_orbital``
+marker, can refuse a file before it). A ``fingerprint_version`` of 2 is
+required: an archive of version 1 and an archive without
+``fingerprint_version`` are refused with a message that says to regenerate
+them (see the table below), and are never reported as malformed. There is
+no conversion and no recompute: the archive has to be written again by the
+producer of this version.
+
+**Regenerating an archive.** An archive of version 1 or without a version
+cannot be converted. Rerun the run that writes it, with this version and the
+same input, and with the ``[file.output]`` key (or ``[eliashberg]`` key) that
+writes the file:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 46 30
+
+   * - Archive
+     - Regenerate with
+     - Key that writes it
+   * - ``chi0q.npz``, ``chiq.npz``
+     - ``hwave <input.toml>``, a spin-orbital RPA or FLEX run
+       (``enable_spin_orbital = true``)
+     - ``[file.output] chi0q``, ``chiq``
+   * - ``green.npz``, ``sigma.npz``
+     - ``hwave <input.toml>``, a spin-orbital FLEX run
+     - ``[file.output] green``, ``sigma``
+   * - ``longitudinal_bond.npz`` (spin-orbital bond archive) and its
+       companion ``green.npz``
+     - ``hwave <input.toml>``, a spin-orbital FLEX run with
+       ``longitudinal_bond_channels = true`` and
+       ``longitudinal_bond_output_full = true`` (the ``green.npz`` alone, as
+       the ``bond_green`` input, needs only ``longitudinal_bond_channels =
+       true`` and ``[file.output] green``)
+     - ``[file.output] longitudinal_bond``, ``green``
+   * - ``gap.npz``, ``gap_dynamic.npz``
+     - ``hwave_sc <input.toml>``
+     - ``[eliashberg] output_gap`` (the archive name is the gap file name
+       with the extension ``.npz``)
+
+In the messages of the table below, ``<producer>`` is the run named here.
+
+The check then runs in two steps.
+
+1. **Structure.** Three conditions, none of which reads a payload array.
+
+   - *Provenance members.* ``producer_stage`` is a stage that writes this
+     kind of archive; every member is present with its exact dtype
+     (``int64``, ``float64``, ``complex128`` or ``bool``, in either byte
+     order; a string of any width) and shape; the digests are 64 lowercase
+     hexadecimal characters; ``fp_capability`` and
+     ``fp_resolved_topology`` agree with the stage; the duplicated fields
+     agree (``beta`` = ``state_beta``, ``nmat`` = ``state_nmat``); and the
+     recorded density residual is consistent and at most
+     :math:`10^{-8}\max(1, |t|)` electrons per cell (:math:`t` the target).
+   - *Payload members and markers.* The payload of the kind is present
+     (below) together with the markers ``index_convention`` and
+     ``spin_orbital = True``; ``green.npz`` also carries ``green_layout =
+     "b_f_k_o_o_v1"``.
+   - *Payload headers.* The npy header of each payload member says
+     ``complex128``, C order and a rank that the kind allows, and the
+     member's stored size is the header plus the data the header declares
+     (a truncated member is refused). Only the header and the zip directory
+     are read.
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 20 40 40
+
+      * - Archive
+        - ``producer_stage`` that writes it
+        - Payload members
+      * - ``chi0q.npz``
+        - ``rpa_so``, ``flex_so_onsite``, ``flex_so_bond``
+        - ``chi0q``
+      * - ``chiq.npz``
+        - ``rpa_so``, ``flex_so_onsite``, ``flex_so_bond``
+        - ``chiq``
+      * - ``green.npz``
+        - ``flex_so_onsite``, ``flex_so_bond``
+        - ``green``, ``green_layout``
+      * - ``sigma.npz``
+        - ``flex_so_onsite``, ``flex_so_bond``
+        - ``sigma_static``
+      * - ``gap.npz``, ``gap_dynamic.npz``
+        - ``sc_so_static``, ``sc_so_dynamic``, ``sc_so_bond_static``
+        - ``gap``
+      * - spin-orbital bond archive
+        - ``flex_so_bond``
+        - ``Gamma_bond`` and ``chi_w`` (dense) or their ``@0``, ``@+1``,
+          ``@-1`` blocks (packed); ``chi_w`` in the index or as sidecar
+          files (:ref:`flex_so_bond_archive`)
+
+   For a sidecar block the header is read from the sidecar file, whose
+   name must be a file name without a directory part, in the archive's
+   directory, carrying the archive's ``archive_nonce``, and whose size must equal both the recorded
+   ``<block>_nbytes`` and the header plus the data; a block stored both in
+   the index and as a sidecar is refused.
+
+   The stage ``sc_so_bond_dynamic`` is recognised but not read yet; it is
+   refused with its own message (see the table below). The bond archive
+   of ``flex_so_bond`` is read by ``load_so_bond_archive`` only, with its
+   companion green file; ``hwave_sc`` does not read it. The ``green.npz``
+   of ``flex_so_bond`` is also the ``bond_green`` input of the static bond
+   path of ``hwave_sc`` (:ref:`sc_so_bond_green`); the on-site consumers of
+   ``hwave_sc`` refuse every output of ``flex_so_bond`` (see the table
+   below).
+
+   *Layout members.* An archive of a bond-resolved stage
+   (``sc_so_bond_static``, and every archive of ``flex_so_bond``: chi0q,
+   chiq, green, sigma and the bond archive) must record ``block_layout``,
+   a string that is ``"dense"`` or ``"sz_packed"``; an archive of an
+   on-site stage carries no ``block_layout``. The member-name prefix
+   ``sz_sector_`` is reserved: only a packed spin-orbital bond archive
+   carries the three sector-map members ``sz_sector_order``,
+   ``sz_sector_offsets`` and ``sz_sector_index`` (and must carry all
+   three); any other archive with a member whose name starts with it (a gap
+   archive, stored as the full gap in either layout, an archive of an
+   on-site stage, a chi0q, chiq, green or sigma archive of
+   ``flex_so_bond``, or a dense bond archive), and a packed bond archive
+   with any other such member, is refused as malformed.
+
+2. **Compatibility with this run**, in this order; the first difference is
+   reported.
+
+   1. *Band.* The Transfer table, the Extern table (and whether there is
+      one) and the metadata (``coeff_extern``, the index convention, the
+      orbital counts, ``CellShape`` and ``SubShape``) must be identical.
+      The message lists each difference, e.g. ``coeff_extern: file 0.0, run
+      0.1`` or ``Transfer: file 12 rows, run 12 rows; first differing row
+      (R=(1, 0, 0), a=1, b=2): file (0.1+0j), run (0.11+0j)`` (orbitals
+      1-based).
+   2. *Interaction.* The interaction rows must be identical, compared on
+      the input before any sublattice folding. The message gives the record
+      counts and the first differing record, e.g. ``file 3 records, run 4
+      records; first differing record CoulombIntra modes (...) cells
+      (...): file ..., run ...``.
+   3. *Capability.* The archive's ``fp_capability`` must equal the
+      capability the run consumes. The on-site spin-orbital paths (the
+      ``"load"`` and ``"flex"`` inputs above) consume ``"so_onsite"``
+      artifacts; an archive that resolves bond channels (``"so_bond"``) is
+      refused. The bond-resolved path (:ref:`sc_so_bond_static`) writes a
+      ``"so_bond"`` gap archive and reads no susceptibility archive
+      (``chi0q_mode = "flex"`` is refused); with ``bond_green`` it reads
+      the ``green.npz`` of a spin-orbital FLEX run with bond channels
+      (``"so_bond"``), and refuses the ``green.npz`` of the on-site
+      spin-orbital FLEX (``"so_onsite"``) with a remedy
+      (:ref:`sc_so_bond_green`). The declared and resolved bond topologies
+      are compared only by a bond-resolved consumer: the Python function
+      ``load_so_bond_archive`` of the spin-orbital bond archive
+      (:ref:`flex_so_bond_archive`) and the ``bond_green`` reader of the
+      bond path. Both consume ``"so_bond"`` and require ``Nmat`` to be
+      identical. A declared row counts even with a zero coupling.
+   4. *State.* :math:`\beta` (relative :math:`10^{-12}`); the μ-search mode
+      (``hwave_sc`` always searches μ, so a fixed-μ archive is refused);
+      the target ``filling * 2N`` electrons per cell (relative
+      :math:`10^{-12}`); the producer's closure density against that
+      target (tolerance :math:`\max(10^{-8}\max(1,|t|), 10\,r)` with
+      :math:`r` the file's residual); ``Nmat`` exactly when the Green
+      function is borrowed (``"flex"`` and ``bond_green``). In ``"load"``
+      mode ``Nmat`` may
+      differ: the existing rule locates the zero bosonic frequency through
+      the file's ``nmat``. The loaded :math:`\chi_0` was then summed on
+      another Matsubara grid, so its frequency truncation differs from this
+      run's (the difference shrinks as ``Nmat`` grows but can reach the
+      percent level), and a WARNING says so; the same ``Nmat`` as the
+      producer reproduces it. μ itself is not compared: with the band
+      identical, the density decides.
+   5. *Green function.* In ``"flex"`` mode the digest of the Green function
+      as loaded must equal the ``fp_green`` of the chiq archive (and of its
+      chi0q companion, which is checked like chiq), and the sigma archive
+      must record the same ``fp_green``. ``green.npz`` and ``sigma.npz``
+      go through the whole check (structure, band, interaction, capability
+      and state) before any array is read, and once the Green function is
+      loaded, the ``fp_green`` of ``green.npz`` must equal its digest too.
+      With ``bond_green`` the ``fp_green`` of the file must equal the
+      digest of its ``green`` member as stored; this compare runs once the
+      Green function is read, after the state step and the marker and
+      shape checks (:ref:`sc_so_bond_green`).
+      In ``"load"`` mode no Green function is borrowed, and the archive's
+      ``fp_green`` is logged as a producer assertion (INFO).
+
+**Outputs that cannot be consumed.** A spin-orbital RPA run writes no
+fingerprint members when the one-body band includes ``[file.input]
+trans_mod`` or ``green_init`` (the fingerprints do not cover them), or when
+it is given a chi0q (``chi0q_init`` or an in-memory chi0q), whose band it
+did not build. The run logs an INFO line saying so; the archives are then
+unversioned, and a spin-orbital ``hwave_sc`` refuses them with the
+"no fingerprint_version" message of the table below, whether or not the run
+has an Extern field. (A run given a chi0q also lacks the marker
+``spin_orbital = True``, which ``hwave_sc`` refuses first.) To use such a
+run's susceptibility, rerun the spin-orbital RPA from the Transfer and
+Extern input alone. An unversioned archive of an earlier version was
+accepted with a WARNING when the run had no Extern field; it is now always
+refused.
+
+**What the gap archive records.** ``gap.npz`` (``producer_stage =
+"sc_so_static"``, or ``"sc_so_bond_static"`` for a bond-resolved run) and
+``gap_dynamic.npz`` (``"sc_so_dynamic"``) carry the
+same version-2 members, describing what *this* run's kernel used; nothing
+is copied from the producer except the state of a Green function read
+with ``bond_green`` (below):
+
+- ``"calc"`` and ``"load"``, and every bond-resolved run without
+  ``bond_green``: the run's own
+  Green function, built from its
+  band and its own μ; ``state_density`` is the Fermi count of the band at that
+  μ per cell, ``state_mu_tol = |state_density - state_target|``;
+- ``"flex"``: ``fp_green`` is the digest of the borrowed Green function as
+  consumed, ``state_mu`` the FLEX μ it was built at, and ``state_density``
+  its closure density, computed with the routine FLEX uses (the static
+  self-energy from ``flex_sigma``, on this run's band);
+- a bond-resolved run with ``bond_green``: ``fp_green`` is the digest of
+  the Green function as consumed (after the :math:`S_z` projection, when
+  one was applied), ``fp_green_source`` the file's ``fp_green``, written
+  only when the Green function was projected, and the ``state_*``
+  members are copied from ``green.npz``: the producer's recorded state of
+  the same Green function (:ref:`sc_so_bond_green`).
+
+The interaction digests (``fp_interaction``, ``fp_topology``) are those of
+this run's input. The scalar members also appear as ``# key = value`` lines
+in ``eigenvalue.dat``. Accepted limitations: the sigma archive is bound to
+the Green function only through its ``fp_green``; a producer must close its
+density to :math:`10^{-8}\max(1,|t|)` electrons per cell (FLEX's closure
+check at :math:`10^{-10}` and the RPA μ search both do).
+
+**Troubleshooting.** Every refusal is one line naming the file and the
+producer:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 40 30
+
+   * - Message
+     - Cause and remedy
+     - Keys to align or regenerate
+   * - ``'<file>' carries fingerprint_version 1 (written before interaction
+       fingerprints existed); this version requires fingerprint_version 2.
+       Regenerate it by re-running <producer> with this version (the run
+       and the [file.output] key that write each archive are listed under
+       'Archive checks' in the hwave_sc documentation).``
+     - A spin-orbital archive written by an earlier version. It cannot be
+       converted. Rerun the producer with this version.
+     - the producer's ``[file.output]`` archives
+   * - ``'<file>' has no fingerprint_version (written before this version, or
+       by a run whose band the fingerprints do not cover: trans_mod,
+       green_init or a supplied chi0q; such outputs cannot be read by a
+       spin-orbital consumer); this version requires fingerprint_version 2.
+       Regenerate it by re-running <producer> with this version, from the
+       Transfer/Extern input (the run and the [file.output] key that write
+       each archive are listed under 'Archive checks' in the hwave_sc
+       documentation).``
+     - Either an archive written before this version, or the output of a
+       spin-orbital RPA run with ``trans_mod``, ``green_init`` or a supplied
+       chi0q. Rerun the producer with this version; for RPA, without those
+       inputs.
+     - the producer's ``[file.output]`` archives; remove ``[file.input]
+       trans_mod``, ``green_init`` and ``chi0q_init`` from the RPA run
+   * - ``... does not match this run: band differs: coeff_extern: file 0.0,
+       run 0.1 ... Archives are reused only at the identical state point``
+     - The archive was written for another band (another field, Transfer or
+       Extern table), or the producer and this run give the same field along
+       different routes (Transfer in one, Extern in the other): the check
+       compares the tables, not the band. Rerun the producer at the matching
+       field, with this input and the same route.
+     - ``Transfer``, ``Extern``, ``[mode.param] coeff_extern`` (also
+       ``CellShape``, ``SubShape``)
+   * - ``... does not match this run: interaction differs: file 3 records,
+       run 4 records; first differing record ... Archives are reused only at
+       the identical state point ...``
+     - The producer used other interaction definitions (an added, removed or
+       changed row, in any interaction file). Rerun the producer with the
+       interaction files of this input.
+     - the interaction files (``CoulombIntra``, ``CoulombInter``,
+       ``Hund``, ``Ising``, ``Exchange``, ``PairLift``, ``PairHop``,
+       ``Coulomb``)
+   * - ``<file> was produced by <producer> (so_bond), but this run needs a
+       so_onsite artifact``
+     - The archive resolves bond channels, which this run does not use.
+       The gap archive of a bond-resolved run (``sc_so_bond_static``) is
+       refused by the stage check before this step. With ``chi0q_mode =
+       "flex"`` the on-site FLEX loader refuses the outputs of
+       ``flex_so_bond`` first, with its own message (below). With
+       ``chi0q_mode = "load"`` this message appears for a ``chi0q.npz``
+       written by the spin-orbital FLEX with bond channels. Give a chi0q
+       written by a spin-orbital RPA (``rpa_so``) or an on-site
+       spin-orbital FLEX (``flex_so_onsite``) run, or, for the bond-resolved
+       path, use the ``green.npz`` of that FLEX run through ``bond_green``
+       (:ref:`sc_so_bond_green`).
+     - ``[file.output] chi0q`` (``"load"``); ``[eliashberg] bond_channels``,
+       ``bond_green``
+   * - ``state differs: calc_mu: file False, run True``
+     - The producer ran at a fixed μ (fixed-μ mismatch); ``hwave_sc`` always
+       searches μ from ``filling``. Rerun the producer with ``filling``
+       instead of ``mu``.
+     - ``[mode.param] filling`` (remove ``mu``)
+   * - ``state differs: target ... (file) vs ... (run) ...; density ...
+       (file) vs target ... (run, tol ...)``
+     - The FLEX (or RPA) run was at another filling, or its density did not
+       reach the filling (FLEX density mismatch). Rerun it at this filling.
+     - ``[mode.param] filling``
+   * - ``state differs: beta ... (file) vs ... (run)``
+     - Another temperature (relative tolerance :math:`10^{-12}`). Rerun the
+       producer at this ``T``.
+     - ``[mode.param] T``
+   * - ``state differs: nmat ... (file) vs ... (run)``
+     - ``"flex"`` reuses the Green function on its own grid. Use the FLEX
+       run's ``Nmat``.
+     - ``[mode.param] Nmat``
+   * - ``state_nmat ... (file) vs Nmat ... (run)`` (WARNING, ``"load"``
+       mode)
+     - The chi0q archive was summed on another Matsubara grid; it is used,
+       but its frequency truncation differs. Set ``Nmat`` to the producer's
+       value to reproduce it.
+     - ``[mode.param] Nmat``
+   * - ``fp_green mismatch`` / ``sigma.npz and green.npz come from different
+       runs``
+     - The Green function (or the self-energy) is not the one the chiq
+       archive was computed with: a modified or mixed-up file. Use the
+       archives of one FLEX run, or rerun it.
+     - ``[eliashberg] flex_green``, ``flex_sigma``, ``flex_chiq``
+   * - ``'<file>' was written by producer_stage 'sc_so_bond_dynamic', which
+       this version does not read yet (the dynamic spin-orbital bond path
+       arrives in a later version).``
+     - No run of this version writes this stage (the dynamic bond path
+       refuses ``enable_spin_orbital`` up front), so the file comes from a
+       later version or was modified. Every spin-orbital archive reader
+       refuses it in the structure check, before the band and state checks.
+       Give the reader the archives of
+       a run of this version: for ``hwave_sc``, the chi0q, chiq, green and
+       sigma of a spin-orbital RPA (``rpa_so``) or on-site FLEX
+       (``flex_so_onsite``) run; for ``load_so_bond_archive``, the bond
+       archive of the spin-orbital FLEX with bond channels
+       (``flex_so_bond``).
+     - ``[eliashberg] flex_chiq``, ``flex_chi0q``, ``flex_green``,
+       ``flex_sigma`` (``"flex"``); ``[file.output] chi0q`` (``"load"``);
+       the path given to ``load_so_bond_archive``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83): '<file>'
+       was written by the spin-orbital FLEX with bond channels ([mode.param]
+       longitudinal_bond_channels = true): the chi0q, chiq and green of that
+       run describe the bond-resolved run, which [eliashberg] chi0q_mode =
+       "flex" cannot use. Re-run FLEX with longitudinal_bond_channels = false
+       for this mode.``
+     - The FLEX run used the bond channels (any :math:`B`, also
+       :math:`B = 1`); its chi0q/chiq are channel-0 blocks of the
+       bond-resolved susceptibility. Rerun FLEX without the bond channels
+       for the on-site solver.
+     - ``[mode.param] longitudinal_bond_channels`` of the FLEX run;
+       ``[file.input] path_to_flex_output``, ``[eliashberg] flex_chiq``,
+       ``flex_chi0q``, ``flex_green``, ``flex_sigma`` of this run
+   * - ``bond archive <file>: this is a spin-orbital bond archive (written by
+       the spin-orbital FLEX with bond channels); the non-spin-orbital bond
+       consumers cannot read it, and hwave_sc does not read it in this
+       version (read it with
+       hwave.solver.so_bond_archive.load_so_bond_archive).``
+     - A schema-4 archive given to the non-spin-orbital bond pairing
+       (``hwave_sc`` with ``bond_channels = true`` and ``frequency =
+       "dynamic"``). There is no conversion; rerun the non-spin-orbital FLEX
+       for the schema-3 archive.
+     - ``[eliashberg] flex_bond_archive``, ``bond_channels``
+   * - ``'<file>' is not a spin-orbital bond archive (bond_archive_schema
+       <schema>, spin_orbital <so>); write it with FLEX, [mode]
+       enable_spin_orbital = true, [mode.param] longitudinal_bond_channels =
+       true and longitudinal_bond_output_full = true.``
+     - ``load_so_bond_archive`` was given another file (for example a
+       non-spin-orbital schema-3 archive). ``absent`` stands for a missing
+       member.
+     - ``[mode] enable_spin_orbital``, ``[mode.param]
+       longitudinal_bond_channels``, ``longitudinal_bond_output_full``,
+       ``[file.output] longitudinal_bond``
+   * - ``'<path>' cannot be read as an npz archive (<error>); re-run FLEX to
+       regenerate the bond archive.``
+     - The index given to ``load_so_bond_archive`` is empty, truncated or
+       not an npz file (``<error>`` names the exception). Rerun FLEX.
+     - ``[file.output] longitudinal_bond``
+   * - ``companion green file '<green>' named by '<archive>' is missing
+       (keep the archive, its sidecars and the green file together, or
+       re-run FLEX)``
+     - The archive was moved or copied without its green file, or the
+       green file was removed. Move the index, any sidecars and the green
+       file together, keeping the green file at the relative path
+       ``green_file`` records (:ref:`flex_so_bond_archive`), or rerun FLEX.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``companion green file '<green>' named by '<archive>' cannot be read
+       as an npz archive (<error>); keep the archive, its sidecars and the
+       green file together, or re-run FLEX.``
+     - The green file is empty, truncated, or not an npz file (``<error>``
+       is ``a single .npy array`` for a ``.npy``). Restore the green file
+       of the same run, or rerun FLEX.
+     - ``[file.output] green``
+   * - ``'<archive>': the sidecar file '<name>' is a symbolic link; the
+       reader reads sidecars only as regular files next to the index (copy
+       the file in place of the link, or re-run FLEX).``
+     - A sidecar was replaced by a symbolic link (also one pointing into
+       the same directory). Copy the file itself.
+     - ``[file.output] longitudinal_bond``
+   * - ``'<archive>': the <what> '<name>' resolves to '<real>', outside the
+       archive directory '<dir>'; keep the index, its sidecars and the
+       companion green file in that directory (the green file may be below
+       it), or re-run FLEX.``
+     - A sidecar (``<what>`` = ``sidecar file``) or the green file
+       (``companion green file``) resolves, through a symbolic link, to a
+       place outside the archive's directory. Copy the file to ``<name>``
+       in (or, for the green file, below) that directory.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``'<archive>' (written by <producer>): fp_green mismatch: the Green
+       function this run loaded has digest ..., the archive records ...;
+       the Green function and the susceptibility do not come from the same
+       run. ...``
+     - The companion green file is not the Green function of the
+       archive: it was replaced, a write failed between the commit of the
+       green file and that of the index and left a stale index (see
+       *When writing fails* in :ref:`flex_so_bond_archive`), a later run
+       with ``longitudinal_bond_output_full = false`` or ``IterationMax =
+       0`` overwrote the green file and left the old index (the WARNING
+       ``spin-orbital bond archive '<path>': this run wrote the green file
+       '<green>' but no bond archive ...``), or the index is a copy in the
+       same directory as a re-run (a copy there is no backup; see *Moving
+       and re-running* in :ref:`flex_so_bond_archive`). Rerun FLEX with
+       ``longitudinal_bond_output_full = true`` (and ``IterationMax > 0``),
+       or remove the stale archive.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``'<archive>' is malformed or truncated: sidecar member <block> has
+       the wrong size (...)``, ``... sidecar member <block> file '<name>' is
+       missing ...``, ``... sidecar file name of <block> does not carry the
+       archive_nonce ...``, ``... payload member <block> has an unreadable
+       npy header ...`` (also wrong dtype, rank or slot shape, and ``...
+       is stored both inline and as a sidecar ...``)
+     - A sidecar is truncated, missing, replaced by the sidecar of another
+       archive, or damaged. Every check reads the header and the file size
+       only. Rerun FLEX (a re-run into the same path removes the replaced
+       archive's sidecars).
+     - ``[file.output] longitudinal_bond``
+   * - ``... member block_layout is missing ...``
+     - An output of the spin-orbital FLEX with bond channels written before
+       this version (it lacks ``block_layout``). Regenerate it with this
+       version.
+     - ``[file.output] chi0q``, ``chiq``, ``green``, ``sigma``,
+       ``longitudinal_bond`` of the FLEX run
+   * - ``<head>: longitudinal_bond_output_full = true needs [file.output]
+       green ...`` (``<head>`` = ``[mode] enable_spin_orbital = true with
+       [mode.param] longitudinal_bond_channels = true (FLEX)``)
+     - The bond archive needs its companion green file; the ``[file.output]``
+       keys are case-sensitive.
+     - ``[file.output] green``
+   * - ``<head>: the bond archive '<archive>' and its companion green file
+       '<green>' must be in the same directory or the green file below it
+       ...``
+     - ``green_file`` is stored as a relative path without ``..``.
+     - ``[file.output] green``, ``longitudinal_bond``
+   * - ``<head>: longitudinal_bond_output_layout = "npz" cannot hold the
+       bond archive member <member> (<size>, above the small-array bound
+       <bound> = min(1 GiB, cap / 8)); ...``
+     - A ``chi_w`` member is too large for the single file. Set
+       ``"sidecar"`` or remove the key.
+     - ``[mode.param] longitudinal_bond_output_layout``
+   * - ``spin-orbital bond FLEX needs an estimated peak of ... in phase
+       archive_... ... longitudinal_bond_output_full = true adds the archive
+       phases (archive_bubble, archive_dressing, archive_write); setting it
+       to false removes them. ...``
+     - The pre-flight memory check refused a phase of the bond archive.
+       Raise the cap, reduce ``Nmat`` or the k grid, or set
+       ``longitudinal_bond_output_full = false``.
+     - ``[mode.param] longitudinal_bond_memory_cap_gb``,
+       ``longitudinal_bond_output_full``
+   * - ``... This happened in the final susceptibility pass of the bond
+       archive; set longitudinal_bond_output_full = false to skip that
+       pass.``
+     - The dressing guard refused in the pass of the bond archive; no
+       output of the run is written. Lower ``longitudinal_bond_cond_tol``,
+       or set ``longitudinal_bond_output_full = false`` to get the
+       standard outputs.
+     - ``[mode.param] longitudinal_bond_cond_tol``,
+       ``longitudinal_bond_output_full``
+   * - ``... needs the general (4-index) spinful chi0q ...`` (load mode,
+       Zeeman field without spin-mixing hopping)
+     - The spin-orbital RPA reduces a Zeeman-only model to the spin-diagonal
+       form. Use ``chi0q_mode = "calc"`` or ``"flex"``.
+     - ``[eliashberg] chi0q_mode``
+   * - ``'<file>' is malformed or truncated: <check> (<stored> vs
+       <expected>). Regenerate it with <producer>.`` (also ``the producer
+       did not reach its filling``)
+     - A damaged, truncated or hand-edited archive, or a producer whose
+       density did not close. Rerun the producer.
+     - the producer's ``[file.output]`` archives
+
+Refused combinations
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Each of the following raises an error that names the key or file to change,
+before any calculation:
+
+- a ``frequency`` other than ``"static"`` or ``"dynamic"`` (the refusals
+  specific to ``"dynamic"`` are listed in :ref:`sc_spin_orbital_dynamic`);
+- ``bond_channels = true`` with ``frequency = "dynamic"``:
+  ``[mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg]
+  bond_channels = true with frequency = "dynamic" is not available yet
+  (issue #270); use frequency = "static", or bond_channels = false for
+  on-site interactions.`` With ``frequency = "static"`` it selects the
+  bond-resolved path (:ref:`sc_so_bond_static`), which has refusals of its
+  own (listed there);
+- an off-site two-body row (:math:`\mathbf{R} \neq 0`) without
+  ``bond_channels = true``, including off-site rows inside a ``Coulomb``
+  aggregate file. With ``frequency = "static"`` the message names the row
+  and the key that accepts it::
+
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site row (R = <R>, orbitals <orbitals>) in <file> needs [eliashberg] bond_channels = true: the exchange crossing of an off-site term depends on k + k', which only the bond-resolved pairing path treats. Set bond_channels = true (with frequency = "static"), or remove the off-site rows.
+
+  With ``frequency = "dynamic"`` it says that the spin-orbital pairing
+  vertex supports on-site and in-cell (:math:`\mathbf{R} = 0`) interactions
+  only, and asks to remove the off-site rows. Every :math:`\mathbf{R} = 0`
+  row is accepted, also between
+  orbitals that ``orbital_site`` would label as different sites
+  (``orbital_site`` is ignored in spin-orbital mode);
+- an imaginary part on a ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``
+  or ``PairLift`` coefficient, on every spin-orbital path (RPA, FLEX and
+  ``hwave_sc``). A complex ``PairHop`` is accepted. The message names the
+  row and asks to remove the imaginary part; for ``Exchange`` it points to
+  issue #302;
+- an interaction file with an orbital index outside :math:`1 \ldots N`
+  (an index larger than :math:`N` means the file was written in
+  spin-orbital indices; an index 0 is never valid);
+- ``chi0q_tensor`` other than ``"auto"`` or ``"general"`` (on the
+  bond-resolved path it is unused and gets a WARNING instead), a reduced
+  (two-index) chi0q file, a chi0q file without the ``index_convention``
+  tag, and a chi0q file without the marker ``spin_orbital = True`` (only a
+  spin-orbital run writes it, so a non-spin-orbital RPA chi0q has no
+  marker; over :math:`2N` orbitals it has the same shape as a spin-orbital
+  one over :math:`N`; regenerate the file with a spin-orbital RPA run,
+  ``[mode] enable_spin_orbital = true``);
+- FLEX outputs of a run without ``enable_spin_orbital``, of a
+  ``calc_scheme = "reduced"`` run, or without the ``chi_convention`` /
+  ``index_convention`` tags; a FLEX archive whose ``chi_orbital_layout`` is
+  not ``"acbd"``; non-finite FLEX values;
+- ``flex_chi_s`` / ``flex_chi_c`` (on the bond-resolved path they are
+  unused and get a WARNING instead);
+- a missing FLEX chi0q archive (write ``[file.output] chi0q`` in the FLEX
+  run), a FLEX chi0q archive without the marker ``spin_orbital = True``
+  (written only by a spin-orbital FLEX run), a missing FLEX Green function
+  or self-energy archive, an archive that fails the checks of
+  :ref:`sc_so_archive_checks`, and a FLEX :math:`\chi` that the vertex of this input does not
+  reproduce (checked per wavevector, so the bound does not loosen with the
+  lattice size; the marker alone does not show that the interactions
+  match);
+- ``eigenvalue_method`` other than ``"arnoldi"``;
+- an ``init_gap`` with no fermion-antisymmetric component;
+- an explicit ``pairing_type``;
+- an ``output_gap`` whose gap archive name (see *Outputs*) equals
+  ``output_eigenvalue``;
+- an odd spin-orbital count (Geometry ``norb``);
+- an ``Extern`` file with an orbital index outside :math:`1 \ldots N` or a
+  header that does not declare :math:`N` orbitals (see
+  :ref:`sc_spin_polarized`);
+- ``[file.input] trans_mod`` and ``green_init`` (a mean-field one-body input is not
+  supported yet; see issue #273);
+- ``[mode.param] spinful_vertex_exchange = false``.
+
+``hwave_tsweep`` with ``run_eliashberg = true`` still refuses
+``enable_spin_orbital`` (for both frequencies).
+
+Conversely, ``hwave_sc`` without ``enable_spin_orbital`` refuses a chi0q or
+FLEX archive that carries ``spin_orbital = True`` (or a FLEX
+``chi_convention = "spin_orbital"``) or a malformed marker, before any work:
+its shape would otherwise be misread as a non-spin-orbital file over
+:math:`2N` orbitals. Enable ``[mode] enable_spin_orbital`` or regenerate the
+archive with a non-spin-orbital run; archives without the marker load as
+before.
+
+Practical advice
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- The spin-orbital solve works in the antisymmetric subspace (see "Pauli
+  projection" above), whose dimension is about half of
+  :math:`(2N)^2 N_k`; at most that many eigenvalues exist, and a
+  ``num_eigenvalues`` at or above it returns all of them (the small reduced
+  operator is then diagonalized densely, keeping the eigenvalues of largest
+  real part). Without ``spectral_shift`` the Arnoldi solver selects by
+  magnitude, so large repulsive (negative) eigenvalues can mask the
+  physical leading one; when the returned set cannot contain the largest
+  real part (its largest real part is below its smallest magnitude) the
+  solver re-solves for it (:ref:`sc_eigen_convergence`). A set that holds
+  a positive eigenvalue above that bound is kept, so in the SU(2)-limit
+  test model ``num_eigenvalues = 4`` could still miss it where ``8`` found
+  it; ``spectral_shift = "auto"`` (largest real part) found it already
+  with ``num_eigenvalues = 1``.
+- The default ``init_gap = "cos"`` seed is singlet-structured
+  (:math:`\phi(\mathbf{k}) \otimes i\sigma_y`). In a centrosymmetric model
+  the power iteration cannot leave the parity sector of its seed, so it
+  cannot reach a triplet-led state from this seed. Use ``solver_mode =
+  "eigenvalue"`` (Arnoldi), or an odd seed (``"p_x"``, ``"p_y"``, ...,
+  which gives the :math:`d_z` triplet; ``"random"`` spans every spin block).
+- Memory. With ``frequency = "static"``, ``chi0q_mode = "calc"`` computes
+  the spinful chi0q at the zero bosonic frequency only:
+  :math:`N_k (2N)^4` complex numbers, i.e. :math:`16\,N_k (2N)^4` bytes,
+  with :math:`N_k` the number of k points (about 64 MiB for :math:`N = 4` on
+  a :math:`32 \times 32` grid). What still grows with ``Nmat`` is the Green
+  function, :math:`O(N_\mathrm{mat} N_k (2N)^2)`. ``"load"`` and ``"flex"``
+  read the full-frequency file whole, :math:`16\,N_\mathrm{mat} N_k (2N)^4`
+  bytes: about 64 GiB for the same model with ``Nmat = 1024``, against about
+  4 GiB for a non-spin-orbital general chi0q (:math:`N^4` orbital indices) of
+  the same physical :math:`N`. ``frequency = "dynamic"`` needs every
+  frequency; see :ref:`sc_spin_orbital_dynamic_memory`. The bond-resolved
+  path has its own estimate and admission check (:ref:`sc_so_bond_memory`).
+- ``gpu = true`` with ``frequency = "static"`` in spin-orbital mode is
+  validated against ``gpu = false`` on an A100 GPU: the full spectrum of an
+  SU(2) model and the Arnoldi solve of a complex-SOC model agree to
+  :math:`10^{-10}` in the eigenvalues, and the power-iteration solve agrees
+  within its converged residual (``tests/test_sc_spin_orbital_gpu.py``; for
+  ``"dynamic"`` see :ref:`sc_spin_orbital_dynamic`). The bond-resolved path
+  runs on the CPU only: there ``gpu = true`` is ignored with a WARNING and
+  ``gpu_required = true`` is refused (:ref:`sc_so_bond_static`).
+
+Validation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- **SU(2) limit.** With spin-independent hopping and spin-rotation
+  invariant interactions, every eigenvalue of the non-spin-orbital singlet
+  kernel appears once in the spin-orbital spectrum and every eigenvalue of
+  the triplet kernel three times, to a relative accuracy of
+  :math:`10^{-8}`; the Pauli-forbidden modes are absent.
+- **First order with spin-orbit coupling.** The bare part of the vertex
+  equals an independent first-order construction in the spin-orbital basis
+  for every on-site interaction type.
+- **Second order with spin-orbit coupling.** The static pair
+  susceptibility built from the vertex agrees with exact diagonalization of
+  a small chain in the first- and second-order coefficients of the
+  interaction.
+- **Agreement between inputs.** ``chi0q_mode = "calc"`` and ``"load"`` give
+  the same eigenvalues, and ``"flex"`` reproduces the spectrum built
+  directly from the stored FLEX :math:`\chi` and Green function.
+- **Zeeman field.** The Extern route and the Transfer route give the same
+  band (equal to the spin-orbital RPA band, also with spin-orbit coupling)
+  and the same spectrum, static and dynamic. Without spin-orbit coupling
+  the field conserves :math:`S_z`, and the static spectrum equals the
+  union of the spectra of the three pair-:math:`S_z` sectors (up-up,
+  up-down, down-down); the field splits the up-up and down-down sectors.
+
+Relation to the non-spin-orbital singlet and triplet
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The non-spin-orbital singlet and triplet formulas assume a spin-rotation
+invariant interaction. ``Hund`` alone or ``Exchange`` alone conserves
+:math:`S_z` but is not rotation invariant, so for them those formulas are an
+approximation, whereas the spin-orbital path treats these
+terms exactly. Its singlet eigenvalues can therefore differ from those of a
+non-spin-orbital run for such models; the equal-spin triplet agrees.
+Rotation-invariant combinations (for example ``Hund`` and ``Exchange`` in
+the Kanamori form) agree in both channels.
+
+
+.. _sc_so_bond_static:
+
+Bond-resolved spin-orbital pairing (``bond_channels``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+With ``frequency = "static"`` (the default), ``[eliashberg] bond_channels =
+true`` gives the spin-orbital solver the bond-resolved channels of
+:ref:`sc_bond_channels_static`. Off-site rows (:math:`\mathbf{R} \neq 0`) of
+every interaction type are then accepted, and the exchange crossing of each
+row acts on the bond it was declared on. The pairing vertex is built on the
+(spin-orbital pair) :math:`\times` (bond) basis: :math:`B` bond channels
+(channel 0 is the on-site point, then the off-site shells by bond length,
+closed under reversal) give ``ND = B (2N)^2`` slots. The input files follow
+the spin-orbital conventions of the *Scope* above.
+
+.. code-block:: toml
+
+   [mode]
+   enable_spin_orbital = true
+
+   [eliashberg]
+   bond_channels = true          # frequency = "static", the default
+   # so_bond_layout = "auto"     # the default; "dense" forces the dense layout
+   # bond_memory_cap_gb = 32.0   # GiB; unset: 0.8 x the available memory
+
+What is exact
+"""""""""""""
+
+The bond vertex :math:`\Gamma_B` is the antisymmetrized spinful vertex of
+the on-site path (the direct term plus its exchange crossing), with every
+row placed on its own bond: the direct part of an off-site row in the
+on-site channel, as a function of :math:`\mathbf{q}`, and its exchange
+crossing in the channel of its displacement. No spin-rotation symmetry is
+assumed: each row enters with its own spin structure, so ``Hund`` or
+``Ising`` without the matching ``Exchange``, a spin-orbit coupled band and a
+Zeeman field need none of the approximations of the non-spin-orbital bond
+kernel (its singlet/triplet combination and the ``J_Exchange != J_Hund - 2
+J_Ising`` WARNING do not apply here). The pairing vertex is
+
+.. math::
+
+   V = \tfrac{1}{4}\left(\Gamma_B + \Gamma_B^{P}\right)
+       \;-\; \Gamma_B\,\chi_B\,\Gamma_B ,
+   \qquad
+   \chi_B = \left[1 + \bar\chi_B \Gamma_B\right]^{-1} \bar\chi_B ,
+
+at zero bosonic frequency, with :math:`\Gamma_B^{P}` the exchange image of
+:math:`\Gamma_B` (equal to it; the solver checks this, so the first term is
+:math:`\Gamma_B/2`, as on site) and :math:`\bar\chi_B` the bond-resolved
+bubble of the **bare** Green function built from the Transfer (and Extern)
+input. The bare part is exact at first order for every interaction type.
+The fluctuation part is a static RPA-ladder dressing, not a conserving
+(FLEX) result, and every run says so with one WARNING::
+
+   [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the BARE Green function built from the Transfer (and Extern) input. It demonstrates the qualitative V-dependence of the pairing eigenvalue; it is NOT a conserving FLEX result (the bond chi-bar is built here at RPA-ladder level), so absolute lambda values are not comparable with FLEX/dynamic references.
+
+With ``bond_green`` (:ref:`sc_so_bond_green`), the Green function read
+from the file replaces the band's in both :math:`\bar\chi_B` and the pair
+propagator :math:`G(k)G(-k)` of the gap equation, and the WARNING names the
+file instead::
+
+   [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the Green function read from bond_green = '<path>' (its approximation level, e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that Green function at RPA-ladder level; it is NOT the bond susceptibility of the run that wrote the file, so absolute lambda values are not comparable with FLEX/dynamic references.
+
+.. note::
+
+   **Off-site PairLift.** The non-spin-orbital bond paths leave an off-site
+   ``PairLift`` out (it has no spin/charge content). The spin-orbital bond
+   vertex includes it, and the run logs at INFO level::
+
+      off-site PairLift is included in the spin-orbital bond vertex (the non-spin-orbital bond paths omit it: it has no spin/charge content)
+
+   A nonzero ``PairLift`` row (on-site or off-site) changes :math:`S_z` and
+   so selects the dense layout (see *Layout* below). A model with an
+   off-site ``PairLift`` can therefore give different eigenvalues on the
+   spin-orbital and the non-spin-orbital bond paths.
+
+**One channel.** With ``bond_channels = true`` and no off-site row the run
+has :math:`B = 1` and logs at INFO level::
+
+   bond_channels = true: no off-site row is declared, so B = 1 and the bond vertex is the on-site spin-orbital vertex
+
+It is accepted (the non-spin-orbital bond path refuses ``bond_channels =
+true`` without a declared off-site interaction). With the same Matsubara tail on
+both bubbles (``bond_coeff_tail = 0``, and the default ``[mode.param]
+coeff_tail = 0`` of the on-site bubble) it gives the eigenvalues of the
+on-site path with ``chi0q_mode = "calc"``. Off-site rows that are all
+declared with zero coupling keep their channels and give the leading
+eigenvalue of the :math:`B = 1` run.
+
+Keys
+""""
+
+Keys are case-insensitive. The keys of the spin-orbital solver apply as on
+site (``solver_mode``, ``num_eigenvalues``, ``spectral_shift``,
+``max_iter``, ``init_gap``, ...); the bond keys are:
+
+- ``bond_channels`` (default ``false``): ``true`` selects this path.
+- ``so_bond_layout``: ``"auto"`` (the default) or ``"dense"``, read
+  case-insensitively (see *Layout*). ``"sz_packed"`` cannot be forced:
+  ``[eliashberg] so_bond_layout = "sz_packed" cannot be forced: the S_z-packed
+  layout is chosen automatically when the input conserves S_z (no spin-flip
+  Transfer entry, no S_z-changing interaction). Use "auto" (the default) or
+  "dense".`` Any other value is refused. With ``bond_channels = false`` the
+  key is ignored with a WARNING: ``[eliashberg] so_bond_layout set but
+  bond_channels=false; it only applies to the spin-orbital bond path and is
+  ignored here.``
+- ``bond_max_shells`` (an integer :math:`\ge 0`; default: every declared
+  shell) keeps the first ``bond_max_shells`` off-site shells. A cutoff that
+  would drop a shell used by a nonzero row is refused, naming the shells and
+  the smallest admissible value (``so_bond_topology: max_shells=<m> would drop
+  bond shell(s) used by nonzero interaction records: shell <k> with
+  displacements [...]. Use max_shells >= <n>, or remove those
+  declarations.``); shells declared only with zero coupling may be dropped.
+- ``bond_memory_cap_gb``: the host-memory cap of the admission check, in
+  GiB (see :ref:`sc_so_bond_memory`). Unset: ``0.8`` times the available
+  memory. A positive value: that many GiB. ``0``: the check is disabled,
+  with a WARNING. A negative or non-finite value (or a boolean) is refused:
+  ``[eliashberg] bond_memory_cap_gb must be a finite number >= 0 in
+  spin-orbital mode (0 disables the check), got <value>``.
+- ``bond_green``: the ``green.npz`` of a spin-orbital FLEX run with bond
+  channels, used in place of the bare Green function in the bond bubble and
+  in the pair propagator of the gap equation (:ref:`sc_so_bond_green`).
+- ``bond_coeff_tail`` (default ``1.0``): the Matsubara tail coefficient of
+  the Green function of the bond bubble, as on the non-spin-orbital bond
+  path. It is not applied to a Green function read with ``bond_green``.
+- ``g2_tail`` (default ``true``): the Matsubara tail correction of the pair
+  propagator (applied with ``bond_green`` too).
+
+``eigenvalue_method`` must be ``"arnoldi"`` (or unset), as in every
+spin-orbital run; another value is refused before any file is read. Use
+``spectral_shift`` (not ``sigma_shift``) to bias the Arnoldi selection. The
+keys that are accepted but not used on this path, the keys that are
+refused, and their messages are listed in *Switching a non-spin-orbital
+bond configuration* below.
+
+Layout
+""""""
+
+The bond objects (:math:`\Gamma_B`, :math:`\bar\chi_B`, :math:`\chi_B`,
+:math:`V`) and the pairing kernel are stored in one of two layouts:
+
+- ``"sz_packed"``: when the input conserves :math:`S_z`, every object is
+  block-diagonal in the pair-:math:`S_z` sectors :math:`(+1, 0, -1)`; only
+  the blocks are stored (:math:`\sum_\sigma n_\sigma^2 = (6/16)\,ND^2`
+  entries per :math:`ND \times ND` matrix instead of :math:`ND^2`), and the
+  eigenvalue problem is solved sector by sector;
+- ``"dense"``: the full matrices and one kernel on the whole gap.
+
+``so_bond_layout = "auto"`` selects the layout from the input, in this
+order: ``"dense"`` when the key forces it; else ``"dense"`` at the first
+spin-flip Transfer entry (in the interleaved index, an entry between
+different spins); else ``"dense"`` at the first interaction row that
+changes :math:`S_z` (a nonzero ``PairLift``); else ``"sz_packed"``. An
+Extern field (:math:`\sigma^z`) never breaks :math:`S_z`, so a Zeeman-only
+model is packed. The selection is **exact**: a spin-flip entry of
+``1e-14`` selects the dense layout, so the layout, and the memory estimate
+with it, jump between a value of exactly zero and any nonzero value. The
+reason is logged at INFO level and written to ``eigenvalue.dat``
+(``so_bond_layout_reason``), one of::
+
+   so bond layout: sz_packed (S_z conserved: no spin-flip transfer, no S_z-changing interaction)
+   so bond layout: dense (reason: forced by so_bond_layout = "dense")
+   so bond layout: dense (reason: spin-flip transfer entry R=(<Rx>, <Ry>, <Rz>) (<i>, <j>) = <value>)
+   so bond layout: dense (reason: PairLift declared)
+   so bond layout: dense (reason: S_z-changing interaction record of type <type>)
+
+(``<i>``, ``<j>`` are the 1-based interleaved spin-orbital indices of the
+Transfer file. The last line is for an :math:`S_z`-changing record of a type
+other than ``PairLift``; no such type exists yet.) Both layouts give the same leading eigenvalue and gap
+within round-off; the packed listing is the union of the per-sector
+solves, so with a small ``num_eigenvalues`` it can list other eigenvalues
+below the leading one than the dense listing.
+The packed layout is the cheaper one; ``"dense"`` is for debugging and for
+cross-checking a packed run.
+
+Outputs
+"""""""
+
+``gap.dat`` and ``eigenvalue.dat`` have the layout of the on-site path
+(*Outputs* above). ``eigenvalue.dat`` adds the comment lines
+``bond_channels``, ``bond_n_channels`` (:math:`B`), ``bond_delta_r`` (the
+channel displacements), ``bond_max_shells``, ``so_bond_layout``,
+``so_bond_layout_reason``, ``bond_memory_cap`` (the cap in force and where
+it came from), ``g2_tail``, ``bond_coeff_tail``, ``bond_coeff_tail_source``,
+``approximation = static RPA-ladder bond dressing`` (with ``bond_green``:
+``static RPA-ladder bond dressing on a borrowed Green function``, and the
+lines listed in :ref:`sc_so_bond_green`), ``gap_status``,
+``pp_sector`` and ``selection`` (the eigen-selection, per sector in the
+packed layout, e.g. ``+1:dense-LR;0:LR;-1:null-operator``), plus the scalar
+provenance members of the gap archive. Past the static RPA pole of the
+spinful channel (:ref:`bond_rpa_pole`; the indicator
+:math:`\max_{\mathbf{q}}\mathrm{eig}[-\bar\chi\Gamma]`, over the
+:math:`S_z` sectors in the packed layout, is logged at INFO level on every
+run) one WARNING is logged and both files also carry ``rpa_past_pole``,
+``rpa_pole_indicator_spinful`` and ``rpa_pole_q_spinful``; these three
+``gap.npz`` members are written only then. There is **no** split :math:`\lambda
+= \lambda^{pp} + \lambda^{fl}` of the leading eigenvalue and no
+``bond_diagnostics`` record (both belong to the non-spin-orbital bond
+path).
+
+``gap.npz`` (``producer_stage = "sc_so_bond_static"``) holds the members of
+the on-site table above and the provenance of :ref:`sc_so_archive_checks`
+(with ``fp_capability = "so_bond"``, ``delta_r``, ``reverse``,
+``slot_convention`` and ``max_shells``), and in addition:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - key
+     - content
+   * - ``gap_status``
+     - ``"certified"`` (the reported eigenvalue is finite), ``"uncertified"``
+       (a gap is written, but no eigenvalue was certified: the reported
+       value is NaN) or ``"none"`` (no gap; ``gap`` is zeros)
+   * - ``pp_sector``
+     - int8: the pair-:math:`S_z` sector (``1``, ``0``, ``-1``) of the
+       written gap in the packed layout; ``2`` for a dense result or when
+       no gap is written
+   * - ``pp_sectors``
+     - int8, one entry per listed eigenvalue: its sector (``2`` in the
+       dense layout)
+   * - ``block_layout``
+     - ``"dense"`` or ``"sz_packed"``
+   * - ``eigen_converged``
+     - whether the reported eigenvalue was certified
+   * - ``sz_weight_upup``, ``sz_weight_dndn``, ``sz_weight_singlet0``,
+       ``sz_weight_triplet0``, ``sz_conservation_residual``, ``sz_conserved``
+     - the :math:`S_z` report of :ref:`sc_spin_polarized`; the residual is
+       that of the bond vertex and of the Green function (``0`` for the
+       vertex in the packed layout)
+
+The listing members ``eigenvalues``, ``eigenvectors``,
+``eigenvector_spin_weights``, ``eigenvalue_match`` and ``pp_sectors`` are
+written exactly when the eigenvalue listing is not empty: never in
+``solver_mode = "iteration"`` (the gap and its weights are then those of the
+one iterate), and not when the eigenvalue analysis returned no pair. The
+gap-level members (``gap``, ``gap_spin_weights`` and the :math:`S_z`
+weights) are always written; with ``gap_status = "none"`` the gap is zeros
+and its spin and :math:`S_z` weights are NaN. When no pair-:math:`S_z`
+sector has a fermion-antisymmetric gap space on the k grid, one WARNING
+says so::
+
+   spin-orbital bond pairing: no pair-S_z sector has a fermion-antisymmetric gap space on this k grid; no gap is reported (gap_status = "none")
+
+**Iteration at the default** ``max_iter``. ``solver_mode = "iteration"``
+(and the iteration leg of ``"both"``) runs a power iteration (with
+``spectral_shift = "auto"`` unless set). On a slowly converging model the
+default ``max_iter = 1000`` may not be enough: the run then reports no
+eigenvalue (NaN, ``gap_status = "uncertified"``, ``eigen_converged =
+false``; ``hwave_sc`` exits with status 3), and the WARNING names the
+``max_iter`` it needs, e.g.::
+
+   Failed to converge after 1000 iterations: no eigenvalue is reported (lambda = NaN, eigen_converged = false). The iterate difference was still decreasing by a factor 0.9949 per step (now 9.56e-05; the stopping rule needs diff / (1 - rate) < convergence_tol 1.0e-05): about 1473 more steps are needed, i.e. max_iter of about 2473 -- or use solver_mode="eigenvalue", which does not depend on the eigenvalue gap this way.
+
+Raise ``max_iter`` to the value named, or keep the default ``solver_mode =
+"eigenvalue"``, which is not affected.
+
+Scope
+"""""
+
+- ``frequency = "static"`` only; with ``frequency = "dynamic"``
+  ``bond_channels = true`` is refused (see *Refused combinations*);
+- the bond bubble is built from the bare Green function of the band, or
+  from the ``green.npz`` of a spin-orbital FLEX run with bond channels
+  named by ``bond_green`` (:ref:`sc_so_bond_green`); no chi0q and no FLEX
+  susceptibility is read (``chi0q_mode`` is not used, ``chi0q_mode =
+  "flex"`` is refused, and the bond archive ``longitudinal_bond.npz`` is
+  not read);
+- CPU only (``gpu = true`` is ignored with a WARNING, ``gpu_required =
+  true`` is refused);
+- ``eigenvalue_method = "arnoldi"`` only;
+- the memory of the whole run is admitted once, before any bond array is
+  built (:ref:`sc_so_bond_memory`).
+
+.. _sc_so_bond_green:
+
+A FLEX Green function (``bond_green``)
+""""""""""""""""""""""""""""""""""""""
+
+``[eliashberg] bond_green`` replaces the bare Green function of the bond
+bubble by the Green function of a file: the ``green.npz`` of a spin-orbital
+FLEX run with ``[mode.param] longitudinal_bond_channels = true``
+(:ref:`flex_so_bond_tutorial`, written with ``[file.output] green``). The
+key is read case-insensitively (``Bond_Green`` works); its value is a path,
+used as given, relative to the working directory (neither
+``path_to_input`` nor ``path_to_flex_output`` is prepended). The bare
+vertex :math:`\Gamma_B` and the topology are those of the bare-band run. The
+file's Green function replaces the band's in both the bond bubble
+:math:`\bar\chi_B` and the pair propagator :math:`G(k)G(-k)` of the gap
+equation (with ``g2_tail``, whose :math:`1/(i\omega_n)` asymptote a dressed
+Green function shares). ``bond_green`` is a key of the static path: with
+``frequency = "dynamic"``, ``bond_channels = true`` is refused in
+spin-orbital mode, with or without ``bond_green``::
+
+   [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_channels = true with frequency = "dynamic" is not available yet (issue #270); use frequency = "static", or bond_channels = false for on-site interactions.
+
+**The producing FLEX run.** The file is accepted only at the identical
+state point of this run: the same ``Nmat`` (exactly), ``T``, ``filling``,
+band (Transfer, Extern, ``coeff_extern``, ``CellShape``, ``SubShape``),
+interaction rows and declared bond topology. ``bond_max_shells`` may differ
+from the FLEX run's ``longitudinal_bond_max_shells`` as long as both keep
+the same bond channels. ``hwave_sc`` always determines μ from ``filling``,
+so the FLEX run must run in filling mode: set ``filling`` and do not set
+``mu`` in its ``[mode.param]``. A Green function of a fixed-μ FLEX run is
+refused by the state check (``state differs: calc_mu: file False, run
+True``; see the table below).
+
+**Example.** The FLEX run, with the input files of
+:ref:`flex_so_bond_tutorial` (``hwave flex.toml``):
+
+.. code-block:: toml
+
+   [mode]
+     mode = "FLEX"
+     enable_spin_orbital = true
+     calc_scheme = "general"
+   [mode.param]
+     T = 0.05
+     filling = 0.4                 # filling mode: do not set mu
+     CellShape = [16, 16, 1]
+     Nmat = 512
+     mixing_scheme = "anderson"
+     anderson_depth = 8
+     Mix = 0.2
+     EPS = 8
+     flex_hartree_fock = true
+     longitudinal_bond_channels = true
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output"
+     green = "green"
+
+then ``hwave_sc`` with the same state point and the same input files
+(``hwave_sc sc.toml``):
+
+.. code-block:: toml
+
+   [mode]
+     mode = "RPA"
+     enable_spin_orbital = true
+   [mode.param]
+     T = 0.05
+     filling = 0.4
+     CellShape = [16, 16, 1]
+     Nmat = 512                    # the FLEX run's Nmat
+   [file.input]
+     path_to_input = "."
+   [file.input.interaction]
+     path_to_input = "."
+     Geometry = "geom.dat"
+     Transfer = "transfer.dat"
+     CoulombIntra = "coulombintra.dat"
+     CoulombInter = "coulombinter.dat"
+   [file.output]
+     path_to_output = "output_sc"
+   [eliashberg]
+     bond_channels = true          # frequency = "static", the default
+     bond_green = "output/green.npz"
+
+**The checks**, in this order; the first failure is reported. The file
+must exist and be an npz archive; a spin-orbital bond archive
+(``longitudinal_bond.npz``), a non-spin-orbital bond archive, or another
+output file of a FLEX run (``sigma.npz``, ``chi0q.npz``, ``chiq*.npz``: a
+file without a ``green`` member) is refused with a pointer to the Green
+function. Then come the archive checks of
+:ref:`sc_so_archive_checks`, for ``producer_stage = "flex_so_bond"`` and the
+capability ``"so_bond"``: structure, the producer's density residual, band,
+interaction, capability, declared topology, resolved topology (the bond
+channels after ``bond_max_shells``) and state, with ``Nmat`` exact. Then the
+markers ``scf_converged`` (optional; when present it must be a 0-d
+boolean), ``momentum_convention``, ``wavevector_index`` (it must be the k
+grid of this run: ``CellShape``, or ``SubShape`` when set) and
+``sc_vertex_version``, and the shape of the stored Green function, ``(1,
+Nmat, nvol, 2N, 2N)``; the Green function is then read once, must be
+finite, and its digest must equal the file's ``fp_green``. Last, when the
+input conserves :math:`S_z`, the leakage rule below.
+
+**The** :math:`S_z` **leakage rule.** When the input conserves :math:`S_z`
+(no spin-flip Transfer entry and no :math:`S_z`-changing interaction row;
+the rule that selects the packed layout, see *Layout*), the Green function
+must be block-diagonal in spin. With :math:`\mathrm{leak} =
+\max|G_{\mathrm{off}}| / \max|G|` (:math:`G_{\mathrm{off}}` the
+spin-off-diagonal blocks): a leak
+of exactly zero uses the file as stored; :math:`0 < \mathrm{leak} \le
+10^{-12}` (round-off of the producer) sets the off-diagonal blocks to zero
+with one WARNING::
+
+   the Green function '<path>' has S_z-off-sector entries at the round-off level (leak = max off-sector |G| / max |G| = <leak> <= 1e-12: numerical leakage from a non-canonical producer); they are projected to exact zeros
+
+and a larger leak is refused (see the table below). When the input does not
+conserve :math:`S_z`, the leak is neither measured nor reported and the
+Green function is used as stored. An accepted file is reported at INFO
+level::
+
+   [eliashberg] bond_green: '<path>' (written by hwave FLEX (spin-orbital, bond channels)) passed the archive checks; S_z leak <leak>; projected: <yes|no>.
+
+with ``not checked (the input does not conserve S_z)`` in place of the leak
+for an input that does not conserve :math:`S_z`. A file that records
+``scf_converged = false`` and passes every check above (the density
+residual of the FLEX run included) is accepted with one WARNING::
+
+   [eliashberg] bond_green '<path>' records scf_converged = false: the FLEX run did not converge; its Green function is used as stored.
+
+**No tail correction.** ``bond_coeff_tail`` is the tail coefficient of the
+band Green function; a Green function read from a file is used without a
+tail correction (``bond_coeff_tail_applied = 0.0``). :math:`\bar\chi_B` then
+carries the truncation error of the Matsubara sum, which decreases only
+about as :math:`1/N_{\mathrm{mat}}`: check the eigenvalue against ``Nmat``
+(run the FLEX and ``hwave_sc`` again at a larger ``Nmat`` and compare).
+``g2_tail`` still applies to the pair propagator. Without the key, an INFO
+line says so::
+
+   [eliashberg] bond_coeff_tail: the default 1.0 applies to the band Green function only; the Green function read from bond_green is used without a tail correction.
+
+An explicit nonzero value gives one WARNING (``bond_coeff_tail = 0`` gives
+neither line)::
+
+   [eliashberg] bond_coeff_tail = <value> is not applied with bond_green = '<path>': the tail correction is implemented for the band Green function only (bond_coeff_tail_applied = 0), so the bond bubble carries the Matsubara truncation error, which decreases only about as 1/Nmat; check the eigenvalue against Nmat.
+
+**What the kernel is.** :math:`\bar\chi_B` is the bubble of the Green
+function read from the file, the pair propagator :math:`G(k)G(-k)` is built
+from the same Green function, and the pairing vertex is dressed with
+:math:`\bar\chi_B` at static RPA-ladder level. The kernel is therefore not the one of the FLEX
+run: its bond susceptibility (the bond archive ``longitudinal_bond.npz``)
+is not read by ``hwave_sc``. Every run says so with one WARNING, in place
+of the bare-band WARNING of *What is exact*::
+
+   [eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond dressing on the Green function read from bond_green = '<path>' (its approximation level, e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that Green function at RPA-ladder level; it is NOT the bond susceptibility of the run that wrote the file, so absolute lambda values are not comparable with FLEX/dynamic references.
+
+**Outputs.** ``eigenvalue.dat`` carries the lines of *Outputs* above, with
+``approximation = static RPA-ladder bond dressing on a borrowed Green
+function``, and in addition:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - key
+     - value
+   * - ``bond_green``
+     - the path as configured
+   * - ``bond_coeff_tail``
+     - the requested value (with ``bond_coeff_tail_source``), as on the
+       bare-band path
+   * - ``bond_coeff_tail_applied``
+     - ``0.0``: no tail correction is applied to a Green function read
+       from a file
+   * - ``bond_green_leak``
+     - the measured leak (``%.3e``); only when the input conserves
+       :math:`S_z`
+   * - ``bond_green_scf_converged``
+     - ``true`` or ``false``; only when the file records ``scf_converged``
+
+``gap.npz`` records the Green function it consumed: ``fp_green``
+is the digest of the Green function used by the kernel (after the
+projection, when one was applied); ``fp_green_source`` is the file's
+``fp_green`` and is written only when the Green function was projected
+(the two then differ); the state members (``state_mu``,
+``state_density``, ``state_calc_mu``, ``state_target``,
+``state_mu_tol``) are copied from ``green.npz``: the producer's recorded
+state of the same Green function (:math:`\beta` and ``Nmat`` equal this
+run's by the state check). The band, interaction and topology digests are
+this run's, as on the bare-band path.
+
+**Memory.** The admission check (:ref:`sc_so_bond_memory`) adds a
+resident row ``file_read`` for the read of the file: 256 KiB plus four
+times the bytes of the file's members other than ``green`` (the provenance
+tables among them, whose size grows with the input). These bytes are taken
+from the zip records and array headers of the file without reading a
+member, so a run over the cap is refused before any member of the file is read. The
+Green function rows are those of the bare-band path.
+
+**Troubleshooting.** The table groups the common mistakes; it is not in
+the order of the checks. ``<producer>`` is ``hwave FLEX (spin-orbital, bond
+channels)`` for a file that passed the structure check. The refusals of the
+structure check are listed in :ref:`sc_so_archive_checks` (for example
+``marker spin_orbital is missing`` for the ``green.npz`` of a
+non-spin-orbital FLEX run).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 40 20
+
+   * - Message
+     - Cause and remedy
+     - Keys
+   * - ``[eliashberg] bond_green file not found: <path>``
+     - The path does not exist. It is used as given, relative to the
+       working directory of ``hwave_sc`` (neither ``path_to_input`` nor
+       ``path_to_flex_output`` is prepended).
+     - ``[eliashberg] bond_green``
+   * - ``[eliashberg] bond_green file '<path>' is not an npz archive (it
+       holds a single .npy array); point the configuration at the .npz file
+       the FLEX run wrote.``
+     - A ``.npy`` file. Use the ``green.npz`` of the FLEX run.
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is the bond archive of a
+       spin-orbital FLEX run, not a Green function; set bond_green to its
+       companion green file '<green>'.``
+     - The spin-orbital bond archive was named. Set ``bond_green`` to the
+       companion file the message names (it is named only when it is a
+       readable regular file).
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is the bond archive of a
+       spin-orbital FLEX run, not a Green function, and it records no
+       readable companion green file; set bond_green to the green.npz
+       written by that FLEX run ([file.output] green).``
+     - As above, for an archive whose ``green_file`` is absent, empty, or
+       not a readable regular file.
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is a bond archive, not a Green
+       function; set bond_green to the green.npz of a spin-orbital FLEX run
+       with [mode.param] longitudinal_bond_channels = true.``
+     - A non-spin-orbital bond archive was named. Run the spin-orbital bond
+       FLEX and use its ``green.npz``.
+     - ``[eliashberg] bond_green``
+   * - ``[mode] enable_spin_orbital = true (hwave_sc, issue #83):
+       [eliashberg] bond_green = '<path>' is the <kind> file of a FLEX run,
+       not a Green function; set bond_green to the green.npz written by
+       that run ([file.output] green).``
+     - Another output file of the FLEX run was named (``<kind>`` is
+       ``sigma``, ``chi0q``, ``chiq``, ``chiq_s`` or ``chiq_c``). Set
+       ``bond_green`` to the ``green.npz`` of the same run.
+     - ``[eliashberg] bond_green``
+   * - ``<path> was produced by <producer> (so_onsite), but this run needs
+       a so_bond artifact. [eliashberg] bond_green needs the green.npz of a
+       spin-orbital FLEX run with [mode.param] longitudinal_bond_channels =
+       true (the bond-resolved run); re-run FLEX with it.``
+     - The ``green.npz`` of the on-site spin-orbital FLEX. Rerun FLEX with
+       ``longitudinal_bond_channels = true``.
+     - ``[mode.param] longitudinal_bond_channels`` of the FLEX run
+   * - ``'<path>' (written by <producer>) does not match this run: state
+       differs: calc_mu: file False, run True. Archives are reused only at
+       the identical state point; re-run <producer> at this filling and
+       temperature.``
+     - The FLEX run fixed μ (``mu`` set). ``hwave_sc`` determines μ from
+       ``filling``. Rerun the FLEX in filling mode: set ``filling`` to this
+       run's value and remove ``mu``.
+     - ``[mode.param] filling``, ``mu`` of the FLEX run
+   * - ``... state differs: nmat <n> (file) vs <m> (run). Archives are
+       reused only at the identical state point; set [mode.param] Nmat =
+       <n> (the producer's grid).``
+     - The Green function is used on its own Matsubara grid. Set ``Nmat``
+       to the FLEX run's value.
+     - ``[mode.param] Nmat``
+   * - ``... state differs: beta ... (file) vs ... (run)`` /
+       ``... state differs: target ... (file) vs ... (run) electrons per
+       cell; density ... (file) vs target ... (run, tol ...) electrons per
+       cell``
+     - Another temperature or filling. Rerun the FLEX at this ``T`` and
+       ``filling`` (or set them to the FLEX run's values).
+     - ``[mode.param] T``, ``filling``
+   * - ``'<path>' cannot be reused: the producer did not reach its filling
+       (residual ... electrons per cell > 1e-8·max(1,|t|) = ...).
+       Regenerate it with <producer> so that its density closes to that
+       tolerance.``
+     - The FLEX density did not close to its filling. Rerun the FLEX to
+       convergence.
+     - ``[mode.param] IterationMax``, ``EPS`` of the FLEX run
+   * - ``... does not match this run: band differs: ...`` /
+       ``... interaction differs: ...``
+     - Another band or other interaction rows (see the table of
+       :ref:`sc_so_archive_checks`). Use the input files of the FLEX run.
+       The off-site interaction rows reach the FLEX Green function only
+       through its bond channels: run the FLEX with
+       ``longitudinal_bond_channels = true``.
+     - ``Transfer``, ``Extern``, ``coeff_extern``, the interaction files
+   * - ``... does not match this run: declared topology differs: file <n>
+       displacements, run <m> displacements. ...``
+     - The interaction files declare other bond displacements. A declared
+       row counts even with a zero coupling: a ``CoulombInter`` row of
+       value 0 in one run and not in the other changes the declared
+       topology. Use the same interaction files, zero rows included.
+     - the interaction files
+   * - ``... does not match this run: resolved bond topology differs: file
+       delta_r ... reverse ... (max_shells ...), run delta_r ... reverse ...
+       (max_shells ...). ...``
+     - ``bond_max_shells`` keeps other bond channels than the FLEX run's
+       ``longitudinal_bond_max_shells``. Keep the same channels (the
+       numbers may differ when the channels agree).
+     - ``[eliashberg] bond_max_shells``, ``longitudinal_bond_max_shells``
+   * - ``'<path>' is malformed or truncated: <member> is missing or older
+       than this build requires. Regenerate it with <producer>.`` /
+       ``'<path>' is malformed or truncated: wavevector_index is not the k
+       grid [...] of this run (CellShape / SubShape). Regenerate it with
+       <producer>.``
+     - A missing or older marker (``momentum_convention``,
+       ``wavevector_index``, ``sc_vertex_version``), or a wavevector index
+       of another k grid. Rerun the FLEX with this version.
+     - the FLEX run
+   * - ``'<path>' is malformed or truncated: scf_converged is not a 0-d
+       boolean. Regenerate it with <producer>.``
+     - The ``scf_converged`` marker is not a single boolean (the file was
+       edited or written by another tool). Rerun the FLEX.
+     - the FLEX run
+   * - ``'<path>' is malformed or truncated: green shape differs from this
+       run ((...) vs (...)). Regenerate it with <producer>.``
+     - The stored Green function does not have the shape ``(1, Nmat, nvol,
+       2N, 2N)`` of this run. Rerun the FLEX.
+     - the FLEX run
+   * - ``'<path>' is malformed or truncated: green has non-finite values at
+       frequency index <n>. Regenerate it with <producer>.``
+     - A NaN or infinite entry. Rerun the FLEX.
+     - the FLEX run
+   * - ``'<path>' (written by <producer>): fp_green mismatch: the Green
+       function read from it has digest ..., the file records ... (both at
+       fingerprint_version 2); its green member is not the one the run that
+       wrote it recorded. Regenerate it with <producer>.``
+     - The ``green`` member was modified after the FLEX run wrote it.
+       Rerun the FLEX.
+     - the FLEX run
+   * - ``the Green function '<path>' breaks S_z (leak = max off-sector |G| /
+       max |G| = <leak> > 1e-12) although this run's input conserves S_z;
+       it was produced from a different Hamiltonian. Regenerate it from this
+       run's input.``
+     - The input conserves :math:`S_z` but the Green function does not
+       (leak above :math:`10^{-12}`). Rerun the FLEX with this input.
+     - the FLEX run
+
+Switching a non-spin-orbital bond configuration
+"""""""""""""""""""""""""""""""""""""""""""""""
+
+A non-spin-orbital ``bond_channels = true`` input needs, besides the
+spin-orbital input files (*Scope* above: Geometry ``norb = 2N``, the
+interleaved Transfer file, interaction files in physical orbital indices),
+these changes to its ``[eliashberg]`` table. Each item gives the message the
+change avoids.
+
+- **Remove** ``pairing_type`` (there is one gap)::
+
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] pairing_type = <value> has no meaning in spin-orbital mode: the gap is one general 2N x 2N spin-orbital matrix, not a singlet or a triplet channel. Remove pairing_type.
+
+- ``bond_green``: in spin-orbital mode it names the ``green.npz`` of a
+  spin-orbital FLEX run with ``longitudinal_bond_channels = true``, written in
+  filling mode at this run's state point (:ref:`sc_so_bond_green`). The
+  ``green.npz`` of a non-spin-orbital FLEX run is refused by the structure
+  check (``marker spin_orbital is missing``): remove the key, or point it at
+  such a file.
+
+- **Remove** ``bond_diagnostics`` and every ``bond_precondition_*`` key
+  (``bond_precondition_atol``, ``bond_precondition_rtol``,
+  ``bond_precondition_dense_limit``). They are refused **whatever their
+  value, false included**: delete them rather than switching them off::
+
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] bond_diagnostics is not available in spin-orbital mode (its character analysis is the singlet/triplet one of the non-spin-orbital bond path); the gap.npz S_z and spin decompositions describe the leading state. Remove bond_diagnostics.
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] <key> tunes the Hermiticity check of the non-spin-orbital bond kernel; the spin-orbital kernel is not Hermitian and has no such check. Remove <key>.
+
+- **Remove** ``chi0q_mode = "flex"`` (remove the key; it is not used
+  here)::
+
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] chi0q_mode = "flex" with bond_channels = true is not available: the spin-orbital bond path builds its bond bubble from a Green function (the band's, or the file named by bond_green) and reads no FLEX susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green function, set bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] longitudinal_bond_channels = true.
+
+  The value check of every spin-orbital run still applies first: a value
+  other than ``"calc"``, ``"load"`` or ``"flex"`` (``"FLEX"`` included,
+  the value is case-sensitive) is refused with that check's message. Any
+  other ``chi0q_mode`` or ``chi0q_tensor`` is accepted but not used, with
+  one WARNING (``unset`` stands for a key that is not given)::
+
+     [eliashberg] bond_channels=true in spin-orbital mode builds its own bond-resolved bubble directly from the Green function, so chi0q_mode = '<value>' and chi0q_tensor = '<value>' are not used: no chi0q file is read or computed on this path.
+
+  ``flex_chi_s`` / ``flex_chi_c`` (refused on the on-site spin-orbital path)
+  get one WARNING here::
+
+     [eliashberg] <keys>: not used for bond_channels=true in spin-orbital mode (the spin-orbital bond path reads no FLEX susceptibility).
+
+- ``eigenvalue_method``: only ``"arnoldi"``; another value is refused::
+
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] eigenvalue_method = <value> is not supported; only "arnoldi" is. Set eigenvalue_method = "arnoldi" (or remove the key).
+
+  With the eigenvalue analysis (``solver_mode = "eigenvalue"``, the
+  default, or ``"both"``) ``sigma_shift`` is ignored with a WARNING; the
+  power iteration does not read it. Use ``spectral_shift`` to bias the
+  Arnoldi selection::
+
+     [eliashberg] sigma_shift is ignored for eigenvalue_method='arnoldi' (it targets the shift-invert methods); use spectral_shift to bias the arnoldi selection.
+
+- ``gpu = true`` is ignored with a WARNING (the path runs on the CPU), and
+  ``gpu_required = true`` is refused::
+
+     [eliashberg] gpu=true is ignored for bond_channels=true in spin-orbital mode: the spin-orbital bond-resolved kernel is CPU-only (GPU support is a deferred follow-up).
+     [mode] enable_spin_orbital = true (hwave_sc, issue #83): [eliashberg] gpu_required = true is not available with bond_channels = true: the spin-orbital bond-resolved kernel runs on the CPU only. Remove gpu_required (gpu = true alone is ignored with a warning).
+
+- **Complex couplings** are accepted on ``PairHop`` rows only, as in every
+  spin-orbital run; an imaginary part on a ``CoulombInter``, ``Hund``,
+  ``Ising``, ``Exchange`` or ``PairLift`` row is refused, naming the row
+  (the non-spin-orbital bond path refuses every complex off-site
+  coefficient).
+- **Declared-zero outer shells.** Off-site shells declared only with zero
+  coupling keep their channels and count in the memory estimate. When the
+  run is over the cap, the refusal names the ``bond_max_shells`` value that
+  drops them (``<n> outer shell(s) declared only with zero coupling;
+  [eliashberg] bond_max_shells = <m> removes them``); set it, or remove the
+  rows.
+- ``bond_memory_cap_gb``: unset means ``0.8`` times the available memory
+  (the non-spin-orbital default is a fixed 8 GB); a positive value is in
+  GiB; ``0`` disables the check, with a WARNING (the non-spin-orbital path
+  refuses ``0``); a negative or non-finite value is refused.
+- **Outputs.** ``gap.npz`` differs from the non-spin-orbital bond archive:
+  it carries ``pp_sector``, ``pp_sectors``, ``gap_status``,
+  ``block_layout`` and the :math:`S_z` weights; the listing members are not
+  written in ``solver_mode = "iteration"``; there is no singlet/triplet
+  ``bond_diagnostics`` record and no :math:`\lambda^{pp} + \lambda^{fl}`
+  attribution in ``eigenvalue.dat`` (*Outputs* above).
+
+.. _sc_so_bond_memory:
+
+Memory
+""""""
+
+The run is admitted once, from an estimate made before the Green function
+or any bond array is built; an admitted run is not refused later. The
+estimate is :math:`1.25\times` the largest phase total (the arrays resident
+for the whole run plus those of one phase). With :math:`P = (2N)^2`,
+:math:`N_k` k points and ``ND = B P``, the rows, the largest first for
+realistic sizes, are:
+
+- the bubble's per-shift workspace, ``16 N_k (3 Nmat P^2 + 3 Nmat P + 8 P)``
+  bytes, in the pairing phase: about 12.8 GiB for :math:`N = 2`, a
+  :math:`32 \times 32` grid and ``Nmat = 1024``. It grows linearly with
+  ``Nmat`` and with :math:`N_k`, and does not depend on :math:`B` or on
+  the layout;
+- the Green function, ``G = 16 Nmat N_k P`` bytes: ``4 G`` while it is
+  built, then ``3 G`` resident to the end of the solve (0.25 GiB per ``G``
+  in the same example);
+- the :math:`(N_k, ND, ND)` arrays (:math:`\Gamma_B` resident; in the
+  pairing phase :math:`\bar\chi_B`, :math:`\chi_B`, the bare and the
+  fluctuation part of :math:`V`, a dense bubble temporary and a dressing
+  workspace of seven such arrays): ``16 N_k ND^2`` bytes each in the dense
+  layout, :math:`6/16` of that packed, about 0.32 GiB each for
+  :math:`32 \times 32` k points up to ``ND = 144`` (:math:`B = 9`,
+  :math:`N = 2`);
+- the eigensolver: the Arnoldi work arrays, the room for its dense
+  fallback with the LAPACK workspace included (operators up to dimension
+  2000), and above dimension 2000 a second Arnoldi working set;
+  ``spectral_shift = "auto"`` or unset adds the few vectors of the
+  spectral-radius estimate that sizes the shift. These rows grow with the
+  reduced gap dimension ``dim`` (about ``N_k (2N)^2 / 2``): linearly, times
+  ``num_eigenvalues``, for Arnoldi, as ``dim^2`` for the dense fallback
+  (``dim <= 2000``), and with ``max_iter`` for the power iteration; they
+  depend on the layout and on ``spectral_shift``. With few k points and a
+  small ``Nmat`` the dense fallback can be the largest row;
+- the kernel workspace: the hoisted vertex blocks (proportional to
+  :math:`N_k\,ND^2`) and the gap and matvec work arrays, independent of
+  ``Nmat``.
+
+For the example above with :math:`B = 9` the estimated peak is about 22 GiB
+dense and 19 GiB packed; ``Nmat = 256`` brings it to about 9.4 GiB dense.
+``Nmat`` and the k grid therefore dominate. The remedies, in order: reduce
+``Nmat``, reduce the k grid, or raise ``bond_memory_cap_gb``.
+``bond_max_shells`` lowers :math:`B` only by the shells whose coupling is
+zero (a cutoff that drops a nonzero shell is refused), so it helps only for
+declared-zero shells.
+
+**The cap.** ``bond_memory_cap_gb`` unset: ``0.8`` times the available host
+memory, logged as ``spin-orbital bond memory cap: <c> GiB = 0.8 x available
+<a> GiB (source: <source>)``. The available memory is the minimum over the
+sources that give a value:
+
+- ``psutil`` (``virtual_memory().available``), else the ``MemAvailable``
+  line of ``/proc/meminfo``;
+- a finite soft ``RLIMIT_AS`` minus the process's virtual size, and a
+  finite soft ``RLIMIT_DATA`` minus its data size;
+- the job's own cgroup (v2, else v1): at every level from the process's
+  cgroup up to the mount point, the remaining amount is the limit minus the
+  working set, the working set being the usage minus the inactive file
+  cache (v2 ``memory.stat`` ``inactive_file``, v1 ``total_inactive_file``),
+  as the kernel counts it, so reclaimable cache of earlier output files is
+  not counted as used. The minimum over the levels and over every mount
+  that shows the job's cgroup is taken.
+
+A batch-system limit enforced outside these (for example a PBS memory
+limit that is not a cgroup of the job) is invisible to the estimate: set
+``bond_memory_cap_gb`` to the job's limit. When no source gives a value, a
+WARNING says ``no memory limit could be determined; the admission check is
+disabled; set [eliashberg] bond_memory_cap_gb to enable it`` and the run
+continues. ``bond_memory_cap_gb = 0`` disables the check with the WARNING
+``[eliashberg] bond_memory_cap_gb = 0: the memory admission check of the
+spin-orbital bond path is disabled``.
+
+**The refusal.** An estimate above the cap is refused before the Green
+function and :math:`\Gamma_B` are built::
+
+   spin-orbital bond Eliashberg needs an estimated peak of <peak> GiB in phase <phase> (B = <B> channels, ND = B·(2·norb_phys)² = <ND>, nvol = <nvol>, Nmat = <nmat>; largest row in that phase: <row> = <bytes> GiB) but the cap is <cap> GiB ([eliashberg] bond_memory_cap_gb). Memory grows as Nmat · nvol · norb_phys⁴ (the bubble's per-shift workspace) and Nmat · nvol · norb_phys² (the Green function); independent of Nmat, as nvol · B² · norb_phys⁴ (the vertex arrays and the kernel workspace); the eigensolver rows grow with the reduced gap dimension dim (about nvol · (2·norb_phys)² / 2): linearly times num_eigenvalues for Arnoldi, as dim² for the dense fallback (dim <= 2000), with max_iter for the power iteration, and they depend on the layout and spectral_shift. Reduce Nmat or the k grid, or raise [eliashberg] bond_memory_cap_gb (0 disables the check); pruning bond shells helps only for shells the per-shell table below shows with negligible coupling.
+   rows (phase  name  bytes):
+     ...
+   admitted cases (machine | path | admitted):
+     ...
+   shells (shell  |dr|  max|v|):
+     ...
+
+The row table lists every row of the estimate; the first paragraph names
+the largest of them in the peak phase. The table of admitted cases gives,
+for this static path on the CPU, the largest power-of-two ``Nmat``
+admitted on a 64 GiB and a 256 GiB host at the default cap (``0.8`` times
+the host memory) and the default solver settings, for a few model sizes
+(one table per layout, the layout of this run marked ``<- this run``). The per-shell table gives, for every off-site
+shell, its bond length and the largest coupling of its rows; when the outer
+shells carry only zero couplings it ends with the clause naming the
+``bond_max_shells`` value that removes them.
+
+Validation
+""""""""""
+
+- **SU(2) limit.** With spin-independent hopping and a spin-rotation
+  invariant interaction (``CoulombIntra``, ``CoulombInter``, ``PairHop`` and
+  ``J_Exchange = J_Hund - 2 J_Ising`` on every bond), the spectrum is that
+  of the non-spin-orbital singlet bond kernel once and of the triplet bond
+  kernel three times, in both layouts, to a relative accuracy of about
+  :math:`10^{-8}`.
+- **One channel.** At :math:`B = 1` the whole eigenvalue listing equals that
+  of the on-site path (``chi0q_mode = "calc"``), for a spin-orbit coupled
+  model (dense) and a Zeeman model (packed).
+- **S_z-conserving, not rotation invariant.** For ``Hund``, ``Ising`` or
+  ``Exchange`` alone on the bonds, each equal-spin sector (pair
+  :math:`S_z = \pm 1`) reproduces the non-spin-orbital triplet bond
+  spectrum, where the non-spin-orbital vertex is exact.
+- **Zeeman field.** On an SU(2) model a weak Extern field moves the
+  eigenvalues linearly: a triplet splits by its pair :math:`S_z` (the
+  :math:`S_z = 0` component with a slope near zero, the two equal-spin
+  components with opposite slopes), and a singlet does not move at first
+  order.
+- **Exact diagonalization.** The pair susceptibility built from the bond
+  vertex agrees with exact diagonalization of a two-orbital chain with
+  complex spin-flip hopping in the first- and second-order coefficients of
+  the interaction (``tests/test_so_bond_pairing_ed.py``).
+- **Kernel.** The pairing kernel of a run equals a reference kernel built
+  from an independently constructed Green function, in both layouts.
+
+
+.. _sc_spin_orbital_dynamic:
+
+Frequency-resolved gap (``frequency = "dynamic"``)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+With ``[eliashberg] frequency = "dynamic"`` the spin-orbital gap carries the
+fermionic Matsubara frequency as well,
+:math:`\Delta_{AB}(\mathbf{k}, i\omega_n)` on the uniform grid
+:math:`\omega_n = (2n + 1 - N_\mathrm{mat})\pi T`,
+:math:`n = 0, \ldots, N_\mathrm{mat} - 1`, and the pairing vertex is used at
+every bosonic frequency :math:`\nu_m = (2m - N_\mathrm{mat})\pi T`:
+
+.. math::
+
+   V(\mathbf{q}, i\nu_m) = \tfrac{1}{2}\,\Gamma \;-\;
+   \Gamma\,\chi(\mathbf{q}, i\nu_m)\,\Gamma .
+
+The bare part :math:`\tfrac{1}{2}\Gamma` does not depend on frequency. The
+fluctuation part is read at :math:`+\mathbf{q}` and at the same bosonic index
+as :math:`\chi`. This is the orientation that exact diagonalization fixes at
+nonzero frequency; the opposite reading agrees only at :math:`\nu = 0`. The
+kernel is the frequency-resolved kernel of the non-spin-orbital dynamic
+solver (see :ref:`sc_dynamic_frequency`) at :math:`2N` spin-orbitals.
+
+**Pauli projection.** A gap must satisfy
+:math:`\Delta_{AB}(\mathbf{k}, i\omega_n) = -\Delta_{BA}(-\mathbf{k},
+-i\omega_n)`, where :math:`-i\omega_n` is the index
+:math:`N_\mathrm{mat} - 1 - n`. A fermionic frequency is never zero, so no
+element is paired with itself, and the antisymmetric space has exactly half
+the dimension :math:`(2N)^2 N_k N_\mathrm{mat}` of the gap. The solver works
+in an orthonormal basis of that space, as the static solver does.
+
+**Both frequency parities are solved together.** The non-spin-orbital
+dynamic solver selects the even-frequency singlet or triplet channel. In
+spin-orbital mode there is no singlet/triplet label, and the frequency parity
+:math:`\Delta(i\omega_n) \to \Delta(-i\omega_n)` is not a symmetry of the
+kernel in general (without inversion symmetry or with spin-orbit coupling).
+The spectrum therefore contains even- and odd-frequency gaps, and the
+even/odd content of every eigenvector is reported, not selected.
+
+Scope
+"""""
+
+- ``matsubara_basis = "uniform"`` (the default) only;
+- ``chi0q_mode`` set explicitly to ``"flex"`` or ``"calc"`` (never
+  ``"load"``). A minimal ``[eliashberg]`` table, to be used with
+  ``[mode] enable_spin_orbital = true``:
+
+  .. code-block:: toml
+
+     [eliashberg]
+     frequency         = "dynamic"
+     chi0q_mode        = "flex"        # or "calc"
+     solver_mode       = "eigenvalue"
+     eigenvalue_method = "arnoldi"
+
+- ``chi0q_mode = "flex"``: the ``chiq``, ``chi0q``, ``green`` and ``sigma``
+  archives of a spin-orbital FLEX run, on the full bosonic and fermionic grid of the
+  configured ``Nmat`` (see "Reading the outputs of a spin-orbital FLEX run"
+  above). The check that the vertex of this input reproduces the stored
+  :math:`\chi`, :math:`(1 + \chi_0\Gamma)\chi = \chi_0`, runs at **every**
+  bosonic frequency, not only at :math:`\nu = 0`;
+- ``chi0q_mode = "calc"``: the spinful bubble of the bare Green function is
+  computed at every bosonic frequency, and
+  :math:`\chi = [1 + \chi_0\Gamma]^{-1}\chi_0`;
+- on-site and in-cell interactions, no bond channels (``bond_channels = true``
+  is refused; the bond-resolved path of :ref:`sc_so_bond_static` is static
+  only);
+- ``[mode.param] filling``, in both modes (the archive checks compare the
+  filling target);
+- an even ``Nmat``;
+- ``solver_mode = "iteration"`` or ``"eigenvalue"`` with
+  ``eigenvalue_method = "arnoldi"``. ``"both"`` runs the eigenvalue leg only,
+  as in the non-spin-orbital dynamic solver. ``spectral_shift`` and
+  ``seed_eigenvector`` (a ``gap_dynamic.npz`` of another spin-orbital dynamic
+  run on the same grid) are supported.
+
+Refused combinations
+""""""""""""""""""""
+
+In addition to the static refusals above (``pairing_type``,
+``eigenvalue_method`` other than ``"arnoldi"``, ...), and to ``bond_channels =
+true`` and every off-site row, which the dynamic solver refuses in any case
+(see *Refused combinations* of the static solver), the
+following are refused before any file is read. Each error names the key:
+
+- ``matsubara_basis = "ir"`` (the IR basis is not available in spin-orbital
+  mode yet);
+- ``chi0q_mode = "load"`` and a missing ``chi0q_mode`` (its default is
+  ``"load"``);
+- ``zero_chi_s = true`` and ``zero_chi_c = true`` (``false`` is accepted).
+  The vertex is built from the single spinful channel, which has no
+  spin/charge split;
+- ``parity_leakage_policy`` and ``parity_leakage_tol``, which are keys of the
+  bond-resolved dynamic path;
+- an odd ``Nmat``, and FLEX archives on a different grid;
+- a ``seed_eigenvector`` without the ``spin_orbital = True`` marker. A
+  non-spin-orbital gap over :math:`2N` orbitals has the same shape. Likewise a
+  spin-orbital gap is refused as the seed of a non-spin-orbital run;
+- an estimated peak memory above ``[eliashberg] mem_limit_gb`` (see
+  *Memory* below; this raises ``MemoryError``).
+
+``hwave_tsweep`` with ``run_eliashberg = true`` still refuses spin-orbital
+mode.
+
+Initial gap
+"""""""""""
+
+The power iteration (``solver_mode = "iteration"``) starts by default from
+``init_gap = "random"``: a fixed-seed random gap over every
+:math:`(A, B, \mathbf{k}, \omega_n)`, projected onto the antisymmetric space,
+so both frequency parities are present. A named form factor (``"cos"``,
+``"p_x"``, ...) gives the static spin-orbital seed copied to every frequency.
+That seed is purely even in frequency. If the kernel happens to conserve the
+frequency parity (for example a centrosymmetric model without spin-orbit
+coupling), a power iteration started there cannot reach an odd-frequency
+leading state. Keep the random default unless you want to follow a specific
+even-frequency state. The Arnoldi solver does not use ``init_gap``.
+
+Outputs
+"""""""
+
+The file names are those of the dynamic solver: ``eigenvalue.dat``,
+``gap.dat`` and ``gap_dynamic.npz``. The conventions are those of the static
+spin-orbital solver (spin-block order, ``index_convention = spin_block``, no
+``pairing_type``).
+
+- ``eigenvalue.dat``: the first line is
+  ``# Dynamic Eliashberg leading eigenvalue``. It is followed by
+  ``# key = value`` lines: ``spin_orbital = true``, ``index_convention``, the
+  gap layout, the definition of the weights, ``gap_spin_weights``,
+  ``gap_frequency_parity_weights``, ``gap_spin_frequency_weights`` (the
+  :math:`4 \times 2` table below), ``pauli_leakage``, ``chi0q_mode`` and, in
+  flex mode, ``flex_vertex_backward_error_max``. Then come
+  ``# eigenvalue_selection: LM`` (``LR`` with ``spectral_shift``,
+  ``iteration`` for the power iteration, with ``_seed_overlap`` appended when
+  a seed orders the eigenpairs, ``LR_retry`` as described below), the leading
+  eigenvalue, and the table. The column layout is compatible with the table
+  of the non-spin-orbital dynamic solver: the match column is the fifth
+  column in both (``hwave_tsweep`` itself still refuses spin-orbital mode):
+
+  .. code-block:: text
+
+     # index  Re(eigenvalue)  Im(eigenvalue)  |eigenvalue|  match(1=fermion-antisymmetric)  w_psi  w_dx  w_dy  w_dz  w_even_w  w_odd_w
+
+  ``w_psi`` ... ``w_dz`` are the spin weights of the static solver, summed
+  over frequency as well:
+  :math:`w_X = \sum_{n,\mathbf{k},a,b} |X_{ab}(\mathbf{k}, i\omega_n)|^2 / W`.
+  ``w_even_w`` and ``w_odd_w`` are the weights
+  :math:`\|\Delta^{(\pm)}\|^2 / \|\Delta\|^2` of the even and odd halves
+  :math:`\Delta^{(\pm)} = [\Delta(i\omega_n) \pm \Delta(-i\omega_n)]/2`.
+  On the antisymmetric space the momentum parity is minus the frequency
+  parity, so these two sectors are the only ones.
+
+- ``gap.dat``: the slice at :math:`n_0 = N_\mathrm{mat}/2` (the smallest
+  positive :math:`\omega_n`). Its first line is the dynamic header
+  ``# frequency=dynamic index=... iomega_n=... eigenvalue=... T=...``,
+  followed by the spin-orbital comment lines of the static solver.
+
+- ``gap_dynamic.npz``:
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 34 66
+
+     * - key
+       - content
+     * - ``gap``
+       - :math:`\Delta_{AB}(\mathbf{k}, i\omega_n)`, shape
+         ``(2N, 2N, Nx, Ny, Nz, Nmat)``, spin-block order, normalized with a
+         fixed global phase
+     * - ``iomega``, ``T``, ``frequency``, ``eigenvalue``, ``axis_order``,
+         ``normalization``, ``momentum_convention``
+       - as in the non-spin-orbital dynamic solver (no ``pairing_type``)
+     * - ``spin_orbital``, ``index_convention``, ``norb_phys``, ``kx``,
+         ``ky``, ``kz``, ``spin_components``
+       - as in the static ``gap.npz``
+     * - ``gap_spin_weights``
+       - ``(4,)``: the weights :math:`w_\psi, w_{d_x}, w_{d_y}, w_{d_z}`
+     * - ``gap_spin_weights_w``
+       - ``(Nmat, 4)``: the same weights per frequency, normalized by the
+         same :math:`W`, so that the whole array sums to 1
+     * - ``gap_frequency_parity_labels``, ``gap_frequency_parity_weights``
+       - ``["even_w", "odd_w"]`` and their weights ``(2,)``
+     * - ``gap_spin_frequency_weights``
+       - ``(4, 2)``: the spin weights of the even and odd halves (sums to 1).
+         In the SU(2) limit, :math:`(\psi, \text{even})` is the
+         even-frequency singlet, :math:`(\mathbf{d}, \text{even})` the
+         even-frequency triplet, and :math:`(\psi, \text{odd})` and
+         :math:`(\mathbf{d}, \text{odd})` are the two odd-frequency states
+     * - ``eigenvalues``, ``eigenvector_spin_weights``,
+         ``eigenvector_frequency_parity_weights``, ``eigenvalue_match``
+       - with an eigenvalue analysis: the eigenvalues and the per-eigenpair
+         weights ``(n, 4)`` and ``(n, 2)``. The eigenvectors themselves are
+         **not** stored, because each one is as large as ``gap``; only the
+         leading one is written, as ``gap``
+     * - ``eigenvalue_selection``, ``pauli_leakage``
+       - as in ``eigenvalue.dat``
+
+**Largest-magnitude selection.** Without ``spectral_shift`` the Arnoldi
+solver selects the ``num_eigenvalues`` eigenvalues of largest magnitude. The
+repulsive (negative) dynamic eigenvalues grow with ``Nmat`` and can fill that
+set. As in the non-spin-orbital dynamic solver, when that set cannot contain
+the largest real part (its largest real part is below its smallest
+magnitude; in particular when its leading eigenvalue is negative) and no
+seed is given, the solver re-solves once with ``spectral_shift = "auto"``
+(largest real part), logs a WARNING, writes ``eigenvalue_selection:
+LR_retry`` and a note in ``eigenvalue.dat``. Set ``spectral_shift = "auto"``
+yourself to avoid the extra solve. When ``num_eigenvalues`` reaches the
+dimension of the antisymmetric space minus one, the reduced operator is
+diagonalized densely and the eigenvalues of largest real part are kept
+(``eigenvalue_selection: dense-LR``). The power iteration follows
+:ref:`sc_eigen_convergence` (``eigen_converged`` in ``eigenvalue.dat`` and
+``gap_dynamic.npz``).
+
+``pauli_leakage`` measures how far the kernel maps antisymmetric gaps out of
+the antisymmetric space. It is the largest
+:math:`\|\mathrm{sym}(K E c)\| / \|K E c\|` over three fixed random probes.
+On the uniform grid it is at round-off level (about :math:`10^{-15}`), and a
+WARNING is logged above :math:`10^{-8}`. The solve is restricted to the
+antisymmetric space in either case.
+
+.. _sc_spin_orbital_dynamic_memory:
+
+Memory and time
+"""""""""""""""
+
+Every four-leg tensor (:math:`\chi`, :math:`\chi_0`, the vertex, its
+:math:`(\mathbf{r}, \tau)` form and the pair bubble) holds
+:math:`T_4 = 16\,(2N)^4 N_k N_\mathrm{mat}` bytes, 16 times the
+non-spin-orbital tensor of the same :math:`N`. The solver frees each one as
+soon as it is used, and transforms the vertex one orbital-pair slab at a
+time, so that at most two such tensors are alive at once. The exception is
+the internal bubble of ``chi0q_mode = "calc"``, which peaks at about
+:math:`4.5\,T_4`. Before reading anything, the solver estimates the peak.
+The estimate is the largest of the stages (input, vertex, transform, pair
+bubble, solve), and the solve stage includes the ARPACK basis,
+:math:`(\max(2k+1, 20) + 4)` vectors of half the gap length for
+``num_eigenvalues`` :math:`= k`. The run is refused when the estimate exceeds
+``[eliashberg] mem_limit_gb`` (default: 80 % of the available memory; ``0``
+disables the guard).
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 15 15 15
+
+   * - :math:`N`, grid, ``Nmat``
+     - :math:`T_4`
+     - estimate (flex)
+     - estimate (calc)
+   * - 2, :math:`32 \times 32`, 512
+     - 2.0 GiB
+     - 7.2 GiB
+     - 10.0 GiB
+   * - 3, :math:`32 \times 32`, 512
+     - 10.1 GiB
+     - 28.5 GiB
+     - --
+
+For the first row (``num_eigenvalues = 10``, ``chi0q_mode = "calc"``, a
+10-core CPU, ``fft_workers = -1``) the whole run took 81 s, 68 s of them in
+the Arnoldi solve, and the measured peak resident memory was 7.8 GiB against
+the estimate of 10.0 GiB. Reduce ``Nmat`` or the k grid when the estimate is
+too large.
+
+GPU
+"""
+
+``gpu = true`` moves the vertex and the pair bubble to the device. The kernel
+is the shared, backend-independent kernel of the dynamic solver; the basis
+and the eigensolver stay on the host. The host and device kernel
+applications are checked against each other to :math:`10^{-12}`, and the
+leading eigenvalue is compared as well (this check requires CuPy). On an
+A100 GPU the full-spectrum and Arnoldi solves with ``gpu = true`` agree with
+``gpu = false`` to :math:`10^{-10}` in the eigenvalues, and the power-iteration
+solve agrees within its converged residual; for a degenerate leading
+eigenvalue the gaps are compared as subspaces
+(``tests/test_sc_spin_orbital_gpu.py``).
+
+Validation
+""""""""""
+
+- **Against exact diagonalization.** On the spin-mixing chain of the static
+  validation, the production operator equals, to round-off, the kernel
+  application whose pair susceptibility agrees with exact diagonalization at
+  first and second order in the interaction.
+- **SU(2) limit.** With spin-independent hopping and a rotation-invariant
+  interaction, the spectrum on the antisymmetric space is every eigenvalue of
+  the non-spin-orbital dynamic singlet kernel once and every eigenvalue of
+  the triplet kernel three times, each in its combined-parity sector (which
+  contains both frequency parities), and nothing else.
+- **Static limit.** A frequency-independent :math:`\chi` reproduces the
+  spectrum of the static spin-orbital solver (with ``g2_tail = false``),
+  with frequency-independent gaps.
+- **Inputs.** ``"flex"`` reproduces the spectrum built directly from the
+  stored archives, and ``"calc"`` the spectrum built from an independent
+  bubble of the same Green function.
 
 Tips
 ----------------------------

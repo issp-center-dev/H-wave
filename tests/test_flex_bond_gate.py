@@ -154,9 +154,8 @@ class TestRefusals(unittest.TestCase):
         self.assertFalse(any(str(k).startswith("longitudinal_bond_") for k in gi))
 
     def test_refusal_precedence_tripwires(self):
-        # (6) off-site Exchange
-        s, r = _flex(inter={"CoulombInter": "coulombinter.dat", "Exchange": "coulombinter.dat"})
-        self._assert_refused(s, r.get_param("green"), "Exchange")
+        # (6) an off-site Exchange or PairHop is accepted by the gate since
+        # issue #181 (refused without it: tests/test_flex_bond_exchange.py)
         # (6) no declared off-site shell
         s, r = _flex(inter={"CoulombIntra": "coulombintra.dat"})
         self._assert_refused(s, r.get_param("green"), "shell")
@@ -258,7 +257,7 @@ class TestOutputs(unittest.TestCase):
                       "green.npz", "chi0q.npz"):
                 self.assertTrue(os.path.exists(os.path.join(out, f)), f)
             b = np.load(os.path.join(out, "longitudinal_bond.npz"))
-            self.assertEqual(int(b["bond_archive_schema"]), 2)
+            self.assertEqual(int(b["bond_archive_schema"]), 3)
             self.assertEqual(str(b["freq_axis"]), "bosonic l -> 2l - nmat")
             nvol, nd = s.lattice.nvol, s.norb ** 2
             B = b["delta_r"].shape[0]
@@ -455,7 +454,7 @@ class TestFailureClearing(unittest.TestCase):
     def test_caches_and_seed_are_dropped_on_every_failure(self):
         from hwave.solver import flex_bond
         attrs = ("_phase_b_seed", "_hf_tables", "_bond_topo", "_bond_split", "_bond_view",
-                 "_bond_S", "_bond_C", "_bond_S_on", "_bond_C_on", "_bond_est", "_bond_last")
+                 "_bond_S", "_bond_C", "_bond_est", "_bond_last")
         with tempfile.TemporaryDirectory() as out:
             # preflight failure (no declared shell)
             s, r = _flex(inter={"CoulombIntra": "coulombintra.dat"})
@@ -594,7 +593,7 @@ class TestDeviceAdmission(unittest.TestCase):
                 guard_all = mode == "all"
                 # the leading u is the bubble: B^2 blocks of Nmat nvol P^2 16,
                 # brought back one channel pair at a time (issue #196)
-                d2h = (u + u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
+                d2h = (u + u * (1 + 2 * int(guard_all)) + 3 * C_b + 3 * S_b
                        + (0 if guard_all else 2 * S_b) + G_b)
                 gib = 1024.0 ** 3
                 self.assertIn("{:.4f}".format(d2h / gib), line)
@@ -613,7 +612,7 @@ class TestDeviceAdmission(unittest.TestCase):
         line = [m for m in cm.output if "transfer volume" in m][0]
         u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
         S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
-        d2h = u + 3 * u + 3 * C_b + 2 * S_b + G_b
+        d2h = u + 3 * u + 3 * C_b + 3 * S_b + G_b
         gib = 1024.0 ** 3
         self.assertIn("{:.4f}".format(d2h / gib), line)
         self.assertNotIn("{:.4f}".format((d2h + 2 * G_b) / gib), line)
