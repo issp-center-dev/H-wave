@@ -7,7 +7,9 @@ and the bond preflight's Green-function peek. Both used private
 which numpy removed in 2.4 -- so the probe stopped working on any file,
 not merely on the newer header versions the fallback existed for. The
 dispatch lives here once so the two sites cannot answer the question
-differently.
+differently. The spin-orbital archive checks read the dtype and the
+order from the same header (:func:`read_npy_header`) to refuse a payload of
+the wrong type before it is loaded.
 
 No private numpy API is used. numpy publishes a reader per header
 version (``read_array_header_1_0``, ``read_array_header_2_0``) but has
@@ -27,7 +29,17 @@ therefore parsed here directly from the format specification: strict
 utf-8, a literal dict, and a shape of plain integers.
 """
 
+from typing import NamedTuple
+
 import numpy as np
+
+
+class NpyHeader(NamedTuple):
+    """The metadata an ``.npy`` header declares: the array's ``shape``, its
+    ``dtype`` (byte order as stored) and whether it is in Fortran order."""
+    shape: tuple
+    dtype: np.dtype
+    fortran_order: bool
 
 
 class UnsupportedNpyHeaderVersion(Exception):
@@ -73,7 +85,7 @@ _REQUIRED_KEYS = frozenset(("descr", "fortran_order", "shape"))
 
 
 def _read_header_3_0(fh):
-    """Parse a version-3.0 header and return its ``shape``.
+    """Parse a version-3.0 header and return its :class:`NpyHeader`.
 
     Follows the NPY specification: a 4-byte little-endian length, then
     that many bytes of utf-8 holding a Python literal dict.
@@ -135,7 +147,7 @@ def _read_header_3_0(fh):
             "NPY 3.0 header fortran_order is not a bool: {!r}".format(
                 header["fortran_order"]))
     try:
-        np.lib.format.descr_to_dtype(header["descr"])
+        dtype = np.lib.format.descr_to_dtype(header["descr"])
     except Exception as exc:
         raise ValueError(
             "NPY 3.0 header descr is not a valid dtype descriptor: "
@@ -147,11 +159,12 @@ def _read_header_3_0(fh):
         raise ValueError(
             "NPY 3.0 header shape is not a tuple of non-negative "
             "integers: {!r}".format(shape))
-    return shape
+    return NpyHeader(shape, dtype, header["fortran_order"])
 
 
-def read_npy_header_shape(fh):
-    """The ``shape`` of the ``.npy`` stream ``fh``, read from its header.
+def read_npy_header(fh):
+    """The :class:`NpyHeader` (shape, dtype, Fortran order) of the ``.npy``
+    stream ``fh``, read from its header.
 
     ``fh`` must be positioned at the start of the member; on return it sits
     just past the header, before the array data (which is never read).
@@ -163,8 +176,8 @@ def read_npy_header_shape(fh):
 
     Returns
     -------
-    tuple of int
-        The stored array's shape.
+    NpyHeader
+        The stored array's shape, dtype and order.
 
     Raises
     ------
@@ -185,5 +198,31 @@ def read_npy_header_shape(fh):
         raise UnsupportedNpyHeaderVersion(
             "numpy.lib.format.{} is unavailable (numpy {})".format(
                 reader_name, np.__version__))
-    shape, _fortran_order, _dtype = reader(fh)
-    return shape
+    shape, fortran_order, dtype = reader(fh)
+    return NpyHeader(shape, dtype, fortran_order)
+
+
+def read_npy_header_shape(fh):
+    """The ``shape`` of the ``.npy`` stream ``fh``, read from its header
+    (:func:`read_npy_header`; the same bytes are read and the same errors
+    raised).
+
+    ``fh`` must be positioned at the start of the member; on return it sits
+    just past the header, before the array data (which is never read).
+
+    Parameters
+    ----------
+    fh : file-like
+        A binary stream open on an ``.npy`` member.
+
+    Returns
+    -------
+    tuple of int
+        The stored array's shape.
+
+    Raises
+    ------
+    UnsupportedNpyHeaderVersion
+        If the header version is not one this module knows how to read.
+    """
+    return read_npy_header(fh).shape

@@ -7,7 +7,7 @@ Basic usage
   H-wave requires the following programs and libraries:
 
   - python 3.10 or later
-  - numpy module
+  - numpy module (1.26 or later and below 3; CI tests numpy 1.26 and 2.x)
   - scipy module
   - requests module
   - tomli module

@@ -661,7 +661,9 @@ in the input TOML file. In this mode:
 - The Hamiltonian is constructed in the full :math:`2n_{\rm orb} \times 2n_{\rm orb}` space
   without assuming spin conservation.
 - All interaction types (``CoulombIntra``, ``CoulombInter``, ``Hund``, ``Exchange``,
-  ``Ising``, ``PairLift``, ``PairHop``) are supported.
+  ``Ising``, ``PairLift``, ``PairHop``) are supported. An imaginary part on a
+  ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange`` or ``PairLift``
+  coefficient is refused (a complex ``PairHop`` is accepted).
 - The block decomposition is applied automatically when possible.
 - Both the ``reduced`` and ``general`` calculation schemes are supported for spin-orbital systems
   in RPA. FLEX supports the spin-orbital mode on the ``general`` scheme with
@@ -675,6 +677,56 @@ in the input TOML file. In this mode:
    **Migration (RPA):** the geometry ``norb`` for spin-orbital input is now the
    spin-orbital count; double any pre-existing RPA spin-orbital ``geom.dat``
    ``Norbit``.
+
+.. _so_migration_note:
+
+.. important::
+
+   **Release and migration note: spin-orbital mode.** In spin-orbital mode:
+
+   (1) ``[mode.param] orbital_site`` is ignored. The exchange of every
+       R = 0 row, including rows between orbitals labelled as different
+       sites, is included exactly. SO RPA, SO FLEX and SO hwave_sc results
+       change for inputs that combine ``orbital_site`` with such rows.
+   (2) An imaginary part on any coefficient other than PairHop is refused
+       (it was silently folded before; see issue #302 for complex
+       Exchange).
+   (3) Spin-orbital archives written before this version (fingerprint
+       version 1 or none) must be regenerated (which command writes which
+       file: see :ref:`sc_so_archive_checks`).
+
+   To reproduce an earlier result, remove the affected rows or imaginary
+   parts, or run the non-spin-orbital solver.
+
+   In spin-orbital mode the value of ``orbital_site`` is not read; an
+   invalid value is ignored too. One WARNING is logged per run when the key
+   is present: ``orbital_site is ignored in spin-orbital mode; all R=0 rows
+   are treated exactly (see migration note)``.
+
+.. _rpa_so_offsite:
+
+**Off-site rows in spin-orbital RPA.** The spinful vertex of the RPA ring sum is the antisymmetrized vertex: the
+direct term plus its exchange crossing. For the on-site rows and the in-cell
+(:math:`\mathbf{R} = 0`) rows between different orbitals the crossing is
+included exactly. For an off-site row (:math:`\mathbf{R} \neq 0`) the
+crossing depends on both fermionic momenta and cannot be written as a function
+of the transfer momentum :math:`\mathbf{q}` alone, so the off-site rows
+enter the ring sum through their direct (Hartree-like) part
+:math:`V(\mathbf{q})` only, as in the non-spin-orbital RPA. The spin-orbital
+RPA logs this once per run, at INFO level, when the input has off-site rows::
+
+   enable_spin_orbital: the off-site rows of <types> enter the spinful RPA vertex through their direct (Hartree-like) part V(q) only; the exchange (crossing) part of these off-site rows is not included in the ring sum. The on-site and in-cell exchange is included. For an exact treatment of the off-site exchange use hwave_sc with [eliashberg] bond_channels = true (frequency = "static") or FLEX with [mode.param] longitudinal_bond_channels = true.
+
+``<types>`` is the sorted, comma-separated list of the interaction types that
+have a nonzero off-site row. ``PairHop`` is not named in this list. The line
+is not logged by FLEX (which, in spin-orbital mode, refuses off-site rows
+without ``longitudinal_bond_channels`` and resolves their exchange exactly
+with it; see :ref:`flex_spin_orbital`) or by the RPA that ``hwave_sc`` runs
+internally. The static bond path of ``hwave_sc`` builds its bond bubble
+from the bare band, or from the ``green.npz`` of the spin-orbital FLEX with
+bond channels named by ``[eliashberg] bond_green`` (see
+:ref:`sc_so_bond_green`); the bond archive of that FLEX run is not read by
+``hwave_sc``.
 
 
 .. _flex_second_order_kernel:
@@ -1154,9 +1206,14 @@ Domain of this version:
 
 - the general scheme with ``flex_hartree_fock = true`` and the other
   conditions of that switch;
-- on-site interactions only (the exchange crossing of an off-site
-  interaction is not a :math:`\mathbf{q}`-only vertex);
-- ``spinful_vertex_exchange = true``, and no ``longitudinal_bond_channels``;
+- without ``longitudinal_bond_channels``: on-site and in-cell
+  (:math:`\mathbf{R} = 0`) interactions only (the exchange crossing of an
+  off-site interaction is not a :math:`\mathbf{q}`-only vertex); an
+  off-site row is refused. With ``longitudinal_bond_channels = true``
+  off-site rows are accepted (see *Bond channels* below);
+- an imaginary part on a ``CoulombInter``, ``Hund``, ``Ising``, ``Exchange``
+  or ``PairLift`` coefficient is refused;
+- ``spinful_vertex_exchange = true``;
 - no ``sigma_init`` / ``trans_mod`` / ``green_init``: the run starts from
   the bare Hartree-Fock state;
 - an Extern field is accepted: the file uses physical orbital indices and
@@ -1165,12 +1222,53 @@ Domain of this version:
   :math:`H_1` is on-site (see :ref:`sc_spin_polarized`).
 
 The reduced scheme refuses spin-orbital input. The Eliashberg solver
-(``hwave_sc``) reads the spin-orbital FLEX outputs, with ``frequency =
-"static"`` (see :ref:`sc_spin_orbital`) and with ``frequency = "dynamic"``
-(see :ref:`sc_spin_orbital_dynamic`); its dynamic bond path and
-``hwave_tsweep`` with ``run_eliashberg = true`` still refuse
-``enable_spin_orbital``. A FLEX-only
+(``hwave_sc``) reads the spin-orbital FLEX outputs of a run without bond
+channels, with ``frequency = "static"`` (see :ref:`sc_spin_orbital`) and
+with ``frequency = "dynamic"`` (see :ref:`sc_spin_orbital_dynamic`); its
+dynamic bond path and ``hwave_tsweep`` with ``run_eliashberg = true`` still
+refuse ``enable_spin_orbital``. A FLEX-only
 ``hwave_tsweep`` runs it with ``warm_start = false`` (the spin-orbital FLEX
 takes no seed).
+
+**Bond channels.** With ``longitudinal_bond_channels = true`` the single
+spinful channel is resummed on the (spin-orbital pair) :math:`\times`
+(bond) basis of the spin-orbital Eliashberg bond path
+(:ref:`sc_so_bond_static`): :math:`B` bond channels :math:`m` (the on-site
+point and every declared off-site displacement, closed under reversal),
+``ND = B n_d^2`` slots. The bond vertex :math:`\Gamma_B` is the
+antisymmetrized spinful vertex with every row on its own bond: the direct
+part of an off-site row in the on-site channel, as a function of
+:math:`\mathbf{q}`, and its exchange crossing in the channel of its
+displacement. With the bond-resolved bubble :math:`\bar\chi_B(q, i\nu)` of
+the dressed Green function at every bosonic frequency,
+
+.. math::
+
+   \chi_B = \left[\hat{I} + \bar\chi_B\,\Gamma_B\right]^{-1} \bar\chi_B, \qquad
+   W = P_B\left[\Gamma_B\left(\chi_B - \tfrac{1}{2}\bar\chi_B\right)\Gamma_B\right],
+
+and the self-energy is the bond transport of :ref:`flex_bond_hf` (the bond
+form factor on the internal leg at both ends of :math:`W`) on the
+spin-orbital index. :math:`P_B` is the orbital swap :math:`P` of the
+on-site path within each bond channel,
+:math:`P_B[M]_{(m;\,x y),(m';\,z w)} = M_{(m;\,y x),(m';\,w z)}` (no
+channel reversal, no phase). What
+is exact: :math:`\Sigma_{\rm HF}[G]` of every row (off-site rows and complex
+``PairHop`` included); the second order, direct and exchange, of every row
+(the term :math:`\tfrac{1}{2}\Gamma_B\bar\chi_B\Gamma_B`); beyond it the
+ring series of the bond-resolved spinful channel. At :math:`B = 1` the
+run is the on-site spin-orbital FLEX; in the SU(2) limit it reproduces the
+non-spin-orbital bond FLEX of :ref:`flex_bond_hf` (self-energy times the
+unit matrix in spin; the susceptibility projects onto its charge,
+longitudinal and transverse spin channels). The run, its keys, its memory
+and its outputs are described in :ref:`flex_so_bond_tutorial`; in this
+version it runs on the CPU and writes ``chi0q``/``chiq`` as the channel-0
+blocks of the last SCF iteration; with ``longitudinal_bond_output_full =
+true`` it also writes the spin-orbital bond archive of the final Green
+function (:ref:`flex_so_bond_archive`). ``hwave_sc`` reads its
+``green.npz`` through ``[eliashberg] bond_green`` on the static bond path
+(:ref:`sc_so_bond_green`) and does not read its bond archive in this
+version (a later version reads it). A FLEX-only ``hwave_tsweep`` runs it with ``warm_start =
+false``, as above.
 
 .. [1] `K. Yoshimi, T. Kato, H. Maebashi, J. Phys. Soc. Jpn. 78, 104002 (2009). <https://journals.jps.jp/doi/10.1143/JPSJ.78.104002>`_
