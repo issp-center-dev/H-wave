@@ -38,6 +38,9 @@ trees):
   Ising; reduced refuses Exchange and PairHop). The ``rpa.py`` changes after
   the reference revision (the ``Interaction`` constructor flag and the
   ``_so_provenance`` signature) sit on the path both schemes share;
+  ``rpa_onsite_6x5`` -- the general case on a 6 x 5 grid, where the two
+  expressions of the unnormalised inverse FFT round differently (the
+  one-body H(k) must keep RPA's ``ifftn * nvol``; ``fp_green`` included);
 * ``sc_static_onsite`` -- hwave_sc, ``frequency = "static"``,
   ``chi0q_mode = "calc"``, on that model;
 * ``sc_bond_soc_all_types`` and ``sc_bond_zeeman_extern`` -- hwave_sc static
@@ -151,7 +154,7 @@ def _sc_model(d):
     return S, S._write_model(d, so=True, soc=0.3)
 
 
-def _rpa_input(d, out, scheme="general"):
+def _rpa_input(d, out, scheme="general", cell=None):
     if scheme == "reduced":
         from tests import test_sc_spin_orbital as S
         files = S._write_model(d, so=True, soc=0.3,
@@ -160,6 +163,8 @@ def _rpa_input(d, out, scheme="general"):
         S, files = _sc_model(d)
     inp = S._input(d, files, True, {})
     inp["mode"]["calc_scheme"] = scheme
+    if cell is not None:
+        inp["mode"]["param"]["CellShape"] = list(cell)
     del inp["eliashberg"]
     inp["log"] = {"print_level": 1}
     inp["file"]["output"] = {"path_to_output": out, "chi0q": "chi0q", "chiq": "chiq"}
@@ -189,6 +194,10 @@ CASES = {
     "flex_onsite": ("hwave", _flex_input),
     "rpa_onsite": ("hwave", _rpa_input),
     "rpa_onsite_reduced": ("hwave", lambda d, out: _rpa_input(d, out, scheme="reduced")),
+    # a grid side that is not a power of two: ifftn * nvol and
+    # ifftn(norm="forward") round differently there, and the archive's
+    # Green-function digest (fp_green) and state members would show it
+    "rpa_onsite_6x5": ("hwave", lambda d, out: _rpa_input(d, out, cell=(6, 5, 1))),
     "sc_static_onsite": ("sc", _sc_onsite_input),
     "sc_bond_soc_all_types": ("sc", _sc_bond_input("SOC_ALL_TYPES")),
     "sc_bond_zeeman_extern": ("sc", _sc_bond_input("ZEEMAN_EXTERN")),
@@ -413,6 +422,7 @@ class TestSpinOrbitalOnsiteReference(unittest.TestCase):
             "flex_onsite": {"chi0q.npz", "chiq.npz", "sigma.npz", "green.npz", "energy.dat"},
             "rpa_onsite": {"chi0q.npz", "chiq.npz"},
             "rpa_onsite_reduced": {"chi0q.npz", "chiq.npz"},
+            "rpa_onsite_6x5": {"chi0q.npz", "chiq.npz"},
             "sc_static_onsite": {"eigenvalue.dat", "gap.dat", "gap.npz"},
             "sc_bond_soc_all_types": {"eigenvalue.dat", "gap.dat", "gap.npz"},
             "sc_bond_zeeman_extern": {"eigenvalue.dat", "gap.dat", "gap.npz"},

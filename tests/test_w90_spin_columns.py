@@ -100,7 +100,24 @@ class TestReaderSpinColumns(unittest.TestCase):
 
     def test_spin_index_outside_two_flavors_refused(self):
         lines = [MARKED, "1", "1", "1", "0 0 0 1 1 0 2 1.0 0.0"]
-        with self.assertRaisesRegex(ValueError, "N_f = 2"):
+        with self.assertRaisesRegex(ValueError, r"expected 0 \(up\) or 1 \(down\)"):
+            _read(lines, allow_spin_columns=True)
+
+    def test_non_integer_spin_index_names_file_and_line(self):
+        lines = [MARKED, "1", "1", "1", "0 0 0 1 1 0 x 1.0 0.0"]
+        with self.assertRaisesRegex(ValueError, r"line 5: spin index 'x' is invalid"):
+            _read(lines, allow_spin_columns=True)
+
+    def test_marker_hint_only_where_the_format_is_accepted(self):
+        # a 9-token row where the spin-resolved format is not accepted
+        # (two-body files, Extern, direct reads) is a plain 7-column error:
+        # adding the marker would only lead to the next refusal
+        lines = [PLAIN, "1", "1", "1", "0 0 0 1 1 0 0 1.0 0.0"]
+        with self.assertRaises(ValueError) as ctx:
+            _read(lines)
+        self.assertIn("has 9 columns, expected 7", str(ctx.exception))
+        self.assertNotIn("w90spin", str(ctx.exception))
+        with self.assertRaisesRegex(ValueError, "no 'w90spin/1' marker"):
             _read(lines, allow_spin_columns=True)
 
     def test_orbital_index_beyond_header_norb_refused(self):
@@ -242,6 +259,21 @@ class TestInputReaderAndSolverRefusal(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "enable_spin_orbital = true"):
             rpa_module.RPA(self._input().get_param("ham"),
                            {"print_level": 0, "print_step": 100}, info_mode)
+
+    def test_hwave_sc_entry_refuses_with_its_own_message(self):
+        from hwave import sc
+        _write_chain(self.d, _SPIN_CHAIN)
+        inp = {"mode": {"mode": "RPA", "param": {
+                   "T": 0.5, "CellShape": [4, 1, 1], "SubShape": [1, 1, 1],
+                   "Nmat": 16, "filling": 0.5}},
+               "eliashberg": {"chi0q_mode": "calc"},
+               "file": {"input": {"path_to_input": "", "interaction": {
+                            "path_to_input": self.d, "Geometry": "geom.dat",
+                            "Transfer": "transfer.dat"}},
+                        "output": {"path_to_output": os.path.join(self.d, "out")}}}
+        with self.assertRaisesRegex(ValueError, "hwave_sc does not accept the "
+                                    "spin-resolved"):
+            sc.calc_eliashberg(inp)
 
     def test_flex_hf_bare_transfer_refuses(self):
         from hwave.solver import flex_hf

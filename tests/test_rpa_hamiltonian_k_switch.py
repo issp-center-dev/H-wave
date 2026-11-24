@@ -105,6 +105,27 @@ class TestNormalModeSpinBlockDroppedAtBoundary(unittest.TestCase):
                                    atol=1e-12)
 
 
+class TestTranslationBeyondTheCell(unittest.TestCase):
+    """Unfolded RPA: a row with R >= L or R < -L used to raise IndexError
+    (direct indexing); it is now taken modulo the grid, i.e. added to its
+    periodic image, as the shared builder does."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="rpa_hk_wrap_")
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def test_rows_beyond_the_cell_wrap(self):
+        rows = _CHAIN + [" 5 0 0 1 1 -1.0 0.0", "-5 0 0 1 1 -1.0 0.0"]
+        _write_chain(self.d, 1, rows)
+        h = _rpa(self.d, [1, 1, 1]).ham_info.ham_trans_q[:, 0, 0]
+        # eps(k) = -2 cos k - 2 cos 5k on the 4-site ring, k = 0, pi/2, pi, 3pi/2
+        k = 2 * np.pi * np.arange(4) / 4
+        np.testing.assert_allclose(h, -2 * np.cos(k) - 2 * np.cos(5 * k),
+                                   atol=1e-12)
+
+
 class TestSpinOrbitalBranch(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="rpa_hk_so_")
@@ -115,7 +136,8 @@ class TestSpinOrbitalBranch(unittest.TestCase):
     def test_out_of_range_index_raises(self):
         # geometry norb = 2 (one physical orbital); index 3 is outside
         _write_chain(self.d, 2, _CHAIN + [" 0 0 0 3 3 0.5 0.0"], geom_norb=2)
-        with self.assertRaisesRegex(ValueError, r"outside \[0, 2\)"):
+        with self.assertRaisesRegex(ValueError, r"outside \[0, 2\).*geometry "
+                                    r"norb \(the spin-orbital count"):
             _rpa(self.d, [1, 1, 1], enable_spin_orbital=True)
 
     def test_interleaved_file_lands_in_spin_block_order(self):

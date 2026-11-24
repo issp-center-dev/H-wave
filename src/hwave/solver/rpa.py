@@ -1039,7 +1039,16 @@ class Interaction:
         shape = self.lattice.shape
         if self.spinful_one_body:
             # nd x nd. An index outside [0, nd) raises.
-            tab_r = hamiltonian_k.dense_table(table, shape, nd, label="Transfer")
+            try:
+                tab_r = hamiltonian_k.dense_table(table, shape, nd,
+                                                  label="Transfer")
+            except ValueError as exc:
+                if not self.enable_spin_orbital:
+                    raise
+                raise ValueError(
+                    "{}; in spin-orbital mode the geometry norb (the "
+                    "spin-orbital count, 2 x physical) must cover all "
+                    "Transfer indices".format(exc)) from exc
             if self.enable_spin_orbital:
                 # The SO transfer file uses the interleaved convention
                 # (index = 2*orb + spin, matching UHFk and the docs), while
@@ -1059,8 +1068,9 @@ class Interaction:
         p = tab_r.shape[-1]
         self.ham_trans_r = tab_r.reshape(nvol, p, p)
         # eps(k) = sum_R e^{+ikR} t(R), the documented convention (issue
-        # #133) shared with UHFk through hamiltonian_k.to_k
-        self.ham_trans_q = hamiltonian_k.to_k(tab_r)
+        # #133) shared with UHFk through hamiltonian_k.to_k; scale_after
+        # keeps RPA's own ifftn * nvol so the outputs stay bitwise as before
+        self.ham_trans_q = hamiltonian_k.to_k(tab_r, scale_after=True)
 
         logger.debug("ham_trans_r shape={}, size={}, nonzero_count={}".format(
             self.ham_trans_r.shape,
@@ -1084,7 +1094,7 @@ class Interaction:
             hab_r = hamiltonian_k.dense_table(self.param_ham["Extern"], shape,
                                               norb, label="Extern")
             self.ham_extern_r = hab_r.reshape(nvol, norb, norb)
-            self.ham_extern_q = hamiltonian_k.to_k(hab_r)
+            self.ham_extern_q = hamiltonian_k.to_k(hab_r, scale_after=True)
         else:
             self.ham_extern_r = None
             self.ham_extern_q = None

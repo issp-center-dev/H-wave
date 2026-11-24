@@ -227,9 +227,12 @@ Usage rules
 
 -  Header cannot be omitted.
 
+-  Every coefficient row has exactly seven columns, ``[rx] [ry] [rz] [alpha] [beta] [J.real] [J.imag]``. **Release note:** earlier releases ignored any tokens after the seventh column (a trailing comment, for example); such a row is now an error that names the file and the line. Remove the extra tokens.
+
 -  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared. A nonzero on-site CoulombInter row of an orbital with itself (:math:`R = 0`, :math:`\alpha = \beta`) is also rejected: each declared row carries half of :math:`V n n`, so such a row is the Hubbard term :math:`U = V` plus a one-body level shift :math:`V/2`; declare :math:`U = V` in CoulombIntra and add :math:`V/2` to the orbital's on-site energy in the Transfer file (or absorb it in the chemical potential).
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
+   **Release note (RPA / FLEX):** a Transfer or Extern row whose translation vector reaches the cell size (:math:`r_i \ge L_i` or :math:`r_i < -L_i`) used to stop the one-body set-up with an ``IndexError``; it is now taken modulo CellShape, i.e. added to its periodic image.
 
 -  When ``mode.enable_spin_orbital`` is set to ``true``, the orbital indices of the
    Transfer term use the interleaved spin-orbital convention and range from 1 to
@@ -238,6 +241,9 @@ Usage rules
    physical-orbital index and :math:`s \in \{0,1\}` is the spin index.
    Otherwise, only the entries with the orbital indices from 1 to
    :math:`N_\text{orbital}` are taken into account.
+   The ignored entries of Transfer and of Extern are reported with one
+   warning per file, with their number (**release note:** earlier releases
+   skipped them without a message).
 
    .. note::
 
