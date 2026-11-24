@@ -20,6 +20,18 @@ An example of the output is presented below.
     NCond = 8.000000000000007
     Sz = 3.2822430107160017e-07
     ChemicalPotential = 0.123456789
+    Sx = 0.0
+    Sy = 0.0
+
+.. note::
+
+   **Changed in this version.** UHFr and normal-mode UHFk now append ``Sx`` and ``Sy`` as the
+   last two lines of the file; all other lines are unchanged. Files written
+   by older versions lack them. A script that reads the last line (for
+   example ``tail -n 1`` to obtain ``ChemicalPotential``) now gets ``Sy``;
+   read the value by its key instead. The mean-field state can point along
+   any spin axis, so Sx and Sy can be nonzero also without spin-orbit
+   coupling.
 
 File format
 ^^^^^^^^^^^
@@ -39,6 +51,10 @@ File format
 -  Sz = ``[sz]``
 
 -  ChemicalPotential = ``[mu]``
+
+-  Sx = ``[sx]``
+
+-  Sy = ``[sy]``
 
 
 Parameters
@@ -121,6 +137,23 @@ Parameters
    finite-temperature :math:`\mu` is not uniquely fixed within the gap.
    When several blocks (e.g. spin up/down) exist, the value is written per
    block as ``ChemicalPotential_{block}``.
+
+-  ``[sx]``, ``[sy]``
+
+   **Type :**
+   Float
+
+   **Description :**
+   The expectation values of the :math:`x` and :math:`y` components of the
+   total spin, in units of :math:`\hbar` and summed over all sites like
+   ``[sz]``:
+   :math:`S_x = \sum_{i}\mathrm{Re}\,(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle + \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)/2`
+   and
+   :math:`S_y = \sum_{i}\mathrm{Re}\,[-i(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle - \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)]/2`.
+   The mean-field state can point along any spin axis, so Sx and Sy can be
+   nonzero also without spin-orbit coupling.
+   With a fixed ``2Sz`` the two spin blocks are separate, and Sx and Sy
+   are zero.
 
 
 .. raw:: latex

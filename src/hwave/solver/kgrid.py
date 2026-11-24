@@ -60,3 +60,12 @@ def reverse_fft_axes(arr, axes):
         raise ValueError(
             "reverse_fft_axes: axes must name at least one axis")
     return xp.roll(xp.flip(arr, axis=axes), 1, axis=axes)
+
+
+def fold_rvec(irvec, shape):
+    """The translation vector ``irvec`` folded into the cell ``shape``
+    (component-wise modulo). On the ``shape`` k-mesh ``e^{ik.R}`` has period
+    ``shape`` in ``R``, so folding leaves H(k) unchanged; it lets a table
+    whose range exceeds the cell (``trustme_interaction_range = true``) be
+    accumulated instead of indexing out of bounds (issue #348)."""
+    return tuple(int(r) % int(n) for r, n in zip(irvec, shape))

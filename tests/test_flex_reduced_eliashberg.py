@@ -1278,6 +1278,87 @@ class TestExactRedundancyHoldsEndToEnd(unittest.TestCase):
                     "ir-densified")
 
 
+class TestIRDensifyKeepsSpinRedundancy(unittest.TestCase):
+    """``FLEX._ir_densify_chi`` restores the exact spin redundancy of a
+    spin-free reduced susceptibility after the densifying GEMM.
+
+    The end-to-end check above (``TestExactRedundancyHoldsEndToEnd``) is
+    only as strong as the BLAS it runs on: numpy 2.2.6 with OpenBLAS left the
+    densified spin blocks one ulp apart, numpy 1.26 and Accelerate did not.
+    Here the GEMM is stood in for by a stub that perturbs the down block by
+    one ulp, so the restoration is exercised on every platform, and the
+    non-redundant inputs are pinned to pass through untouched.
+    """
+
+    norb, ns = 2, 2
+
+    def _solver(self, spin_mode="spin-free", general=False):
+        from hwave.solver.flex import FLEX
+
+        s = FLEX.__new__(FLEX)
+        s.spin_mode = spin_mode
+        s._flex_general = general
+        s.norb, s.ns, s.nd = self.norb, self.ns, self.norb * self.ns
+        s.nmat = 6
+        # Stand-in for the GEMM: expand the node axis to nmat by repetition
+        # and nudge the DOWN spin block by one ulp, as a BLAS that rounds
+        # different columns differently would.
+        def densify(arr, ax, freq_axis):
+            self.assertEqual(freq_axis, 0)
+            out = np.repeat(arr[:1], s.nmat, axis=0).astype(np.complex128)
+            n = self.norb
+            blk = out[..., n:, n:]
+            out[..., n:, n:] = np.nextafter(blk.real, np.inf) + 1j * blk.imag
+            return out
+        s._ir_densify = densify
+        return s
+
+    def _redundant_nodes(self):
+        rng = np.random.default_rng(7)
+        n, nd, nvol, nfreq = self.norb, self.norb * self.ns, 3, 2
+        up = rng.normal(size=(nfreq, nvol, n, n)) + 1j * rng.normal(size=(nfreq, nvol, n, n))
+        chi = np.zeros((nfreq, nvol, nd, nd), dtype=np.complex128)
+        chi[..., :n, :n] = up
+        chi[..., n:, n:] = up
+        return chi
+
+    def test_redundant_input_gives_bit_identical_blocks(self):
+        s = self._solver()
+        chi = self._redundant_nodes()
+        dense = s._ir_densify_chi(chi, ax=None)
+        n = self.norb
+        self.assertTrue(np.array_equal(dense[..., :n, :n], dense[..., n:, n:]))
+        self.assertTrue(np.array_equal(dense[..., :n, n:], np.zeros_like(dense[..., :n, n:])))
+        self.assertTrue(np.array_equal(dense[..., n:, :n], np.zeros_like(dense[..., n:, :n])))
+        # the up block is exactly what the GEMM produced
+        self.assertTrue(np.array_equal(dense[..., :n, :n], np.repeat(chi[:1, ..., :n, :n], s.nmat, axis=0)))
+
+    def test_non_redundant_input_passes_through(self):
+        n = self.norb
+        chi = self._redundant_nodes()
+        chi[..., n:, n:] *= 1.0 + 1e-12          # a genuine spin asymmetry
+        s = self._solver()
+        dense = s._ir_densify_chi(chi, ax=None)
+        self.assertFalse(np.array_equal(dense[..., :n, :n], dense[..., n:, n:]))
+
+    def test_cross_block_content_passes_through(self):
+        n = self.norb
+        chi = self._redundant_nodes()
+        chi[0, 0, 0, n] = 1e-300                  # nonzero cross-spin entry
+        s = self._solver()
+        dense = s._ir_densify_chi(chi, ax=None)
+        self.assertFalse(np.array_equal(dense[..., :n, :n], dense[..., n:, n:]))
+
+    def test_other_spin_modes_and_general_pass_through(self):
+        n = self.norb
+        chi = self._redundant_nodes()
+        for kw in ({"spin_mode": "spin-diag"}, {"spin_mode": "spinful"},
+                   {"general": True}):
+            s = self._solver(**kw)
+            dense = s._ir_densify_chi(chi, ax=None)
+            self.assertFalse(np.array_equal(dense[..., :n, :n], dense[..., n:, n:]), kw)
+
+
 class TestSpinOrbitalShapeErrorNamesTheCause(unittest.TestCase):
     """A spin-orbital chi reaches hwave_sc as a bare shape mismatch.
 
