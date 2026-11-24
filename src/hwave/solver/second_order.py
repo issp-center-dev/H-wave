@@ -336,7 +336,7 @@ _SPIN_WEIGHT = {   # w[itype][(s, s')]: the density-slot spin structure of spec 
 def build_offsite(split, lattice, norb):
     """vpair[s, s', q, a, b] = v^{pair, s s'}_{(aa),(bb)}(q) = v^{file, s s'}_{ba}(q):
     the off-site density-slot arrays in the ED-validated pair-space
-    orientation of ``hwave.sc._build_interaction_k`` (transpose=True), with
+    orientation of ``hwave.solver.eliashberg.vertex._build_interaction_k`` (transpose=True), with
     the reader's reversal closure (``symmetrise_k``). None without off-site
     density types."""
     from hwave.solver.eliashberg.vertex import _build_interaction_k

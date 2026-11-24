@@ -58,7 +58,7 @@ def _ir_keep_static_requested(eli_param):
 # Channel sectors of the frequency-resolved gap
 #
 # The static path filters eigenpairs by the (k, orbital) parity operator
-# Delta_{ab}(k) -> Delta_{ba}(-k) (sc._reverse_k_and_orbital), so a singlet
+# Delta_{ab}(k) -> Delta_{ba}(-k) (eliashberg.eigen._reverse_k_and_orbital), so a singlet
 # request never reports an odd-parity (triplet-sector) mode. The dynamic gap
 # carries an extra fermionic Matsubara axis, and fermion antisymmetry makes the
 # COMBINED operator
@@ -112,7 +112,7 @@ def _reverse_kw_and_orbital(gap_w):
         ``Delta_{ba}(-k, -iw_n)``, same shape. Spatial ``k -> -k`` is the
         shared FFT-grid reversal ``i -> (N - i) % N``
         (``kgrid.reverse_fft_axes``, matching
-        ``sc._reverse_k_and_orbital``); the centered fermionic Matsubara
+        ``eliashberg.eigen._reverse_k_and_orbital``); the centered fermionic Matsubara
         partner of index ``n`` is ``nmat - 1 - n`` (a plain reversal, no roll);
         the two orbital indices are swapped.
     """
@@ -127,7 +127,7 @@ def _reverse_k_and_orbital_dynamic(gap_w):
     combined parity operator, frequency untouched.
 
     The same ``k -> -k`` FFT-grid reversal ``i -> (N - i) % N`` and orbital
-    transpose as ``sc._reverse_k_and_orbital`` on the static path: the momentum
+    transpose as ``eliashberg.eigen._reverse_k_and_orbital`` on the static path: the momentum
     parity of a pair amplitude carries the exchange of the two orbitals.
     """
     return np.swapaxes(reverse_fft_axes(gap_w, (2, 3, 4)), 0, 1)
@@ -217,7 +217,7 @@ def gap_sector_weights(gap_w):
 
 def _is_parity_dynamic(gap_w, pairing_type, tol=0.9):
     """True when ``gap_w`` retains at least ``tol`` of its norm under the
-    channel's even-frequency sector projection (mirrors ``sc._is_gap_parity``)."""
+    channel's even-frequency sector projection (mirrors ``eliashberg.eigen._is_gap_parity``)."""
     proj = _project_parity_dynamic(gap_w, pairing_type)
     n = np.linalg.norm(gap_w)
     if n == 0:
@@ -269,12 +269,12 @@ def _parity_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
 
     Zero (to numerical precision) iff the kernel commutes with the combined
     parity ``P``, i.e. iff the direct-term pairing kernel is the physical
-    kernel. Mirrors ``sc._solve_iteration``'s centrosymmetry guard verbatim:
+    kernel. Mirrors ``eliashberg.eigen._solve_iteration``'s centrosymmetry guard verbatim:
     for each of ``n_probe`` random vectors and each parity sign, project the
     probe into that sector, apply ``A``, and measure the norm fraction of the
     image that lands in the opposite sector (denominator
     ``||A xp|| + 1e-300``). Uses the same probe count as the static path
-    (``sc._PARITY_GUARD_PROBES``).
+    (``eliashberg.eigen._PARITY_GUARD_PROBES``).
 
     It is deliberately measured against the COMBINED parity and not against
     the narrower even-frequency channel sector: this number answers "is the
@@ -285,7 +285,7 @@ def _parity_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
     ``_channel_leakage``.
     """
     # pairing_type is unused by design: the guard probes BOTH parity sectors
-    # (even and odd), exactly as sc._solve_iteration does, so the leakage
+    # (even and odd), exactly as eliashberg.eigen._solve_iteration does, so the leakage
     # measure is independent of the requested channel.
     from hwave.solver.eliashberg.eigen import _PARITY_GUARD_PROBES
     if n_probe is None:
@@ -350,7 +350,7 @@ def _channel_leakage(A, gap_shape, pairing_type, n_probe=None, seed=0):
 def _project_seed_dynamic(phi0, pairing_type):
     """Project the seed gap onto the channel sector (no renormalization).
 
-    Mirrors the static guard in ``sc._solve_iteration``: if the seed has no
+    Mirrors the static guard in ``eliashberg.eigen._solve_iteration``: if the seed has no
     component in the requested parity sector, raise instead of silently
     iterating from a (near-)zero vector (which would return a bogus
     ``lambda~0`` non-converged result). Like the static path, the projected
@@ -384,7 +384,7 @@ def _project_seed_combined_dynamic(phi0, pairing_type):
 def _reorder_eigenpairs_by_parity_dynamic(vals, vecs, gap_shape, pairing_type):
     """Promote eigenpairs whose gap lies in the channel's even-frequency sector.
 
-    Mirrors ``sc._reorder_eigenpairs_by_parity`` for the frequency-resolved
+    Mirrors ``eliashberg.eigen._reorder_eigenpairs_by_parity`` for the frequency-resolved
     gap so the reported leading dynamic eigenpair is the physical solution for
     the requested channel, not ARPACK's raw largest-|lambda| (which can be an
     opposite-parity mode).
@@ -472,7 +472,7 @@ def _channel_sector_basis(gap_shape, pairing_type):
     carry no coordinate. With ``Q = [q_r]``: ``Q^H Q = I`` and ``Q Q^H = P``.
 
     The sector has about a quarter of the full dimension; the static analogue
-    is ``sc._parity_sector_basis``.
+    is ``eliashberg.eigen._parity_sector_basis``.
 
     Returns
     -------
@@ -555,12 +555,12 @@ def _solve_channel_projected(matvec, vec_size, gap_shape, pairing_type,
     ``Q^H K Q`` has about a quarter of the full dimension and no complement,
     so nothing outside the channel can win the selection and a repulsive
     channel reports its least repulsive eigenvalue. It goes through the shared
-    driver ``sc._solve_leading`` (plain Arnoldi; the user's
+    driver ``eliashberg.eigen._solve_leading`` (plain Arnoldi; the user's
     ``spectral_shift`` when one is set), so the reporting contract is the one
     of every other Eliashberg solve: a which='LM' set that cannot contain the
     largest real part is re-solved for it, a failed ARPACK solve falls back to
     a dense diagonalization of the reduced operator up to
-    ``sc._DENSE_FALLBACK_MAX``, and otherwise reports NaN with the selection
+    ``eliashberg.eigen._DENSE_FALLBACK_MAX``, and otherwise reports NaN with the selection
     ``"not-converged"``.
 
     The listing (``info["eigenvalues"]``) is therefore the
@@ -573,7 +573,7 @@ def _solve_channel_projected(matvec, vec_size, gap_shape, pairing_type,
     ``vec_size``.
 
     Returns the same ``(eigenvalue, eigenvector, info)`` triple as
-    ``sc._solve_leading``, with the eigenvectors (``info["eigenvectors"]``,
+    ``eliashberg.eigen._solve_leading``, with the eigenvectors (``info["eigenvectors"]``,
     columns) lifted back to the full flat gap space, so the caller reorders and
     gauge-fixes it exactly as the unprojected result.
     """
@@ -695,7 +695,7 @@ def check_memory(norb, Nk, nmat, mem_limit_gb=None):
 
 
 # NOTE: do NOT write a private chi loader here — path/name/convention/
-# spin-orbital-expansion logic lives ONLY in sc._load_flex_susceptibilities_full
+# spin-orbital-expansion logic lives ONLY in eliashberg.io._load_flex_susceptibilities_full
 # (Task 1c). load_flex_chi_dynamic delegates to it to avoid contract drift.
 # The module also needs the FFT alias for the Task-6 kernel:
 #   from hwave.solver.perf import FFT
@@ -941,7 +941,7 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
         Spin/charge susceptibilities, shape (Nx, Ny, Nz, nd, nd, nmat)
         with nd = norb**2.
     inter_k : dict
-        Interactions in k-space from sc._build_interaction_k.
+        Interactions in k-space from eliashberg.vertex._build_interaction_k.
     norb, Nx, Ny, Nz : int
         Orbital count and grid dimensions.
     pairing_type : str
@@ -999,15 +999,15 @@ def compute_vertices_flex_dynamic(chis_w, chic_w, inter_k, norb,
 
 
 def calc_g2_dynamic(green_kw, beta):
-    """Frequency-resolved pair bubble: identical to sc._calc_g2 except the
+    """Frequency-resolved pair bubble: identical to eliashberg.kernel._calc_g2 except the
     fermionic Matsubara sum is NOT taken (the frequency axis is kept).
 
-    sc._calc_g2 computes G2[i,j,l,m,x,y,z] = (1/beta) * sum_n
+    eliashberg.kernel._calc_g2 computes G2[i,j,l,m,x,y,z] = (1/beta) * sum_n
     green_kw[i,j,x,y,z,n] * green_kw_inv[l,m,x,y,z,n], where green_kw_inv is
     G(-k,-wn) built via the shared FFT-grid reversal (kgrid.reverse_fft_axes,
     i -> (N - i) % N). This function drops the sum over n and
     returns the per-frequency summand, so calc_g2_dynamic(...).sum(axis=-1)
-    reproduces sc._calc_g2(..., tail=False) to machine precision (see
+    reproduces eliashberg.kernel._calc_g2(..., tail=False) to machine precision (see
     tests/test_eliashberg_dynamic.py::test_g2_dynamic_sums_to_static).
     The static path's Matsubara tail correction (issue #86) is a property of
     taking the frequency sum, so it has no per-frequency counterpart here;
@@ -1030,9 +1030,9 @@ def calc_g2_dynamic(green_kw, beta):
     nvol = Nx * Ny * Nz
 
     # G(-k, -wn) via the shared FFT-grid reversal -- SAME construction
-    # as sc._calc_g2.
+    # as eliashberg.kernel._calc_g2.
     green_kw_inv = reverse_fft_axes(green_kw[..., ::-1], (2, 3, 4))
-    # Same reshape/index layout as sc._calc_g2's A/B (ij, site, n) and
+    # Same reshape/index layout as eliashberg.kernel._calc_g2's A/B (ij, site, n) and
     # (lm, site, n), but keep the per-frequency product instead of summing
     # (matmul-)contracting over n.
     A = green_kw.reshape(norb * norb, nvol, nmat)      # (ij, site, n)
@@ -1085,7 +1085,7 @@ def eliashberg_kernel_dynamic(Vs_q_w, G2_w, phi_w, norb, beta, Vs_rt=None,
 
     Implements one action of the linearized Eliashberg operator on a trial
     gap ``phi``, keeping the full fermionic Matsubara axis. The structure
-    mirrors the static kernel (``sc._make_kernel_operator``) and the FLEX
+    mirrors the static kernel (``eliashberg.kernel._make_kernel_operator``) and the FLEX
     self-energy (``flex._calc_self_energy``): an orbital contraction with the
     pair bubble G2, then an imaginary-time PRODUCT with the pairing vertex
     (NOT a circular frequency convolution) done via matsubara transforms.
@@ -1220,7 +1220,7 @@ def write_dynamic_outputs(output_dir, gap_w, eigenvalue, T, pairing_type,
       convention).
     * ``gap.dat`` -- a plain-text slice at a single Matsubara frequency (the
       smallest positive :math:`\omega_n`, index ``nmat//2``), mirroring the
-      static ``sc._save_results`` column layout (kx ky kz then Re/Im per orbital
+      static ``eliashberg.output._save_results`` column layout (kx ky kz then Re/Im per orbital
       pair). Its FIRST line is a ``#``-prefixed header that carries
       ``frequency=dynamic`` together with the slice index and its
       :math:`\omega_n` value.
@@ -1376,10 +1376,10 @@ def _ir_auto_wmax(hr, inter_k, norb, beta, mu=None, filling=None):
     eps(k), diagonalized on a coarse k-mesh built from the real-space transfer
     integrals; this is the real-frequency extent the IR basis must cover. The
     chemical potential ``mu`` is used directly when given, else solved from
-    ``filling`` via ``sc._determine_mu`` (mu is what sets where the spectral
+    ``filling`` via ``eliashberg.band._determine_mu`` (mu is what sets where the spectral
     weight sits relative to zero -- ignoring it and using max|eps_k| would
     re-introduce any on-site energy offset). ``hr`` is the flat wan90 layout
-    ``{((Rx,Ry,Rz),(orb1,orb2)): scalar}`` (see ``sc._build_hamiltonian_k``);
+    ``{((Rx,Ry,Rz),(orb1,orb2)): scalar}`` (see ``eliashberg.band._build_hamiltonian_k``);
     it must NOT be summed as if each value were a per-R matrix -- doing so
     returns the grand total of |t| over every (R, orbital-pair), a large
     overestimate on realistic multi-hopping models (issue #57)."""
@@ -1572,7 +1572,7 @@ def _instantaneous_vertex(inter_k, norb, Nx, Ny, Nz, pairing_type,
     (CoulombIntra-only) model the Kuroki matrices have S = C = U on the
     intra-orbital element, so the SINGLET bare term ``0.5 (S + C)`` is the
     familiar +U while the TRIPLET one ``0.5 (C - S)`` (without its cross
-    elements ``(ab, ab)``, ``a != b``: ``sc._triplet_bare_vertex``, issue
+    elements ``(ab, ab)``, ``a != b``: ``eliashberg.vertex._triplet_bare_vertex``, issue
     #262) vanishes; the triplet term is nonzero wherever the density or
     diagonal elements have C != S, which is the generic outcome of an
     inter-orbital U', a Hund / Ising term or an off-site density
@@ -1737,7 +1737,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
 
     Shared eigen-driver behind the on-site and bond-resolved dynamic
     solvers: the same ``scipy.sparse.linalg.LinearOperator`` +
-    ``sc._solve_leading`` machinery, parity leakage probe / iterate
+    ``eliashberg.eigen._solve_leading`` machinery, parity leakage probe / iterate
     projection / ARPACK eigenpair reordering, and gauge fix.
 
     ``parity_leakage_policy``: ``"warn"`` (default) reproduces the historical
@@ -1901,7 +1901,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
                 return _project_parity_dynamic(
                     flat.reshape(gap_shape), pairing_type).ravel()
             # Project + normalize the seed, raising if it has no in-sector
-            # component (matches sc._solve_iteration's guard).
+            # component (matches eliashberg.eigen._solve_iteration's guard).
             phi0 = _project_seed_dynamic(phi0, pairing_type)
         elif leakage <= parity_leakage_tol:
             sector_selection = "combined_parity"
@@ -1926,9 +1926,9 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
         # spectral_shift is honoured on the power-iteration path too: with a
         # repulsive-dominant kernel (negative dominant eigenvalue) the iterate
         # flips sign every step and the loop can never converge; iterating on
-        # K + sigma*I fixes that and sc._solve_leading subtracts sigma back, so
+        # K + sigma*I fixes that and eliashberg.eigen._solve_leading subtracts sigma back, so
         # the eigenvalue below is still the signed eigenvalue of K.
-        # An absent spectral_shift means "auto" here (sc._resolve_spectral_shift);
+        # An absent spectral_shift means "auto" here (eliashberg.eigen._resolve_spectral_shift);
         # "none" keeps the historical unshifted iteration.
         iteration_spectral_shift = _resolve_spectral_shift(
             eli_param.get("spectral_shift"), "iteration")
@@ -2159,7 +2159,7 @@ def run_leading_eigenproblem(matvec, gap_shape, eli_param, pairing_type, *, phi0
     lam = float(np.real(eigenvalue))
     if solver_mode != "iteration" and not np.isfinite(lam):
         # the eigenvalue solver's largest-real-part solve failed on an
-        # operator too large for the dense fallback (sc._solve_leading)
+        # operator too large for the dense fallback (eliashberg.eigen._solve_leading)
         eigen_converged = False
     if not eigen_converged and solver_mode != "iteration" and no_channel_pair:
         lam = float("nan")
@@ -2309,7 +2309,7 @@ def solve_dynamic(input_dict):
     Reads the FLEX outputs (full-frequency chi_s/chi_c and the dressed
     Green's function), builds the frequency-resolved pairing vertex and pair
     bubble, and finds the leading eigenpair of the tau-product Eliashberg
-    kernel via the shared driver ``sc._solve_leading`` (the same eigenvalue
+    kernel via the shared driver ``eliashberg.eigen._solve_leading`` (the same eigenvalue
     ordering / shift-invert / iteration machinery as the static path).
 
     Parameters

@@ -29,9 +29,9 @@ Pipeline (every piece below is shared with an existing, validated path):
   that ``tests/test_so_pairing_ed.py`` validates against exact
   diagonalization with spin-orbit coupling);
 * the eigenproblem on the fermion-antisymmetric coordinates ``E^dagger K E``
-  (``sc._SOAntisymmetricBasis`` with the frequency-reversing map) through the
-  drivers of the static spin-orbital solver (``sc._so_solve_iteration`` /
-  ``sc._so_solve_eigenvalue``, including the dense full-spectrum branch).
+  (``eliashberg.eigen._SOAntisymmetricBasis`` with the frequency-reversing map) through the
+  drivers of the static spin-orbital solver (``eliashberg.so_solve._so_solve_iteration`` /
+  ``eliashberg.so_solve._so_solve_eigenvalue``, including the dense full-spectrum branch).
 
 Frequency parity ``Delta_AB(k, i w_n) -> Delta_AB(k, -i w_n)`` is not a
 symmetry of the spin-orbital kernel in general, so the whole antisymmetric
@@ -91,7 +91,7 @@ def antisymmetrize(gap_w):
 def antisymmetry_residual(gap_w):
     """``||Delta + R Delta|| / (2 ||Delta||)`` (the symmetric part relative to
     the gap); ``inf`` for a zero or non-finite gap. Compare with
-    ``sc._SO_ANTISYM_TOL``."""
+    ``eliashberg.so_solve._SO_ANTISYM_TOL``."""
     gap_w = np.asarray(gap_w)
     n = float(np.linalg.norm(gap_w))
     if n == 0.0 or not np.isfinite(n):
@@ -388,7 +388,7 @@ def _grid(mode_param):
 
 
 def _check_vertex_every_frequency(gam, chi_w, chi0_w, chi_path, T):
-    """``sc._check_so_flex_vertex`` at every bosonic frequency: the stored
+    """``eliashberg.so_solve._check_so_flex_vertex`` at every bosonic frequency: the stored
     chi must solve ``(1 + chi0 Gamma) chi = chi0`` with the stored chi0 and
     the Gamma of this run's interaction files, frequency by frequency."""
     from hwave.solver.eliashberg.so_solve import (
@@ -942,7 +942,7 @@ def solve_dynamic_so(input_dict):
         eigenvalues_eig, eig_weights = np.asarray(vals), np.array(rows)
         lam = float(np.real(vals[0]))
         # NaN only when the largest-real-part solve failed on an operator
-        # too large for the dense fallback (sc._solve_leading)
+        # too large for the dense fallback (eliashberg.eigen._solve_leading)
         eigen_converged = bool(np.isfinite(lam))
         for i, ev in enumerate(vals):
             logger.info("  %3d: %.6f%+.6fi (|ev| = %.6f)", i, ev.real, ev.imag,

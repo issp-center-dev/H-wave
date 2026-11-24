@@ -14,7 +14,7 @@ logger = logging.getLogger("qlms").getChild("solver").getChild("eliashberg_bond"
 _INDEX_ORDER = "I = m*norb**2 + l1*norb + l2"
 _FREQ_AXIS = "bosonic l -> 2l - nmat"
 _SOLVER_MODES = ("iteration", "eigenvalue", "both")
-#: the eigen family sc._solve_leading accepts (see sc.calc_eliashberg)
+#: the eigen family eliashberg.eigen._solve_leading accepts (see sc.calc_eliashberg)
 _EIGENVALUE_METHODS = ("arnoldi", "shift-invert-bicgstab", "shift-invert-gmres",
                        "shift-invert-lgmres")
 

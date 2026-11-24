@@ -1,7 +1,7 @@
 """Spin/charge interaction matrices for the full-vertex FLEX path.
 
 Historically this module carried a hand-maintained sibling of
-``hwave.sc._build_sc_matrices_all_q`` differing in exactly one element: the
+``hwave.solver.eliashberg.vertex._build_sc_matrices_all_q`` differing in exactly one element: the
 charge (ab, ab) slot, where it used the MYO (cond-mat/0407094) value ``-U'+2J``
 against the Kuroki (arXiv:0902.3691) value ``-U'+J`` used by ``sc.py``.
 
@@ -52,7 +52,7 @@ from hwave.solver.offsite import _OFFSITE_DENSITY_TYPES  # noqa: E402,F401
 
 
 def build_sc_matrices_myo(inter_k, norb, Nx, Ny, Nz):
-    """One implementation: see :func:`hwave.sc._build_sc_matrices_all_q`."""
+    """One implementation: see :func:`hwave.solver.eliashberg.vertex._build_sc_matrices_all_q`."""
     return _build_sc_matrices_all_q(inter_k, norb, Nx, Ny, Nz)
 
 
@@ -63,7 +63,7 @@ def build_sc_matrices_locality_split(inter_k, inter_k_onsite, inter_k_offsite,
     Parameters
     ----------
     inter_k : dict
-        k-space interactions (``hwave.sc._build_interaction_k``) built from
+        k-space interactions (``hwave.solver.eliashberg.vertex._build_interaction_k``) built from
         the WHOLE table, in the caller's own entry order. Every slot
         element that exists without a split is read from this, so their
         floating-point summation order is unchanged.

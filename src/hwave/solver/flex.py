@@ -3735,7 +3735,7 @@ class FLEX(RPA):
         channel vertices keep it so through the RPA solve. The consumers
         rely on that -- ``hwave_sc`` embeds the up block alone and checks
         that what it discards is redundant to the bit
-        (``sc._check_spin_block_discarded``).
+        (``eliashberg.config._check_spin_block_discarded``).
 
         The densifying GEMM does not promise it: the two blocks are
         different columns of one ``(nmat, L) @ (L, nvol*nd*nd)`` product,
@@ -4849,7 +4849,7 @@ class FLEX(RPA):
         The S/C matrices are built via
         ``hwave.solver._sc_matrices_myo.build_sc_matrices_locality_split``
         from three ``inter_k`` dicts assembled with
-        ``hwave.sc._build_interaction_k``: the whole (reader's folded,
+        ``hwave.solver.eliashberg.vertex._build_interaction_k``: the whole (reader's folded,
         normalised) table, and its on-site and off-site parts split on the
         PRE-fold declarations (#181, Tier 1). On-site Kanamori entries give
         q-independent matrices; off-site entries give a q-DEPENDENT Hartree
@@ -6043,7 +6043,7 @@ class FLEX(RPA):
             # Deliberately NOT stamped on reduced files: those axes are
             # spin-orbital (s*norb + a), not four orbital legs -- the loader has
             # to extract a spin block before the array becomes an orbital-pair
-            # object at all (see sc._to_orbital_pair). Calling them "acbd" would
+            # object at all (see eliashberg.io._expand_flex_chi). Calling them "acbd" would
             # be false machine-readable metadata. The reader accepts
             # marker-less "kuroki" files; only "myo" requires the marker.
             common_meta["chi_orbital_layout"] = "acbd"
@@ -6157,7 +6157,7 @@ class FLEX(RPA):
                 beta=1.0 / self.T,
                 momentum_convention=MOMENTUM_CONVENTION,
                 # bond placement of issue #232 (checked by the
-                # Eliashberg consumers, hwave.sc.check_placement_stamp)
+                # Eliashberg consumers, hwave.solver.eliashberg.vertex.check_placement_stamp)
                 sc_vertex_version=np.int64(3),
                 **green_extra,
                 **_freq_meta("F"),

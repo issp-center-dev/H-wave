@@ -616,7 +616,7 @@ def canonical_band_eigen(epsilon_k, norb_phys, *, conserving):
 
     ``epsilon_k`` is the band ``(nd, nd, Nx, Ny, Nz)`` in the SPIN-BLOCK
     index (``X = s norb_phys + a``, ``nd = 2 norb_phys``), as
-    ``sc._so_epsilon_k`` returns it. ``conserving`` must be the bool
+    ``eliashberg.so_solve._so_epsilon_k`` returns it. ``conserving`` must be the bool
     ``band_conserves_sz(...).conserving`` of the run's Transfer table; it
     alone decides the construction (the ``so_bond_layout`` is never read).
 
@@ -626,12 +626,12 @@ def canonical_band_eigen(epsilon_k, norb_phys, *, conserving):
       S_z-off-sector entries. Per k the ``nd`` eigenvalues are put in
       ascending order by a stable sort (ties keep spin up before spin down)
       with the matching column permutation of the eigenvectors, the order
-      of ``sc._calc_eigenvalues``. A band with a nonzero S_z-off-sector
+      of ``eliashberg.band._calc_eigenvalues``. A band with a nonzero S_z-off-sector
       entry is refused: the table conserves S_z, so the array is not in the
       spin-block order (an interleaved ``2 orb + spin`` array, for example);
       a non-finite band is refused as such first.
     * ``conserving = False``: the full diagonalization of
-      ``sc._calc_eigenvalues`` (the same arithmetic).
+      ``eliashberg.band._calc_eigenvalues`` (the same arithmetic).
 
     Returns ``(eigenvalues (Nx, Ny, Nz, nd), eigenvectors (Nx, Ny, Nz, nd,
     nd))``; ``eigenvectors[..., :, i]`` belongs to ``eigenvalues[..., i]``."""
@@ -2258,7 +2258,7 @@ _EINSUM_BUFFER = 8192
 
 
 #: the largest operator dimension the failure-only dense fallback of the
-#: ARPACK solve diagonalizes (``hwave.sc._DENSE_FALLBACK_MAX``, pinned equal
+#: ARPACK solve diagonalizes (``hwave.solver.eliashberg.eigen._DENSE_FALLBACK_MAX``, pinned equal
 #: by a test)
 DENSE_FALLBACK_MAX = 2000
 
@@ -2273,7 +2273,7 @@ _ZGEEV_WORK_FLOOR = 4352
 
 
 #: the eigenpairs of the which='LM' solve that sizes ``spectral_shift = "auto"``
-#: (``hwave.sc._solve_leading``: ``min(6, dim - 2)``)
+#: (``hwave.solver.eliashberg.eigen._solve_leading``: ``min(6, dim - 2)``)
 _SHIFT_ESTIMATE_PAIRS = 6
 
 
@@ -2835,7 +2835,7 @@ def static_so_bond_resident_rows(*, green_source="band", member_bytes=None):
     file's members other than ``green``, which the checks materialise (the
     provenance tables among them, whose size scales with the input). The
     caller takes it from the members' npy headers and zip records without
-    reading any member (``sc._so_bond_green_member_bytes``). The factor 4
+    reading any member (``eliashberg.io._so_bond_green_member_bytes``). The factor 4
     bounds the member read plus the temporaries a check forms from it,
     measured at most 2.3 times the member bytes. The row is resident, alive
     in every phase from ``green_static`` on: part of that overhead (numpy's

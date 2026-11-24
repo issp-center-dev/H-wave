@@ -23,7 +23,7 @@ shows that, read in the pair slots, it is the antisymmetrized
 particle-particle vertex ``A`` of ``H = 1/4 sum A_pq,rs c+_p c+_q c_s c_r``.
 The first-order gap equation of an antisymmetrized vertex carries a 1/2
 (``Delta = -1/2 A F``), so with ``Delta_ad = -sum_bc V_abcd F_bc`` (the
-contraction of ``sc._make_kernel_operator``)
+contraction of ``eliashberg.kernel._make_kernel_operator``)
 
     V_bare[a, b, c, d] = 1/2 Gamma[(a, b), (c, d)],
 
@@ -124,7 +124,7 @@ def so_pairing_vertex_parts(gam, chi, nd, spatial_shape):
     -------
     (V_bare, V_fluct) : ndarrays, (nd, nd, nd, nd, Nx, Ny, Nz)
         In the layout of the general-mode ``Vs_q`` of
-        ``sc._make_kernel_operator`` (``Delta_ad = -sum_bc V_abcd F_bc``):
+        ``eliashberg.kernel._make_kernel_operator`` (``Delta_ad = -sum_bc V_abcd F_bc``):
         ``V_bare = 1/2 Gamma``, ``V_fluct = -Gamma chi Gamma`` (see the module
         docstring).
     """
@@ -195,7 +195,7 @@ def so_pairing_vertex_dynamic(gam, chi_w, nd, spatial_shape):
 _SEED_SPIN_EVEN = np.array([[0.0, 1.0], [-1.0, 0.0]], dtype=complex)
 _SEED_SPIN_ODD = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
 
-#: the odd (k -> -k) form factors of ``sc._initialize_gap``
+#: the odd (k -> -k) form factors of ``eliashberg.eigen._initialize_gap``
 _ODD_SEEDS = ("p_x", "p_y", "p_z", "f_x", "f_y")
 
 
@@ -203,7 +203,7 @@ def so_initial_gap(init_gap_mode, norb_phys, kx_array, ky_array, kz_array):
     """Initial spin-orbital gap ``(nd, nd, Nx, Ny, Nz)``, ``nd = 2 norb_phys``,
     spin-block order (``A = s * norb_phys + a``).
 
-    The orbital seed of ``sc._initialize_gap`` (``1_orb (x) f(k)``) times a
+    The orbital seed of ``eliashberg.eigen._initialize_gap`` (``1_orb (x) f(k)``) times a
     spin structure that makes it fermion-antisymmetric
     (``Delta_AB(k) = -Delta_BA(-k)``): ``i sigma_y`` (singlet) for an even
     form factor, ``sigma_z i sigma_y`` (the S_z = 0 triplet) for an odd one
@@ -334,8 +334,8 @@ def check_so_config(input_dict):
     (``spinful_vertex_exchange`` not false). An ``Extern`` file (a Zeeman
     field ``coeff_extern * sigma^z H_ab(R)`` in physical orbital indices,
     issue #88) is accepted; it enters the band through
-    :func:`hwave.sc._so_epsilon_k` and is checked by
-    :func:`hwave.sc._read_so_extern`."""
+    :func:`hwave.solver.eliashberg.so_solve._so_epsilon_k` and is checked by
+    :func:`hwave.solver.eliashberg.io._read_so_extern`."""
     from hwave.solver.backend import strict_bool
     eli = _ci(input_dict.get("eliashberg", {}))
     freq = eli.get("frequency", "static")
