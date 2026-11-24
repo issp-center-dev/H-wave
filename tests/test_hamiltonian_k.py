@@ -97,6 +97,19 @@ class TestToKAndEmbed(unittest.TestCase):
         np.testing.assert_allclose(got, _explicit_k(tbl, shape, norb),
                                    atol=1e-12)
 
+    def test_images_beyond_the_grid_are_periodic(self):
+        # |R_i| >= n_i and several images of one bond: dense_table takes R
+        # modulo the grid and accumulates, which is the periodic sum
+        # sum_R e^{+ikR} T(R) (the old RPA copy indexed R directly and
+        # raised IndexError for R >= n or R < -n)
+        shape, norb = (4, 3, 1), 2
+        tbl = _hermitian_table(self.rng, norb,
+                               [(0, 0, 0), (1, 0, 0), (-3, 0, 0), (5, 0, 0),
+                                (-4, 1, 0), (1, 4, 0), (0, -7, 0)])
+        got = hk.to_k(hk.dense_table(tbl, shape, norb))
+        np.testing.assert_allclose(got, _explicit_k(tbl, shape, norb),
+                                   atol=1e-12)
+
     def test_embed_spin_is_kron_identity(self):
         m = self.rng.normal(size=(3, 2, 2)) + 1j * self.rng.normal(size=(3, 2, 2))
         got = hk.embed_spin(m)
@@ -282,6 +295,24 @@ class TestEquivalenceSC(unittest.TestCase):
         got = hk.to_k(hk.dense_table(tbl, shape, norb)).reshape(
             *shape, norb, norb).transpose(3, 4, 0, 1, 2)
         np.testing.assert_allclose(got, eps, atol=1e-12)
+
+    def test_build_hamiltonian_k_off_the_fft_grid(self):
+        # sc._build_hamiltonian_k takes arbitrary k arrays; to_k is
+        # FFT-grid only, so a switch of sc (plan 2.3) has to keep the
+        # explicit sum for these. Pin the general-k behaviour here.
+        from hwave import sc
+        rng = np.random.default_rng(9)
+        norb = 2
+        tbl = _hermitian_table(rng, norb, [(0, 0, 0), (1, 0, 0), (1, -1, 2)])
+        karr = [np.array([0.1, 0.7, 2.9]), np.array([-0.4, 1.3]),
+                np.array([0.25])]
+        eps = sc._build_hamiltonian_k(*karr, tbl, norb)
+        kx, ky, kz = np.meshgrid(*karr, indexing="ij")
+        want = np.zeros_like(eps)
+        for (irvec, (a, b)), v in tbl.items():
+            want[a, b] += v * np.exp(1j * (kx * irvec[0] + ky * irvec[1]
+                                           + kz * irvec[2]))
+        np.testing.assert_allclose(eps, want, atol=1e-12)
 
 
 if __name__ == "__main__":

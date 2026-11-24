@@ -15,10 +15,12 @@ those three element by element.
 ``to_k``
     ``T(R)`` -> ``T(k) = sum_R e^{+ikR} T(R)`` as ``(nvol, p, p)`` on the FFT
     grid ``k = 2 pi m / N`` in C order -- the documented Wannier90-style
-    sign (issue #133), i.e. an unnormalised inverse FFT.
+    sign (issue #133), i.e. an unnormalised inverse FFT. Only the FFT grid:
+    a consumer that evaluates H(k) at arbitrary k (``sc._build_hamiltonian_k``
+    accepts any k arrays) needs the explicit sum.
 ``embed_spin``
     ``(nvol, p, p)`` -> ``(nvol, ns*p, ns*p)``, spin-major and spin-diagonal:
-    the ``T ⊗ I_ns`` of a spin-independent table.
+    the ``I_ns ⊗ T`` of a spin-independent table (spin index outer).
 
 ``p`` is whatever the table's indices count, and the builder never reorders
 them:
@@ -140,8 +142,10 @@ def to_k(tab_r):
 
     ``tab_r`` is ``(nx, ny, nz, p, q)``; the k index runs in C order over
     ``(nx, ny, nz)`` with ``k_i = 2 pi m_i / n_i``. The transform is the
-    unnormalised inverse FFT (``ifftn * nvol``), the sign every solver copy
-    uses since issue #133.
+    unnormalised inverse FFT, the sign every solver copy uses since issue
+    #133. It is computed as ``ifftn(..., norm="forward")`` (UHFk's
+    expression); this equals ``ifftn(...) * nvol`` mathematically but not
+    bitwise on a grid with a side that is not a power of two.
     """
     tab_r = np.asarray(tab_r)
     nx, ny, nz, p, q = tab_r.shape
@@ -150,7 +154,7 @@ def to_k(tab_r):
 
 
 def embed_spin(mat_k, ns=2):
-    """``(nvol, p, q)`` -> ``(nvol, ns*p, ns*q)``: ``mat_k ⊗ I_ns`` with the
+    """``(nvol, p, q)`` -> ``(nvol, ns*p, ns*q)``: ``I_ns ⊗ mat_k``, the
     spin index outer (composite index ``s*p + a``), i.e. the same
     spin-independent, spin-diagonal operator on every spin."""
     mat_k = np.asarray(mat_k)

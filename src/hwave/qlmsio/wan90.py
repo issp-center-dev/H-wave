@@ -248,19 +248,25 @@ def read_w90_header_marker(name_in):
     return (SPIN_COLUMN_FORMAT, int(m.group(1)))
 
 
-def _column_count_error(name_in, lineno, found, spin_format):
+def _column_count_error(name_in, lineno, found, spin_format,
+                        allow_spin_columns=False):
+    """ValueError for a body row whose column count breaks the format rules.
+
+    The hint to add the ``w90spin/1`` marker is given only where the
+    caller accepts the spin-resolved format (``allow_spin_columns``);
+    everywhere else following it would only lead to the next refusal."""
     if spin_format:
         expected = "{} (spin-resolved format {}/{} declared on line 1)".format(
             _NCOL_SPIN, SPIN_COLUMN_FORMAT, SPIN_COLUMN_VERSION)
-    elif found == _NCOL_SPIN:
+    elif found == _NCOL_SPIN and allow_spin_columns:
         return ValueError(
             "{}: line {} has {} columns but line 1 carries no '{}/{}' marker. "
-            "A spin-resolved Transfer file must declare its format on line 1 "
-            "(issue #323); an unmarked 9-column file is not guessed at."
+            "A spin-resolved Transfer file must declare its format on line 1; "
+            "an unmarked 9-column file is not guessed at."
             .format(name_in, lineno, found, SPIN_COLUMN_FORMAT,
                     SPIN_COLUMN_VERSION))
     else:
-        expected = "{}".format(_NCOL_PLAIN)
+        expected = "{} (Rx Ry Rz a b Re Im)".format(_NCOL_PLAIN)
     return ValueError("{}: line {} has {} columns, expected {}".format(
         name_in, lineno, found, expected))
 
@@ -277,13 +283,17 @@ def _fold_spin_columns(name_in, lineno, orbvec, s_str, t_str, norb_phys,
                 "{}: line {}: orbital index {} is outside 1..{} (the norb of "
                 "line 2; spin-resolved rows use physical orbital indices)"
                 .format(name_in, lineno, idx + 1, norb_phys))
-    spins = (int(s_str), int(t_str))
-    for sp in spins:
+    spins = []
+    for raw in (s_str, t_str):
+        try:
+            sp = int(raw)
+        except ValueError:
+            sp = None
         if sp not in (0, 1):
             raise ValueError(
-                "{}: line {}: spin index {} is outside {{0, 1}}. H-wave reads "
-                "the spin-resolved format for N_f = 2 flavors only "
-                "(0 = up, 1 = down)".format(name_in, lineno, sp))
+                "{}: line {}: spin index {!r} is invalid, expected 0 (up) "
+                "or 1 (down)".format(name_in, lineno, raw))
+        spins.append(sp)
     return (spinblock_index(orbvec[0], spins[0], norb_phys),
             spinblock_index(orbvec[1], spins[1], norb_phys))
 
@@ -348,9 +358,11 @@ def read_w90(name_in, allow_spin_columns=False):
         if not allow_spin_columns:
             raise ValueError(
                 "{}: this file declares the spin-resolved (9-column) Transfer "
-                "format {}/{}, which is accepted only for the Transfer entry "
-                "of the k-space input reader (issue #323); it cannot be read "
-                "here".format(name_in, SPIN_COLUMN_FORMAT, version))
+                "format {}/{}, which is accepted only for the Transfer file "
+                "(file.input.interaction.Transfer) of the hwave k-space "
+                "input; it cannot be read here. Write this file in the "
+                "7-column form Rx Ry Rz a b Re Im"
+                .format(name_in, SPIN_COLUMN_FORMAT, version))
         if version != SPIN_COLUMN_VERSION:
             raise ValueError(
                 "{}: unknown spin-resolved format version {}/{} (this build "
@@ -416,7 +428,8 @@ def read_w90(name_in, allow_spin_columns=False):
             break
         if len(values) != ncol:
             raise _column_count_error(name_in, body_first_line + i,
-                                      len(values), marker is not None)
+                                      len(values), marker is not None,
+                                      allow_spin_columns)
         irvec = (int(values[0]), int(values[1]), int(values[2]))
         orbvec = (int(values[3]) - 1, int(values[4]) - 1)
         if marker is not None:
