@@ -267,10 +267,12 @@ jobs:
       # codecov-action v4 and later accept a tokenless upload only from a
       # pull request opened from a fork, so uploads from pushes and from
       # same-repository pull requests are rejected and the coverage of the
-      # base branch is not refreshed. Adding a CODECOV_TOKEN secret, or
-      # `use_oidc: true` with the `id-token: write` permission, would
-      # enable them. fail_ci_if_error stays false, so a rejected upload
-      # cannot fail the gate.
+      # base branch is not refreshed. To enable them, either add a
+      # CODECOV_TOKEN secret AND pass it to this step
+      # (`token: ${{ secrets.CODECOV_TOKEN }}` under `with:`), or set
+      # `use_oidc: true` and grant the `id-token: write` permission.
+      # fail_ci_if_error stays false, so a rejected upload cannot fail
+      # the gate.
       uses: codecov/codecov-action@v6
       with:
         files: ./coverage.xml
