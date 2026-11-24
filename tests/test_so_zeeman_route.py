@@ -751,7 +751,7 @@ def _run_sc(mode, extern_rows, extern_header_dim=S.NP, key="Extern"):
         with contextlib.ExitStack() as st:
             st.enter_context(_quiet())
             # the static entry reads every heavy step from
-            # hwave.solver.eliashberg.static (dev/sc-split-plan.md, step 7)
+            # hwave.solver.eliashberg.static
             for name in _HEAVY_MOCKS:
                 st.enter_context(mock.patch.object(
                     sc_static, name, side_effect=AssertionError("heavy work reached: " + name)))

@@ -316,8 +316,8 @@ def _spy_iteration(cap):
              "info": dict(info) if info is not None else None})
         return out
 
-    # the static entry calls it through hwave.sc, the dynamic one from
-    # hwave.solver.eliashberg.so_solve (dev/sc-split-plan.md, step 4b)
+    # the static entry calls it through hwave.solver.eliashberg.static, the
+    # dynamic one from hwave.solver.eliashberg.so_solve
     with mock.patch.object(sc_static, "_so_solve_iteration", side_effect=spy), \
             mock.patch.object(sc_so, "_so_solve_iteration", side_effect=spy):
         yield cap

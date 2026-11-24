@@ -1,4 +1,4 @@
-"""Layering guard for the sc.py split (dev/sc-split-plan.md, steps 0 and 7).
+"""Layering guard for the split of sc.py into hwave.solver.eliashberg.
 
 ``hwave.sc`` was taken apart into ``hwave/solver/eliashberg/``, one layer per
 pull request, each a pure move; it is now the entry shell. Two things must

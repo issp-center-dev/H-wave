@@ -4,7 +4,7 @@
 chi0q from H-wave's RPA solver (or the dressed susceptibilities of a FLEX
 run) to solve the linearized Eliashberg equation and analyze superconducting
 instabilities. The implementation lives in :mod:`hwave.solver.eliashberg`,
-one module per layer (dev/sc-split-plan.md): ``config``, ``band``,
+one module per layer: ``config``, ``band``,
 ``vertex``, ``kernel``, ``eigen``, ``io``, ``output``, ``bond``,
 ``so_solve``, the static entry ``static`` and the dynamic solvers
 ``dynamic``, ``dynamic_so``, ``bond_dynamic``, ``bond_io``.

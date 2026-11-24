@@ -774,7 +774,7 @@ def _sc(mode, inp, src=None, frequency="static", transfer_edit=None,
     ctx = _quiet() if quiet else Z._quiet_info()
     # the static entry reads _calc_g2 from hwave.solver.eliashberg.static;
     # the dynamic solvers never call _calc_g2 (calc_g2_dynamic below), so the
-    # hwave.sc patch is kept only for symmetry (dev/sc-split-plan.md, step 6)
+    # patch on hwave.solver.eliashberg.kernel is kept only for symmetry
     from hwave.solver.eliashberg import static as sc_static
     with ctx, mock.patch.object(sc_kernel, "_calc_g2", side_effect=spy_g2), \
             mock.patch.object(sc_static, "_calc_g2", side_effect=spy_g2), \

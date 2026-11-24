@@ -903,8 +903,8 @@ class TestRejectionIsEnforcedAtEveryVertexBoundary(unittest.TestCase):
         inter_k = self._inter_k(["CoulombIntra"], norb, Nx, Ny, Nz)
         chi_w = np.zeros((Nx, Ny, Nz, nd, nd, nmat), dtype=complex)
 
-        # The builder is called from inside hwave.solver.eliashberg.vertex
-        # (dev/sc-split-plan.md, step 1), so the spy goes on that module.
+        # The builder is called from inside hwave.solver.eliashberg.vertex,
+        # so the spy goes on that module.
         from hwave.solver.eliashberg import vertex as sc_vertex
         real_build = sc_vertex._build_sc_matrices_all_q
         with mock.patch.object(sc_vertex, "_build_sc_matrices_all_q",

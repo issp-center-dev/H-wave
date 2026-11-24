@@ -1,5 +1,5 @@
-"""Compatibility shell: this module moved to ``hwave.solver.eliashberg.dynamic``
-(dev/sc-split-plan.md, step 6). It stays for one release so that
+"""Compatibility shell: this module moved to ``hwave.solver.eliashberg.dynamic``.
+It stays for one release so that
 ``hwave.solver.eliashberg_dynamic`` keeps importing; the name resolves to the moved
 module itself (not a copy of its attributes), so patching or reading
 ``hwave.solver.eliashberg_dynamic.<name>`` reaches the code that runs.

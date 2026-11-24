@@ -1,6 +1,6 @@
 """The eigenvalue layer of hwave_sc: the leading-eigenpair driver, ARPACK and shift helpers, parity sectors and the static solver drivers.
 
-Moved verbatim from hwave.sc (dev/sc-split-plan.md, step 2); the shell
+Moved verbatim from hwave.sc; the shell
 re-exports every name here under its old spelling.
 """
 from __future__ import annotations

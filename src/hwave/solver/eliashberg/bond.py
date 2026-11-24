@@ -1,6 +1,6 @@
 """The static bond-resolved pairing path of hwave_sc: topology, vertices, the bond kernel operator, the bond Green function and the diagnostics record.
 
-Moved verbatim from hwave.sc (dev/sc-split-plan.md, step 4); the shell
+Moved verbatim from hwave.sc; the shell
 re-exports every name here under its old spelling.
 """
 from __future__ import annotations

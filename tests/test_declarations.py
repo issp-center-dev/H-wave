@@ -191,7 +191,7 @@ class TestProductionAnchoring(unittest.TestCase):
         from hwave.solver import declarations
 
         # symmetrise_k is read by the builders in
-        # hwave.solver.eliashberg.vertex (dev/sc-split-plan.md, step 1)
+        # hwave.solver.eliashberg.vertex
         from hwave.solver.eliashberg import vertex as sc_vertex
         M = _rand((2, 2, 2, 2, 1), 9)
         with mock.patch.object(
@@ -362,9 +362,9 @@ class TestClosureGate(unittest.TestCase):
                            "output_gap": "gap.dat"},
         }
         # Each spy sits on the module whose code makes the call: the
-        # detector is called from calc_eliashberg (hwave.sc), the
-        # symmetriser and the simple vertex from inside
-        # hwave.solver.eliashberg.vertex (dev/sc-split-plan.md, step 1).
+        # detector is called from calc_eliashberg
+        # (hwave.solver.eliashberg.static), the symmetriser and the simple
+        # vertex from inside hwave.solver.eliashberg.vertex.
         from hwave.solver.eliashberg import vertex as sc_vertex
         real_closed = sc_static._declarations_partner_closed
         real_symm = sc_vertex._symmetrise_interactions_k

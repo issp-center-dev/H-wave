@@ -1,6 +1,6 @@
 """Writing the results of hwave_sc and the spectral-shift note.
 
-Moved verbatim from hwave.sc (dev/sc-split-plan.md, step 3); the shell
+Moved verbatim from hwave.sc; the shell
 re-exports every name here under its old spelling.
 """
 from __future__ import annotations

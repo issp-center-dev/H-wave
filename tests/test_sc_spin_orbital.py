@@ -782,7 +782,7 @@ class TestRefusals(_TmpDir):
                 read = mock.Mock(side_effect=AssertionError("input files read"))
                 # chi0q_mode = "calc" builds the vertex inside
                 # hwave.solver.eliashberg.so_solve._so_static_vertex
-                # (dev/sc-split-plan.md, step 4): guard both namespaces
+                # guard both namespaces
                 with mock.patch.object(sc_static, "_so_rpa_vertex", boom), \
                         mock.patch.object(sc_so, "_so_rpa_vertex", boom), \
                         mock.patch("hwave.solver.rpa.RPA.read_init", boom), \

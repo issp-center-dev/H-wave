@@ -1,6 +1,6 @@
 """Green's function layouts, the pair bubble G2 and the static Eliashberg kernel of hwave_sc.
 
-Moved verbatim from hwave.sc (dev/sc-split-plan.md, step 1); the shell
+Moved verbatim from hwave.sc; the shell
 re-exports every name here under its old spelling.
 """
 from __future__ import annotations

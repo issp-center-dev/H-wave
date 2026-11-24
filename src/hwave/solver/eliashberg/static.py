@@ -1,7 +1,7 @@
 """The static entry of hwave_sc: calc_eliashberg as stages over an
 EliashbergRun record, the command line, and the public constants.
 
-Moved verbatim from hwave.sc (dev/sc-split-plan.md, step 5); the shell
+Moved verbatim from hwave.sc; the shell
 re-exports every name here under its old spelling.
 """
 from __future__ import annotations
@@ -177,7 +177,7 @@ def reject_spin_orbital_mode(input_dict):
 @dataclass
 class EliashbergRun:
     """The state of one static hwave_sc run, filled stage by stage by the
-    functions below (dev/sc-split-plan.md, step 5). Every attribute is a
+    functions below. Every attribute is a
     former local variable of calc_eliashberg that more than one stage reads;
     a stage sets what it computes and leaves the rest untouched.
     """

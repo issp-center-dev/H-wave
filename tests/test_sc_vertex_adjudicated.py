@@ -603,8 +603,8 @@ class TestLegacyFlexFileGuard(unittest.TestCase):
                 "file": {"input": {"interaction": {}},
                          "output": {"path_to_output": "."}},
                 "eliashberg": {}}
-        # calc_eliashberg reads through hwave.sc; solve_dynamic reads from
-        # hwave.solver.eliashberg.io (dev/sc-split-plan.md, step 3b)
+        # calc_eliashberg reads through hwave.solver.eliashberg.static;
+        # solve_dynamic reads from hwave.solver.eliashberg.io
         from hwave.solver.eliashberg import io as sc_io
         with mock.patch.object(sc_static, "_read_interaction_files",
                                side_effect=AssertionError(

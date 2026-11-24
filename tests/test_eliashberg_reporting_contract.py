@@ -220,8 +220,8 @@ class TestChannelLeaderFromTheSectorSolve(unittest.TestCase):
         inp["eliashberg"].update(eli)
         n = M.shape[0]
         # calc_eliashberg builds the sector operator itself, and the global
-        # solve builds its own inside hwave.solver.eliashberg.eigen
-        # (dev/sc-split-plan.md, step 2): both call sites see the kernel
+        # solve builds its own inside hwave.solver.eliashberg.eigen:
+        # both call sites see the kernel
         with mock.patch.object(sc_static, "_make_kernel_operator",
                                return_value=(aslinearoperator(M), n)), \
                 mock.patch.object(sc_eigen, "_make_kernel_operator",

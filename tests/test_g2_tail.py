@@ -27,8 +27,8 @@ import hwave.sc as sc
 from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.eliashberg import kernel as sc_kernel
 # The G2 size-guard thresholds are read by _warn_if_g2_indefinite in
-# hwave.solver.eliashberg.config (dev/sc-split-plan.md, step 1); the tests
-# that rebind them do so on that module. hwave.sc still re-exports them.
+# hwave.solver.eliashberg.config; the tests that rebind them do so on that
+# module.
 from hwave.solver.eliashberg import config as _cfg
 from hwave.solver.eliashberg.kernel import _calc_g2
 from hwave.solver.eliashberg.config import _warn_if_g2_indefinite
