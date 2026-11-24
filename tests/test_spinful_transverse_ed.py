@@ -46,6 +46,7 @@ import numpy as np
 import hwave.qlmsio.read_input_k as read_input_k
 import hwave.solver.rpa as rpa_mod
 from tests import ed_oracle_util
+from tests import ed_cache
 from tests.approx_util import assert_approx_array
 from tests.test_bond_transverse_ed import (CAMPAIGN_V1, _hf_h1_from_terms_at,
                                             _dense_bond_correlator_transverse,
@@ -434,6 +435,15 @@ _S0_PAIRHOP_PHASE = np.exp(0.4j)
 _S0_NMAT1, _S0_NMAT2 = 1024, 2048
 
 
+def _readonly(arr):
+    """A read-only copy of ``arr``, for a result cached across tests: a
+    test that writes into it in place fails loudly instead of corrupting
+    the value every later test reads."""
+    out = np.array(arr, copy=True)
+    out.setflags(write=False)
+    return out
+
+
 def _s0_sidx(o, s):
     """1-based, interleaved (2*orb+spin) spin-orbital file index -- the
     Transfer file's OWN convention under enable_spin_orbital (confirmed
@@ -666,10 +676,10 @@ def _s0_X_of_v(v):
     terms = (ed_oracle_util.canonical_density_terms(
                 fx, [(0, 0, 0, v * _S0_U_UNIT)])
               + _s0_pairhop_terms(fx, v, _S0_PAIRHOP_PHASE))
-    full = ed_oracle_util.TotalNED(
+    full = ed_cache.total(
         fx, terms=terms, h1=h1_so).bond_correlator_transverse(channels)
     hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_so)
-    hf_only = ed_oracle_util.TotalNED(
+    hf_only = ed_cache.total(
         fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
     return (full - hf_only).reshape(fx.L, _S0_NORB, _S0_NORB, _S0_NORB,
                                      _S0_NORB)
@@ -722,14 +732,21 @@ def _s0_frame_map(X):
     return np.transpose(x_qrev, (0, 3, 4, 1, 2))
 
 
+@functools.lru_cache(maxsize=1)
 def _s0_ed_derivative():
     """(D_ed_v1, D_ed_vhalf): the Richardson pair (V1, V1/2) of the frame-
     mapped ED reference, for ``adjudicate_granule``'s ED-side convergence
-    measurement (``delta_rich``)."""
-    D_v1 = _s0_frame_map(ed_oracle_util.richardson(_s0_X_of_v, CAMPAIGN_V1))
+    measurement (``delta_rich``).
+
+    Cached for the process: it takes no input (the fixture is the module's
+    constants), and the four S0/S2 gates all adjudicate against this one
+    reference. The arrays are returned READ-ONLY so that no caller can
+    alter the shared result (an in-place write raises instead)."""
+    X_of_v = functools.lru_cache(maxsize=None)(_s0_X_of_v)
+    D_v1 = _s0_frame_map(ed_oracle_util.richardson(X_of_v, CAMPAIGN_V1))
     D_vhalf = _s0_frame_map(
-        ed_oracle_util.richardson(_s0_X_of_v, CAMPAIGN_V1 / 2))
-    return D_v1, D_vhalf
+        ed_oracle_util.richardson(X_of_v, CAMPAIGN_V1 / 2))
+    return _readonly(D_v1), _readonly(D_vhalf)
 
 
 class TestGateS0ExtractionAdjudication(unittest.TestCase):
@@ -814,6 +831,7 @@ class TestGateS0ExtractionAdjudication(unittest.TestCase):
     confirming Step 3's PASS is not vacuous.
     """
 
+    @heavy
     def test_step3_dressed_extraction_matches_totalned(self):
         D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
         D_pred_nmat = _s0_pred_at_nmat(
@@ -839,6 +857,7 @@ class TestGateS0ExtractionAdjudication(unittest.TestCase):
             format(rec["status"], rec["delta_rich"], rec["delta_nmat"],
                    rec["tol"], rec["max_signal"], rec["failures"][:5]))
 
+    @heavy
     def test_step4_g2_g4_swap_mutation_must_fail(self):
         D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
         D_pred_nmat = _s0_pred_at_nmat(
@@ -1178,6 +1197,7 @@ class TestGateS2ProductionRouting(unittest.TestCase):
     -- exact bit-for-bit agreement, not merely close, at
     ``v=1.0, nmat=1024``."""
 
+    @heavy
     def test_old_slice_then_solve_fails_the_s0_granule(self):
         D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
         D_old_nmat = _s2_old_pred(_S0_NMAT1, CAMPAIGN_V1)
@@ -1196,6 +1216,7 @@ class TestGateS2ProductionRouting(unittest.TestCase):
                 rec["status"], rec["delta_rich"], rec["delta_nmat"],
                 rec["tol"], rec["max_signal"]))
 
+    @heavy
     def test_production_passes_the_s0_granule(self):
         D_ed_v1, D_ed_vhalf = _s0_ed_derivative()
         D_new_nmat = _s2_new_pred(_S0_NMAT1, CAMPAIGN_V1)
@@ -1507,13 +1528,20 @@ def _s4_norb2_fixture():
     return fx, _h1_with_spin_orbit(fx, _S4_2_LSO)
 
 
+@functools.lru_cache(maxsize=None)
 def _s4_ed_derivative(variant, kind, v1, phase=1.0):
     """(D_v1, D_vhalf): the Richardson pair of TotalNED's full-minus-HF-
     only ``bond_correlator_transverse`` derivative for ONE on-site type,
     on the given fixture variant, frame-mapped via ``_s0_frame_map`` --
     REUSED VERBATIM (interfaces: "REUSE it verbatim"; the map is pure
     index/axis algebra -- q-reversal and the Kubo pair-slot swap -- with
-    no dependence on the particular (L, norb) it is applied to)."""
+    no dependence on the particular (L, norb) it is applied to).
+
+    Cached for the process, keyed by its full input ``(variant, kind, v1,
+    phase)`` (the fixture itself is the module's constants): the
+    direction-set gates of ``TestTask4SVDSensitivityGate`` adjudicate the
+    same granules ``TestTask4GranuleCampaign`` does, and re-ran their ED.
+    The arrays are returned READ-ONLY (see ``_readonly``)."""
     fx, h1_so = (_s4_norb1_fixture() if variant == "norb1"
                  else _s4_norb2_fixture())
     norb = _S4_1_NORB if variant == "norb1" else _S4_2_NORB
@@ -1526,16 +1554,16 @@ def _s4_ed_derivative(variant, kind, v1, phase=1.0):
     @functools.lru_cache(maxsize=None)
     def X_of_v(v):
         terms = _s4_terms_of_v(fx, kind, _s4_scaled(v), phase)
-        full = ed_oracle_util.TotalNED(
+        full = ed_cache.total(
             fx, terms=terms, h1=h1_so).bond_correlator_transverse(channels)
         hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_so)
-        hf_only = ed_oracle_util.TotalNED(
+        hf_only = ed_cache.total(
             fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
         return (full - hf_only).reshape(fx.L, norb, norb, norb, norb)
 
     D_v1 = _s0_frame_map(ed_oracle_util.richardson(X_of_v, v1))
     D_vhalf = _s0_frame_map(ed_oracle_util.richardson(X_of_v, v1 / 2))
-    return D_v1, D_vhalf
+    return _readonly(D_v1), _readonly(D_vhalf)
 
 
 def _s4_adjudicate(variant, kind, label, phase=1.0, v1=CAMPAIGN_V1,
@@ -1714,10 +1742,10 @@ def _s4_tso0_ed_derivative(kind, v1):
     @functools.lru_cache(maxsize=None)
     def X_of_v(v):
         terms = _s4_terms_of_v(fx, kind, _s4_scaled(v))
-        full = ed_oracle_util.TotalNED(
+        full = ed_cache.total(
             fx, terms=terms).bond_correlator_transverse(channels)
         hf_h1 = _hf_h1_from_terms_at(fx, terms, fx.build_h1())
-        hf_only = ed_oracle_util.TotalNED(
+        hf_only = ed_cache.total(
             fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
         return (full - hf_only).reshape(fx.L, _S4_2_NORB, _S4_2_NORB,
                                          _S4_2_NORB, _S4_2_NORB)

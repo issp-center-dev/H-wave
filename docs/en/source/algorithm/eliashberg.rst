@@ -98,7 +98,7 @@ The singlet pairing vertex is
 .. math::
 
    V^S_{\alpha\beta}(\mathbf{q})
-   = \frac{1}{2}(W_c + W_s)_{\alpha\beta}
+   = \frac{1}{2}(W_c - W_s)_{\alpha\beta}
      + \frac{3}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
      - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}
 
@@ -107,9 +107,13 @@ and the triplet pairing vertex is
 .. math::
 
    V^T_{\alpha\beta}(\mathbf{q})
-   = \frac{1}{2}(W_c - W_s)_{\alpha\beta}
+   = \frac{1}{2}(W_c + W_s)_{\alpha\beta}
      - \frac{1}{2} (W_s\, X^s\, W_s)_{\alpha\beta}
      - \frac{1}{2} (W_c\, X^c\, W_c)_{\alpha\beta}
+
+The bare (first-order) terms are :math:`\tfrac12(W_c - W_s) = U + V` in the
+singlet channel and :math:`\tfrac12(W_c + W_s) = V` in the triplet channel:
+the on-site :math:`U` acts only on the singlet, not on the equal-time triplet.
 
 
 General mode (S/C matrix formulation)

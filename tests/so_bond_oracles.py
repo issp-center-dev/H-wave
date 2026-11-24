@@ -1035,13 +1035,16 @@ def _fixture_ii_transfer():
     return tr
 
 
-def _fixture_ii_tables():
+def _fixture_ii_tables(*, pairlift=True):
     """Fixture (ii) interactions (norb_phys = 2): CoulombIntra on site, every
     other type on the NN inter-orbital rows ``X_01(+1) = v``,
-    ``X_01(-1) = 0.6 v`` with their partners (complex PairHop)."""
+    ``X_01(-1) = 0.6 v`` with their partners (complex PairHop);
+    ``pairlift=False`` drops PairLift."""
     out = {"CoulombIntra": {((0, 0, 0), (0, 0)): BASE["CoulombIntra"],
                             ((0, 0, 0), (1, 1)): 0.8 * BASE["CoulombIntra"]}}
     for t in TYPES_OFFSITE:
+        if t == "PairLift" and not pairlift:
+            continue
         out[t] = {**closed_row(1, 0, 1, BASE[t]), **closed_row(-1, 0, 1, 0.6 * BASE[t])}
     return out
 
@@ -1630,3 +1633,688 @@ def _grid_tables():
 #: a two-dimensional 5x3 mesh (norb_phys = 1) with complex spin-flip hopping
 #: and interactions on the x, y and diagonal bonds (no exact diagonalization)
 FIXTURE_GRID_5X3 = FixtureSpec.make((5, 3, 1), 1, 2.0, 0.2, _grid_transfer(), _grid_tables())
+
+
+# ------------------------------------------------- archive-version oracles
+# Independent literals of the spin-orbital archive refusals (never imported
+# from hwave.solver.fingerprint), shared by the archive-check tests.
+
+#: the provenance members of a fingerprint_version 1 archive, in writer order
+V1_MEMBERS = (
+    "fingerprint_version", "producer_stage", "producer_label", "producer_version",
+    "fp_transfer", "fp_extern", "fp_meta", "fp_band", "fp_green",
+    "prov_transfer_keys", "prov_transfer_vals", "prov_extern_present",
+    "prov_extern_keys", "prov_extern_vals",
+    "prov_coeff_extern", "prov_enable_spin_orbital", "prov_index_convention",
+    "prov_norb", "prov_norb_phys", "prov_cell_shape", "prov_sub_shape",
+    "state_beta", "state_nmat", "state_mu", "state_density", "state_calc_mu",
+    "state_target", "state_mu_tol")
+#: the members of a fingerprint_version 2 archive that version 1 did not write
+V2_ONLY_MEMBERS = ("fp_interaction", "fp_topology", "fp_resolved_topology", "fp_capability",
+                   "prov_rec_types", "prov_rec_modes", "prov_rec_cells", "prov_rec_v",
+                   "prov_topology")
+#: the provenance members of a fingerprint_version 2 archive, in writer order
+PROVENANCE_MEMBERS = V1_MEMBERS + V2_ONLY_MEMBERS
+#: the members a bond-resolved stage adds, in writer order
+BOND_MEMBERS = ("delta_r", "reverse", "slot_convention", "max_shells")
+#: the producers the hwave_sc consumers name: the RPA run of a chi0q load,
+#: the FLEX run of a (static or dynamic) flex entry
+EXPECTED_RPA_PRODUCER = "the spin-orbital RPA run (hwave RPA, enable_spin_orbital = true)"
+EXPECTED_FLEX_PRODUCER = "the spin-orbital FLEX run (hwave FLEX, enable_spin_orbital = true)"
+#: the refusal of a version-1 archive (``path``, ``producer``)
+V1_REFUSAL_TEXT = ("'{path}' carries fingerprint_version 1 (written before interaction "
+                   "fingerprints existed); this version requires fingerprint_version 2. "
+                   "Regenerate it by re-running {producer} with this version (the run "
+                   "and the [file.output] key that write each archive are listed under "
+                   "'Archive checks' in the hwave_sc documentation).")
+#: the refusal of an unversioned archive (``path``, ``producer``)
+UNVERSIONED_REFUSAL_TEXT = (
+    "'{path}' has no fingerprint_version (written before this version, or by a run "
+    "whose band the fingerprints do not cover: trans_mod, green_init or a supplied "
+    "chi0q; such outputs cannot be read by a spin-orbital consumer); this version "
+    "requires fingerprint_version 2. Regenerate it by re-running {producer} with this "
+    "version, from the Transfer/Extern input (the run and the [file.output] key that "
+    "write each archive are listed under 'Archive checks' in the hwave_sc "
+    "documentation).")
+
+
+# ---------------------------------------------------------------------------
+# S_z-conserving fixtures (no spin-flip transfer, no PairLift, Zeeman 0.15)
+# ---------------------------------------------------------------------------
+
+#: L = 5, norb_phys = 1: every S_z-conserving type on NN and NNN bonds,
+#: spin-diagonal hopping, Zeeman 0.15. The same object as FIXTURE_I_SZ (the
+#: periodic five-site chain, a ring), named for the S_z-packed tests.
+FIXTURE_SZ_RING = FIXTURE_I_SZ
+
+
+def _grid_sz_transfer(*, spin_symmetric=False):
+    """norb_phys = 1 on the 5x3 grid, spin diagonal: on-site ``0.1`` and a
+    random complex hopping per spin (seed 13, times 1/2) on the x and y
+    bonds, with its partner at ``-R``. ``spin_symmetric=True`` puts the
+    spin-up hopping on both spins (the same draws)."""
+    rng = np.random.default_rng(13)
+    tr = {((0, 0, 0), (s, s)): 0.1 for s in (0, 1)}
+    for R in GRID_BONDS[:2]:
+        t = 0.5 * (rng.normal(size=2) + 1j * rng.normal(size=2))
+        if spin_symmetric:
+            t = np.array([t[0], t[0]])
+        for s in (0, 1):
+            tr[(R, (s, s))] = t[s]
+            tr[(_neg(R), (s, s))] = np.conj(t[s])
+    return tr
+
+
+def _grid_sz_tables(*, y_bond=True):
+    """CoulombIntra on site; every other S_z-conserving type on the x bond
+    (``v``) and the y bond (``0.8 v``), Hermitian-closed. ``y_bond=False``
+    keeps the x bond only."""
+    out = {"CoulombIntra": {((0, 0, 0), (0, 0)): BASE["CoulombIntra"]}}
+    for t in TYPES_OFFSITE:
+        if t == "PairLift":
+            continue
+        tbl = {}
+        for R, f in zip(GRID_BONDS[:2 if y_bond else 1], (1.0, 0.8)):
+            tbl.update(closed_row(R, 0, 0, f * BASE[t]))
+        out[t] = tbl
+    return out
+
+
+#: the 5x3 mesh (norb_phys = 1, B = 5 channels: on site, +-x, +-y) with
+#: every S_z-conserving type, spin-diagonal hopping and Zeeman 0.15
+FIXTURE_SZ_GRID = FixtureSpec.make((5, 3, 1), 1, 2.0, 0.2, _grid_sz_transfer(),
+                                   _grid_sz_tables(), zeeman=0.15)
+
+#: the 4x2 mesh (norb_phys = 1) with an even extent on both axes (N_TRIM = 4):
+#: the spin-diagonal hopping of :data:`FIXTURE_SZ_GRID` on the x and y bonds
+#: (hopping enters only the band, where the folding of +-y at L_y = 2 is
+#: harmless), the interactions on site and on the x bond only, so the
+#: topology has B = 3 channels (on site, +-x; +-y channels would coincide on
+#: this mesh), Zeeman 0.15
+FIXTURE_SZ_GRID_4X2 = FixtureSpec.make((4, 2, 1), 1, 2.0, 0.2, _grid_sz_transfer(),
+                                       _grid_sz_tables(y_bond=False), zeeman=0.15)
+
+#: the spin-diagonal inter-orbital term ``i lambda s_z`` (``s_z = +-1``) of
+#: :data:`FIXTURE_LZSZ`: ``R -> lambda`` for ``c+_{0 s}(0) c_{1 s}(R)``
+LZSZ = {(0, 0, 0): 0.25, (1, 0, 0): 0.15}
+
+
+def _lzsz_transfer():
+    """norb_phys = 2: :data:`TRANSFER_II` on both spins plus ``i lambda s_z``
+    between orbitals 0 and 1 on site and on the NN bond (:data:`LZSZ`), with
+    the Hermitian partners; no spin-flip entry."""
+    tr = {}
+
+    def add(key, v):
+        tr[key] = tr.get(key, 0.0) + v
+    for (r, a, b), t in TRANSFER_II.items():
+        for s in (0, 1):
+            add(((r, 0, 0), (2 * a + s, 2 * b + s)), t)
+    for R, lam in LZSZ.items():
+        for s, sz in ((0, 1.0), (1, -1.0)):
+            add((R, (s, 2 + s)), 1j * lam * sz)
+            add((_neg(R), (2 + s, s)), -1j * lam * sz)
+    return tr
+
+
+#: L = 5, norb_phys = 2: the orbital-angular-momentum-like ``i lambda s_z``
+#: inter-orbital hopping (on site and NN), every S_z-conserving type on the
+#: NN inter-orbital rows, Zeeman 0.15
+FIXTURE_LZSZ = FixtureSpec.make(5, 2, 2.0, 0.8, _lzsz_transfer(),
+                                _fixture_ii_tables(pairlift=False), zeeman=0.15)
+
+#: the zero-field partner of :data:`FIXTURE_SZ_GRID` with the spin-up hopping
+#: on both spins: the global spin flip is a symmetry, so it maps the pair-S_z
+#: sector +1 onto -1 and their spectra coincide (the hopping of
+#: :data:`FIXTURE_SZ_GRID` differs between the spins, so its zero-field
+#: spectra do not)
+FIXTURE_SZ_GRID_H0 = FixtureSpec.make((5, 3, 1), 1, 2.0, 0.2,
+                                      _grid_sz_transfer(spin_symmetric=True),
+                                      _grid_sz_tables())
+#: :data:`FIXTURE_SZ_GRID_H0` in the field 0.15: only the Zeeman term splits
+#: the sectors +1 and -1
+FIXTURE_SZ_GRID_SYM = FIXTURE_SZ_GRID_H0._replace(zeeman=0.15)
+
+
+def _lzsz_grid_transfer():
+    """norb_phys = 2 on the 5x3 grid: :data:`TRANSFER_II` along x on both
+    spins, its bond rows times 0.8 along y, and ``i lambda s_z`` between
+    orbitals 0 and 1 on site and on the x bond (:data:`LZSZ`), with the
+    Hermitian partners; no spin-flip entry."""
+    tr = {}
+
+    def add(key, v):
+        tr[key] = tr.get(key, 0.0) + v
+    for (r, a, b), t in TRANSFER_II.items():
+        for s in (0, 1):
+            add(((r, 0, 0), (2 * a + s, 2 * b + s)), t)
+            if r:
+                add(((0, r, 0), (2 * a + s, 2 * b + s)), 0.8 * t)
+    for R, lam in LZSZ.items():
+        for s, sz in ((0, 1.0), (1, -1.0)):
+            add((R, (s, 2 + s)), 1j * lam * sz)
+            add((_neg(R), (2 + s, s)), -1j * lam * sz)
+    return tr
+
+
+def _lzsz_grid_tables():
+    """Repulsive-dominant S_z-conserving interactions (norb_phys = 2) on the
+    x bond and the y bond (``0.6 v``): CoulombIntra on site; CoulombInter
+    on every orbital row of both bonds and on the on-site inter-orbital row
+    (0.5); Hund, Ising, Exchange and complex PairHop on the inter-orbital
+    rows at 0.2 times their :data:`BASE` value; Hermitian-closed."""
+    out = {"CoulombIntra": {((0, 0, 0), (0, 0)): BASE["CoulombIntra"],
+                            ((0, 0, 0), (1, 1)): 0.8 * BASE["CoulombIntra"]}}
+    inter = dict(closed_row((0, 0, 0), 0, 1, 0.5))
+    for R, f in (((1, 0, 0), 1.0), ((0, 1, 0), 0.6)):
+        for a in (0, 1):
+            for b in (0, 1):
+                inter.update(closed_row(R, a, b, f * BASE["CoulombInter"]))
+    out["CoulombInter"] = inter
+    for t in ("Hund", "Ising", "Exchange", "PairHop"):
+        out[t] = {**closed_row((1, 0, 0), 0, 1, 0.2 * BASE[t]),
+                  **closed_row((0, 1, 0), 0, 1, 0.12 * BASE[t])}
+    return out
+
+
+#: the 5x3 mesh (norb_phys = 2, B = 5 channels: on site, +-x, +-y) with the
+#: ``i lambda s_z`` inter-orbital hopping, a repulsive-dominant interaction
+#: of every S_z-conserving type and Zeeman 0.15; the antisymmetric static gap
+#: space splits into the pair-S_z sectors 29 / 60 / 29
+FIXTURE_LZSZ_GRID = FixtureSpec.make((5, 3, 1), 2, 2.0, 0.8, _lzsz_grid_transfer(),
+                                     _lzsz_grid_tables(), zeeman=0.15)
+
+#: the S_z-conserving fixtures
+ALL_CONSERVING_FIXTURES = (FIXTURE_SZ_RING, FIXTURE_SZ_GRID, FIXTURE_LZSZ)
+
+
+# ---------------------------------------------------------------------------
+# S_z sectors of the code slots and of the gap pairs (spin-block modes)
+# ---------------------------------------------------------------------------
+
+#: the ph sectors in storage order and the pp sectors in tie-break order
+PH_SIGMAS = (0, +1, -1)
+PP_ORDER = (+1, 0, -1)
+
+
+def sz_of_mode(X, norb_phys):
+    """``S_z`` of the spin-block mode ``X = s * norb_phys + a``: ``+1/2``
+    for ``s = 0`` (up), ``-1/2`` for ``s = 1``."""
+    return 0.5 if int(X) < int(norb_phys) else -0.5
+
+
+def ph_sector_lists(B, nd):
+    """The dense code slots ``I = m * nd**2 + p * nd + p'`` of each ph sector
+    ``sigma = S_z(p) - S_z(p')`` in the order ``(0, +1, -1)``, ascending."""
+    norb = nd // 2
+    out = {s: [] for s in PH_SIGMAS}
+    for m in range(B):
+        for p in range(nd):
+            for p2 in range(nd):
+                sigma = int(round(sz_of_mode(p, norb) - sz_of_mode(p2, norb)))
+                out[sigma].append(m * nd * nd + p * nd + p2)
+    return [np.array(out[s], dtype=np.int64) for s in PH_SIGMAS]
+
+
+def pp_sector_lists(nd):
+    """The flat gap pairs ``b * nd + c`` of each pp sector
+    ``p = S_z(b) + S_z(c)`` in the order ``(+1, 0, -1)``, ascending."""
+    norb = nd // 2
+    out = {p: [] for p in PP_ORDER}
+    for b in range(nd):
+        for c in range(nd):
+            p = int(round(sz_of_mode(b, norb) + sz_of_mode(c, norb)))
+            out[p].append(b * nd + c)
+    return [np.array(out[p], dtype=np.int64) for p in PP_ORDER]
+
+
+def restrict(M, lists):
+    """The diagonal sector blocks ``M[..., l, l]`` of a dense code-slot
+    array, one per index list."""
+    M = np.asarray(M)
+    return [M[..., l[:, None], l] for l in lists]
+
+
+# ---------------------------------------------------------------------------
+# The second-order functional and its gradient
+# ---------------------------------------------------------------------------
+
+def _lindhard_batch(green, beta, geom):
+    """:func:`lindhard_discrete` of a stack of Green functions ``(S, nmat,
+    nvol, nd, nd)``, the same sum with a leading batch axis; returns
+    ``(S, nmat, nvol, NL, NL)``.
+
+    The sum over ``(n, k)`` is one matrix product per bosonic slice ``l``:
+    ``first[s, (a, Y, Z), (n, k)] = p_a(k) G_YZ(k, n)`` times
+    ``second[s, (n, k), (q, b, W, X)] = p_b(k+q) G_WX(k+q, n_l(n))``, the
+    second leg read from a frequency-doubled copy so that the circular shift
+    ``n_l(n) = (n - l + nmat/2) mod nmat`` is a contiguous slice. (A batched
+    ``einsum`` of the same sum is an order of magnitude slower on numpy 1.x.)
+    """
+    S, nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    D = np.asarray(geom.delta_r, dtype=np.int64)
+    B = D.shape[0]
+    NL = B * nd * nd
+    pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))       # (k, a)
+    add = mesh_add(shape)                                              # (q, k) -> k + q
+    pkq = pk[add]                                                      # (q, k, b)
+    first = pk[None, None, :, :, None, None] * green[:, :, :, None, :, :]   # (s, n, k, a, y, z)
+    first = np.ascontiguousarray(
+        first.reshape(S, nmat * nvol, NL).transpose(0, 2, 1))          # (s, ayz, nk)
+    second = pkq[None, None, :, :, :, None, None] * green[:, :, add][:, :, :, :, None, :, :]
+    second = second.transpose(0, 1, 3, 2, 4, 5, 6).reshape(S, nmat, nvol, nvol * NL)
+    second = np.concatenate([second, second], axis=1)                 # (s, 2 n, k, (q, bwx))
+    out = np.empty((S, nmat, nvol, NL, NL), dtype=np.complex128)
+    for l in range(nmat):
+        c = (nmat // 2 - l) % nmat                                     # n_l(n) = n + c (mod nmat)
+        t = first @ second[:, c:c + nmat].reshape(S, nmat * nvol, nvol * NL)
+        t = t.reshape(S, B, nd, nd, nvol, B, nd, nd).transpose(0, 4, 1, 7, 2, 5, 3, 6)
+        out[:, l] = (-(1.0 / beta) / nvol) * t.reshape(S, nvol, NL, NL)  # (s, q, axy, bzw)
+    return out
+
+
+def phi2_gradient(green, beta, gamma_label, geom, *, nodes=8, radius=0.3, chunk=160):
+    """``Sigma[n, k, a, b] = beta dPhi_2/dG_ba(k, i w_n)`` of the
+    second-order functional of the label vertex
+
+    ``Phi_2[G] = -(T/8) sum_{l, q} Tr[(chibar(q, i nu_l) Gamma(-q))**2]``,
+
+    ``chibar`` the label bubble of :func:`lindhard_discrete` on the
+    production grid (every bosonic slice ``l``, wrapped second leg) and
+    ``Gamma(-q)`` read at the grid index of ``-q`` (:func:`mesh_negate`).
+    The derivative with respect to each entry of ``G`` is taken by the
+    ``nodes``-point circle stencil ``f'(0) = (1/(M r)) sum_j f(r w^j)
+    w^{-j}`` (``w = e^{2 pi i/M}``, ``M = nodes``, ``r = radius``), which is
+    exact for a polynomial of degree below ``M``; ``Phi_2`` is quartic in
+    ``G``. Every stencil node is one Green function of a single stacked
+    array, evaluated ``chunk`` at a time.
+
+    Parameters
+    ----------
+    green : ndarray (nmat, nvol, nd, nd)
+        No block axis.
+    beta : float
+    gamma_label : ndarray (nvol, NL, NL)
+        The label vertex ``Gamma(q)`` (:func:`file_gamma_label`) on the
+        labels of ``geom``.
+    geom : object with ``delta_r`` and ``spatial_shape``
+    nodes, radius : int, float
+        The circle stencil (``M`` points of radius ``r``).
+    chunk : int
+        Stencil nodes evaluated per stacked batch (memory only; the
+        result does not depend on it).
+
+    Returns
+    -------
+    ndarray complex128 (nmat, nvol, nd, nd)
+    """
+    green = np.asarray(green, dtype=np.complex128)
+    nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    gamma = np.asarray(gamma_label, dtype=np.complex128)
+    NL = np.asarray(geom.delta_r).reshape(-1, 3).shape[0] * nd * nd
+    if int(np.prod(shape)) != nvol or gamma.shape != (nvol, NL, NL):
+        raise ValueError("phi2_gradient: green {} and Gamma {} do not share the labels and the "
+                         "mesh {}".format(green.shape, gamma.shape, shape))
+    gamma_mq = gamma[mesh_negate(shape)]
+    M = int(nodes)
+    w = np.exp(2j * np.pi * np.arange(M) / M)
+    entries = np.array(list(np.ndindex(nmat, nvol, nd, nd)))
+    stack = np.repeat(green[None], len(entries) * M, axis=0)
+    owner = np.repeat(np.arange(len(entries)), M)
+    e = entries[owner]
+    stack[np.arange(len(owner)), e[:, 0], e[:, 1], e[:, 2], e[:, 3]] += radius * np.tile(w, len(entries))
+    vals = np.empty(len(stack), dtype=np.complex128)
+    for s0 in range(0, len(stack), chunk):
+        A = _lindhard_batch(stack[s0:s0 + chunk], beta, geom) @ gamma_mq[None, None]
+        vals[s0:s0 + chunk] = (-(1.0 / beta) / 8.0) * np.einsum("slqij,slqji->s", A, A)
+    grad = (vals.reshape(len(entries), M) * w.conj()[None]).sum(axis=1) / (M * radius)
+    return beta * grad.reshape(nmat, nvol, nd, nd).transpose(0, 1, 3, 2)
+
+
+# ---------------------------------------------------------------------------
+# Second order: imaginary-time grid, mode bridge, equal-time sample
+# ---------------------------------------------------------------------------
+
+def tau_grid_dft(nmat, beta):
+    """The explicit DFT matrices of the grid ``tau_j = j beta / nmat`` and the
+    fermion frequencies ``w_n = (2 n + 1 - nmat) pi T``: ``F[j, n] =
+    e^{-i w_n tau_j}`` and ``B[m, j] = (beta / nmat) e^{+i w_m tau_j}``, each
+    ``(nmat, nmat)`` complex128 (``G(tau) = T F G``, ``S(i w) = B S(tau)``)."""
+    nmat = int(nmat)
+    w = (2 * np.arange(nmat) + 1 - nmat) * np.pi / beta
+    tau = np.arange(nmat) * beta / nmat
+    F = np.exp(-1j * np.outer(tau, w))
+    B = (beta / nmat) * np.exp(1j * np.outer(w, tau))
+    return F, B
+
+
+def green_tau(green, beta):
+    """``G(tau_j) = T sum_n e^{-i w_n tau_j} G(i w_n)`` along axis 0."""
+    green = np.asarray(green, dtype=np.complex128)
+    F, _ = tau_grid_dft(green.shape[0], beta)
+    return np.tensordot(F, green, axes=(1, 0)) / beta
+
+
+def minus_tau(g_tau):
+    """``G~(tau_j) = sgn_j G(tau_{(nmat - j) mod nmat})`` along axis 0, with
+    ``sgn_0 = +1`` and ``sgn_j = -1`` otherwise: ``G(-tau_j)`` for ``j > 0``
+    and the equal-time sample itself for ``j = 0``."""
+    g_tau = np.asarray(g_tau)
+    nmat = g_tau.shape[0]
+    j = np.arange(nmat)
+    sgn = np.where(j == 0, 1.0, -1.0).reshape((nmat,) + (1,) * (g_tau.ndim - 1))
+    return sgn * g_tau[(nmat - j) % nmat]
+
+
+def tau_to_matsubara(s_tau, beta):
+    """``S(i w_m) = (beta / nmat) sum_j e^{+i w_m tau_j} S(tau_j)`` along axis 0."""
+    s_tau = np.asarray(s_tau, dtype=np.complex128)
+    _, B = tau_grid_dft(s_tau.shape[0], beta)
+    return np.tensordot(B, s_tau, axes=(1, 0))
+
+
+def _mode_index(spatial_shape, norb_phys):
+    """``idx[j, X] = ed_mode(j, X)`` ``(nvol, nd)``."""
+    nvol = int(np.prod(spatial_shape))
+    nd = 2 * int(norb_phys)
+    return ed_mode(np.arange(nvol)[:, None], np.arange(nd)[None, :], norb_phys)
+
+
+def modes_of_k(a_k, spatial_shape, norb_phys):
+    """The interleaved-mode matrix ``(..., M, M)`` (``M = nvol nd``) of a
+    translation-invariant k-space array ``a_k`` ``(..., nvol, nd, nd)`` in the
+    spin-block index: ``A[ed_mode(j, X), ed_mode(j', Y)] = (1/N) sum_k
+    e^{+ik.(j - j')} A_XY(k)``."""
+    shape = _shape(spatial_shape)
+    a_k = np.asarray(a_k, dtype=np.complex128)
+    nvol, nd = int(np.prod(shape)), 2 * int(norb_phys)
+    if a_k.shape[-3:] != (nvol, nd, nd):
+        raise ValueError("modes_of_k: array {} is not (..., {}, {}, {})".format(
+            a_k.shape, nvol, nd, nd))
+    U = np.exp(1j * (mesh_momenta(shape) @ mesh_grid(shape).T))           # [k, j]
+    P = U[:, :, None] * U.conj()[:, None, :] / nvol                        # [k, j, j']
+    tmp = np.einsum("kjl,...kxy->...jxly", P, a_k)
+    idx = _mode_index(shape, norb_phys)
+    out = np.zeros(a_k.shape[:-3] + (nvol * nd, nvol * nd), dtype=np.complex128)
+    out[..., idx[:, :, None, None], idx[None, None, :, :]] = tmp
+    return out
+
+
+def k_of_modes(a_modes, spatial_shape, norb_phys, *, tol=1e-12):
+    """The k-space spin-block array ``(..., nvol, nd, nd)`` of an
+    interleaved-mode matrix ``(..., M, M)``: ``A_XY(k) = sum_R e^{+ik.R}
+    A[ed_mode(0, X), ed_mode(R, Y)]``. Refuses a matrix that is not
+    translation invariant (deviation of the reconstruction above
+    ``tol max|A|``)."""
+    shape = _shape(spatial_shape)
+    a = np.asarray(a_modes, dtype=np.complex128)
+    nvol, nd = int(np.prod(shape)), 2 * int(norb_phys)
+    if a.shape[-2:] != (nvol * nd, nvol * nd):
+        raise ValueError("k_of_modes: array {} is not (..., {}, {})".format(
+            a.shape, nvol * nd, nvol * nd))
+    idx = _mode_index(shape, norb_phys)
+    row0 = a[..., idx[0][:, None, None], idx[None, :, :]]                 # [..., X, R, Y]
+    E = np.exp(1j * (mesh_momenta(shape) @ mesh_grid(shape).T))           # [k, R]
+    out = np.einsum("kr,...xry->...kxy", E, row0)
+    dev = float(np.abs(modes_of_k(out, shape, norb_phys) - a).max()) if a.size else 0.0
+    if dev > tol * float(np.abs(a).max()):
+        raise ValueError("k_of_modes: not translation invariant (deviation {:.3e} > {:.3e})"
+                         .format(dev, tol * float(np.abs(a).max())))
+    return out
+
+
+def equal_time_sample(green, beta):
+    """The tau = 0 sample ``T sum_n G(k, i w_n)`` ``(nvol, nd, nd)`` of the
+    truncated frequency grid (``green_tau(green, beta)[0]``)."""
+    return green_tau(green, beta)[0]
+
+
+def equal_time_density(green, beta, spatial_shape, norb_phys):
+    """The density reading ``rho_pq = S_qp`` ``(M, M)`` of the equal-time
+    sample in the interleaved modes: the mode-axis transpose of
+    ``modes_of_k(equal_time_sample(green, beta))``."""
+    S = modes_of_k(equal_time_sample(green, beta), spatial_shape, norb_phys)
+    return np.ascontiguousarray(S.T)
+
+
+def delta23_monomials(monomials, spatial_shape):
+    """The monomials whose operators 2 and 3 are the same mode in the same
+    cell (``modes[1] == modes[2]`` and equal cells on the mesh): these carry
+    a one-body remainder ``delta_23`` when normal ordered."""
+    shape = _shape(spatial_shape)
+    return [m for m in monomials
+            if m.modes[1] == m.modes[2]
+            and int(mesh_index(m.cells[1], shape)) == int(mesh_index(m.cells[2], shape))]
+
+
+def wick_hf_sigma_k(terms, rho, spatial_shape, norb_phys):
+    """The Wick Hartree-Fock self-energy ``(nvol, nd, nd)`` in k (spin-block
+    index): :func:`hf_onebody` of the quartic ``terms`` at the density
+    ``rho[p, q] = <c+_p c_q>`` (interleaved modes), read back through
+    :func:`k_of_modes`."""
+    return k_of_modes(hf_onebody(terms, rho), spatial_shape, norb_phys)
+
+
+def phi1_gradient(green, beta, gamma_label, geom):
+    """``out[n, k, A, B] = dPhi_1/dG_BA(k, i w_n)`` ``(nmat, nvol, nd, nd)``
+    of the first-order functional of the label vertex
+
+    ``Phi_1 = (N/2) sum_IJ Gamma_IJ(0) n_I n_J``,
+
+    ``Gamma(0)`` the ``q = 0`` slice (grid index 0) and ``n_{(d;Z,W)} =
+    (1/N) sum_k e^{+ik.d} S_WZ(k)`` the label densities of the equal-time
+    sample ``S`` (:func:`equal_time_sample`). With ``dn_{(a;X,Y)}/dG_BA(k, n)
+    = (T/N) e^{+ik.d_a} delta_XA delta_YB`` the gradient is
+    ``T sum_a e^{+ik.d_a} (Gamma^ n)_{(a;A,B)}``, ``Gamma^ = (Gamma(0) +
+    Gamma(0)^T)/2``, the same at every frequency (both phases are the
+    ``e^{+ik.d}`` of the density, the ``pk`` of :func:`lindhard_discrete`).
+    """
+    green = np.asarray(green, dtype=np.complex128)
+    nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    D = np.asarray(geom.delta_r, dtype=np.int64).reshape(-1, 3)
+    NL = D.shape[0] * nd * nd
+    gamma = np.asarray(gamma_label, dtype=np.complex128)
+    if int(np.prod(shape)) != nvol or gamma.shape != (nvol, NL, NL):
+        raise ValueError("phi1_gradient: green {} and Gamma {} do not share the labels and the "
+                         "mesh {}".format(green.shape, gamma.shape, shape))
+    g0 = gamma[0]
+    ghat = 0.5 * (g0 + g0.T)
+    pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))         # (k, m)
+    S = equal_time_sample(green, beta)                                  # (k, W, Z)
+    n = np.einsum("km,kzw->mzw", pk, np.swapaxes(S, -1, -2)).reshape(NL) / nvol
+    v = (ghat @ n).reshape(-1, nd, nd)                                  # (a, A, B)
+    grad = np.einsum("ka,aij->kij", pk, v) / beta
+    return np.repeat(grad[None], nmat, axis=0)
+
+
+# ---------------------------------------------------------------------------
+# Second order: the ring value Psi and its adjoint gradient
+# ---------------------------------------------------------------------------
+
+def _ring_inputs(green, gamma_label, geom, where):
+    """Shape checks shared by the ring functionals; returns ``(green, gamma(-q),
+    NL)`` with ``green`` complex128 of shape ``(..., nmat, nvol, nd, nd)``."""
+    green = np.asarray(green, dtype=np.complex128)
+    if green.ndim not in (4, 5):
+        raise ValueError("{}: green {} is not (nmat, nvol, nd, nd) or a stack of those"
+                         .format(where, green.shape))
+    nvol, nd = green.shape[-3], green.shape[-1]
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    gamma = np.asarray(gamma_label, dtype=np.complex128)
+    NL = np.asarray(geom.delta_r).reshape(-1, 3).shape[0] * nd * nd
+    if int(np.prod(shape)) != nvol or gamma.shape != (nvol, NL, NL):
+        raise ValueError("{}: green {} and Gamma {} do not share the labels and the mesh {}"
+                         .format(where, green.shape, gamma.shape, shape))
+    return green, gamma[mesh_negate(shape)], NL
+
+
+def ring2_value(green, beta, gamma_label, geom, *, chunk=32):
+    """``Psi = sum_{q, l} Tr[(chibar(q, l) Gamma(-q))**2]`` of the label
+    bubble :func:`lindhard_discrete` (every bosonic slice, wrapped second
+    leg) and ``Gamma(-q)`` read at :func:`mesh_negate`; ``Phi_2 = -(T/8) Psi``.
+
+    ``green`` is ``(nmat, nvol, nd, nd)`` (returns a complex) or a stack
+    ``(S, nmat, nvol, nd, nd)`` (returns ``(S,)``), evaluated by
+    :func:`_lindhard_batch` on at most ``chunk`` Green functions per call."""
+    green, gmq, _ = _ring_inputs(green, gamma_label, geom, "ring2_value")
+    single = green.ndim == 4
+    stack = green[None] if single else green
+    out = np.empty(stack.shape[0], dtype=np.complex128)
+    chunk = max(1, int(chunk))
+    for s0 in range(0, stack.shape[0], chunk):
+        A = _lindhard_batch(stack[s0:s0 + chunk], beta, geom) @ gmq[None, None]
+        out[s0:s0 + chunk] = np.einsum("slqij,slqji->s", A, A)
+    return complex(out[0]) if single else out
+
+
+def _ring2_first_leg(green, lam, beta, geom):
+    """``F1[n, k, Y, Z] = -(T/N) sum_{q, l, a, b, X, W} Lambda_IJ(q, l) p_a(k)
+    p_b(k+q) G_WX(k+q, n_l(n))``, ``I = (a; X, Y)``, ``J = (b; Z, W)``,
+    ``p_a(k) = e^{+ik.d_a}``, ``n_l(n) = (n - l + nmat/2) mod nmat``: the
+    derivative of ``Psi`` through the first leg ``G_YZ(k, n)`` of the bubble.
+    ``lam`` is ``(nmat, nvol, NL, NL)``. One ``l`` at a time: the sum over
+    ``(q, b, W, X)`` is one matrix product, ``p_a(k)`` is applied once at
+    the end."""
+    nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    D = np.asarray(geom.delta_r, dtype=np.int64).reshape(-1, 3)
+    B = D.shape[0]
+    NL = B * nd * nd
+    pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))        # (k, a)
+    add = mesh_add(shape)                                              # (q, k) -> k + q
+    pkq = pk[add]                                                      # (q, k, b)
+    acc = np.zeros((nmat * nvol, NL), dtype=np.complex128)             # [(n, k), (a, Y, Z)]
+    for l in range(nmat):
+        lam_l = lam[l].reshape(nvol, B, nd, nd, B, nd, nd)             # (q, a, X, Y, b, Z, W)
+        L = lam_l.transpose(0, 4, 6, 2, 1, 3, 5).reshape(nvol * NL, NL)  # [(q, b, W, X), (a, Y, Z)]
+        shifted = green[(np.arange(nmat) - l + nmat // 2) % nmat][:, add]   # (n, q, k, W, X)
+        E = pkq[None, :, :, :, None, None] * shifted[:, :, :, None, :, :]   # (n, q, k, b, W, X)
+        acc += E.transpose(0, 2, 1, 3, 4, 5).reshape(nmat * nvol, nvol * NL) @ L
+    out = np.einsum("nkayz,ka->nkyz", acc.reshape(nmat, nvol, B, nd, nd), pk)
+    return (-(1.0 / beta) / nvol) * out
+
+
+def _ring2_second_leg(green, lam, beta, geom):
+    """``F2[m, k', W, X] = -(T/N) sum_{q, l, a, b, Y, Z} Lambda_IJ(q, l)
+    p_a(k'-q) p_b(k') G_YZ(k'-q, (m + l - nmat/2) mod nmat)``: the derivative
+    of ``Psi`` through the second leg ``G_WX(k', m)`` of the bubble
+    (``k' = k + q``, ``m = n_l(n)``). One ``l`` at a time: the sum over
+    ``(q, a, Y, Z)`` is one matrix product, ``p_b(k')`` is applied once at
+    the end."""
+    nmat, nvol, nd, _ = green.shape
+    shape = tuple(int(x) for x in geom.spatial_shape)
+    D = np.asarray(geom.delta_r, dtype=np.int64).reshape(-1, 3)
+    B = D.shape[0]
+    NL = B * nd * nd
+    pk = np.exp(1j * (mesh_momenta(shape) @ D.T.astype(float)))        # (k, a)
+    sub = mesh_add(shape)[mesh_negate(shape)]                          # (q, k') -> k' - q
+    pkmq = pk[sub]                                                     # (q, k', a)
+    acc = np.zeros((nmat * nvol, NL), dtype=np.complex128)             # [(m, k'), (b, W, X)]
+    for l in range(nmat):
+        lam_l = lam[l].reshape(nvol, B, nd, nd, B, nd, nd)             # (q, a, X, Y, b, Z, W)
+        L = lam_l.transpose(0, 1, 3, 5, 4, 6, 2).reshape(nvol * NL, NL)  # [(q, a, Y, Z), (b, W, X)]
+        shifted = green[(np.arange(nmat) + l - nmat // 2) % nmat][:, sub]   # (m, q, k', Y, Z)
+        E = pkmq[None, :, :, :, None, None] * shifted[:, :, :, None, :, :]  # (m, q, k', a, Y, Z)
+        acc += E.transpose(0, 2, 1, 3, 4, 5).reshape(nmat * nvol, nvol * NL) @ L
+    out = np.einsum("mkbwx,kb->mkwx", acc.reshape(nmat, nvol, B, nd, nd), pk)
+    return (-(1.0 / beta) / nvol) * out
+
+
+def ring2_gradient(green, beta, gamma_label, geom):
+    """``out[n, k, A, B] = dPsi/dG_BA(k, i w_n)`` ``(nmat, nvol, nd, nd)`` of
+    :func:`ring2_value`, by the adjoint: ``dPsi = sum Lambda_IJ dchibar_IJ``
+    with ``Lambda(q, l) = 2 [Gamma(-q) chibar(q, l) Gamma(-q)]^T``, pulled
+    back through both legs of :func:`lindhard_discrete`
+    (:func:`_ring2_first_leg`, :func:`_ring2_second_leg`, looked up at call
+    time). ``Sigma_F = beta (-T/8) out = -out/8``."""
+    green, gmq, _ = _ring_inputs(green, gamma_label, geom, "ring2_gradient")
+    if green.ndim != 4:
+        raise ValueError("ring2_gradient: green {} is not (nmat, nvol, nd, nd)".format(
+            green.shape))
+    chi = lindhard_discrete(green, beta, geom)                         # (l, q, NL, NL)
+    lam = 2.0 * np.swapaxes((gmq[None] @ chi) @ gmq[None], -1, -2)
+    F = _ring2_first_leg(green, lam, beta, geom) + _ring2_second_leg(green, lam, beta, geom)
+    return np.ascontiguousarray(np.swapaxes(F, -1, -2))
+
+
+# ---------------------------------------------------------------------------
+# Second order: the Wick second-order self-energy
+# ---------------------------------------------------------------------------
+
+def antisym_tensor(terms, nmode):
+    """The antisymmetrized two-body tensor ``(M, M, M, M)`` of quartic terms
+    ``(p, q, r, s, v)`` = ``v c+_p c_q c+_r c_s`` on ``nmode = M`` modes.
+
+    With ``q != r`` (refused otherwise: such a term carries a one-body
+    remainder ``delta_qr``) a term is ``v c+_p c+_r c_s c_q``, so ``V[p, r,
+    q, s] += v`` gives ``H = sum V_ijkl c+_i c+_j c_l c_k``, and ``U = V -
+    V^(1023) - V^(0132) + V^(1032)`` gives ``H = 1/4 sum U_ijkl c+_i c+_j
+    c_l c_k``."""
+    M = int(nmode)
+    V = np.zeros((M, M, M, M), dtype=np.complex128)
+    for term in terms:
+        p, q, r, s, v = term
+        if q == r:
+            raise ValueError("antisym_tensor: term {} has mode 2 = mode 3".format(tuple(term)))
+        V[p, r, q, s] += v
+    return V - V.transpose(1, 0, 2, 3) - V.transpose(0, 1, 3, 2) + V.transpose(1, 0, 3, 2)
+
+
+def wick_sigma2(green, beta, terms, spatial_shape, norb_phys):
+    """The second-order Wick self-energy ``(nmat, nvol, nd, nd)`` (k space,
+    spin-block index) of the quartic ``terms`` (interleaved modes) at the
+    Green function ``green`` ``(nmat, nvol, nd, nd)``.
+
+    On the grid ``tau_j = j beta / nmat`` (:func:`green_tau`, read in the
+    modes by :func:`modes_of_k`) with ``G~ = minus_tau(g)``::
+
+        Sigma_ab(tau) = -1/2 sum U[a,c,d,e] g[d,f](tau) g[e,g](tau)
+                             G~[h,c](tau) U[f,g,b,h],
+
+    ``U`` = :func:`antisym_tensor`, evaluated in four two-operand stages
+    (the five-operand ``einsum`` takes the naive O(M^9) path, about 18 s at
+    Nmat 64), then :func:`tau_to_matsubara` and :func:`k_of_modes`. Memory
+    grows as ``nmat M^4`` (the stage arrays ``A1``-``A3``)."""
+    green = np.asarray(green, dtype=np.complex128)
+    shape = _shape(spatial_shape)
+    nmat = green.shape[0]
+    M = int(np.prod(shape)) * 2 * int(norb_phys)
+    g = modes_of_k(green_tau(green, beta), shape, norb_phys)              # (n, M, M)
+    gt = minus_tau(g)
+    U = antisym_tensor(terms, M)
+    A1 = np.einsum("acde,jdf->jacfe", U, g)
+    A2 = np.einsum("jacfe,jeg->jacfg", A1, g)
+    A3 = (A2.reshape(nmat, M * M, M * M) @ U.reshape(M * M, M * M)).reshape(nmat, M, M, M, M)
+    sigma_tau = -0.5 * np.einsum("jacbh,jhc->jab", A3, gt)
+    return k_of_modes(tau_to_matsubara(sigma_tau, beta), shape, norb_phys)
+
+
+def ring3_value(green, beta, gamma_label, geom, *, chunk=32):
+    """``Psi_3 = sum_{q, l} Tr[(chibar(q, l) Gamma(-q))**3]`` of the label
+    bubble (:func:`_lindhard_batch`, every bosonic slice, wrapped second leg)
+    and ``Gamma(-q)`` read at :func:`mesh_negate`.
+
+    Sign: with ``chibar = -(T/N) sum G G`` and the RPA ``chi = [1 + chibar
+    Gamma]^-1 chibar``, the cubic term of the FLEX functional is ``+(T/6)
+    Psi_3`` and the third-order part of ``Gamma (chi - chibar/2) Gamma`` is
+    ``-Gamma chibar Gamma chibar Gamma``. The positive chain ``Gamma chibar
+    Gamma chibar Gamma`` (through ``p_b`` and the transport) is therefore
+    ``beta d/dG`` of ``-(T/6) Psi_3``, the negative of the physical third
+    order.
+
+    ``green`` is ``(nmat, nvol, nd, nd)`` (returns a complex) or a stack
+    ``(S, nmat, nvol, nd, nd)`` (returns ``(S,)``), at most ``chunk`` Green
+    functions per :func:`_lindhard_batch` call. Two-operand stages."""
+    green, gmq, _ = _ring_inputs(green, gamma_label, geom, "ring3_value")
+    single = green.ndim == 4
+    stack = green[None] if single else green
+    out = np.empty(stack.shape[0], dtype=np.complex128)
+    chunk = max(1, int(chunk))
+    for s0 in range(0, stack.shape[0], chunk):
+        A = _lindhard_batch(stack[s0:s0 + chunk], beta, geom) @ gmq[None, None]
+        A2 = A @ A
+        out[s0:s0 + chunk] = np.einsum("slqij,slqji->s", A2, A)
+    return complex(out[0]) if single else out

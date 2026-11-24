@@ -652,9 +652,12 @@ def solve_dynamic_so(input_dict):
     norb_phys = spin_orbital.physical_norb(
         nd, True, source="the Geometry file ({})".format(
             input_dict["file"]["input"]["interaction"].get("Geometry", "")))
-    so_pairing.check_so_supported(
-        input_dict, interactions, sc._nonbond_site(input_dict, norb_phys),
-        norb_phys=norb_phys)
+    # every R = 0 row is treated exactly; [mode.param] orbital_site is never
+    # parsed (one WARNING when given, from the entry context, which also
+    # holds the interaction compiled once for the nested RPA runs)
+    so_pairing.check_so_supported(input_dict, interactions, norb_phys=norb_phys)
+    so_context = spin_orbital.build_so_entry_context(
+        input_dict["mode"].get("param"), interactions, norb_phys, logger)
     # the Zeeman field of an Extern file (issue #88), read and checked in
     # every chi0q_mode before any heavy work
     extern_table, _extern_file = sc._read_so_extern(input_dict, norb_phys)
@@ -665,7 +668,7 @@ def solve_dynamic_so(input_dict):
             "checks compare the filling target).")
     # this run's band and state, for the archive checks (#88)
     so_run = sc._so_run_inputs(input_dict, hr, extern_table, norb_phys, beta,
-                               nmat, n_filling)
+                               nmat, n_filling, context=so_context)
     logger.info("=== Spin-orbital dynamic Eliashberg solver (issue #284) ===")
     logger.info("T = %s, beta = %.6g, grid %dx%dx%d, Nmat = %d, nd = %d "
                 "spin-orbitals (%d physical orbitals), chi0q_mode = %s, "
@@ -701,7 +704,7 @@ def solve_dynamic_so(input_dict):
     kz = np.linspace(0, 2.0 * np.pi, Nz, endpoint=False)
 
     # --- inputs: chi at every bosonic frequency, and G ---
-    gam = sc._so_rpa_vertex(input_dict)
+    gam = sc._so_rpa_vertex(input_dict, so_context=so_run.context)
     if chi0q_mode == "flex":
         chi_w, green_w, chi0_w, chi_path, borrowed = sc._load_flex_so(
             input_dict, nd, Nx, Ny, Nz, interactions=interactions, full=True,
@@ -728,13 +731,12 @@ def solve_dynamic_so(input_dict):
             eigenvalues, eigenvectors, mu, beta, nmat, 0.0, None,
             spin_orbital_mode=True).full_sc
         # the kernel's own G and state
-        from hwave.solver import fingerprint
         so_members = sc._so_writer_members(
-            "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run,
-            fingerprint.green_digest(green_w, "sc_o_o_xyz_f"),
+            "sc_so_dynamic", sc._SO_DYNAMIC_LABEL, so_run, sc._so_green_fp(green_w),
             sc._so_own_state(eigenvalues, beta, mu, nmat, so_run.state.target))
         chi0q_raw = sc._calc_chi0q_internal(input_dict, chi0q_tensor="general",
-                                            precomputed_mu=mu)
+                                            precomputed_mu=mu,
+                                            so_context=so_run.context)
         nvol, nd2 = Nk, nd * nd
         if np.shape(chi0q_raw) != (nmat, nvol) + (nd,) * 4:
             raise ValueError(
