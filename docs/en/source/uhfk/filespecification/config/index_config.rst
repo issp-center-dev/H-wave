@@ -301,7 +301,7 @@ and the latter on the output files (such as locations to store).
   **Description :**
   This parameter specifies the filename of the geometry in the real-space site representation,
   in the ``geometry.dat`` format written by StdFace of mVMC: three lattice vectors, one line with
-  the three boundary phases (not used by UHFk, which takes ``BoundaryCondition``), three supercell
+  the three boundary phases (read but not used: UHFk always uses periodic boundaries), three supercell
   vectors, then one ``x y z orbital`` row per site. The site rows are numbered from 0, and that
   number is the site index ``i`` used by ``initial_uhf``, ``onebodyg_uhf`` and ``onebodyg``;
   ``x y z`` are the integer cell coordinates in ``CellShape`` and ``orbital`` counts from 0.
@@ -339,8 +339,8 @@ and the latter on the output files (such as locations to store).
      as ``green.npz``, and ``initial_uhf`` reads it back the same way. Before, the writer
      read :math:`G(\vec{R}_j-\vec{R}_i)` packed x-fastest, and under ``SubShape`` larger than
      ``[1, 1, 1]`` it lost the sublattice resolution (every creation site was treated as the
-     first sublattice site). Elements with both sites in the same cell are
-     unchanged; the others can change for states without inversion symmetry (for example with
+     first sublattice site). With ``SubShape = [1, 1, 1]`` elements with both sites in the same
+     cell are unchanged; the others can change for states without inversion symmetry (for example with
      complex hopping), for cells extended in more than one direction, and under ``SubShape``.
      The values now agree with UHFr on the same cluster. In earlier releases reading
      ``geometry_uhf`` failed on NumPy 1.24 and later, so neither key could be used on the
