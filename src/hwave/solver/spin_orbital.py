@@ -243,7 +243,7 @@ def reject_spin_resolved_transfer(param_ham, solver, enable_spin_orbital):
     name, tag = _spin_resolved_name_tag(param_ham, fmt)
     raise ValueError(
         "{}: the spin-resolved Transfer format ({}) is not yet consumed by "
-        "the {} solver (issue #323). Write the Transfer in the 7-column "
+        "the {} solver. Write the Transfer in the 7-column "
         "form, or fold the spin into the orbital index and set "
         "[mode] enable_spin_orbital = true.".format(name, tag, solver))
 

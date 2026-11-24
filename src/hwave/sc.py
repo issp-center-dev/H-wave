@@ -2629,6 +2629,18 @@ def _read_interaction_files(input_dict):
     logger.info("norb = {}".format(geom_info["norb"]))
 
     transfer_file = os.path.join(path_to_input, files["Transfer"])
+    # hwave_sc builds its bare band from this read; the spin-resolved
+    # (9-column) Transfer format is not consumed here, so refuse it with
+    # an hwave_sc message rather than the reader's generic one
+    spin_marker = (wan90.read_w90_header_marker(transfer_file)
+                   if os.path.isfile(transfer_file) else None)
+    if spin_marker is not None:
+        raise ValueError(
+            "{}: hwave_sc does not accept the spin-resolved (9-column) "
+            "Transfer format ({}/{}) yet. Write the Transfer in the "
+            "7-column form, or fold the spin into the orbital index and "
+            "set [mode] enable_spin_orbital = true.".format(
+                transfer_file, *spin_marker))
     hr = wan90.read_w90(transfer_file)
 
     interaction_types = ["CoulombIntra", "CoulombInter", "Hund", "Exchange",
