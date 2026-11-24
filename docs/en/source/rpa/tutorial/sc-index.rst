@@ -1041,21 +1041,26 @@ table only for the eigenvalue solver.
    there before). The value can be ``NaN``: test it with ``math.isnan`` or
    ``numpy.isnan``, not by truthiness or ``is None``.
 
-   **Python API: module layout.** The implementation of ``hwave_sc`` moved
-   from ``hwave/sc.py`` into the package ``hwave.solver.eliashberg``, one
-   module per layer. ``hwave.sc`` now re-exports only the public API:
+   **Python API: module layout.** This affects Python scripts only; the
+   ``hwave_sc`` command, its input and its output files are unchanged. The
+   implementation of ``hwave_sc`` moved from the module ``hwave.sc`` into
+   the package ``hwave.solver.eliashberg``, split into submodules by
+   responsibility (``config``, ``band``, ``vertex``, ``kernel``, ``eigen``,
+   ``io``, ``output``, ``bond``, ``so_solve``, ``static`` and the dynamic
+   solvers). ``hwave.sc`` now re-exports only the public API:
    ``calc_eliashberg``, ``main``, ``reject_spin_orbital_mode`` and the
    constants ``DEFAULT_SOLVER_MODE``, ``IN_PROCESS_DEFAULT_SOLVER_MODE`` and
-   ``EXIT_EIGEN_NOT_CONVERGED``. A script that read a private helper through
-   ``hwave.sc`` (for example ``hwave.sc._load_chi0q``) must import it from
-   the module that defines it (``hwave.solver.eliashberg.io._load_chi0q``).
-   The modules ``hwave.solver.eliashberg_dynamic``,
-   ``hwave.solver.eliashberg_dynamic_so``, ``hwave.solver.eliashberg_bond``
-   and ``hwave.solver.eliashberg_bond_io`` still import, as aliases of
-   ``hwave.solver.eliashberg.dynamic``, ``dynamic_so``, ``bond_dynamic`` and
-   ``bond_io``; they are kept for one release and will be removed after it.
-   The ``hwave_sc`` command, its input and its output files are
-   unchanged.
+   ``EXIT_EIGEN_NOT_CONVERGED``. A script that accessed a private helper
+   through ``hwave.sc`` (for example ``hwave.sc._load_chi0q``) must import
+   it from the submodule that defines it
+   (``hwave.solver.eliashberg.io._load_chi0q``). Four old module names can
+   still be imported, as aliases of the moved modules, for one release;
+   they emit no warning and will then be removed:
+
+   - ``hwave.solver.eliashberg_dynamic`` → ``hwave.solver.eliashberg.dynamic``
+   - ``hwave.solver.eliashberg_dynamic_so`` → ``hwave.solver.eliashberg.dynamic_so``
+   - ``hwave.solver.eliashberg_bond`` → ``hwave.solver.eliashberg.bond_dynamic``
+   - ``hwave.solver.eliashberg_bond_io`` → ``hwave.solver.eliashberg.bond_io``
 
 
 Physical interpretation
