@@ -137,19 +137,28 @@ def drop_spin_block(table, dim, *, label="Transfer"):
     return kept, dropped
 
 
-def to_k(tab_r):
+def to_k(tab_r, *, scale_after=False):
     """``T(k) = sum_R e^{+ikR} T(R)`` on the FFT grid, as ``(nvol, p, q)``.
 
     ``tab_r`` is ``(nx, ny, nz, p, q)``; the k index runs in C order over
     ``(nx, ny, nz)`` with ``k_i = 2 pi m_i / n_i``. The transform is the
     unnormalised inverse FFT, the sign every solver copy uses since issue
-    #133. It is computed as ``ifftn(..., norm="forward")`` (UHFk's
-    expression); this equals ``ifftn(...) * nvol`` mathematically but not
-    bitwise on a grid with a side that is not a power of two.
+    #133. Two expressions of it are kept, because they are equal
+    mathematically but not bitwise on a grid with a side that is not a
+    power of two:
+
+    * ``scale_after=False`` (default): ``ifftn(..., norm="forward")``, the
+      expression UHFk has always used;
+    * ``scale_after=True``: ``ifftn(...) * nvol``, the expression RPA /
+      FLEX have always used. They pass it so that their outputs stay
+      byte-identical to the per-solver code this module replaced.
     """
     tab_r = np.asarray(tab_r)
     nx, ny, nz, p, q = tab_r.shape
-    tab_k = np.fft.ifftn(tab_r, axes=(0, 1, 2), norm="forward")
+    if scale_after:
+        tab_k = np.fft.ifftn(tab_r, axes=(0, 1, 2)) * (nx * ny * nz)
+    else:
+        tab_k = np.fft.ifftn(tab_r, axes=(0, 1, 2), norm="forward")
     return tab_k.reshape(nx * ny * nz, p, q)
 
 
