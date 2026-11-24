@@ -233,6 +233,21 @@ class TestInputReaderAndSolverRefusal(unittest.TestCase):
             rpa_module.RPA(self._input().get_param("ham"),
                            {"print_level": 0, "print_step": 100}, info_mode)
 
+    def test_hwave_sc_entry_refuses_with_its_own_message(self):
+        from hwave import sc
+        _write_chain(self.d, _SPIN_CHAIN)
+        inp = {"mode": {"mode": "RPA", "param": {
+                   "T": 0.5, "CellShape": [4, 1, 1], "SubShape": [1, 1, 1],
+                   "Nmat": 16, "filling": 0.5}},
+               "eliashberg": {"chi0q_mode": "calc"},
+               "file": {"input": {"path_to_input": "", "interaction": {
+                            "path_to_input": self.d, "Geometry": "geom.dat",
+                            "Transfer": "transfer.dat"}},
+                        "output": {"path_to_output": os.path.join(self.d, "out")}}}
+        with self.assertRaisesRegex(ValueError, "hwave_sc does not accept the "
+                                    "spin-resolved"):
+            sc.calc_eliashberg(inp)
+
     def test_flex_hf_bare_transfer_refuses(self):
         from hwave.solver import flex_hf
         _write_chain(self.d, _SPIN_CHAIN)
