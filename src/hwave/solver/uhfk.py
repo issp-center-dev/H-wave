@@ -43,6 +43,10 @@ class UHFk(solver_base):
         self.spin_resolved_transfer = (
             spin_orbital.spin_resolved_transfer_format(param_ham) is not None)
         spin_orbital.check_spin_resolved_clash(param_ham, self.enable_spin_orbital)
+        # the reader folded the rows with the line-2 orbital count; it must
+        # be the Geometry norb this solver decodes the keys with
+        spin_orbital.check_spin_resolved_norb(
+            param_ham, param_ham["Geometry"]["norb"], "UHFk")
         self._init_param()          # Initialize parameters
         self._init_lattice()        # Setup lattice geometry
         self._init_orbit()          # Setup orbital structure

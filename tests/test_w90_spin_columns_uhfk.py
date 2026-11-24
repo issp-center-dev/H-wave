@@ -226,6 +226,55 @@ class TestSpinDependent(unittest.TestCase):
         np.testing.assert_allclose(s.ham_trans[:, :norb, norb:], 0.0, atol=1e-12)
 
 
+class TestLineTwoNorbMustMatchGeometry(unittest.TestCase):
+    """Line 2 of a spin-resolved Transfer file is the physical orbital
+    count the reader folds with (s*N + a); a value other than the Geometry
+    norb would relabel spin as orbital, so it is refused."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="w90spin_norb_")
+        _write_geom(self.d, 2)
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def _write(self, header_norb, entries):
+        with open(os.path.join(self.d, "transfer.dat"), "w") as f:
+            f.write("{}\n{}\n1\n 1\n".format(MARKED, header_norb))
+            for (r, a, b, s, t), v in _closed(entries).items():
+                f.write("{} {} {} {} {} {} {} {:.12f} {:.12f}\n".format(
+                    *r, a, b, s, t, v.real, v.imag))
+
+    def test_line_two_smaller_than_geometry_refused(self):
+        # the review's case: line 2 = 1, Geometry norb = 2. Without the
+        # check the down spin of orbital 1 lands on the up spin of orbital 2
+        self._write(1, {((1, 0, 0), 1, 1, 0, 0): -1.0,
+                        ((1, 0, 0), 1, 1, 1, 1): -1.0})
+        with self.assertRaisesRegex(
+                ValueError, r"line 2 of this spin-resolved Transfer file "
+                r"\(w90spin/1\) gives 1 orbitals, but the Geometry norb is 2"):
+            _solver(self.d, [4, 1, 1])
+
+    def test_line_two_larger_than_geometry_refused(self):
+        # 2 * physical, as a spin-orbital-mode file would declare
+        self._write(4, _spin_independent(_ORB))
+        with self.assertRaisesRegex(ValueError, "gives 4 orbitals, but the "
+                                    "Geometry norb is 2"):
+            _solver(self.d, [4, 1, 1])
+
+    def test_seven_column_file_keeps_its_leniency(self):
+        # the 7-column format does not index with line 2
+        _write_plain_transfer(self.d, 2, _ORB)
+        path = os.path.join(self.d, "transfer.dat")
+        with open(path) as f:
+            lines = f.read().splitlines()
+        lines[1] = "5"
+        with open(path, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        s, _ = _solver(self.d, [4, 1, 1])
+        self.assertEqual(s.norb, 2)
+
+
 class TestSOCEquivalenceWithSpinOrbitalMode(unittest.TestCase):
     """Case 4: a spin-resolved SOC file and the interleaved spin-orbital
     file of the same model give the same H(k) up to the index order."""
