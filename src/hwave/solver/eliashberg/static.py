@@ -1,8 +1,9 @@
 """The static entry of hwave_sc: calc_eliashberg as stages over an
 EliashbergRun record, the command line, and the public constants.
 
-Moved verbatim from hwave.sc; the shell
-re-exports every name here under its old spelling.
+Moved verbatim from hwave.sc. hwave.sc re-exports the public API defined
+here (calc_eliashberg, main, reject_spin_orbital_mode and the public
+constants); import the other names here from this module.
 """
 from __future__ import annotations
 

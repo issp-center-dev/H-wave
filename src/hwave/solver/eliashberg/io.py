@@ -1,7 +1,8 @@
 """Reading and checking the archives of hwave_sc: chi0q, FLEX susceptibilities and Green functions, interaction files, and the chi0q internal computation.
 
-Moved verbatim from hwave.sc; the shell
-re-exports every name here under its old spelling.
+Moved verbatim from hwave.sc. hwave.sc re-exports only its public API
+(calc_eliashberg, main, reject_spin_orbital_mode and the public
+constants); import the other names here from this module.
 """
 from __future__ import annotations
 
