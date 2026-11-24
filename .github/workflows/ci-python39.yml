@@ -357,7 +357,7 @@ jobs:
     - name: Load cached venv (other shards, restore only)
       if: matrix.shard != 1
       id: restored-poetry-dependencies
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         path: .venv
         # The same key as shard 1, numpy pin included.
