@@ -4804,7 +4804,8 @@ class RPA:
                     "a reduced chi0q must be embedded at its DENSITY-PAIR "
                     "positions chi0_+-[a,a,b,b] = chi0_red[a,b] -- NOT scattered "
                     "as delta_{{l2,l4}}, which drops the very components the "
-                    "vertex reads (see sc._expand_flex_chi).".format(
+                    "vertex reads (see "
+                    "hwave.solver.eliashberg.io._expand_flex_chi).".format(
                         chi0q_orig.ndim))
             chi0q_pm = chi0q_orig.copy()
 
