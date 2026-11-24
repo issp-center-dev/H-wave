@@ -298,6 +298,10 @@ class FLEX(RPA):
     #: spin-orbital vertex refuses off-site rows); a separate marker from
     #: _accepts_flex_keys, which gates the FLEX-only [mode.param] keys
     _SO_OFFSITE_INFO = False
+    #: a spin-resolved (9-column) Transfer without spin dependence takes
+    #: the 7-column path (the gates below follow the one-body form, so the
+    #: spin structure must be judged from the matrix first, #323)
+    _COLLAPSE_SPIN_FREE_TRANSFER = True
     #: the spin-orbital (spinful) Hartree-Fock FLEX of #83; set by _init_spin_orbital
     _so_spinful = False
     _keep_spinful = False
@@ -1206,7 +1210,11 @@ class FLEX(RPA):
         """
         from hwave.solver import scheme as _scheme
         types = _scheme.declared_types(self._scheme_source_tables())
-        chosen, token = _scheme.resolve_flex(types)
+        # a one-body term that carries a spin index (spin-orbital mode, or a
+        # spin-resolved Transfer that depends on spin) is only supported on
+        # the general scheme, so auto resolves there
+        spinful = _spinful_one_body(self.ham_info)
+        chosen, token = _scheme.resolve_flex(types, spinful_one_body=spinful)
         assert token in _scheme.RESOLUTION_TOKENS
         # commit
         self.calc_scheme = chosen
@@ -1221,7 +1229,12 @@ class FLEX(RPA):
             legacy = _scheme.legacy_1_0_resolution(types, self.calc_type)
             est = self._log_scheme_memory_estimate(
                 "auto-resolved calc_scheme (FLEX)")
-            if chosen != legacy:
+            if spinful and token != "auto:flex_forcing":
+                logger.info(
+                    "auto mode for calc_scheme: set to {} ({}): {} is supported "
+                    "on the general scheme only".format(
+                        chosen, token, _spinful_label(self.ham_info)))
+            elif chosen != legacy:
                 logger.warning(
                     "FLEX calc_scheme='auto' resolved to '{}' ({}); H-wave 1.0.x "
                     "resolved this input to '{}'. Reason: {} carry cross-family "

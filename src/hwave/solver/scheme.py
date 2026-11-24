@@ -258,10 +258,15 @@ def resolve_rpa(types, calc_type, *, conserved, cause, has_sublattice):
     return "reduced", "auto:no_discarded_content"
 
 
-def resolve_flex(types):
-    """FLEX auto decision: general iff any declared type has flex_forcing."""
+def resolve_flex(types, *, spinful_one_body=False):
+    """FLEX auto decision: general iff any declared type has flex_forcing,
+    or the one-body term carries a spin index (``spinful_one_body``:
+    spin-orbital mode, or a spin-resolved Transfer that depends on spin),
+    which FLEX supports on the general scheme only."""
     if any(CAPABILITIES[t].flex_forcing for t in types):
         return "general", "auto:flex_forcing"
+    if spinful_one_body:
+        return "general", "auto:mixed:transfer"
     return "reduced", "auto:no_discarded_content"
 
 

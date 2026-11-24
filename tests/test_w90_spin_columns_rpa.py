@@ -370,6 +370,156 @@ class TestFlexGates(_Fixture):
             s.solve(read_io.get_param("green"), d)
 
 
+_TUTORIAL_1ORB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "docs", "tutorial", "Hubbard", "FLEX", "1orb")
+
+
+def _nine_column_copy(src, dst):
+    """Rewrite the 7-column Transfer file ``src`` as the equivalent
+    spin-resolved file (each row once per spin, s = t)."""
+    with open(src) as f:
+        lines = f.read().splitlines()
+    nr = int(lines[2].split()[0])
+    body0 = 3 + (nr + 14) // 15
+    out = [lines[0] + " w90spin/1"] + lines[1:body0]
+    for line in lines[body0:]:
+        v = line.split()
+        if not v:
+            break
+        for spin in (0, 1):
+            out.append(" ".join(v[:5] + [str(spin), str(spin)] + v[5:7]))
+    with open(dst, "w") as f:
+        f.write("\n".join(out) + "\n")
+
+
+class TestFlexSpinFreeNineColumnTutorial(unittest.TestCase):
+    """The FLEX 1orb tutorial with its Transfer rewritten as 9 columns.
+    The spin structure is judged from the matrix: a spin-independent file
+    takes the 7-column path, so the DEFAULT calc_scheme = "auto" runs (it
+    resolves as for the 7-column file) and every archive equals the
+    7-column run's; so does calc_scheme = "general" with flex_hartree_fock."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="w90spin_flex_tut_")
+        for name in ("geom.dat", "transfer.dat", "coulombintra.dat"):
+            shutil.copy(os.path.join(_TUTORIAL_1ORB, name), self.d)
+        _nine_column_copy(os.path.join(self.d, "transfer.dat"),
+                          os.path.join(self.d, "transfer9.dat"))
+
+    def tearDown(self):
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def _run(self, transfer, tag, scheme=None, hf=None):
+        import tomli
+        import hwave.qlms as qlms
+        with open(os.path.join(_TUTORIAL_1ORB, "input.toml"), "rb") as f:
+            inp = tomli.load(f)
+        inp["log"] = {"print_level": 0}
+        inp["mode"]["param"]["IterationMax"] = 20
+        if scheme is not None:
+            inp["mode"]["calc_scheme"] = scheme
+        if hf is not None:
+            inp["mode"]["param"]["flex_hartree_fock"] = hf
+        inter = inp["file"]["input"]["interaction"]
+        inter["path_to_input"] = self.d
+        inter["Transfer"] = transfer
+        inp["file"]["input"]["path_to_input"] = self.d
+        out = os.path.join(self.d, "out_" + tag)
+        inp["file"]["output"]["path_to_output"] = out
+        qlms.run(input_dict=inp)
+        return out
+
+    def _assert_same_archives(self, a, b):
+        for name in ("chi0q.npz", "chiq.npz", "sigma.npz", "green.npz"):
+            with np.load(os.path.join(a, name)) as za, np.load(os.path.join(b, name)) as zb:
+                self.assertEqual(set(za.files), set(zb.files), name)
+                for key in za.files:
+                    if key == "producer_version":
+                        continue
+                    x, y = za[key], zb[key]
+                    self.assertEqual((x.dtype, x.shape), (y.dtype, y.shape), (name, key))
+                    self.assertTrue(np.array_equal(x, y), (name, key))
+                self.assertNotIn("spin_resolved", za.files, name)
+
+    def test_default_auto_runs_and_equals_the_seven_column_run(self):
+        self.assertIsNotNone(wan90.read_w90_header_marker(
+            os.path.join(self.d, "transfer9.dat")))
+        self._assert_same_archives(self._run("transfer9.dat", "9auto"),
+                                   self._run("transfer.dat", "7auto"))
+
+    def test_general_with_hartree_fock_equals_the_seven_column_run(self):
+        self._assert_same_archives(
+            self._run("transfer9.dat", "9gen", "general", True),
+            self._run("transfer.dat", "7gen", "general", True))
+
+    def test_the_caller_table_is_not_rewritten(self):
+        # the 7-column view lives in FLEX's private container; the reader
+        # result keeps its spin-block table for another solver
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_module
+        files = {"path_to_input": self.d, "Geometry": "geom.dat",
+                 "Transfer": "transfer9.dat", "CoulombIntra": "coulombintra.dat"}
+        ham = read_input_k.QLMSkInput({"path_to_input": self.d,
+                                       "interaction": files}).get_param("ham")
+        before = dict(ham["Transfer"])
+        par = {"T": 0.5, "CellShape": [4, 4, 1], "SubShape": [1, 1, 1], "Nmat": 16,
+               "filling": 0.5, "IterationMax": 1}
+        s = flex_module.FLEX(ham, {}, {"mode": "FLEX", "param": par})
+        self.assertTrue(s.ham_info.spin_free_collapsed)
+        self.assertFalse(s.ham_info.spinful_one_body)
+        self.assertEqual(s.calc_scheme, "reduced")
+        self.assertEqual(dict(ham["Transfer"]), before)
+        self.assertEqual(ham.source_formats["transfer"], ("w90spin", 1))
+        # RPA keeps the nd x nd form and judges the matrix itself
+        import hwave.solver.rpa as rpa_module
+        r = rpa_module.RPA(ham, {}, {"mode": "RPA", "param": par})
+        self.assertTrue(r.ham_info.spin_resolved_transfer)
+
+
+class TestFlexAutoOnASpinDependentTransfer(_Fixture):
+    def test_auto_resolves_to_general(self):
+        # a spin flip: only the general scheme supports it, so auto goes
+        # there (and then asks for the spin-orbital conditions)
+        # CoulombIntra only: the interaction types alone resolve to reduced
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_module
+        d = self._dir(_soc_entries(_DIAG))
+
+        def ham():
+            files = {"path_to_input": d, "Geometry": "geom.dat",
+                     "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat"}
+            return read_input_k.QLMSkInput({"path_to_input": d,
+                                            "interaction": files}).get_param("ham")
+        par = dict(_PARAM, SubShape=[1, 1, 1], IterationMax=1, Mix=1.0,
+                   flex_hartree_fock=True)
+        s = flex_module.FLEX(ham(), {}, {"mode": "FLEX", "param": par,
+                                         "calc_type": "ring"})
+        self.assertEqual(s.calc_scheme, "general")
+        self.assertEqual(s._scheme_resolution, "auto:mixed:transfer")
+        self.assertTrue(s._so_spinful)
+        self.assertFalse(s.ham_info.spin_free_collapsed)
+        par.pop("flex_hartree_fock")
+        with self.assertRaisesRegex(ValueError, "flex_hartree_fock"):
+            flex_module.FLEX(ham(), {}, {"mode": "FLEX", "param": par,
+                                         "calc_type": "ring"})
+
+    def test_auto_resolves_to_general_in_spin_orbital_mode_too(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_module
+        d = self._dir(interleaved=_soc_entries(_DIAG), geom_norb=4)
+        files = {"path_to_input": d, "Geometry": "geom.dat",
+                 "Transfer": "transfer.dat", "CoulombIntra": "coulombintra.dat"}
+        ham = read_input_k.QLMSkInput({"path_to_input": d,
+                                       "interaction": files}).get_param("ham")
+        par = dict(_PARAM, SubShape=[1, 1, 1], IterationMax=1, Mix=1.0,
+                   flex_hartree_fock=True)
+        s = flex_module.FLEX(ham, {}, {"mode": "FLEX", "param": par,
+                                       "calc_type": "ring",
+                                       "enable_spin_orbital": True})
+        self.assertEqual((s.calc_scheme, s._scheme_resolution),
+                         ("general", "auto:mixed:transfer"))
+
+
 class TestFlexRun(_Fixture):
     def test_run_writes_archives_without_spin_orbital_provenance(self):
         # a spin-resolved run carries no spin-orbital fingerprints (they

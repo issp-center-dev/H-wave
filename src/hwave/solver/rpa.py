@@ -770,7 +770,12 @@ class Interaction:
         return bool(getattr(self, "enable_spin_orbital", False)
                     or self.spin_resolved_transfer)
 
-    def __init__(self, lattice, param_ham, info_mode, *, offsite_pairhop_represented=False):
+    #: Set by a spin-resolved Transfer that carries no spin dependence and
+    #: was read as the equivalent 7-column table (``collapse_spin_free``).
+    spin_free_collapsed = False
+
+    def __init__(self, lattice, param_ham, info_mode, *, offsite_pairhop_represented=False,
+                 collapse_spin_free=False):
         logger.debug(">>> Interaction.__init__")
 
         self.offsite_pairhop_represented = bool(offsite_pairhop_represented)
@@ -797,6 +802,27 @@ class Interaction:
         # be the Geometry norb the spin-block keys are decoded with
         spin_orbital.check_spin_resolved_norb(
             param_ham, param_ham["Geometry"]["norb"], "RPA/FLEX")
+        # collapse_spin_free (FLEX): a spin-resolved Transfer whose matrix
+        # does not depend on spin takes the 7-column path -- the spin
+        # structure is judged from the matrix, not from the file format.
+        # The replacement goes into a private copy of the container, so the
+        # caller's table (still keyed on spin-block indices, with its
+        # w90spin record) stays valid for another solver.
+        if (collapse_spin_free and self.spin_resolved_transfer
+                and "Transfer" in param_ham):
+            _plain = spin_orbital.spin_free_transfer_table(
+                param_ham["Transfer"], param_ham["Geometry"]["norb"])
+            if _plain is not None:
+                param_ham = spin_orbital.private_table_container(param_ham)
+                param_ham["Transfer"] = _plain
+                param_ham.source_formats["transfer"] = None
+                self.param_ham = param_ham
+                self.spin_resolved_transfer = False
+                self.spin_free_collapsed = True
+                logger.info(
+                    "Transfer: the spin-resolved (9-column) table does not "
+                    "depend on spin; it is read as the equivalent 7-column "
+                    "table.")
         # self.spinful_one_body (property) now reads True for either route
 
         # Normal mode: a spin-orbital-format one-body file carries its spin
@@ -1622,6 +1648,13 @@ class RPA:
     #: FLEX sets it False: its spin-orbital vertex refuses off-site rows.
     #: A solver nested in hwave_sc never logs it (its context is supplied).
     _SO_OFFSITE_INFO = True
+    #: Whether a spin-resolved (9-column) Transfer without spin dependence
+    #: is read as the equivalent 7-column table (Interaction's
+    #: ``collapse_spin_free``). RPA keeps the nd x nd form and judges the
+    #: spin structure from H0(k) itself; FLEX sets it True, because its
+    #: gates (scheme, Hartree-Fock, bond channels) follow the one-body
+    #: form, and a spin-free matrix must take the 7-column path there.
+    _COLLAPSE_SPIN_FREE_TRANSFER = False
 
     @do_profile
     def __init__(self, param_ham, info_log, info_mode):
@@ -1668,7 +1701,8 @@ class RPA:
         self.lattice = Lattice(self.param_mod)
         self.ham_info = Interaction(
             self.lattice, param_ham, info_mode,
-            offsite_pairhop_represented=self._offsite_pairhop_in_bond_vertex())
+            offsite_pairhop_represented=self._offsite_pairhop_in_bond_vertex(),
+            collapse_spin_free=self._COLLAPSE_SPIN_FREE_TRANSFER)
         if (self._SO_OFFSITE_INFO and self.ham_info.enable_spin_orbital
                 and self.ham_info.so_context_built_here):
             types = spin_orbital.offsite_types(self.ham_info.so_context.compiled)

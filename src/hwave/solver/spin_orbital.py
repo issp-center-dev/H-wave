@@ -252,6 +252,53 @@ def check_spin_resolved_norb(param_ham, norb_geom, solver):
         .format(name, tag, n_file, norb_geom, solver))
 
 
+def spin_free_transfer_table(table, norb_phys):
+    """The 7-column table of a spin-resolved Transfer that does not depend
+    on spin, else ``None``.
+
+    ``table`` is keyed on the spin-block composite index ``s*norb_phys + a``
+    (the reader's fold of the 9-column rows). It is spin-independent when
+    no entry couples the two spins (a zero-valued one is ignored) and the
+    up-up and down-down blocks are identical, value for value; the result
+    is then the up-up block on physical indices -- exactly the table the
+    equivalent 7-column file reads to. Any spin dependence (a Zeeman-like
+    asymmetry or a spin flip), or an index outside ``[0, 2*norb_phys)``,
+    gives ``None``.
+    """
+    n = int(norb_phys)
+    blocks = ({}, {})
+    for (irvec, (i, j)), v in table.items():
+        if not (0 <= i < 2 * n and 0 <= j < 2 * n):
+            return None
+        si, sj = i // n, j // n
+        if si != sj:
+            if v != 0:
+                return None
+            continue
+        blocks[si][(irvec, (i - si * n, j - sj * n))] = v
+    up, dn = blocks
+    for key in set(up) | set(dn):
+        if up.get(key, 0) != dn.get(key, 0):
+            return None
+    # an entry present in the down block only is zero (checked above)
+    return dict(up)
+
+
+def private_table_container(param_ham):
+    """A copy of the k-space reader's table container that a solver can
+    rewrite without touching the caller's: the same tables (shared, not
+    copied) and the same record attributes (``source_files``,
+    ``source_dimensions``, ``source_formats``; their dicts copied)."""
+    new = type(param_ham)()
+    for key, value in param_ham.items():
+        new[key] = value
+    for attr, value in vars(param_ham).items():
+        if attr == "_store":
+            continue
+        setattr(new, attr, dict(value) if isinstance(value, dict) else value)
+    return new
+
+
 def spinful_one_body(ham_info):
     """Whether the one-body term of ``ham_info`` carries a spin index (is
     held as nd x nd): spin-orbital mode or a spin-resolved Transfer.
