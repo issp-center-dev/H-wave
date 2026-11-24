@@ -295,6 +295,60 @@ class TestFlexGates(_Fixture):
         with self.assertRaisesRegex(ValueError, "flex_hartree_fock"):
             self._flex(self._dir(_soc_entries()), "general")
 
+    def test_bond_channels_are_refused(self):
+        # the bond-resolved spinful FLEX (#270) is built from the
+        # spin-orbital entry context, which only enable_spin_orbital makes
+        with self.assertRaisesRegex(
+                ValueError, r"spin-resolved \(9-column\) Transfer \(FLEX\) does not "
+                            r"support longitudinal_bond_channels"):
+            self._flex(self._dir(_soc_entries()), "general",
+                       {"flex_hartree_fock": True, "longitudinal_bond_channels": True})
+
+    def test_offsite_refusal_does_not_point_to_the_bond_channels(self):
+        import hwave.qlmsio.read_input_k as read_input_k
+        import hwave.solver.flex as flex_module
+        d = self._dir(_soc_entries())
+        with open(os.path.join(d, "coulombinter.dat"), "w") as f:
+            f.write("CoulombInter\n2\n1\n 1\n")
+            f.write("1 0 0 1 1 0.2 0.0\n-1 0 0 1 1 0.2 0.0\n")
+        files = dict(_FILES, path_to_input=d, CoulombInter="coulombinter.dat")
+        read_io = read_input_k.QLMSkInput({"path_to_input": d, "interaction": files})
+        par = dict(_PARAM, SubShape=[1, 1, 1], IterationMax=1, Mix=1.0,
+                   flex_hartree_fock=True)
+        s = flex_module.FLEX(read_io.get_param("ham"), {},
+                             {"mode": "FLEX", "param": par, "calc_scheme": "general",
+                              "calc_type": "ring", "enable_spin_orbital": False})
+        with self.assertRaisesRegex(
+                ValueError, r"spin-resolved \(9-column\) Transfer \(FLEX\) supports "
+                            r"on-site and in-cell interactions only \(.*off-site "
+                            r"'CoulombInter' declaration .* is refused\.$"):
+            s.solve(read_io.get_param("green"), d)
+
+
+class TestFlexRun(_Fixture):
+    def test_run_writes_archives_without_spin_orbital_provenance(self):
+        # a spin-resolved run carries no spin-orbital fingerprints (they
+        # belong to the entry context of enable_spin_orbital), in FLEX as
+        # in RPA; the run itself goes through the spinful route to the end
+        import hwave.qlms as qlms
+        d = self._dir(_soc_entries())
+        out = os.path.join(d, "output")
+        par = dict(_PARAM, SubShape=[1, 1, 1], IterationMax=2, Mix=0.5,
+                   flex_hartree_fock=True)
+        inp = {"log": {"print_level": 0},
+               "mode": {"mode": "FLEX", "param": par, "calc_scheme": "general",
+                        "calc_type": "ring", "enable_spin_orbital": False},
+               "file": {"input": {"path_to_input": d,
+                                  "interaction": dict(_FILES, path_to_input=d)},
+                        "output": {"path_to_output": out, "chi0q": "chi0q.npz",
+                                   "chiq": "chiq.npz", "green": "green",
+                                   "sigma": "sigma"}}}
+        qlms.run(input_dict=inp)
+        for name in ("chi0q.npz", "chiq.npz", "green.npz", "sigma.npz"):
+            with np.load(os.path.join(out, name)) as z:
+                stray = [k for k in z.files if k.startswith(("fp_", "prov_"))]
+                self.assertEqual(stray, [], name)
+
 
 class TestExportRoundTrip(_Fixture):
     def test_export_writes_the_spin_resolved_format_back(self):
