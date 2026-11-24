@@ -1041,6 +1041,22 @@ table only for the eigenvalue solver.
    there before). The value can be ``NaN``: test it with ``math.isnan`` or
    ``numpy.isnan``, not by truthiness or ``is None``.
 
+   **Python API: module layout.** The implementation of ``hwave_sc`` moved
+   from ``hwave/sc.py`` into the package ``hwave.solver.eliashberg``, one
+   module per layer. ``hwave.sc`` now re-exports only the public API:
+   ``calc_eliashberg``, ``main``, ``reject_spin_orbital_mode`` and the
+   constants ``DEFAULT_SOLVER_MODE``, ``IN_PROCESS_DEFAULT_SOLVER_MODE`` and
+   ``EXIT_EIGEN_NOT_CONVERGED``. A script that read a private helper through
+   ``hwave.sc`` (for example ``hwave.sc._load_chi0q``) must import it from
+   the module that defines it (``hwave.solver.eliashberg.io._load_chi0q``).
+   The modules ``hwave.solver.eliashberg_dynamic``,
+   ``hwave.solver.eliashberg_dynamic_so``, ``hwave.solver.eliashberg_bond``
+   and ``hwave.solver.eliashberg_bond_io`` still import, as aliases of
+   ``hwave.solver.eliashberg.dynamic``, ``dynamic_so``, ``bond_dynamic`` and
+   ``bond_io``; they are kept for one release and will be removed after it.
+   The ``hwave_sc`` command, its input and its output files are
+   unchanged.
+
 
 Physical interpretation
 ----------------------------
