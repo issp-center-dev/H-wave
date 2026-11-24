@@ -236,22 +236,37 @@
    虚部は Dzyaloshinskii-Moriya 型の項になります。この拡張は issue #302 で扱っています。
    物理的な複素位相をもつのは\ ``PairHop``\ だけで、虚部があっても受け入れられます。
    ``enable_spin_orbital``\ を使わない場合の動作は変わりません。
+
 -  **スピン列つき拡張形式（9 列）の Transfer。** 1 行目に\ ``w90spin/1``\ を含み、各行が
    ``Rx Ry Rz a b s t Re Im``\ （\ ``a``, ``b``\ は 1 始まりの物理軌道、\ ``s``, ``t``\ は
-   0 始まりのスピン）の Transfer ファイルも受け付けます（形式の規則は UHFk の
-   相互作用ファイルの説明を参照）。幾何ファイルの\ ``norb``\ と相互作用定義ファイルは
-   物理軌道のままで、\ ``mode.enable_spin_orbital = true``\ との併用はエラーです。
-   内部では一体項を\ :math:`2N_\text{orbital} \times 2N_\text{orbital}`\ のスピンブロック順で
-   持ち、スピン構造は行列から判定されます: スピン非依存なら spin-free（7 列と同じ経路）、
+   0 始まりのスピン）の Transfer ファイルも受け付けます（形式の規則と例は UHFk の
+   相互作用ファイルの説明を参照）。ファイルの 2 行目は物理軌道の数で、幾何ファイルの
+   ``norb``\ と一致しなければなりません。幾何ファイルと相互作用定義ファイルは物理軌道の
+   ままで、\ ``mode.enable_spin_orbital = true``\ との併用はエラーです。各行にはエルミート
+   共役の相手\ :math:`T_{as,bt}(R) = T_{bt,as}(-R)^*`\ が必要で、相手のない行は拒否されます。
+
+   RPA は一体項を\ :math:`2N_\text{orbital} \times 2N_\text{orbital}`\ のスピンブロック順で
+   持ち、スピン構造を行列から判定します: スピン非依存なら spin-free（7 列ファイルと同じ結果）、
    スピン対角で非対称なら spin-diag、スピン非対角（\ :math:`s \ne t`\ ）成分があれば
-   spinful（FLEX では\ ``flex_hartree_fock = true``\ などスピン軌道モードと同じ条件が
-   課されます）。\ ``calc_scheme = "auto"``\ の判定は 7 列・スピン軌道モードと同じ規則で、
+   spinful です。\ ``calc_scheme = "auto"``\ の判定は 7 列・スピン軌道モードと同じ規則で、
    軌道間ホッピングまたはスピン反転があれば general に昇格します。
-   Extern はこの形式でも物理軌道インデックスで書き、\ :math:`h\sigma^z`\ として加わります
-   （Transfer ファイル側にスピン非対称なオンサイト項が既にある場合、両者は加算されます）。
-   hwave_sc は現在この形式を受け付けません。この形式から計算した chi0q / chiq には
-   ``spin_resolved = True``\ のマーカーが記録され、\ ``chi0q_init``\ での取り違え
-   （軌道数 2N のスピン非依存模型と同じ形になります）は拒否されます。
+
+   FLEX も行列で判定します。スピンに依存しない Transfer（up-up と down-down のブロックが
+   同一で、スピン反転がない）は同等の 7 列ファイルとして読まれ、\ ``calc_scheme = "auto"``\ を
+   含め、すべてのスキームとオプションが 7 列ファイルと同じに動作します。スピンに依存する
+   Transfer（スピン非対称な対角成分またはスピン反転）はスピン軌道モードの spinful 経路を
+   通り、同じ条件が課されます: ``calc_scheme = "general"``\ と\ ``flex_hartree_fock = true``\ 、
+   オンサイトとセル内の相互作用のみ、\ ``longitudinal_bond_channels``\ は不可です。
+   このような Transfer とスピン軌道モードでは、FLEX の\ ``calc_scheme = "auto"``\ は
+   ``"general"``\ に決まります。
+
+   Extern はこの形式でも物理軌道インデックスで書き、\ :math:`h\sigma^z`\ として、Transfer
+   ファイルが持つスピン依存性に加算されます。hwave_sc は現在この形式を受け付けません。
+   RPA がこの形式から計算した chi0q / chiq と、FLEX がスピンに依存する Transfer から計算した
+   chi0q / chiq には\ ``spin_resolved = True``\ のマーカーが記録され、\ ``chi0q_init``\ は
+   7 列の計算・9 列の計算・スピン軌道モードの計算の間で共有できません。別の種類の計算の
+   ファイルは拒否されます（軌道数 2N のスピン非依存模型と同じ配列の形になるためです）。
+   FLEX がスピンに依存しない Transfer を読んだ計算は 7 列の計算として扱われます。
 
 -  **スピン軌道モードでの Extern。**\ ``mode.enable_spin_orbital = true``\ の場合も、
    Extern ファイルは\ **物理**\ 軌道インデックスで書きます。各\ :math:`R`\ について

@@ -267,26 +267,47 @@ Usage rules
    Only ``PairHop`` carries a physical complex phase and is accepted with an
    imaginary part. Without ``enable_spin_orbital`` the previous behaviour is
    unchanged.
+
 -  **Spin-resolved (9-column) Transfer.** A Transfer file whose line 1 contains
    ``w90spin/1`` and whose rows are ``Rx Ry Rz a b s t Re Im`` (``a``, ``b``
    1-based physical orbitals, ``s``, ``t`` 0-based spins) is accepted as well
-   (the format rules are on the UHFk interaction-file page). The geometry
-   ``norb`` and the interaction definition files keep their physical indices,
-   and combining it with ``mode.enable_spin_orbital = true`` is an error.
-   Internally the one-body term is held as a
+   (the format rules and an example are on the UHFk interaction-file page).
+   Line 2 of the file is the number of physical orbitals and must equal the
+   geometry ``norb``; the geometry and the interaction definition files keep
+   their physical indices, and combining the format with
+   ``mode.enable_spin_orbital = true`` is an error. Every row needs its
+   Hermitian partner, :math:`T_{as,bt}(R) = T_{bt,as}(-R)^*`; a row without
+   it is refused.
+
+   RPA holds the one-body term as a
    :math:`2N_\text{orbital} \times 2N_\text{orbital}` matrix in spin-block
-   order and its spin structure is judged from the matrix: spin-independent
-   -> spin-free (the 7-column path), spin-diagonal but asymmetric ->
-   spin-diag, with spin-off-diagonal (:math:`s \ne t`) entries -> spinful
-   (FLEX then imposes the same conditions as spin-orbital mode, e.g.
-   ``flex_hartree_fock = true``). ``calc_scheme = "auto"`` applies the same
-   rule as for a 7-column file and spin-orbital mode: an inter-orbital
-   hopping or a spin flip promotes to general. Extern stays in physical orbital indices
-   and enters as :math:`h\sigma^z` (it adds to a spin-asymmetric on-site term
-   already present in the Transfer file). hwave_sc does not accept this format
-   yet. The chi0q / chiq computed from this format carry a ``spin_resolved =
-   True`` marker, and a ``chi0q_init`` mix-up (a spin-free model with 2N
-   orbitals has the same shape) is refused.
+   order and judges its spin structure from the matrix: spin-independent
+   -> spin-free (the result of the 7-column file), spin-diagonal but
+   asymmetric -> spin-diag, with spin-off-diagonal (:math:`s \ne t`)
+   entries -> spinful. ``calc_scheme = "auto"`` applies the same rule as for
+   a 7-column file and spin-orbital mode: an inter-orbital hopping or a spin
+   flip promotes to general.
+
+   FLEX judges the matrix as well. A Transfer that does not depend on spin
+   (identical up-up and down-down blocks, no spin flip) is read as the
+   equivalent 7-column file, so every scheme and option behaves as for that
+   file, ``calc_scheme = "auto"`` included. A Transfer that depends on spin
+   (a spin-asymmetric diagonal or a spin flip) takes the spinful route of
+   spin-orbital mode, with the same conditions: ``calc_scheme = "general"``
+   with ``flex_hartree_fock = true``, on-site and in-cell interactions only,
+   no ``longitudinal_bond_channels``. For such a Transfer, and in
+   spin-orbital mode, FLEX's ``calc_scheme = "auto"`` resolves to
+   ``"general"``.
+
+   Extern stays in physical orbital indices and enters as
+   :math:`h\sigma^z`, added to whatever spin dependence the Transfer file
+   already carries. hwave_sc does not accept this format yet. The chi0q /
+   chiq that RPA computes from this format, and FLEX from a spin-dependent
+   one, carry a ``spin_resolved = True`` marker, and a ``chi0q_init`` cannot
+   be shared between a 7-column run, a 9-column run and a spin-orbital run:
+   a file from another kind of run is refused (a spin-free model with 2N
+   orbitals has the same array shape). A spin-independent Transfer read by
+   FLEX counts as a 7-column run.
 
 -  **Extern in spin-orbital mode.** With ``mode.enable_spin_orbital = true``
    the Extern file keeps the **physical** orbital indices: an
