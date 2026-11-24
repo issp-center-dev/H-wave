@@ -348,6 +348,21 @@ class TestFlexRun(_Fixture):
             with np.load(os.path.join(out, name)) as z:
                 stray = [k for k in z.files if k.startswith(("fp_", "prov_"))]
                 self.assertEqual(stray, [], name)
+                # not a spin-orbital archive: the marker of this format is
+                # spin_resolved, on chi0q / chiq as in RPA
+                self.assertNotIn("spin_orbital", z.files, name)
+                if name in ("chi0q.npz", "chiq.npz"):
+                    self.assertIn("spin_resolved", z.files, name)
+                    self.assertTrue(bool(z["spin_resolved"]), name)
+        # the chi0q is admitted as chi0q_init by a spin-resolved run and
+        # refused by a spin-orbital one
+        s, _ = _rpa(d, scheme="general")
+        info = s.read_init({"path_to_input": out, "chi0q_init": "chi0q.npz"})
+        self.assertIn("chi0q", info)
+        dso = self._dir(interleaved=_soc_entries(), geom_norb=4)
+        sso, _ = _rpa(dso, scheme="general", enable_spin_orbital=True)
+        with self.assertRaisesRegex(ValueError, "spin_resolved = True"):
+            sso.read_init({"path_to_input": out, "chi0q_init": "chi0q.npz"})
 
 
 class TestExportRoundTrip(_Fixture):

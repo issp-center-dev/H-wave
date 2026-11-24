@@ -5866,6 +5866,20 @@ class FLEX(RPA):
         # ONCE and merged into chiq, green, sigma and chi0q; the Green digest
         # is that of the array written to green.npz
         so_prov = {}
+        # the marker of a spinful run. spin_orbital (#83) goes on every
+        # archive of an enable_spin_orbital run and on no other: a
+        # spin-resolved (9-column) Transfer (#323) takes the same spinful
+        # route but is not a spin-orbital run (physical orbital indices, no
+        # spin-orbital provenance), and marks its chi0q / chiq with
+        # spin_resolved instead, as RPA does
+        _spinful_run = bool(getattr(self, "_so_spinful", False))
+        _ham_info = getattr(self, "ham_info", None)
+        so_mark = ({"spin_orbital": True}
+                   if _spinful_run and getattr(_ham_info, "enable_spin_orbital", False)
+                   else {})
+        chi_mark = so_mark or (
+            {"spin_resolved": True}
+            if _spinful_run and spin_orbital.spin_resolved_one_body(_ham_info) else {})
         # the chi0q / chiq provenance: the same dict, except on the
         # spin-orbital bond FLEX, whose chi0q / chiq carry the digest and the
         # state point (mu, density) of the last map's Green function
@@ -6028,9 +6042,9 @@ class FLEX(RPA):
                      # #83: the spin-orbital marker, written ONLY by a
                      # spin-orbital run (a non-spin-orbital archive keeps its
                      # member set); hwave_sc requires it in spin-orbital
-                     # flex mode -- index_convention alone is on every file
-                     **({"spin_orbital": True}
-                        if getattr(self, "_so_spinful", False) else {}),
+                     # flex mode -- index_convention alone is on every file.
+                     # A spin-resolved Transfer writes spin_resolved (#323)
+                     **chi_mark,
                      **so_prov_map)
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
@@ -6117,8 +6131,8 @@ class FLEX(RPA):
                 save_dict["chiq"] = green_info["chiq"]
                 save_dict["index_convention"] = spin_orbital.INDEX_CONVENTION
             if self._so_spinful:
-                # #83: written ONLY by a spin-orbital run (see chi0q above)
-                save_dict["spin_orbital"] = True
+                # the marker of this spinful run (see chi0q above)
+                save_dict.update(chi_mark)
                 save_dict.update(so_prov_map)
             np.savez(file_name, **save_dict)
             logger.info("save_results: save chiq in file {}".format(file_name))
@@ -6139,7 +6153,7 @@ class FLEX(RPA):
                                    **self._provenance_block("final_state"))
             if self._so_spinful:
                 sigma_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
-                sigma_extra["spin_orbital"] = True
+                sigma_extra.update(so_mark)
                 sigma_extra.update(so_prov)
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
@@ -6174,7 +6188,7 @@ class FLEX(RPA):
                 # of the archive checks) and the spin-orbital marker
                 green_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
                 green_extra["green_layout"] = fingerprint.GREEN_LAYOUT
-                green_extra["spin_orbital"] = True
+                green_extra.update(so_mark)
                 green_extra.update(so_prov)
             green_members = dict(
                 green=green_info.get("green"),
