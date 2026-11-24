@@ -277,6 +277,51 @@ class TestProvenanceMarker(_Fixture):
             s.read_init({"path_to_input": out, "chi0q_init": name})
 
 
+class TestLineTwoNorbMustMatchGeometry(_Fixture):
+    """Line 2 of a spin-resolved Transfer is the physical orbital count the
+    reader folds with (s*N + a); RPA / FLEX decode the keys with the
+    Geometry norb, so a different value is refused."""
+
+    def _dir_header(self, header_norb, entries):
+        d = self._dir(_spin_independent(_DIAG))
+        with open(os.path.join(d, "transfer.dat"), "w") as f:
+            f.write("Transfer w90spin/1\n{}\n1\n 1\n".format(header_norb))
+            for (r, a, b, s_, t), v in _closed(entries).items():
+                f.write("{} {} {} {} {} {} {} {:.12f} {:.12f}\n".format(
+                    *r, a, b, s_, t, v.real, v.imag))
+        return d
+
+    def test_line_two_smaller_than_geometry_refused(self):
+        # the review's case: line 2 = 1, Geometry norb = 2; without the
+        # check the down spin of orbital 1 is read as the up spin of 2
+        d = self._dir_header(1, {((1, 0, 0), 1, 1, 0, 0): -1.0,
+                                 ((1, 0, 0), 1, 1, 1, 1): -1.0})
+        for scheme in ("general", "auto"):
+            with self.subTest(scheme=scheme), self.assertRaisesRegex(
+                    ValueError, r"gives 1 orbitals, but the Geometry norb is 2 "
+                                r"\(RPA/FLEX\)"):
+                _rpa(d, scheme=scheme)
+
+    def test_line_two_larger_than_geometry_refused(self):
+        d = self._dir_header(4, _spin_independent(_DIAG))
+        with self.assertRaisesRegex(ValueError, "gives 4 orbitals, but the "
+                                    "Geometry norb is 2"):
+            _rpa(d, scheme="general")
+
+    def test_flex_refuses_too(self):
+        import hwave.solver.flex as flex_module
+        d = self._dir_header(1, {((1, 0, 0), 1, 1, 0, 0): -1.0,
+                                 ((1, 0, 0), 1, 1, 1, 1): -1.0})
+        ham, _ = _ham(d)
+        par = dict(_PARAM, SubShape=[1, 1, 1], IterationMax=1, Mix=1.0,
+                   flex_hartree_fock=True)
+        with self.assertRaisesRegex(ValueError, "gives 1 orbitals"):
+            flex_module.FLEX(ham, {}, {"mode": "FLEX", "param": par,
+                                       "calc_scheme": "general",
+                                       "calc_type": "ring",
+                                       "enable_spin_orbital": False})
+
+
 class TestFlexGates(_Fixture):
     def _flex(self, d, scheme, extra=None):
         import hwave.solver.flex as flex_module

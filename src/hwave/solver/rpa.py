@@ -793,6 +793,10 @@ class Interaction:
         self.spin_resolved_transfer = (
             spin_orbital.spin_resolved_transfer_format(param_ham) is not None)
         spin_orbital.check_spin_resolved_clash(param_ham, self.enable_spin_orbital)
+        # the reader folded the rows with the line-2 orbital count; it must
+        # be the Geometry norb the spin-block keys are decoded with
+        spin_orbital.check_spin_resolved_norb(
+            param_ham, param_ham["Geometry"]["norb"], "RPA/FLEX")
         # self.spinful_one_body (property) now reads True for either route
 
         # Normal mode: a spin-orbital-format one-body file carries its spin
