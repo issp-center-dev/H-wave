@@ -211,6 +211,11 @@ that has no effect under the current settings.
 
   Relax the checks that the distances of hopping and interaction are within the halves of ``CellShape``;
   if true, warn and continue execution, otherwise stop.
+  When true, a translation vector outside ``CellShape`` is folded back into the cell
+  (component-wise modulo ``CellShape``), and entries that fold onto the same vector are summed.
+  On the ``CellShape`` k-mesh this gives the same Hamiltonian as the unfolded table.
+  The type of each row is still judged on the vector as written: for example, an inter-site
+  row whose vector folds to zero remains an inter-site interaction with a periodic image.
 
 ``log`` section
 ================================
@@ -358,6 +363,19 @@ to the definition files.
   **Description :**
   This parameter specifies the name of the file to store the one-body Green's functions.
   If it is set to an empty string, no output will be generated.
+
+- ``scf_status``
+
+  **Type :**
+  String (default value is ``"scf_status.dat"``)
+
+  **Description :**
+  This parameter specifies the name of the file to store the convergence
+  status of the SCF loop (see :ref:`subsec:scf_status_uhfk.dat`). It is
+  written by default; if it is set to an empty string, no output will be
+  generated. The value must be a string, and the file must not be the same file as
+  another result file of the run (as written, including the ``.npz`` suffix
+  and generated names, ignoring case) or the ``print_check`` file. The key is matched exactly.
 
 - ``rpa``
 

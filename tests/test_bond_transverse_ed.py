@@ -50,6 +50,7 @@ from hwave.solver import green as _hgreen
 from hwave.solver import rpa as rpa_mod
 from hwave.solver.vertex_table import ring_spin_table
 from tests import ed_oracle_util
+from tests import ed_cache
 from tests.approx_util import assert_approx_array
 from tests.heavy_tests import heavy
 
@@ -239,7 +240,7 @@ def _h2_chi0_solver_frame():
     solver's bare transverse bubble at this on-site fixture."""
     fx, _C, _CD, _H1 = oracle._fx2_state()
     channels = _h2_channels()
-    se = ed_oracle_util.SectorED(fx)
+    se = ed_cache.sector(fx)
     raw = se.bond_correlator_transverse(list(channels))
     return _frame_map(raw, oracle.NORB)
 
@@ -291,10 +292,10 @@ def _h2_ed_derivative_solver_frame(kind, phase=1.0):
         @functools.lru_cache(maxsize=None)
         def X_of_v(v):
             terms = _terms_at(fx, kind, v, phase)
-            full = ed_oracle_util.SectorED(
+            full = ed_cache.sector(
                 fx, terms=terms).bond_correlator_transverse(channels)
             hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
-            hf_only = ed_oracle_util.SectorED(
+            hf_only = ed_cache.sector(
                 fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
             return _frame_map(full - hf_only, norb)
 
@@ -1507,10 +1508,10 @@ def _w0_ed_derivative_solver_frame(fx, terms_of_v, delta_r, norb):
     @functools.lru_cache(maxsize=None)
     def X_of_v(v):
         terms = terms_of_v(v)
-        full = ed_oracle_util.SectorED(
+        full = ed_cache.sector(
             fx, terms=terms).bond_correlator_transverse(channels)
         hf_h1 = ed_oracle_util.hf_h1_from_terms(fx, terms)
-        hf_only = ed_oracle_util.SectorED(
+        hf_only = ed_cache.sector(
             fx, terms=(), h1=hf_h1).bond_correlator_transverse(channels)
         diff = full - hf_only
         return diff[:, smap][:, :, smap]
@@ -1528,7 +1529,7 @@ def _w0_chi0_solver_frame(fx, delta_r, norb):
     delta_r_1d = _w0_delta_r_1d(delta_r)
     channels = _w0_channels_for(delta_r_1d, norb)
     smap = transverse_ed_to_solver_map(channels, delta_r_1d, norb)
-    se = ed_oracle_util.SectorED(fx)
+    se = ed_cache.sector(fx)
     raw = se.bond_correlator_transverse(channels)
     return raw[:, smap][:, :, smap]
 
@@ -2564,7 +2565,7 @@ def _sector_s_minus_correlator(se, channels):
     ``S-_{R,a,b}(q) = sum_j e^{+iqj} c^+_{j+R,a,dn} c_{j,b,up}`` (creation
     DOWN, annihilation UP, the opposite of S+'s creation UP/annihilation
     DOWN). Built directly from ``SectorED``'s own
-    ``_build_operator``/``_lehmann_dagger``/``_thermal_avg`` primitives (the
+    ``_build_operator``/``_lehmann_dagger_matrix``/``_thermal_avg`` primitives (the
     SAME primitives ``bond_correlator_transverse`` uses internally, already
     called directly from this module's own contract tests, e.g.
     ``TestBondCorrelatorTransverseContract.
@@ -2591,21 +2592,22 @@ def _sector_s_minus_correlator(se, channels):
     n_i = len(wrapped)
     out = np.zeros((fx.L, n_i, n_i), dtype=complex)
     for qi in range(fx.L):
-        built = []
+        ops, avgs, delta = [], [], None
         for (R, a, b) in wrapped:
             mode_terms = [
                 (fx.mode((j + R) % fx.L, a, 1), fx.mode(j, b, 0),
                  np.exp(2j * np.pi * qi * j / fx.L))
                 for j in range(fx.L)]
             delta, op = se._build_operator(mode_terms)
-            built.append((delta, op, se._thermal_avg(op, delta)))
-        for i in range(n_i):
-            deltaA, opA, avgA = built[i]
-            for j in range(n_i):
-                deltaB, opB, avgB = built[j]
-                val = se._lehmann_dagger(opA, deltaA, opB, deltaB)
-                val -= fx.beta * avgA * np.conj(avgB)
-                out[qi, i, j] = val
+            ops.append(op)
+            avgs.append(se._thermal_avg(op, delta))
+        if n_i == 0:
+            continue
+        # every (I, J) cell of this q at once (the contraction of
+        # _lehmann_dagger, as one product per sector)
+        avgs = np.asarray(avgs, dtype=complex)
+        out[qi] = (se._lehmann_dagger_matrix(ops, delta)
+                   - fx.beta * np.outer(avgs, np.conj(avgs)))
     return out / fx.L
 
 
@@ -2770,12 +2772,14 @@ class TestTask6ProductionConjugatePairGranule(unittest.TestCase):
 
         def X_of_v(v):
             terms = terms_of_v(v)
+            # the engines come from the shared content-keyed cache: the
+            # Richardson stencils of v1 and v1/2 revisit the same points
             full = _sector_s_minus_correlator(
-                ed_oracle_util.SectorED(fx, terms=terms, h1=h1_zeeman),
+                ed_cache.sector(fx, terms=terms, h1=h1_zeeman).engine(),
                 channels)
             hf_h1 = _hf_h1_from_terms_at(fx, terms, h1_zeeman)
             hf_only = _sector_s_minus_correlator(
-                ed_oracle_util.SectorED(fx, terms=(), h1=hf_h1), channels)
+                ed_cache.sector(fx, terms=(), h1=hf_h1).engine(), channels)
             return full - hf_only
 
         v1 = CAMPAIGN_V1_TASK6

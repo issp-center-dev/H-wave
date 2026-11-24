@@ -7,7 +7,7 @@ Basic usage
   H-wave requires the following programs and libraries:
 
   - python 3.10 or later
-  - numpy module
+  - numpy module (1.26 or later and below 3; CI tests numpy 1.26 and 2.x)
   - scipy module
   - requests module
   - tomli module
@@ -34,6 +34,24 @@ Basic usage
   `scipy.fft <https://docs.scipy.org/doc/scipy/reference/fft.html>`_ when the
   opt-in ``fft_workers`` parameter requests parallel FFT worker threads, and to
   cuFFT on the GPU.
+
+- Reading results from Python
+
+  The ``hwave.results`` package reads the output files of a UHFr or UHFk run
+  from Python, starting from the run's input TOML file. For example,
+
+  .. code-block:: python
+
+     import hwave.results as hr
+
+     run = hr.open_run("input.toml")
+     status = hr.read_scf_status(run)   # converged, residual, iterations
+     energy = hr.read_energy(run)
+
+  The readers check the convention tags stored in the output files and the
+  run settings, and raise an error with a hint instead of guessing when an
+  output is missing, was not written by this run, or has an unknown layout. The functions and result
+  types are documented in their docstrings, e.g. ``help(hr)``.
 
 - Official Page
 

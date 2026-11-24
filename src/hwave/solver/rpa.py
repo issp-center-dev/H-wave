@@ -52,6 +52,19 @@ PAIRLIFT_INERT_WARNING = (
     "against exact diagonalization), so it has no effect on the "
     "susceptibility channels in any scheme.")
 
+#: The INFO line a public spin-orbital RPA run logs once when the
+#: interaction has off-site rows; ``{types}`` is the sorted, ``", "``-joined
+#: names of the types with a nonzero off-site record that enter the vertex
+#: through their direct part (``spin_orbital.offsite_types``).
+SO_OFFSITE_INFO = (
+    "enable_spin_orbital: the off-site rows of {types} enter the spinful RPA "
+    "vertex through their direct (Hartree-like) part V(q) only; the exchange "
+    "(crossing) part of these off-site rows is not included in the ring sum. "
+    "The on-site and in-cell exchange is included. For an exact treatment of the "
+    "off-site exchange use hwave_sc with [eliashberg] bond_channels = true "
+    "(frequency = \"static\") or FLEX with [mode.param] "
+    "longitudinal_bond_channels = true.")
+
 
 def canonical_scheme_name(raw):
     """The canonical spelling of a ``calc_scheme`` request: CASE ONLY.
@@ -689,10 +702,20 @@ class Interaction:
     ham_spinful_exchange = None
     _spinful_exchange_built = False
     _onsite_direct_calls = ()
+    # spin-orbital mode: the entry context (spin_orbital.SOEntryContext)
+    # and whether this construction built it (a public entry) rather than
+    # receiving it from an enclosing solver; None / False otherwise
+    so_context = None
+    so_context_built_here = False
+    #: whether the solver represents an off-site PairHop on its own bond
+    #: vertex (the spin-orbital bond FLEX), so that the discard WARNING of
+    #: _make_ham_inter does not apply
+    offsite_pairhop_represented = False
 
-    def __init__(self, lattice, param_ham, info_mode):
+    def __init__(self, lattice, param_ham, info_mode, *, offsite_pairhop_represented=False):
         logger.debug(">>> Interaction.__init__")
 
+        self.offsite_pairhop_represented = bool(offsite_pairhop_represented)
         self.lattice = lattice
         self.param_ham = param_ham
 
@@ -758,11 +781,30 @@ class Interaction:
             # keys are case-insensitive; a ParamDict (from hwave) is read
             # directly so that the read is recorded
             _param = CaseInsensitiveDict(_param)
-        self.orbital_site = parse_orbital_site(_param.get("orbital_site"), self.norb_orig)
-        if not info_mode.get("_orbital_site_reported", False):
-            warn_if_undeclared(
-                self.param_ham_orig if self.lattice.has_sublattice else self.param_ham,
-                self.orbital_site, info_mode.get("mode", "RPA"))
+        _prefold = self.param_ham_orig if self.lattice.has_sublattice else self.param_ham
+        if self.enable_spin_orbital:
+            # Spin-orbital mode treats every R = 0 row exactly (direct and
+            # exchange crossing), so orbital_site is never parsed (an invalid
+            # value is ignored too) and the undeclared-site advisory does not
+            # apply. A public entry compiles the pre-fold interaction once and
+            # logs the orbital_site WARNING; a nested solver gets that
+            # context in info_mode and reuses it.
+            self.orbital_site = None
+            context = info_mode.get(spin_orbital.SO_ENTRY_CONTEXT_KEY)
+            self.so_context_built_here = context is None
+            if context is None:
+                context = spin_orbital.build_so_entry_context(
+                    _param, _prefold, self.norb_orig, logger)
+            elif (spin_orbital.interaction_tables_digest(_prefold)
+                  != context.tables_digest):
+                # the vertex is built below from this solver's own tables;
+                # the archives record the context's fingerprints
+                raise ValueError(spin_orbital.TABLES_MISMATCH_TEXT)
+            self.so_context = context
+        else:
+            self.orbital_site = parse_orbital_site(_param.get("orbital_site"), self.norb_orig)
+            if not info_mode.get("_orbital_site_reported", False):
+                warn_if_undeclared(_prefold, self.orbital_site, info_mode.get("mode", "RPA"))
 
         # create hamiltonian
         self._make_ham_trans()
@@ -1097,7 +1139,7 @@ class Interaction:
             offsite = [(irvec, orbvec, v)
                        for (irvec, orbvec), v in orig_tbl.items()
                        if not is_onsite(irvec, orbvec, getattr(self, "orbital_site", None))]
-            if offsite:
+            if offsite and not self.offsite_pairhop_represented:
                 shown = offsite[:8]
                 logger.warning(
                     "PairHop declares %d off-site term(s) (irvec != "
@@ -1489,6 +1531,12 @@ class RPA:
     """
     RPA calculation
     """
+    #: Whether a public spin-orbital run logs :data:`SO_OFFSITE_INFO` (the
+    #: off-site rows enter the ring sum through their direct part only).
+    #: FLEX sets it False: its spin-orbital vertex refuses off-site rows.
+    #: A solver nested in hwave_sc never logs it (its context is supplied).
+    _SO_OFFSITE_INFO = True
+
     @do_profile
     def __init__(self, param_ham, info_log, info_mode):
         logger.debug(">>> RPA.__init__")
@@ -1532,7 +1580,14 @@ class RPA:
                 "the migration note in the RPA output-file documentation.")
 
         self.lattice = Lattice(self.param_mod)
-        self.ham_info = Interaction(self.lattice, param_ham, info_mode)
+        self.ham_info = Interaction(
+            self.lattice, param_ham, info_mode,
+            offsite_pairhop_represented=self._offsite_pairhop_in_bond_vertex())
+        if (self._SO_OFFSITE_INFO and self.ham_info.enable_spin_orbital
+                and self.ham_info.so_context_built_here):
+            types = spin_orbital.offsite_types(self.ham_info.so_context.compiled)
+            if types:
+                logger.info(SO_OFFSITE_INFO.format(types=", ".join(types)))
 
         self._set_scheme(info_mode)
 
@@ -2032,6 +2087,19 @@ class RPA:
         self._reject_offsite_pairhop_under_transverse_bond_gate()
 
 
+    def _offsite_pairhop_in_bond_vertex(self):
+        """Whether an off-site PairHop is represented by the subclass's own
+        bond vertex, so that the discard WARNING of :meth:`_make_ham_inter`
+        does not apply (``False`` here; the spin-orbital bond FLEX
+        overrides it)."""
+        return False
+
+    def _bond_memory_cap_parsed_elsewhere(self):
+        """Whether ``longitudinal_bond_memory_cap_gb`` is parsed by the
+        subclass rather than by :meth:`_init_longitudinal_bond_config`
+        (``False`` here; the spin-orbital bond FLEX overrides it)."""
+        return False
+
     def _init_longitudinal_bond_config(self):
         """Parse ``[mode.param] longitudinal_bond_channels`` and its
         companion options (the experimental bond-resolved LONGITUDINAL
@@ -2123,6 +2191,12 @@ class RPA:
                     "got {}".format(_max_shells))
         self.longitudinal_bond_max_shells = _max_shells
 
+        if self._bond_memory_cap_parsed_elsewhere():
+            # the spin-orbital bond FLEX (#270) keeps the raw value: its
+            # cap has the spin-orbital meaning (unset = 0.8 x available,
+            # 0 disables the check) and is validated by its admission
+            self.longitudinal_bond_memory_cap_gb = None
+            return
         _cap_gb = self.param_mod.get("longitudinal_bond_memory_cap_gb",
                                       LONGITUDINAL_BOND_MEMORY_CAP_GB_DEFAULT)
         if (isinstance(_cap_gb, (bool, np.bool_))
@@ -3091,15 +3165,15 @@ class RPA:
             return {"spin_orbital": True}
 
         so_stamp = _spin_orbital_stamp()
-        # #88: the version-1 fingerprint and state members, built once and
+        # #88: the fingerprint and state members, built once and
         # written beside the spin_orbital marker into chi0q and chiq
         so_prov = {}
         if so_stamp:
             if "trans_mod" in green_info or "green_init" in green_info:
                 logger.info(
                     "save_results: spin-orbital provenance not written: the one-body "
-                    "band includes trans_mod/green_init, which version-1 "
-                    "fingerprints do not cover")
+                    "band includes trans_mod/green_init, which the fingerprints do "
+                    "not cover; a spin-orbital consumer cannot read these outputs")
             else:
                 so_prov = self._so_provenance("rpa_so", "hwave RPA (spin-orbital)")
         if (bool(getattr(getattr(self, "ham_info", None),
@@ -4114,19 +4188,30 @@ class RPA:
             sub_shape=tuple(int(x) for x in self.lattice.subshape))
         return transfer, extern, meta
 
-    def _so_provenance(self, producer_stage, producer_label):
+    def _so_provenance(self, producer_stage, producer_label, *, bond=None, fp_green=None,
+                       state=None):
         """The fingerprint/state members of this spin-orbital run, built
         once per call (merged into every archive of the run), or ``{}``
-        when this solve established no state (e.g. a supplied chi0q)."""
-        state = getattr(self, "_so_state", None)
-        fp_green = getattr(self, "_so_fp_green", None)
+        when this solve established no state (e.g. a supplied chi0q).
+        They carry the interaction fingerprints of the run's entry context;
+        without them (no state, or the band changed by trans_mod/green_init)
+        a spin-orbital consumer refuses the outputs.
+
+        ``bond`` is the :class:`~hwave.solver.fingerprint.BondInputs` of a
+        bond-resolved stage (``None`` otherwise); ``fp_green`` the Green
+        digest the archive records (``None``: ``self._so_fp_green``) and
+        ``state`` its state point (``None``: ``self._so_state``)."""
+        if state is None:
+            state = getattr(self, "_so_state", None)
+        if fp_green is None:
+            fp_green = getattr(self, "_so_fp_green", None)
         if state is None or fp_green is None:
             return {}
         transfer, extern, meta = self._so_band_tables()
         return fingerprint.so_provenance_members(
             producer_stage=producer_stage, producer_label=producer_label,
             transfer=transfer, extern=extern, meta=meta, fp_green=fp_green,
-            state=state)
+            state=state, interaction=self.ham_info.so_context.interaction, bond=bond)
 
     @do_profile
     def _find_mu(self, Ncond, T):

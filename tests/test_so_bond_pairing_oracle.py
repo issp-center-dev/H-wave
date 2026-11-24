@@ -31,6 +31,7 @@ import numpy as np
 
 import hwave.sc as sc
 import tests.test_sc_bond_pairing_oracle as O
+from tests import so_bond_flex_fixtures as _flex_fixtures
 from hwave.solver import bond_channels as bc
 from hwave.solver.so_bond import (SLOT_CONVENTION, BondSlotGeometry, SOBondCaps, gamma_p,
                                   plan_so_bond, slot_geometry, so_bond_bubble, so_bond_dress,
@@ -257,17 +258,9 @@ class TestFirstOrderSOBondPairing(unittest.TestCase):
 # The parts helper: bounded memory and refusals
 # ---------------------------------------------------------------------------
 
-#: a spin-rotation invariant interaction on mixed bonds (norb_phys = 2):
-#: inter-orbital CoulombInter different at +R and -R, Hund + Ising + Exchange
-#: with J_Exchange = J_Hund - 2 J_Ising, real PairHop, on-site CoulombIntra
-SU2_MIXED = {
-    "CoulombIntra": {((0, 0, 0), (0, 0)): 0.83, ((0, 0, 0), (1, 1)): 0.83},
-    "CoulombInter": {**closed_row(1, 0, 1, 0.37), **closed_row(-1, 0, 1, 0.22)},
-    "Hund": closed_row(1, 0, 1, 0.53),
-    "Ising": closed_row(1, 0, 1, 0.11),
-    "Exchange": closed_row(1, 0, 1, 0.53 - 2 * 0.11),
-    "PairHop": closed_row(1, 0, 1, 0.43),
-}
+#: a spin-rotation invariant interaction on mixed bonds (norb_phys = 2),
+#: defined in tests/so_bond_flex_fixtures.py and re-exported here
+SU2_MIXED = _flex_fixtures.SU2_MIXED
 _TOPO_6 = so_bond_topology(compile_interaction(SU2_MIXED, 2), CELL)
 #: the channels 0, +-1 on the 6-cell chain (B = 3, nd = 4: ND = 48)
 GEOM_6 = slot_geometry(_TOPO_6, SHAPE)

@@ -5,6 +5,8 @@ is an inter-site interaction. With the key it is treated exactly like an
 off-site row in the q-only vertices (RPA ring, FLEX general, non-bond
 hwave_sc): its density (Hartree) part enters, its exchange crossing does
 not. Without the key every orbital is on one site (unchanged results).
+Spin-orbital mode ignores the key (with one WARNING): every ``R = 0``
+row is treated exactly there.
 
 The physical check is that the answer no longer depends on the unit cell:
 a chain of identical sites with a nearest-neighbour ``V`` is described once
@@ -326,16 +328,34 @@ class TestKeyHandling(unittest.TestCase):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
-    def test_spin_orbital_labels_run_over_physical_orbitals(self):
+    def test_spin_orbital_mode_ignores_the_key(self):
+        # spin-orbital mode treats every R = 0 row exactly: the key is not
+        # parsed (a wrong length is not refused) and one WARNING says so
         from hwave.solver.rpa import Interaction, Lattice
+        from hwave.solver.spin_orbital import ORBITAL_SITE_WARNING
         from requests.structures import CaseInsensitiveDict
         param = {"T": 0.5, "CellShape": [NSITE // 2, 1, 1], "SubShape": [1, 1, 1], "Nmat": 8}
         mode = {"mode": "RPA", "enable_spin_orbital": True}
-        ok = Interaction(Lattice(CaseInsensitiveDict(param)), self._ham(so=True),
+        logger = __import__("logging").getLogger("hwave.solver.rpa")
+        for site in ([0, 1], [0, 1, 2, 3]):
+            with self.subTest(site=site):
+                with self.assertLogs(logger, level="WARNING") as logs:
+                    inter = Interaction(Lattice(CaseInsensitiveDict(param)), self._ham(so=True),
+                                        dict(mode, param=dict(param, orbital_site=site)))
+                self.assertIsNone(inter.orbital_site)
+                self.assertEqual([m for m in logs.output if "orbital_site" in m],
+                                 ["WARNING:hwave.solver.rpa:" + ORBITAL_SITE_WARNING])
+
+    def test_non_spin_orbital_labels_are_parsed(self):
+        from hwave.solver.rpa import Interaction, Lattice
+        from requests.structures import CaseInsensitiveDict
+        param = {"T": 0.5, "CellShape": [NSITE // 2, 1, 1], "SubShape": [1, 1, 1], "Nmat": 8}
+        mode = {"mode": "RPA"}
+        ok = Interaction(Lattice(CaseInsensitiveDict(param)), self._ham(),
                          dict(mode, param=dict(param, orbital_site=[0, 1])))
         self.assertEqual(ok.orbital_site, (0, 1))
         with self.assertRaisesRegex(ValueError, "orbital_site"):
-            Interaction(Lattice(CaseInsensitiveDict(param)), self._ham(so=True),
+            Interaction(Lattice(CaseInsensitiveDict(param)), self._ham(),
                         dict(mode, param=dict(param, orbital_site=[0, 1, 2, 3])))
 
     def test_split_is_judged_on_the_pre_fold_table_under_subshape(self):

@@ -51,7 +51,8 @@ from hwave.solver import bubble
 from hwave.solver.eliashberg_bond import (COEFF, ArrayBlockSource, BondPairKernel,
                                           PairVertexUniform, instantaneous_vertex)
 from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
-from tests.ed_oracle_util import EDFixture, SectorED, canonical_density_terms
+from tests.ed_oracle_util import EDFixture, canonical_density_terms
+from tests import ed_cache
 from tests.eliashberg_bond_fixtures import _channel0_from_gate, _tables_from_pairs
 from tests.heavy_tests import heavy
 
@@ -119,7 +120,7 @@ def _ed(lam, sign=+1, rows=None):
     # its partner name the same density product, each carrying half of it
     pairs = [(a, a, 0, lam * U) for a in range(NORB)]
     pairs += [(a, b, -sign * r, lam * v / 2) for (r, a, b), v in _rows(rows).items()]
-    ed = SectorED(fx, canonical_density_terms(fx, pairs), h1=h1)
+    ed = ed_cache.sector(fx, canonical_density_terms(fx, pairs), h1=h1)
     # Delta_{R,a,b} = sum_j c_{j+R,a,dn} c_{j,b,up}: the pair (c=b up at 0, d=a down at R)
     chi = ed.pair_correlator([(dp, d, c) for (c, d, dp) in PAIRS])[0]
     G = ed.green(1j * _wn(max(NMATS)), rows=[fx.mode(0, a, 0) for a in range(NORB)],

@@ -14,3 +14,4 @@ This section describes the file formats of the outputs of UHFk.
    energy_uhfk
    eigen_uhfk
    green_uhfk
+   scf_status_uhfk

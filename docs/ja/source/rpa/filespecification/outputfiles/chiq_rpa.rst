@@ -42,6 +42,15 @@ chiq, chi0q
 
   感受率の計算時に使用された\ ``coeff_tail``\ パラメータ(Matsubara 高周波数裾補正)の値です。裾補正は中程度の\ ``Nmat``\ において\ :math:`\chi_0(\mathbf{q})`\ を\ :math:`O(1)`\ で変えるため、このファイルを読み込む計算(``hwave_sc``\ など)は、自身の\ ``coeff_tail``\ 設定が記録値と異なる場合に警告を出します。事前計算した\ ``chi0q_init``\ ファイルをそのまま出力する場合には入力ファイルの値が引き継がれます。生成元がこの値を記録していない場合(旧バージョン)、および一様格子の裾補正が適用されない IR 松原基底(``matsubara_basis = "ir"``\ 、densified 出力を含む)での FLEX 出力の場合には、キー自体が省略されます。
 
+- ``block_layout``:
+
+  ボンドチャネル付きのスピン軌道 FLEX（\ ``[mode] enable_spin_orbital = true``\ と
+  ``[mode.param] longitudinal_bond_channels = true``\ ）だけが書き出します。計算の
+  レイアウト\ ``"dense"``\ または\ ``"sz_packed"``\ （0 次元の文字列）です。配列は
+  どちらでも密なオンサイトの形で、この経路のファイルにこのキーがなければスピン軌道の
+  読み込み側は拒否します（\ :ref:`flex_so_bond_tutorial`\ を参照）。他の計算はこのキーを
+  書き出しません。
+
 副格子を指定している場合は、出力されるデータは副格子を単位とした感受率の値です。波数ベクトルおよび軌道のインデックスは副格子に読み替えます。
    
 ``chi0q``\ の出力ファイルは、計算済み既約感受率データとして\ ``file.input``\ セクションの\ ``chi0q_init``\ に指定して使用できます。
@@ -226,7 +235,10 @@ INFO ログにその旨が出力されます）。このアーカイブにはさ
 （整数。いずれか1回の反復で厳密に分解されたブロック数の最大値）、
 ``longitudinal_bond_guard_blocks_per_iteration``\ （整数。1回の反復で
 ガードが判定対象とするブロック数 -- 上記2つのカウントの分母）が
-格納されます。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
+格納されます。最終マップが静的 RPA 極を越えたときに限り、
+``longitudinal_bond_rpa_past_pole``\ （\ ``True``\ ）、\ ``longitudinal_bond_rpa_pole_indicator_spin``\ /
+``_charge``\ （実数）、\ ``longitudinal_bond_rpa_pole_q_spin``\ / ``_charge``\ （実数\ ``(3,)``\ 、
+逆格子ベクトル単位）も格納されます（\ :ref:`bond_rpa_pole`\ ）。そのような計算の通常の\ ``chi0q``\ ・\ ``chiq_s``\ ・
 ``chiq_c``\ 配列は、ボンド分解した量の全ボソン振動数における
 :math:`(m = 0, m' = 0)`\ ブロックです。\ ``flex_hartree_fock = true``\ の計算の全ての
 アーカイブ（``chi0q``\ ・\ ``chiq_s``\ ・\ ``chiq_c``\ ・\ ``chiq``\ ・\ ``sigma``\ ・
@@ -292,6 +304,24 @@ ND, ND)``\ 。``chi_s_w`` / ``chi_c_w``\ と同じボンド優先の配置）と
 （INFO ログに一覧が出ます）、初期状態の\ ``sigma``\ ・\ ``green``\ ・\ ``energy``\ のみが
 書き出されます。
 
+**スピン軌道ボンドアーカイブ（スキーマ 4）。** ``[mode] enable_spin_orbital = true``\ 、
+``longitudinal_bond_channels = true``\ 、\ ``longitudinal_bond_output_full = true``\ （アーカイブの
+対となる\ ``[file.output] green``\ が必要）では、同じ\ ``[file.output] longitudinal_bond``\ の
+ファイルは別のアーカイブになります。\ ``bond_archive_schema = 4``\ 、\ ``spin_orbital =
+True``\ です。追加の感受率パス1回で求めた\ **最終**\ の Green 関数（最後の SCF 反復ではない）の
+:math:`\chi_B`\ である\ ``chi_w``\ と、\ ``Gamma_bond``\ を、\ ``block_layout``\ が記録する
+密（\ ``chi_w``\ 、\ ``Gamma_bond``\ ）または\ :math:`S_z`\ パック（\ ``chi_w@0``\ 、
+``chi_w@+1``\ 、\ ``chi_w@-1``\ 、\ ``Gamma_bond``\ も同様）のレイアウトで持ちます。
+``"sidecar"``\ のレイアウトでは\ ``chi_w``\ のブロックはファイル
+``<block>.<archive_nonce>.npy``\ で、\ ``<block>_file``\ がその名前を、
+``<block>_nbytes``\ がその大きさを示します。\ ``Gamma_bond``\ は常にインデックスに
+置かれます。\ ``green_file``\ はインデックスのディレクトリからの相対パスで対となる
+``green.npz``\ を示し、アーカイブの\ ``fp_green``\ はそのファイルのものに等しくなります。
+``chi_s_w``\ 、\ ``chi_c_w``\ 、\ ``S_bond``\ 、\ ``C_bond``\ はなく、非スピン軌道の
+ボンドの読み込み側はこのアーカイブを拒否します。メンバーの一覧、レイアウトの規則、
+移動と再実行、書き出しが失敗したときの振る舞いは\ :ref:`flex_so_bond_archive`\ に
+あります。
+
 
 .. _subsec:eliashberg_bond_outputs:
 
@@ -350,6 +380,10 @@ parity_leakage_tol``\ を参照）、\ ``gap_bond_projection``\ （各ボンド
 ir_fit_tol``\ を参照）を持ちます。\ ``eigenvalue.dat``\ には
 ``# bond_channels=true``\ ・\ ``# residency=<...>``\ 、計算された
 場合は\ ``# parity_leakage=<...>``\ のヘッダー行が追加されます。
+アーカイブの状態が静的 RPA 極を越えているときに限り、両ファイルに
+``rpa_past_pole``\ 、\ ``rpa_pole_indicator_spin``\ / ``_charge``\ 、\ ``rpa_pole_q_spin``\ /
+``_charge``\ （npz のキー、および\ ``eigenvalue.dat``\ の\ ``# key=value``\ ヘッダー行）も
+加わります。値はアーカイブの dress した感受率から復元します（\ :ref:`bond_rpa_pole`\ ）。
 
 動的ソルバーの\ ``eigenvalue.dat``\ は、オンサイトのものも含めて
 ``# gap_sector_weights even_k_even_w=... odd_k_even_w=...
@@ -398,7 +432,10 @@ longitudinal_bond_pairing``\ ）。リクエストされたチャネル
   ``# scf_converged=<true|false>``\ ・\ ``# state=<...>``\ ・
   ``# residency=<...>``\ 、計算された場合は\ ``#
   parity_leakage=<...>``\ 、および上記の\ ``# gap_sector_weights ...``
-  と\ ``# sector_selection=...``\ のヘッダー行を持ちます。
+  と\ ``# sector_selection=...``\ のヘッダー行を持ちます。最終 FLEX マップが静的 RPA 極を
+  越えたときは、\ ``eliashberg_bond_<type>.npz``\ とこのヘッダーに\ ``rpa_past_pole``\ 、
+  ``rpa_pole_indicator_<channel>``\ 、\ ``rpa_pole_q_<channel>``\ も加わります
+  （\ :ref:`bond_rpa_pole`\ ）。
   ``# eigen_converged=<true|false>``\ は\ ``=``\ の前後に空白がなく、静的な
   ``eigenvalue.dat``\ では\ ``# eigen_converged = true``\ と書かれるため、パイプラインは
   空白に寛容な方法（\ ``eigen_converged``\ の後の文字列から\ ``=``\ と空白を取り除く）
