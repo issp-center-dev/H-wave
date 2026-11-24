@@ -235,6 +235,23 @@ jobs:
         poetry run pytest tests/ -v --durations=30 --cov=src/hwave --cov-report=term-missing --cov-report=xml --cov-fail-under=80
         poetry run python tests/_coverage_floor.py coverage.xml 80
 
+    - name: Run the result-reader tests under unittest
+      # hwave.results is a public Python API, and its tests are written as
+      # plain unittest cases. This second runner covers ONLY those modules
+      # (tests/test_results_*.py, under 30 s locally): it guards
+      # `python -m unittest discover -s tests -t . -p "test_results_*.py"`.
+      # The full suite is NOT run twice: the step above stays the single
+      # pass over tests/. Python < 3.12 exits 0 when discovery finds no
+      # test, so the step also fails on "Ran 0 tests".
+      run: |
+        set -o pipefail
+        poetry run python -m unittest discover -s tests -t . -p "test_results_*.py" -v 2>&1 \
+          | tee "$RUNNER_TEMP/unittest-results.log"
+        if ! grep -Eq '^Ran [1-9][0-9]* tests? in ' "$RUNNER_TEMP/unittest-results.log"; then
+          echo "::error::unittest discovery ran no result-reader test"
+          exit 1
+        fi
+
     - name: Verify the test suite left the tracked tree clean
       # !cancelled(): report isolation defects even when the gating test
       # step failed -- the diagnostic is most useful exactly then

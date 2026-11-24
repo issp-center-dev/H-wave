@@ -35,6 +35,24 @@ Basic usage
   opt-in ``fft_workers`` parameter requests parallel FFT worker threads, and to
   cuFFT on the GPU.
 
+- Reading results from Python
+
+  The ``hwave.results`` package reads the output files of a UHFr or UHFk run
+  from Python, starting from the run's input TOML file. For example,
+
+  .. code-block:: python
+
+     import hwave.results as hr
+
+     run = hr.open_run("input.toml")
+     status = hr.read_scf_status(run)   # converged, residual, iterations
+     energy = hr.read_energy(run)
+
+  The readers check the convention tags stored in the output files and the
+  run settings, and raise an error with a hint instead of guessing when an
+  output is missing, was not written by this run, or has an unknown layout. The functions and result
+  types are documented in their docstrings, e.g. ``help(hr)``.
+
 - Official Page
 
     - `GitHub repository <https://github.com/issp-center-dev/H-wave>`_
