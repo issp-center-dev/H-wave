@@ -961,9 +961,15 @@ class Interaction:
             # the (spin, orbital) reshapes downstream are correct. For
             # norb_phys = 1 this is the identity. An index outside
             # [0, nd) (the geometry's spin-orbital count) raises.
-            tab_r = spin_orbital.interleaved_to_spinblock(
-                hamiltonian_k.dense_table(table, shape, nd, label="Transfer"),
-                norb)
+            try:
+                tab_so = hamiltonian_k.dense_table(table, shape, nd,
+                                                   label="Transfer")
+            except ValueError as exc:
+                raise ValueError(
+                    "{}; in spin-orbital mode the geometry norb (the "
+                    "spin-orbital count, 2 x physical) must cover all "
+                    "Transfer indices".format(exc)) from exc
+            tab_r = spin_orbital.interleaved_to_spinblock(tab_so, norb)
         else:
             # physical orbital indices; the spin block of a spin-orbital-
             # format file was dropped at the boundary (__init__), so an

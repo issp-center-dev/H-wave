@@ -96,16 +96,20 @@ def _warn_dropped(label, dropped, dim):
     # the one wording of the ignore-warning; tests count it by its
     # "These terms are ignored" phrase. Only the Transfer can be read as a
     # spin-orbital table; Extern is physical-indexed in every mode, so its
-    # out-of-range rows are refused there rather than used.
+    # out-of-range rows are refused there rather than used. ``dim`` is the
+    # physical orbital count, so "above dim" counts 1-based file indices.
     if label.lower() == "transfer":
-        hint = "Set enable_spin_orbital = true to use them."
+        logger.warning(
+            "{} has {} entries with orbital indices above {} (the spin "
+            "block of a spin-orbital-format file) but enable_spin_orbital "
+            "is False. These terms are ignored. Set enable_spin_orbital = "
+            "true to use them.".format(label, dropped, dim))
     else:
-        hint = ("{} uses physical orbital indices in every mode; remove "
-                "these rows.".format(label))
-    logger.warning(
-        "{} has {} entries with orbital indices >= {} (spin-dependent "
-        "terms) but enable_spin_orbital is False. These terms are "
-        "ignored. {}".format(label, dropped, dim, hint))
+        logger.warning(
+            "{} has {} entries with orbital indices above {}. These terms "
+            "are ignored. {} uses physical orbital indices (1 .. {}) in "
+            "every mode; remove these rows.".format(
+                label, dropped, dim, label, dim))
 
 
 def drop_spin_block(table, dim, *, label="Transfer"):
