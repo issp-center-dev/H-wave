@@ -322,6 +322,46 @@ class TestLineTwoNorbMustMatchGeometry(_Fixture):
                                        "enable_spin_orbital": False})
 
 
+class TestSpinResolvedChecks(_Fixture):
+    """The checks spin-orbital mode applies to its spinful one-body term
+    apply to a spin-resolved Transfer as well."""
+
+    def test_coeff_extern_is_validated(self):
+        d = self._dir(_soc_entries(_DIAG),
+                      extern_rows=["0 0 0 1 1 0.3 0.0"])
+        with self.assertRaisesRegex(ValueError, "coeff_extern"):
+            _rpa(d, scheme="general", extern=True, coeff_extern=True)
+
+    def test_chi0q_init_needs_the_index_convention(self):
+        d = self._dir(_soc_entries(_DIAG))
+        _run_chi0q(d, scheme="general")
+        src = os.path.join(d, "output", "chi0q.npz")
+        with np.load(src) as z:
+            members = {k: z[k] for k in z.files if k != "index_convention"}
+        np.savez(os.path.join(d, "output", "no_conv.npz"), **members)
+        s, _ = _rpa(d, scheme="general")
+        with self.assertRaisesRegex(ValueError, "lacks an 'index_convention'"):
+            s.read_init({"path_to_input": os.path.join(d, "output"),
+                         "chi0q_init": "no_conv.npz"})
+
+    def test_spin_orbital_archive_gets_the_specific_message(self):
+        dso = self._dir(interleaved=_soc_entries(_DIAG), geom_norb=4)
+        _run_chi0q(dso, scheme="general", enable_spin_orbital=True)
+        s, _ = _rpa(self._dir(_soc_entries(_DIAG)), scheme="general")
+        with self.assertRaisesRegex(ValueError, "produced by a spin-orbital run"):
+            s.read_init({"path_to_input": os.path.join(dso, "output"),
+                         "chi0q_init": "chi0q.npz"})
+
+    def test_missing_spin_flip_partner_refused(self):
+        d = self._dir(_spin_independent(_DIAG))
+        with open(os.path.join(d, "transfer.dat"), "a") as f:
+            f.write("0 0 0 1 2 0 1 0.150000000000 0.100000000000\n")
+        with self.assertRaisesRegex(
+                ValueError, r"NO partner entry at R=\(0, 0, 0\) \(orbital, spin\) "
+                            r"= \(2, 1\), \(1, 0\)"):
+            _rpa(d, scheme="general")
+
+
 class TestFlexGates(_Fixture):
     def _flex(self, d, scheme, extra=None):
         import hwave.solver.flex as flex_module

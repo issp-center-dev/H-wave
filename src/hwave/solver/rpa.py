@@ -802,6 +802,14 @@ class Interaction:
         # be the Geometry norb the spin-block keys are decoded with
         spin_orbital.check_spin_resolved_norb(
             param_ham, param_ham["Geometry"]["norb"], "RPA/FLEX")
+        # RPA / FLEX have no Hermiticity check of the Transfer of their own;
+        # the self-describing 9-column format is refused when a row lacks
+        # its Hermitian partner (UHFk keeps its strict_hermite policy)
+        if self.spin_resolved_transfer and "Transfer" in param_ham:
+            spin_orbital.validate_spin_resolved_closure(
+                param_ham["Transfer"], param_ham["Geometry"]["norb"],
+                source=getattr(param_ham, "source_files", {}).get(
+                    "transfer", "Transfer"))
         # collapse_spin_free (FLEX): a spin-resolved Transfer whose matrix
         # does not depend on spin takes the 7-column path -- the spin
         # structure is judged from the matrix, not from the file format.
@@ -2021,9 +2029,11 @@ class RPA:
         self.coeff_tail = _ct
         # #167 invariant: never mutated after construction (scheme resolution input).
         self.ext = self.param_mod.get("coeff_extern", 0.0)
-        if self.ham_info.enable_spin_orbital:
+        if (self.ham_info.enable_spin_orbital
+                or spin_orbital.spin_resolved_one_body(self.ham_info)):
             # the spin-orbital RPA/FLEX and hwave_sc accept or refuse the
-            # same values (a bool would otherwise enable the field as 1.0)
+            # same values (a bool would otherwise enable the field as 1.0);
+            # a spin-resolved band takes the same h sigma^z Extern path
             self.ext = spin_orbital.validate_coeff_extern(self.ext)
 
         # GPU (CuPy) execution and CPU spatial-FFT parallelism. use_gpu is the
@@ -3735,8 +3745,12 @@ class RPA:
                 "uniform-grid file. Re-run FLEX with [mode.param] "
                 "write_densified = true.".format(file_name))
 
+        # the spin-block order matters whenever the one-body term carries a
+        # spin index: spin-orbital mode or a spin-resolved Transfer
         validate_chi0q_index_convention(
-            data, self.ham_info.enable_spin_orbital, file_name)
+            data, (self.ham_info.enable_spin_orbital
+                   or spin_orbital.spin_resolved_one_body(self.ham_info)),
+            file_name)
         # spin-orbital provenance of the file (#83): refused if explicitly
         # False / malformed; None (no marker) is carried to save_results
         so_source = None
@@ -3767,14 +3781,10 @@ class RPA:
         # axis must not be inherited by the replacement (round-6 review)
         self._chi0q_init_meta["fingerprint"] = _chi0q_fingerprint(chi0q)
         self._chi0q_init_meta["spin_orbital"] = so_source
-        # spin-resolved provenance (#323): a spin-resolved run requires the
-        # marker, any other run refuses it; a spin-resolved run also refuses
-        # a spin-orbital file (its norb is the spin-orbital count)
-        self._chi0q_init_meta["spin_resolved"] = _spin_resolved_source_marker(
-            "spin_resolved" in data,
-            data["spin_resolved"] if "spin_resolved" in data else None,
-            "file '{}'".format(file_name),
-            bool(spin_orbital.spin_resolved_one_body(self.ham_info)))
+        # spin-resolved provenance (#323): a spin-resolved run refuses a
+        # spin-orbital file (its norb is the spin-orbital count) -- checked
+        # first, so that file gets this specific message -- and requires
+        # the marker; any other run refuses it
         if (spin_orbital.spin_resolved_one_body(self.ham_info) and "spin_orbital" in data
                 and bool(np.asarray(data["spin_orbital"])[()])):
             raise ValueError(
@@ -3783,6 +3793,11 @@ class RPA:
                 "count) and cannot be used by a run on a spin-resolved "
                 "Transfer (physical norb). Drop it and let the run compute "
                 "chi0q.".format(file_name))
+        self._chi0q_init_meta["spin_resolved"] = _spin_resolved_source_marker(
+            "spin_resolved" in data,
+            data["spin_resolved"] if "spin_resolved" in data else None,
+            "file '{}'".format(file_name),
+            bool(spin_orbital.spin_resolved_one_body(self.ham_info)))
         # The tail correction changes chi0q at O(1); a config whose
         # coeff_tail differs from the file's describes different physics
         # than this chi0q_init actually contains (issue #80).

@@ -284,6 +284,42 @@ def spin_free_transfer_table(table, norb_phys):
     return dict(up)
 
 
+def validate_spin_resolved_closure(table, norb_phys, source="Transfer"):
+    """Refuse a spin-resolved Transfer that is not Hermitian-closed.
+
+    In the 9-column format the partner of ``T_{as,bt}(R)`` is
+    ``T_{bt,as}(-R)`` and the two must be complex conjugates; a declared
+    entry without its partner (a spin-flip row written in one direction
+    only, say) is refused, naming both entries as (orbital, spin). The
+    same rule and tolerance as the two-body declarations
+    (:func:`hwave.solver.declarations.validate_hermitian_closure`).
+    ``table`` is keyed on the spin-block index ``s*norb_phys + a``.
+    """
+    from .declarations import REVERSE_ATOL, REVERSE_RTOL
+    n = int(norb_phys)
+
+    def fmt(irvec, i, j):
+        (a, s), (b, t) = spinblock_split(i, n), spinblock_split(j, n)
+        return "R={} (orbital, spin) = ({}, {}), ({}, {})".format(
+            tuple(irvec), a + 1, s, b + 1, t)
+
+    for (irvec, (i, j)), v in table.items():
+        neg = tuple(-x for x in irvec)
+        partner = table.get((neg, (j, i)))
+        if partner is None:
+            raise ValueError(
+                "{}: the spin-resolved Transfer declares {} = {} with NO "
+                "partner entry at {}: declare both directions "
+                "(T_as,bt(R) = conj T_bt,as(-R))".format(
+                    source, fmt(irvec, i, j), v, fmt(neg, j, i)))
+        if abs(v - np.conj(partner)) > REVERSE_ATOL + REVERSE_RTOL * abs(v):
+            raise ValueError(
+                "{}: the spin-resolved Transfer is not Hermitian-closed: "
+                "{} = {} but {} = {} (expected conj = {})".format(
+                    source, fmt(irvec, i, j), v, fmt(neg, j, i), partner,
+                    np.conj(partner)))
+
+
 def private_table_container(param_ham):
     """A copy of the k-space reader's table container that a solver can
     rewrite without touching the caller's: the same tables (shared, not
