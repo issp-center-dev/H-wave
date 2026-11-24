@@ -21,7 +21,13 @@ class UHFk(solver_base):
         Parameters
         ----------
         param_ham : dict
-            Hamiltonian parameters
+            Hamiltonian parameters. The solver normalises tables IN this
+            container: a sublattice fold rewrites them, and in normal mode
+            the spin block of a spin-orbital-format Transfer (orbital
+            indices above the Geometry norb) is removed from it with one
+            warning, also without a sublattice. A container reused for a
+            second solver therefore no longer holds the original Transfer;
+            build each solver from its own ``QLMSkInput`` result.
         info_log : dict
             Logging configuration  
         info_mode : dict
