@@ -577,6 +577,10 @@ class DressResult:
     #: on the full grid
     mirror_guarded: bool = None
     time_reversal_deviation: float = None
+    #: the static RPA pole indicators of the map (issue #345), ``{"spin":
+    #: (lambda, q, max_re), "charge": ...}`` of its bare chibar at Omega = 0;
+    #: ``None`` when the caller passed no ``pole_vertices``
+    pole: dict = None
 
 
 class HalfGridDressing:
@@ -674,7 +678,8 @@ class HalfGridDressing:
 def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_shape,
                       cond_tol=_bc._BOND_COND_FLOOR, iteration=None, factors=None,
                       guard_freqs="all", guard_policy="refuse",
-                      guard_method="auto", workers=1, bond_w2=None, guard_exact="always"):
+                      guard_method="auto", workers=1, bond_w2=None, guard_exact="always",
+                      pole_vertices=None):
     """The spec 3.2-3.3 loop (rev 19): per frequency batch, dress spin then
     charge (one channel batch alive at a time) and consume each into the
     effective interaction
@@ -747,6 +752,12 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
     channel-0 kernel, the mixed-block rule and the zero bond-bond blocks
     above are not used; ``factors`` is then ignored.
 
+    ``pole_vertices`` (issue #345): the HOST spin and charge vertices
+    ``(S, C)``. When given, the static RPA pole indicators of the map
+    (:func:`~hwave.solver.bond_channels.static_pole_indicator` of the bare
+    static chibar, one slice copied to the host on the device path) are
+    returned as ``DressResult.pole``; read-only.
+
     The ring's pair orientation (issue #251): with or without ``bond_w2``,
     the ring, third order and up, is taken with the two orbitals of every
     pair swapped inside its channel block -- the conserving orientation
@@ -804,6 +815,7 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                                guard_freqs=guard_freqs, guard_policy=guard_policy)
         mirror_guard, trs_dev = hgd.mirror_guard, hgd.deviation
     cond_s, cond_c = _CondMin(), _CondMin()
+    pole = None
     # one list for the whole map: every warned guard violation of either
     # channel and either guard kind (empty under guard_policy = "refuse")
     violations = []
@@ -831,6 +843,14 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
         # cb is then a VIEW of the slot that the W batch below overwrites
         # (with "W" aliased onto "chibar"), as on the CPU path
         cb = freq_batch_on(store, "chibar", l0, l1, xp)
+        if pole_vertices is not None and l0 <= l_static < l1:
+            # the static RPA pole indicators of the map (issue #345), from the
+            # bare static bubble before the W batch below can overwrite it;
+            # one slice to the host on the device path, and nothing is kept
+            bar = _bk.to_host(cb[l_static - l0])
+            pole = {ch: _bc.static_pole_indicator(bar, Wh, ch, spatial_shape)
+                    for ch, Wh in zip(("spin", "charge"), pole_vertices)}
+            del bar
         if mirror_guard:
             # time reversal is broken: the mirrored slices l' = nmat - l of
             # this batch (l = 0 and nmat/2 are their own mirrors and are not
@@ -926,7 +946,8 @@ def dress_and_build_w(store, dev, *, nb, output_full, nmat, nvol, nd, spatial_sh
                                                      if v["kind"] == "residual"),
                        guard_exact_blocks=int(stats["guard_exact_blocks"]),
                        guard_blocks=int(stats["guard_blocks"]),
-                       mirror_guarded=mirror_guard, time_reversal_deviation=trs_dev)
+                       mirror_guarded=mirror_guard, time_reversal_deviation=trs_dev,
+                       pole=pole)
 
 
 class _CondMin:
@@ -1105,6 +1126,60 @@ def transport_ops(B, nmat, nvol, norb):
     return float(B * B) * nmat * nvol * (P ** 2 * np.log2(max(nmat * nvol, 2)) + P ** 3)
 
 
+def flex_scf_rows(*, nmat, nvol, nmodes, depth, mixing, n_types, split_seed):
+    """The FLEX SCF rows of the bond admission table that do not depend on
+    the bond channels: ``(persistent, phase)``, two dicts of bytes.
+
+    With ``P = nmodes**2`` (``nmodes`` the orbital modes of one Green
+    function: ``norb`` without spin orbitals, ``nd = 2 norb_phys`` with
+    them), ``G = 16 nmat nvol P`` (one Green function) and ``H = 16 nvol
+    P`` (one static matrix field):
+
+    * persistent: ``state = G + H``, ``seed_envelope = 2 G + H`` with a
+      split seed (else 0), ``anderson_history = 2 depth 2 G``,
+      ``anderson_work = 2 max(depth - 1, 0) 2 G``, ``eigenpairs_hf = 5 H``,
+      ``flex_arrays = 5 G``, ``hf_tables = n_types H``;
+    * phase: ``green_mu = 6 G + H``, ``density_hf = 2 G + 35 H``,
+      ``convergence = 7 G + H``, ``mixing = 4 G`` (Anderson) or ``3 G +
+      H`` (linear).
+
+    ``depth`` is the Anderson depth as configured: the mixer's effective
+    depth is ``max(1, depth)`` under ``mixing = "anderson"`` and ``0``
+    otherwise (the normalisation is idempotent).
+    :func:`estimate_bond_memory` builds its table from these rows with
+    ``nmodes = norb``."""
+    nmat, nvol, nmodes = int(nmat), int(nvol), int(nmodes)
+    depth = max(1, int(depth)) if mixing == "anderson" else 0      # the mixer's effective depth
+    it = 16
+    P = nmodes * nmodes
+    G = nmat * nvol * P * it
+    H = nvol * P * it
+    persistent = {
+        "state": G + H,
+        "seed_envelope": (2 * G + H) if split_seed else 0,
+        "anderson_history": 2 * depth * 2 * G,
+        "anderson_work": 2 * max(depth - 1, 0) * 2 * G,       # the mixer's retained dR/dX stacks
+        "eigenpairs_hf": 5 * H,
+        "flex_arrays": 5 * G,
+        "hf_tables": int(n_types) * H,
+    }
+    phase = {
+        "green_mu": 6 * G + H,
+        # the evaluator's G_ref and G - G_ref (2 G), the Heff eigenpairs and
+        # their workspace (4 H), rho_k/rho_r (2 H), rho_so/out (8 H), the
+        # kernel's spin-major temporaries (20 H), the owning Sigma_HF copy (H)
+        "density_hf": 2 * G + 4 * H + 2 * H + 8 * H + 20 * H + H,
+        # materialised new total, green_inv + inverse + workspace, the G
+        # difference, the two frequency-broadcast static stacks of the
+        # component residual (7 G), the new static pair (H)
+        "convergence": 7 * G + H,
+        # anderson: residual + output (the history and work stacks are
+        # persistent); linear: the difference, the scaled step, the new pair
+        "mixing": 4 * G if mixing == "anderson" else 3 * G + H,
+    }
+    return persistent, phase
+
+
 def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed, n_types,
                          freq_batch, cap_gb, mixing, factor_bytes=0, device_available=None,
                          guard_freqs="all", guard_enabled=True, w_in_place=False,
@@ -1258,18 +1333,21 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
     # resident set is S, C, mask and perm; the margin also covers the static
     # slices and the Green-function copies; re-deriving it is a follow-up)
     V = 5 * S
+    # the SCF rows shared with the spin-orbital bond FLEX (flex_scf_rows)
+    scf, scf_phase = flex_scf_rows(nmat=nmat, nvol=nvol, nmodes=norb, depth=depth,
+                                   mixing=mixing, n_types=n_types, split_seed=split_seed)
     persistent_rows = {
         "chibar_W": (1 if w_in_place else 2) * U_store,
         "chi_sc_w": 2 * U_store if output_full else 0,
         "vertices_static": V,
-        "state": G + H,
-        "seed_envelope": (2 * G + H) if split_seed else 0,
-        "anderson_history": 2 * depth * 2 * G,
-        "anderson_work": 2 * max(depth - 1, 0) * 2 * G,       # the mixer's retained dR/dX stacks
+        "state": scf["state"],
+        "seed_envelope": scf["seed_envelope"],
+        "anderson_history": scf["anderson_history"],
+        "anderson_work": scf["anderson_work"],
         "collapses": 3 * C,
-        "eigenpairs_hf": 5 * H,
-        "flex_arrays": 5 * G,
-        "hf_tables": int(n_types) * H,
+        "eigenpairs_hf": scf["eigenpairs_hf"],
+        "flex_arrays": scf["flex_arrays"],
+        "hf_tables": scf["hf_tables"],
         "second_order_factors": int(factor_bytes),
     }
     persistent = sum(persistent_rows.values())
@@ -1283,21 +1361,13 @@ def estimate_bond_memory(*, nmat, nvol, norb, B, depth, output_full, split_seed,
 
     def _phase_rows(nb):
         return {
-            "green_mu": 6 * G + H,
-            # the evaluator's G_ref and G - G_ref (2 G), the Heff eigenpairs and
-            # their workspace (4 H), rho_k/rho_r (2 H), rho_so/out (8 H), the
-            # kernel's spin-major temporaries (20 H), the owning Sigma_HF copy (H)
-            "density_hf": 2 * G + 4 * H + 2 * H + 8 * H + 20 * H + H,
+            "green_mu": scf_phase["green_mu"],
+            "density_hf": scf_phase["density_hf"],
             "bubble": host_bubble,
             "dressing": per_batch * nb,
             "transport": 4 * G + 4 * C,
-            # materialised new total, green_inv + inverse + workspace, the G
-            # difference, the two frequency-broadcast static stacks of the
-            # component residual (7 G), the new static pair (H)
-            "convergence": 7 * G + H,
-            # anderson: residual + output (the history and work stacks are
-            # persistent); linear: the difference, the scaled step, the new pair
-            "mixing": 4 * G if mixing == "anderson" else 3 * G + H,
+            "convergence": scf_phase["convergence"],
+            "mixing": scf_phase["mixing"],
             "post_scf": G + ((2 * U - U_store if half_grid else U) if output_full else C),
         }
 

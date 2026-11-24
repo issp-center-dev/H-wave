@@ -444,6 +444,8 @@ def _archive(kind="chiq", stage="rpa_so", payload=None, **kw):
     d.update(_PAYLOAD[kind] if payload is None else payload)
     d["spin_orbital"] = np.bool_(True)
     d["index_convention"] = np.str_("spin_block")
+    if fp.STAGE_CAPABILITY[stage] == "so_bond":
+        d["block_layout"] = np.str_("dense")
     return d
 
 
@@ -531,9 +533,13 @@ class TestProvenanceSchema(unittest.TestCase):
               "prov_topology", "state_beta", "state_nmat", "state_mu", "state_density",
               "state_calc_mu", "state_target", "state_mu_tol"}
     BOND = {"delta_r", "reverse", "slot_convention", "max_shells"}
-    KINDS = {"chi0q": ("rpa_so", "flex_so_onsite"), "chiq": ("rpa_so", "flex_so_onsite"),
-             "green": ("flex_so_onsite",), "sigma": ("flex_so_onsite",),
-             "gap": ("sc_so_static", "sc_so_dynamic", "sc_so_bond_static")}
+    KINDS = {"chi0q": ("rpa_so", "flex_so_onsite", "flex_so_bond"),
+             "chiq": ("rpa_so", "flex_so_onsite", "flex_so_bond"),
+             "green": ("flex_so_onsite", "flex_so_bond"),
+             "sigma": ("flex_so_onsite", "flex_so_bond"),
+             "gap": ("sc_so_static", "sc_so_dynamic", "sc_so_bond_static"),
+             "bond": ("flex_so_bond",)}
+    BOND_STAGES = ("sc_so_bond_static", "flex_so_bond")
 
     def test_sets(self):
         self.assertEqual(len(self.COMMON), 37)
@@ -541,7 +547,7 @@ class TestProvenanceSchema(unittest.TestCase):
         for kind, stages in self.KINDS.items():
             for st in stages:
                 with self.subTest(kind=kind, stage=st):
-                    want = self.COMMON | (self.BOND if st == "sc_so_bond_static" else set())
+                    want = self.COMMON | (self.BOND if st in self.BOND_STAGES else set())
                     self.assertEqual(fp.required_members(kind, st), frozenset(want))
                     self.assertEqual(set(_v2_members(st)), want)
         self.assertEqual(set(_v2_members(fp_green_source="b" * 64)),
@@ -550,7 +556,7 @@ class TestProvenanceSchema(unittest.TestCase):
             fp.required_members("green", "rpa_so")
         self.assertEqual(str(cm.exception),
                          "artifact kind 'green' has no producer_stage 'rpa_so' "
-                         "(its stages: flex_so_onsite)")
+                         "(its stages: flex_so_onsite, flex_so_bond)")
 
     def test_writer_values(self):
         m = _v2_members()
@@ -680,7 +686,9 @@ class TestProvenanceSchema(unittest.TestCase):
     def test_valid_archives(self):
         for kind, stages in self.KINDS.items():
             for st in stages:
-                if st == "sc_so_bond_static":
+                # the bond-resolved stages are covered by test_bond_rules and
+                # tests/test_fingerprint_bond.py
+                if st in self.BOND_STAGES:
                     continue
                 with self.subTest(kind=kind, stage=st):
                     payload = _GAP_DYNAMIC if st == "sc_so_dynamic" else None
@@ -916,27 +924,31 @@ class TestPayloadTables(unittest.TestCase):
             fp.validate_structure(_archive("chiq", "rpa_so"), "x.npz", kind="green")
         self.assertEqual(str(cm.exception), _malformed_text(
             "x.npz", "producer_stage does not write a green archive", "'rpa_so'",
-            "one of flex_so_onsite"))
+            "one of flex_so_onsite, flex_so_bond"))
         with self.assertRaises(ValueError) as cm:
             fp.validate_structure(_archive(), "x.npz", kind="Chiq")
         self.assertEqual(str(cm.exception), "unknown artifact kind 'Chiq'")
 
     def test_deferred_stages(self):
-        texts = {
-            "sc_so_bond_dynamic": "'g.npz' was written by producer_stage 'sc_so_bond_dynamic', "
-                                  "which this version does not read yet (the dynamic "
-                                  "spin-orbital bond path arrives in a later version).",
-            "flex_so_bond": "'g.npz' was written by producer_stage 'flex_so_bond', which this "
-                            "version does not read yet (the spin-orbital bond FLEX arrives in "
-                            "a later version).",
-        }
-        for stage, text in texts.items():
-            with self.subTest(stage=stage):
-                d = _archive("gap", "sc_so_static")
-                d["producer_stage"] = np.str_(stage)
-                with self.assertRaises(fp.SOArchiveError) as cm:
-                    fp.validate_structure(d, "g.npz", kind="gap")
-                self.assertEqual(str(cm.exception), text)
+        """Only the dynamic bond stage is deferred; the bond FLEX stage is
+        read, and a gap archive claiming it is refused as malformed."""
+        self.assertEqual(fp.DEFERRED_STAGES,
+                         {"sc_so_bond_dynamic": "the dynamic spin-orbital bond path"})
+        d = _archive("gap", "sc_so_static")
+        d["producer_stage"] = np.str_("sc_so_bond_dynamic")
+        with self.assertRaises(fp.SOArchiveError) as cm:
+            fp.validate_structure(d, "g.npz", kind="gap")
+        self.assertEqual(str(cm.exception),
+                         "'g.npz' was written by producer_stage 'sc_so_bond_dynamic', which "
+                         "this version does not read yet (the dynamic spin-orbital bond path "
+                         "arrives in a later version).")
+        d = _archive("gap", "sc_so_static")
+        d["producer_stage"] = np.str_("flex_so_bond")
+        with self.assertRaises(fp.SOArchiveError) as cm:
+            fp.validate_structure(d, "g.npz", kind="gap")
+        self.assertEqual(str(cm.exception), _malformed_text(
+            "g.npz", "producer_stage does not write a gap archive", "'flex_so_bond'",
+            "one of sc_so_static, sc_so_dynamic, sc_so_bond_static"))
         d = _archive("gap", "sc_so_static")
         d["producer_stage"] = np.str_("sc_so_later")
         with self.assertRaises(fp.SOArchiveError) as cm:
@@ -1151,6 +1163,456 @@ class TestVersionTwoChecks(unittest.TestCase):
             self.check(d)
         self.assertEqual(str(cm.exception), _malformed_text(
             "chiq.npz", "unsupported fingerprint_version", 3, 2))
+
+
+def _outcome(call):
+    """``("ok", value)`` or ``(exception type, text)`` of ``call()``."""
+    try:
+        return "ok", call()
+    except ValueError as exc:
+        return type(exc), str(exc)
+
+
+class TestCompatibilitySplit(unittest.TestCase):
+    """``check_so_archive`` is ``_validate`` followed by
+    ``check_so_compatibility``: both give the same result, the same text and
+    the same log lines on the archives of TestVersionTwoChecks."""
+    RUN_BAND = TestVersionTwoChecks.RUN_BAND
+    RUN_STATE = TestVersionTwoChecks.RUN_STATE
+
+    def _args(self, **kw):
+        args = dict(kind="chiq", run_band=self.RUN_BAND, run_state=self.RUN_STATE,
+                    nmat_rule="exact", run_interaction=INTER, need="so_onsite")
+        args.update(kw)
+        return args
+
+    def _split(self, d, path, *, kind, expected_producer=None, **kw):
+        label = fp._readable_label(d, fp._members(d))
+        if label == fp.UNKNOWN_PRODUCER and expected_producer:
+            label = expected_producer
+        kind, stage, version = fp._validate(d, path, kind, None, label, expected_producer)
+        return fp.check_so_compatibility(d, path, validated=(kind, stage, version, label),
+                                         expected_producer=expected_producer, **kw)
+
+    def _cases(self):
+        T2 = dict(T)
+        T2[((0, 0, 0), (0, 0))] = -1.5 + 0j
+        g = _rand((1, 8, 1, 4, 4))
+        g_fp = fp.green_digest(g, "b_f_k_o_o_v1", version=2)
+        unreadable = _archive()
+        unreadable["producer_label"] = np.str_("")
+        unreadable["fp_band"] = np.str_("z" * 64)
+        far = _archive(state=fp.so_state(beta=2.0, nmat=8, mu=-0.3, density=0.9,
+                                         calc_mu=True, target=0.8))
+        file_rec = _records(("Exchange", (0, 1, 1, 0), (1, 0, 0), 0.29))
+        run_rec = file_rec.copy()
+        run_rec[0]["v"] = 0.31
+        gap = _archive("gap", "sc_so_bond_static")
+        bond_kw = dict(path="gap.npz", kind="gap", need="so_bond")
+        other = fp.interaction_inputs(_Compiled(_COMPILED.records))
+        return (
+            ("accepted", _archive(), {}),
+            ("band", _archive(), dict(run_band=fp.band_inputs(T2, E, META2))),
+            ("state", _archive(), dict(run_state=self.RUN_STATE._replace(beta=4.0))),
+            ("nmat exact", _archive(), dict(run_state=self.RUN_STATE._replace(nmat=16))),
+            ("nmat load", _archive(), dict(run_state=self.RUN_STATE._replace(nmat=16),
+                                           nmat_rule="load")),
+            ("residual", far, {}),
+            ("green", _archive(fp_green=g_fp), dict(green=g, green_layout="b_f_k_o_o_v1")),
+            ("green mismatch", _archive(), dict(green=g, green_layout="b_f_k_o_o_v1")),
+            ("green_fp mismatch", _archive(), dict(green_fp="b" * 64)),
+            ("interaction", _archive(interaction=fp.interaction_inputs(_Compiled(file_rec))),
+             dict(run_interaction=fp.interaction_inputs(_Compiled(run_rec)))),
+            ("capability", _archive(), dict(need="so_bond", run_bond=BOND)),
+            ("unreadable label", unreadable,
+             dict(expected_producer="the spin-orbital RPA run")),
+            ("bond accepted", gap, dict(run_bond=BOND, **bond_kw)),
+            ("bond resolved", gap, dict(run_bond=BOND._replace(reverse=REV_SWAPPED), **bond_kw)),
+            ("bond declared", gap, dict(run_bond=BOND, run_interaction=other, **bond_kw)),
+            ("bond no run_bond", gap, bond_kw),
+            ("bond onsite consumer", gap, dict(path="gap.npz", kind="gap")),
+            ("bond FLEX chiq onsite consumer", _archive("chiq", "flex_so_bond"), {}),
+        )
+
+    def test_same_outcome(self):
+        outcomes = {}
+        for name, d, kw in self._cases():
+            args = self._args(**kw)
+            path = args.pop("path", "chiq.npz")
+            with self.subTest(case=name):
+                with self.assertLogs(fp.check_logger, "DEBUG") as whole_logs:
+                    fp.check_logger.debug("start")
+                    whole = _outcome(lambda: fp.check_so_archive(d, path, **args))
+                with self.assertLogs(fp.check_logger, "DEBUG") as split_logs:
+                    fp.check_logger.debug("start")
+                    split = _outcome(lambda: self._split(d, path, **args))
+                self.assertEqual(split, whole)
+                self.assertEqual(split_logs.output, whole_logs.output)
+                outcomes[name] = (whole[0], whole_logs.output)
+        # the cases reach acceptance, refusals, a WARNING and the INFO line
+        self.assertEqual(outcomes["accepted"][0], "ok")
+        self.assertTrue(any("WARNING" in line for line in outcomes["nmat load"][1]))
+        self.assertTrue(any("producer assertion" in line for line in outcomes["accepted"][1]))
+        self.assertEqual(outcomes["bond accepted"][0], "ok")
+        self.assertIs(outcomes["residual"][0], fp.SOArchiveError)
+        self.assertIs(outcomes["bond no run_bond"][0], ValueError)
+
+    def test_signature(self):
+        params = inspect.signature(fp.check_so_compatibility).parameters
+        self.assertEqual(list(params), [
+            "data", "path", "validated", "run_band", "run_state", "nmat_rule",
+            "run_interaction", "need", "expected_producer", "run_bond", "green",
+            "green_layout", "green_fp", "check_green"])
+        for k in list(params)[2:]:
+            self.assertEqual(params[k].kind, inspect.Parameter.KEYWORD_ONLY)
+        for k in ("expected_producer", "run_bond", "green", "green_layout", "green_fp"):
+            self.assertIsNone(params[k].default)
+
+    def test_caller_arguments(self):
+        d = _archive()
+        v = ("chiq", "rpa_so", 2, "test producer")
+        args = self._args()
+        del args["kind"]
+        with self.assertRaises(ValueError) as cm:
+            fp.check_so_compatibility(d, "chiq.npz", validated=v,
+                                      **dict(args, run_interaction=None))
+        self.assertEqual(str(cm.exception), "check_so_compatibility needs run_interaction")
+        with self.assertRaises(ValueError) as cm:
+            fp.check_so_compatibility(d, "chiq.npz", validated=v, **dict(args, need="bond"))
+        self.assertEqual(str(cm.exception),
+                         "need must be one of ('so_onsite', 'so_bond'), got 'bond'")
+        with self.assertRaises(ValueError) as cm:
+            fp.check_so_compatibility(d, "chiq.npz", validated=v,
+                                      **dict(args, nmat_rule="loose"))
+        self.assertEqual(str(cm.exception),
+                         "nmat_rule must be one of ('exact', 'load'), got 'loose'")
+        with self.assertRaises(ValueError) as cm:
+            fp.check_so_compatibility(d, "chiq.npz", validated=v[:3], **args)
+        self.assertEqual(str(cm.exception),
+                         "check_so_compatibility: validated must be (kind, stage, version, "
+                         "label), got ('chiq', 'rpa_so', 2)")
+        info = fp.check_so_compatibility(d, "chiq.npz", validated=v, **args)
+        self.assertEqual(info, fp.check_so_archive(d, "chiq.npz", kind="chiq", **args))
+
+    def test_label_from_validated(self):
+        """The messages name the label of ``validated``; an unknown label is
+        replaced by ``expected_producer`` as check_so_archive does."""
+        d = _archive()
+        d["fp_band"] = np.str_("0" * 64)
+        args = self._args()
+        del args["kind"]
+        for label, ep, named in (("another producer", None, "another producer"),
+                                 (fp.UNKNOWN_PRODUCER, "the RPA run", "the RPA run"),
+                                 (fp.UNKNOWN_PRODUCER, None, fp.UNKNOWN_PRODUCER)):
+            with self.subTest(label=label, expected_producer=ep):
+                with self.assertRaises(fp.SOArchiveError) as cm:
+                    fp.check_so_compatibility(d, "chiq.npz",
+                                              validated=("chiq", "rpa_so", 2, label),
+                                              expected_producer=ep, **args)
+                self.assertIn("(written by {})".format(named), str(cm.exception))
+
+
+class TestOnsiteCapability(unittest.TestCase):
+    """The spin-orbital bond FLEX outputs are read by the structure check;
+    an on-site consumer gets the capability refusal, never a deferred-stage
+    or malformed text."""
+    RUN_BAND = TestVersionTwoChecks.RUN_BAND
+    RUN_STATE = TestVersionTwoChecks.RUN_STATE
+
+    def test_capability_text(self):
+        for kind in ("chi0q", "chiq", "green", "sigma"):
+            with self.subTest(kind=kind):
+                d = _archive(kind, "flex_so_bond")
+                path = kind + ".npz"
+                self.assertEqual(fp.validate_structure(d, path, kind=kind),
+                                 (kind, "flex_so_bond", 2))
+                with self.assertRaises(fp.SOArchiveError) as cm:
+                    fp.check_so_archive(d, path, kind=kind, run_band=self.RUN_BAND,
+                                        run_state=self.RUN_STATE, nmat_rule="exact",
+                                        run_interaction=INTER, need="so_onsite")
+                self.assertEqual(str(cm.exception),
+                                 "{} was produced by test producer (so_bond), but this run "
+                                 "needs a so_onsite artifact".format(path))
+
+
+class TestStateRelations(unittest.TestCase):
+    """The copied state relations: one helper, the same texts through
+    validate_structure and directly, checked in the order asked for."""
+    ROWS = (
+        ("beta", np.float64(3.0), "beta differs from state_beta", "3.0", "2.0"),
+        ("beta", np.array([2.0]), "beta differs from state_beta", "[2.0]", "2.0"),
+        ("nmat", np.int64(16), "nmat differs from state_nmat", "16", "8"),
+        ("nmat", np.float64(8.0), "nmat differs from state_nmat", "8.0", "8"),
+        ("norb_phys", np.int64(3), "norb_phys differs from prov_norb_phys", "3", "2"),
+    )
+
+    def test_rows(self):
+        for name, bad, check, stored, expected in self.ROWS:
+            d = _archive()
+            d[name] = bad
+            text = _malformed_text("a.npz", check, stored, expected)
+            with self.subTest(name=name, bad=bad):
+                for via, call in (
+                        ("validate_structure",
+                         lambda: fp.validate_structure(d, "a.npz", kind="chiq")),
+                        ("check_state_relations",
+                         lambda: fp.check_state_relations(d, "a.npz", "test producer"))):
+                    with self.assertRaises(fp.SOArchiveError) as cm:
+                        call()
+                    self.assertEqual(str(cm.exception), text, via)
+        d = _archive()
+        d.update(beta=np.float64(2.0), nmat=np.int64(8), norb_phys=np.int64(2))
+        self.assertIsNone(fp.check_state_relations(d, "a.npz", "test producer"))
+        self.assertIsNone(fp.check_state_relations(_archive(), "a.npz", "test producer"))
+
+    def test_order(self):
+        d = _archive()
+        d.update(beta=np.float64(3.0), nmat=np.int64(16), norb_phys=np.int64(3))
+        self.assertEqual(fp.STATE_RELATIONS, ("beta", "nmat", "norb_phys"))
+        for members, first in ((fp.STATE_RELATIONS, "beta"),
+                               (("norb_phys", "nmat", "beta"), "norb_phys"),
+                               (("nmat",), "nmat")):
+            with self.subTest(members=members):
+                with self.assertRaises(fp.SOArchiveError) as cm:
+                    fp.check_state_relations(d, "a.npz", "test producer", members=members)
+                self.assertIn(": {} differs from ".format(first), str(cm.exception))
+        with self.assertRaises(fp.SOArchiveError) as cm:
+            fp.validate_structure(d, "a.npz", kind="chiq")
+        self.assertIn(": beta differs from state_beta", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            fp.check_state_relations(d, "a.npz", "test producer", members=("mu",))
+        self.assertEqual(str(cm.exception),
+                         "check_state_relations: unknown relation 'mu' (beta, nmat, norb_phys)")
+
+    def test_reads_no_payload(self):
+        d = _NoPayload(_archive())
+        self.assertIsNone(fp.check_state_relations(d, "a.npz", "test producer"))
+
+
+_MISMATCH_AB = ("'chiq.npz' (written by test producer): fp_green mismatch: the Green function "
+                "this run loaded has digest bbbbbbbbbbbb..., the archive records "
+                "aaaaaaaaaaaa... (both at fingerprint_version 2); the Green function and the "
+                "susceptibility do not come from the same run. Regenerate both with test "
+                "producer.")
+_NOT_READ = "check_so_compatibility: green and green_fp are not read with check_green = False"
+
+
+class TestDeferredGreen(unittest.TestCase):
+    """``check_green = False`` stops before the green step; the digest is
+    compared afterwards by :func:`check_green_digest` with the same text."""
+    RUN_BAND = TestVersionTwoChecks.RUN_BAND
+    RUN_STATE = TestVersionTwoChecks.RUN_STATE
+
+    def _args(self, **kw):
+        args = dict(run_band=self.RUN_BAND, run_state=self.RUN_STATE, nmat_rule="exact",
+                    run_interaction=INTER, need="so_onsite")
+        args.update(kw)
+        return args
+
+    def _calls(self, d, **kw):
+        v = ("chiq", "rpa_so", 2, "test producer")
+        return (("check_so_compatibility",
+                 lambda: fp.check_so_compatibility(d, "chiq.npz", validated=v,
+                                                   **self._args(**kw))),
+                ("check_so_archive",
+                 lambda: fp.check_so_archive(d, "chiq.npz", kind="chiq",
+                                             **self._args(**kw))))
+
+    def _logs(self, call):
+        with self.assertLogs(fp.check_logger, "DEBUG") as cm:
+            fp.check_logger.debug("start")
+            result = call()
+        return result, cm.output[1:]
+
+    def test_deferred_then_digest(self):
+        g = _rand((1, 8, 1, 4, 4))
+        right = fp.green_digest(g, "b_f_k_o_o_v1", version=2)
+        d = _archive()                          # stores "a" * 64, not g's digest
+        for via, call in self._calls(d, check_green=False):
+            with self.subTest(via=via):
+                info, logs = self._logs(call)
+                self.assertEqual(logs, [])      # no producer-assertion INFO
+                self.assertEqual(info.producer_fp_green, GREEN_FP)
+                self.assertEqual(info, fp.check_so_archive(d, "chiq.npz", kind="chiq",
+                                                           **self._args()))
+                with self.assertRaises(fp.SOArchiveError) as cm:
+                    fp.check_green_digest(info.producer_fp_green, "chiq.npz",
+                                          label=info.producer_label, green_fp="b" * 64)
+                self.assertEqual(str(cm.exception), _MISMATCH_AB)
+                self.assertEqual(cm.exception.check, "green")
+        d = _archive(fp_green=right)
+        info = fp.check_so_compatibility(d, "chiq.npz",
+                                         validated=("chiq", "rpa_so", 2, "test producer"),
+                                         check_green=False, **self._args())
+        out, logs = self._logs(lambda: fp.check_green_digest(
+            info.producer_fp_green, "chiq.npz", label="test producer", green_fp=right))
+        self.assertEqual(out, right)
+        self.assertEqual(logs, [])
+
+    def test_mismatch_text_shared(self):
+        """The deferred compare gives the text of the one-stage green step."""
+        d = _archive()
+        with self.assertRaises(fp.SOArchiveError) as one:
+            fp.check_so_archive(d, "chiq.npz", kind="chiq", green_fp="b" * 64,
+                                **self._args())
+        with self.assertRaises(fp.SOArchiveError) as two:
+            fp.check_green_digest(GREEN_FP, "chiq.npz", label="test producer",
+                                  green_fp="b" * 64)
+        self.assertEqual(str(one.exception), _MISMATCH_AB)
+        self.assertEqual(str(two.exception), _MISMATCH_AB)
+
+    def test_green_with_check_green_false(self):
+        g = _rand((1, 8, 1, 4, 4))
+        for extra in (dict(green_fp="b" * 64), dict(green=g, green_layout="b_f_k_o_o_v1"),
+                      dict(green=g)):
+            for via, call in self._calls(_archive(), check_green=False, **extra):
+                with self.subTest(via=via, extra=sorted(extra)):
+                    with self.assertRaises(ValueError) as cm:
+                        call()
+                    self.assertIs(type(cm.exception), ValueError)
+                    self.assertEqual(str(cm.exception), _NOT_READ)
+
+    def test_green_digest_needs_a_string(self):
+        with self.assertRaises(TypeError) as cm:
+            fp.check_green_digest(GREEN_FP, "chiq.npz", label="test producer", green_fp=None)
+        self.assertEqual(str(cm.exception),
+                         "check_green_digest: green_fp must be the digest string, got None")
+
+    def test_defaults_unchanged(self):
+        d = _archive()
+        for via, call in self._calls(d):
+            with self.subTest(via=via):
+                info, logs = self._logs(call)
+                self.assertEqual(logs, ["INFO:qlms.solver.fingerprint:fp_green: producer "
+                                        "assertion (chiq.npz)"])
+                self.assertEqual(info.producer_fp_green, GREEN_FP)
+        for name in ("check_so_archive", "check_so_compatibility"):
+            p = inspect.signature(getattr(fp, name)).parameters["check_green"]
+            self.assertIs(p.default, True)
+            self.assertEqual(p.kind, inspect.Parameter.KEYWORD_ONLY)
+        params = inspect.signature(fp.check_green_digest).parameters
+        self.assertEqual(list(params), ["stored", "path", "label", "green_fp", "green_only"])
+        self.assertEqual([params[k].kind for k in ("label", "green_fp", "green_only")],
+                         [inspect.Parameter.KEYWORD_ONLY] * 3)
+        self.assertIs(params["green_only"].default, False)
+
+    def test_green_only_text(self):
+        """A Green function read from the archive itself: the refusal names
+        the archive's green member, not a susceptibility."""
+        with self.assertRaises(fp.SOArchiveError) as cm:
+            fp.check_green_digest(GREEN_FP, "green.npz", label="test producer",
+                                  green_fp="b" * 64, green_only=True)
+        self.assertEqual(
+            str(cm.exception),
+            "'green.npz' (written by test producer): fp_green mismatch: the Green function "
+            "read from it has digest bbbbbbbbbbbb..., the file records aaaaaaaaaaaa... (both "
+            "at fingerprint_version 2); its green member is not the one the run that wrote "
+            "it recorded. Regenerate it with test producer.")
+        self.assertEqual(cm.exception.check, "green")
+        self.assertEqual(fp.check_green_digest(GREEN_FP, "green.npz", label="test producer",
+                                               green_fp=GREEN_FP, green_only=True), GREEN_FP)
+
+
+class TestStepNames(unittest.TestCase):
+    """Each refusal of the compatibility steps names its step in ``check``;
+    its text is unchanged."""
+    RUN_BAND = TestVersionTwoChecks.RUN_BAND
+    RUN_STATE = TestVersionTwoChecks.RUN_STATE
+
+    def _rows(self):
+        T2 = dict(T)
+        T2[((0, 0, 0), (0, 0))] = -1.5 + 0j
+        far = _archive(state=fp.so_state(beta=2.0, nmat=8, mu=-0.3, density=0.9,
+                                         calc_mu=True, target=0.8))
+        file_rec = _records(("Exchange", (0, 1, 1, 0), (1, 0, 0), 0.29))
+        run_rec = file_rec.copy()
+        run_rec[0]["v"] = 0.31
+        gap = _archive("gap", "sc_so_bond_static")
+        bond = dict(path="gap.npz", kind="gap", need="so_bond", run_bond=BOND)
+        other = fp.interaction_inputs(_Compiled(_COMPILED.records))
+        return (
+            ("residual", far, {},
+             "'chiq.npz' cannot be reused: the producer did not reach its filling (residual "
+             "1.000e-01 electrons per cell > 1e-8·max(1,|t|) = 1.000e-08). Regenerate it "
+             "with test producer so that its density closes to that tolerance."),
+            ("band", _archive(), dict(run_band=fp.band_inputs(T2, E, META2)),
+             "'chiq.npz' (written by test producer) does not match this run: band "
+             "differs: Transfer: file 2 rows, run 2 rows; first differing row "
+             "(R=(0, 0, 0), a=1, b=1): file (-1+0j), run (-1.5+0j). Archives are "
+             "reused only at the identical state point (not a warm start across a "
+             "sweep); re-run test producer with this input (the same "
+             "Transfer/Extern/coeff_extern)."),
+            ("interaction", _archive(interaction=fp.interaction_inputs(_Compiled(file_rec))),
+             dict(run_interaction=fp.interaction_inputs(_Compiled(run_rec))),
+             "'chiq.npz' (written by test producer) does not match this run: interaction "
+             "differs: file 1 records, run 1 records; first differing record Exchange modes "
+             "(0, 1, 1, 0) cells ((0, 0, 0), (1, 0, 0), (0, 0, 0), (0, 0, 0)): file "
+             "(0.29+0j), run (0.31+0j). Archives are reused only at the identical state "
+             "point (not a warm start across a sweep); re-run test producer with this input "
+             "(the same interaction definitions)."),
+            ("capability", _archive(), dict(need="so_bond", run_bond=BOND),
+             "chiq.npz was produced by test producer (so_onsite), but this run needs a "
+             "so_bond artifact"),
+            ("topology", gap, dict(run_interaction=other, **bond),
+             "'gap.npz' (written by test producer) does not match this run: declared "
+             "topology differs: file 5 displacements, run 3 displacements. Archives are "
+             "reused only at the identical state point (not a warm start across a sweep); "
+             "re-run test producer with this input (the same interaction definitions)."),
+            ("resolved_topology", gap,
+             dict(bond, run_bond=BOND._replace(reverse=REV_SWAPPED)),
+             "'gap.npz' (written by test producer) does not match this run: resolved "
+             "bond topology differs: file delta_r [[0, 0, 0], [1, 0, 0], [-1, 0, 0]] "
+             "reverse [0, 2, 1] (max_shells 1), run delta_r [[0, 0, 0], [1, 0, 0], "
+             "[-1, 0, 0]] reverse [0, 1, 2] (max_shells 1). Archives are reused only "
+             "at the identical state point (not a warm start across a sweep); re-run "
+             "test producer with this input (the same bond settings)."),
+            ("state", _archive(), dict(run_state=self.RUN_STATE._replace(beta=4.0)),
+             "'chiq.npz' (written by test producer) does not match this run: state "
+             "differs: beta 2.0 (file) vs 4.0 (run). Archives are reused only at "
+             "the identical state point; re-run test producer at this filling and "
+             "temperature."),
+            ("green", _archive(), dict(green_fp="b" * 64), _MISMATCH_AB),
+        )
+
+    def test_steps(self):
+        names = []
+        for step, d, kw, text in self._rows():
+            args = dict(kind="chiq", run_band=self.RUN_BAND, run_state=self.RUN_STATE,
+                        nmat_rule="exact", run_interaction=INTER, need="so_onsite")
+            args.update(kw)
+            path = args.pop("path", "chiq.npz")
+            kind = args.pop("kind")
+            v = fp.validate_structure(d, path, kind=kind) + ("test producer",)
+            for via, call in (
+                    ("check_so_archive",
+                     lambda: fp.check_so_archive(d, path, kind=kind, **args)),
+                    ("check_so_compatibility",
+                     lambda: fp.check_so_compatibility(d, path, validated=v, **args))):
+                with self.subTest(step=step, via=via):
+                    with self.assertRaises(fp.SOArchiveError) as cm:
+                        call()
+                    self.assertEqual(cm.exception.check, step)
+                    self.assertEqual(str(cm.exception), text)
+                    self.assertEqual(cm.exception.args, (text,))
+            names.append(step)
+        self.assertEqual(names, ["residual", "band", "interaction", "capability", "topology",
+                                 "resolved_topology", "state", "green"])
+
+    def test_default_and_structure(self):
+        e = fp.SOArchiveError("text")
+        self.assertIsNone(e.check)
+        self.assertEqual((str(e), e.args), ("text", ("text",)))
+        e = fp.SOArchiveError("text", check="band")
+        self.assertEqual((str(e), e.args, e.check), ("text", ("text",), "band"))
+        self.assertIsInstance(e, ValueError)
+        d = _archive()
+        d["fingerprint_version"] = np.int64(3)
+        with self.assertRaises(fp.SOArchiveError) as cm:
+            fp.check_so_archive(d, "chiq.npz", kind="chiq", run_band=self.RUN_BAND,
+                                run_state=self.RUN_STATE, nmat_rule="exact",
+                                run_interaction=INTER, need="so_onsite")
+        self.assertIsNone(cm.exception.check)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,8 @@ from hwave.solver.eliashberg.config import (
     _warn_if_static_ignores_channel_flags,
     _resolve_bond_coeff_tail,
     _read_bond_config,
+    _read_so_bond_config,
+    _so_bond_entry_warnings,
     _validate_bond_prereqs,
     _check_nonbond_offsite,
     _validate_bond_green_nmat,
@@ -58,7 +60,8 @@ from hwave.solver.eliashberg.eigen import (
     _channel_eigenpairs,
     _resolve_spectral_shift,
     _solve_eigenvalue,
-    _SOAntisymmetricBasis)
+    _SOAntisymmetricBasis,
+    _SIGMA_SHIFT_IGNORED)
 from hwave.solver.eliashberg.io import (
     _refuse_so_green_file,
     _preflight_refuse_so_archives,
@@ -81,8 +84,14 @@ from hwave.solver.eliashberg.bond import (
     _resolve_bond_topology,
     _build_bond_operator,
     _build_bond_green,
-    _bond_diagnostics_record)
+    _bond_diagnostics_record,
+    _so_bond_green,
+    _admit_so_bond_static,
+    _build_so_bond_operator)
 from hwave.solver.eliashberg.so_solve import (
+    EigenLeg,
+    IterationLeg,
+    _so_bond_run,
     _so_run_inputs,
     _so_own_state,
     _so_writer_members,
@@ -98,6 +107,9 @@ from hwave.solver.eliashberg.so_solve import (
     _so_is_antisymmetric,
     _so_solve_iteration,
     _so_solve_eigenvalue,
+    _so_solve_sectors,
+    _so_iterate_sectors,
+    _so_bond_report,
     _so_check_antisymmetric_eigenpairs)
 
 logger = logging.getLogger("hwave_sc")
@@ -121,6 +133,9 @@ DEFAULT_SOLVER_MODE = "eigenvalue"
 
 
 _SO_DYNAMIC_LABEL = "hwave_sc (spin-orbital, dynamic)"
+
+
+_SO_BOND_STATIC_LABEL = "hwave_sc (spin-orbital, bond, static)"
 
 
 IN_PROCESS_DEFAULT_SOLVER_MODE = "eigenvalue"
@@ -182,6 +197,7 @@ class EliashbergRun:
     Nx: Any = None
     Ny: Any = None
     eli_param: Any = None
+    so_bond_cfg: Any = None
     use_gpu: Any = None
     gpu_active: Any = None
     xp: Any = None
@@ -334,12 +350,22 @@ def _read_static_options(run):
     # dynamic vertex, so warn rather than silently ignore them.
     _warn_if_static_ignores_channel_flags(run.eli_param)
 
+    # The bond options of a spin-orbital run are read here, before the
+    # backend is selected (the spin-orbital bond path runs on the CPU).
+    run.so_bond_cfg = _read_so_bond_config(run.eli_param) if run.spin_orbital_mode else None
+
     # GPU backend for the static kernel (the dynamic branch returned from
     # calc_eliashberg before this stage and handles its own gpu flag). get_backend falls back to numpy with a warning
     # when CuPy/CUDA is unusable, unless gpu_required=true (then it raises).
     run.use_gpu = backend.as_bool(run.eli_param.get("gpu", False))
     gpu_required = backend.as_bool(run.eli_param.get("gpu_required", False))
-    run.xp, run.gpu_active = backend.get_backend(run.use_gpu, logger, required=gpu_required)
+    if run.so_bond_cfg is not None and run.so_bond_cfg.use_bond:
+        # the spin-orbital bond path runs on the CPU: no backend is selected
+        # (gpu_required was refused by _read_so_bond_config, gpu warns here)
+        run.xp, run.gpu_active = np, False
+        _so_bond_entry_warnings(run.eli_param, logger)
+    else:
+        run.xp, run.gpu_active = backend.get_backend(run.use_gpu, logger, required=gpu_required)
 
     run.solver_mode = run.eli_param.get("solver_mode", DEFAULT_SOLVER_MODE)
     run.max_iter = run.eli_param.get("max_iter", 1000)
@@ -362,8 +388,14 @@ def _read_static_options(run):
     # ignored with a warning when the flag is off; the guards themselves run
     # right after the interaction files are read (_check_bond_and_archives),
     # before any chi0q/FLEX data is touched.
-    (run.use_bond_channels, run.bond_green, run.bond_max_shells, run.bond_memory_cap_gb,
-     run.bond_precondition_opts, run.bond_diagnostics) = _read_bond_config(run.eli_param)
+    # In spin-orbital mode the bond options were read above
+    # (_read_so_bond_config); the non-spin-orbital bond path stays off.
+    if run.spin_orbital_mode:
+        (run.use_bond_channels, run.bond_green, run.bond_max_shells, run.bond_memory_cap_gb,
+         run.bond_precondition_opts, run.bond_diagnostics) = (False, None, None, None, {}, False)
+    else:
+        (run.use_bond_channels, run.bond_green, run.bond_max_shells, run.bond_memory_cap_gb,
+         run.bond_precondition_opts, run.bond_diagnostics) = _read_bond_config(run.eli_param)
     from requests.structures import CaseInsensitiveDict
     run.g2_tail = _coerce_g2_tail(
         CaseInsensitiveDict(run.eli_param).get("g2_tail", True))
@@ -418,9 +450,14 @@ def _read_model(run):
         run.so_extern_table, _so_extern_file = _read_so_extern(run.input_dict, run.norb_phys)
         logger.info("enable_spin_orbital: %d physical orbitals, nd = %d "
                     "spin-orbitals (spin-block order)", run.norb_phys, run.norb)
+        # the bond topology of a bond run, resolved once (a shell cutoff that
+        # drops a used shell is refused here, before any heavy work)
+        so_bond_run = (_so_bond_run(so_context, run.geom_info["rvec"], run.so_bond_cfg.max_shells)
+                       if run.so_bond_cfg.use_bond else None)
         # this run's band and state, for the archive checks (#88)
         run.so_run = _so_run_inputs(run.input_dict, run.hr, run.so_extern_table, run.norb_phys,
-                                run.beta, run.nmat, run.n_filling, context=so_context)
+                                run.beta, run.nmat, run.n_filling, context=so_context,
+                                bond=so_bond_run)
 
 
 def _check_bond_and_archives(run):
@@ -518,9 +555,9 @@ def _prepare_band(run):
                 run.band = run.band._replace(solver=None)
 
 
-def _build_one_body(run):
-    """Stage 6: the k mesh, H(k), its eigenpairs, the chemical potential and
-    the k-space interaction table.
+def _build_hamiltonian(run):
+    """Stage 6a: the k mesh and H(k). (The static spin-orbital bond path
+    leaves calc_eliashberg right after this stage.)
     """
     # --- Step 3: Setup k-mesh ---
     run.kx_array = np.linspace(0, 2.0 * np.pi, run.Nx, endpoint=False)
@@ -547,6 +584,11 @@ def _build_one_body(run):
                     "Hamiltonian in k-space".format(", ".join(run.band.sources)))
         run.epsilon_k = run.band.epsilon_k
 
+
+def _build_one_body(run):
+    """Stage 6b: the eigenpairs of H(k), the chemical potential and the
+    k-space interaction table.
+    """
     logger.info("Diagonalizing Hamiltonian...")
     run.eigenvalues, run.eigenvectors = _calc_eigenvalues(run.epsilon_k)
 
@@ -1306,6 +1348,277 @@ def _write_results(run):
     return float(np.real(run.eigenvalue_iter))
 
 
+_SO_BOND_B1_INFO = (
+    "bond_channels = true: no off-site row is declared, so B = 1 and the bond vertex is "
+    "the on-site spin-orbital vertex")
+_SO_BOND_PAIRLIFT_INFO = (
+    "off-site PairLift is included in the spin-orbital bond vertex (the non-spin-orbital "
+    "bond paths omit it: it has no spin/charge content)")
+_SO_BOND_RPA_LADDER = (
+    "[eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond "
+    "dressing on the BARE Green function built from the Transfer (and Extern) input. It "
+    "demonstrates the qualitative V-dependence of the pairing eigenvalue; it is NOT a "
+    "conserving FLEX result (the bond chi-bar is built here at RPA-ladder level), so "
+    "absolute lambda values are not comparable with FLEX/dynamic references.")
+#: WARNING of a run on a Green function read from ``bond_green`` (``%s`` path)
+_SO_BOND_RPA_LADDER_BORROWED = (
+    "[eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond "
+    "dressing on the Green function read from bond_green = '%s' (its approximation level, "
+    "e.g. FLEX-dressed, is that of the file). The bond chi-bar is built here from that "
+    "Green function at RPA-ladder level; it is NOT the bond susceptibility of the run that "
+    "wrote the file, so absolute lambda values are not comparable with FLEX/dynamic "
+    "references.")
+#: the eigenvalue.dat note of a power iteration with no gap space (no
+#: sector was iterated; the format field is solver_mode)
+_SO_BOND_NO_ITERATION = (
+    "solver_mode='{}': no pair-S_z sector has a fermion-antisymmetric gap space on this k "
+    "grid, so no power iteration ran; NO eigenvalue is reported (the value below is NaN) "
+    "and the gap written is zeros (gap_status = \"none\").")
+_SO_BOND_EMPTY_GAP = (
+    "spin-orbital bond pairing: no pair-S_z sector has a fermion-antisymmetric gap space "
+    "on this k grid; no gap is reported (gap_status = \"none\")")
+
+
+def _so_bond_has_offsite_pairlift(compiled):
+    """Whether a nonzero record of ``compiled`` is an off-site PairLift (a
+    nonzero cell)."""
+    return any(str(r["type"]) == "PairLift" and bool(np.any(np.asarray(r["cells"]) != 0))
+               for r in compiled.records)
+
+
+def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb_phys, beta,
+                          nmat, filling, shape, cell, kx_array, ky_array, kz_array,
+                          output_dir, gap_file, eigenvalue_file, solver_mode,
+                          num_eigenvalues, eigenvalue_method, max_iter, alpha, tol,
+                          init_gap_mode):
+    """The static spin-orbital Eliashberg solve with bond-resolved channels
+    (``[eliashberg] bond_channels = true``), from the run's band
+    ``epsilon_k`` on: the admission, the Green function, the operator, the
+    solve and both outputs. Returns the reported leading eigenvalue (NaN when
+    it is not certified).
+
+    The admission (:func:`_admit_so_bond_static`) decides the layout and the
+    memory before any bond array is allocated; the operator
+    (:func:`_build_so_bond_operator`) is one kernel on the flat gap (dense)
+    or one operator per pair-S_z sector (S_z-packed). The legs that run are
+    those of ``solver_mode``: the eigenvalue analysis for ``"eigenvalue"``
+    and ``"both"``, the power iteration (from the antisymmetric part of
+    ``init_gap``) for ``"iteration"`` and ``"both"``; :func:`_so_bond_report`
+    makes the one report of both layouts. ``gap.npz``
+    (:func:`_so_output_record`, the stage ``sc_so_bond_static``) and
+    ``eigenvalue.dat`` (:func:`_save_results`, with the bond provenance
+    lines) are written from that report."""
+    nd = 2 * norb_phys
+    gap_shape = (nd, nd) + tuple(shape)
+    from hwave.solver import so_pairing
+    shape = tuple(int(x) for x in shape)
+    topo = so_run.bond.topo
+    n_channels = len(topo.delta_r)
+    delta_r_text = str([[int(x) for x in dr] for dr in topo.delta_r])
+    logger.info("Bond channels: B = %d, Delta r = %s", n_channels, delta_r_text)
+    if n_channels == 1:
+        logger.info(_SO_BOND_B1_INFO)
+    elif _so_bond_has_offsite_pairlift(so_run.context.compiled):
+        logger.info(_SO_BOND_PAIRLIFT_INFO)
+    if cfg.green is None:
+        logger.warning(_SO_BOND_RPA_LADDER)
+
+    raw_shift = eli_param.get("spectral_shift")
+    admission = _admit_so_bond_static(
+        so_run, cfg=cfg, cell=cell, nmat=nmat, nd=nd, shape=shape, solver_mode=solver_mode,
+        num_eigenvalues=num_eigenvalues, max_iter=max_iter, spectral_shift=raw_shift,
+        eigenvalue_method=eigenvalue_method, log=logger)
+    logger.info("Calculating Green's function G(k, iwn) (spin-orbital bond)...")
+    so_green = _so_bond_green(epsilon_k, so_run, norb_phys=norb_phys, filling=filling,
+                              beta=beta, nmat=nmat, coeff_tail=cfg.coeff_tail,
+                              bond_green=cfg.green, coeff_tail_source=cfg.coeff_tail_source)
+    if cfg.green is not None:
+        # after the file is accepted: a refused file logs no ladder text
+        logger.warning(_SO_BOND_RPA_LADDER_BORROWED, cfg.green)
+    logger.info("mu = {:.6f}".format(so_green.mu))
+    logger.info("Building the spin-orbital bond pairing operator...")
+    static = _build_so_bond_operator(so_run, admission, so_green, beta=beta, nmat=nmat,
+                                     g2_tail=cfg.g2_tail, norb_phys=norb_phys)
+
+    # --- the legs of solver_mode ---
+    run_eigen = solver_mode in ("eigenvalue", "both")
+    run_iter = solver_mode in ("iteration", "both")
+    eigen = None
+    iteration = None
+    iteration_shift = None
+    info_i = {}
+    if run_iter:
+        iteration_shift = _resolve_spectral_shift(raw_shift, "iteration")
+        sigma_init = so_pairing.so_initial_gap(init_gap_mode, norb_phys,
+                                               kx_array, ky_array, kz_array)
+        sigma_init = _project_gap_parity(sigma_init, "triplet")
+        if np.linalg.norm(sigma_init) == 0.0:
+            raise ValueError(
+                "[eliashberg] init_gap = {!r} has no fermion-antisymmetric "
+                "component on this k grid; choose another init_gap.".format(
+                    init_gap_mode))
+        sigma_init = sigma_init / np.linalg.norm(sigma_init)
+    if run_eigen:
+        eigen_shift = _resolve_spectral_shift(raw_shift, "eigenvalue")
+        sigma_shift = eli_param.get("sigma_shift")
+    if static.layout == "dense":
+        if run_eigen:
+            logger.info("=== Eigenvalue analysis ===")
+            info_e = {}
+            vals, gaps = _so_solve_eigenvalue(static.operator, static.basis, num_eigenvalues,
+                                              "arnoldi", sigma_shift=sigma_shift,
+                                              spectral_shift=eigen_shift, info_out=info_e)
+            eigen = EigenLeg.from_dense(vals, gaps, selection=info_e["selection"])
+        if run_iter:
+            logger.info("=== Self-consistent iteration ===")
+            gap, val, conv, n_iter = _so_solve_iteration(
+                static.operator, static.basis, sigma_init, max_iter, alpha, tol,
+                spectral_shift=iteration_shift, info_out=info_i)
+            iteration = IterationLeg.from_dense(gap, val, conv, n_iter, info_i)
+    else:
+        ops = tuple(static.kernel.sector_op(p) for p in (1, 0, -1))
+        if run_eigen:
+            logger.info("=== Eigenvalue analysis (per pair-S_z sector) ===")
+            if sigma_shift is not None:
+                logger.warning(_SIGMA_SHIFT_IGNORED)
+            eigen = EigenLeg.from_sectors(_so_solve_sectors(
+                ops, num_eigenvalues, "arnoldi", gap_shape=gap_shape,
+                spectral_shift=eigen_shift))
+        if run_iter:
+            logger.info("=== Self-consistent iteration (per pair-S_z sector) ===")
+            iteration = IterationLeg.from_sectors(_so_iterate_sectors(
+                ops, sigma_init, gap_shape=gap_shape, max_iter=max_iter, alpha=alpha,
+                tol=tol, spectral_shift=iteration_shift))
+            # the note describes the reported sector's iteration
+            info_i = iteration.info or {}
+    report = _so_bond_report(solver_mode, eigen, iteration, gap_shape=gap_shape)
+
+    # round-off guards: the bases make every gap antisymmetric by construction
+    if (iteration is not None and iteration.gap is not None
+            and not _so_is_antisymmetric(iteration.gap)):
+        raise ValueError(
+            "[mode] enable_spin_orbital = true: the power iteration "
+            "returned a gap that is not fermion-antisymmetric "
+            "(Delta_AB(k) = -Delta_BA(-k)) to round-off; it is not "
+            "written.")
+    eigenvalue_match = None
+    if len(report.vals):
+        eigenvalue_match = np.array([_so_is_antisymmetric(g) for g in report.gaps])
+        _so_check_antisymmetric_eigenpairs(report.vals, eigenvalue_match)
+        logger.info("Leading eigenvalues:")
+        for i, ev in enumerate(report.vals):
+            logger.info("  {:3d}: {:.6f} (|ev| = {:.6f}, pair S_z sector {})".format(
+                i, ev.real, abs(ev), int(report.pp_sectors[i])))
+    # the empty-space WARNING needs an empty space: no gap is reported also
+    # when a sector with a gap space failed
+    if static.layout == "dense":
+        gap_space_empty = static.basis.dim == 0
+    else:
+        gap_space_empty = all(op.basis.dim == 0 for op in ops)
+    if report.gap_status == "none" and not len(report.vals) and gap_space_empty:
+        logger.warning(_SO_BOND_EMPTY_GAP)
+    logger.info("spin-orbital bond pairing: lambda = %s (gap_status = %s, selection = %s)",
+                report.reported, report.gap_status, report.selection)
+
+    # --- outputs ---
+    # the state of the Green function the kernel used: the run's own for the
+    # band's G, the producer's recorded state for a borrowed one
+    if so_green.state is not None:
+        state = so_green.state
+    else:
+        state = _so_own_state(so_green.eigenvalues, beta, so_green.mu, nmat,
+                              so_run.state.target)
+    members = _so_writer_members("sc_so_bond_static", _SO_BOND_STATIC_LABEL, so_run,
+                                 so_green.fp_green, state, bond=so_run.bond.inputs,
+                                 fp_green_source=so_green.fp_green_source)
+    block_layout, layout_reason = static.layout, static.layout_reason
+    sz_residual = max(static.r_V, static.r_G)
+    pole = static.pole
+    # the operator (its kernel, V and G2) and the Green function carrier are
+    # not needed by the outputs: release them before the archive is written
+    # (the packed kernel's cached sector operators refer back to it: drop
+    # them, so the kernel is freed at once, not at the next collection)
+    if block_layout == "sz_packed":
+        static.kernel.drop_sector_ops()
+    borrowed_lines = None
+    if cfg.green is not None:
+        borrowed_lines = {"bond_green": str(cfg.green),
+                          "bond_coeff_tail_applied": repr(float(
+                              so_green.carrier.coeff_tail_applied))}
+        if so_green.leak is not None:
+            borrowed_lines["bond_green_leak"] = "%.3e" % so_green.leak
+        if so_green.scf_converged is not None:
+            borrowed_lines["bond_green_scf_converged"] = (
+                "true" if so_green.scf_converged else "false")
+    del static, so_green
+    ops = None
+    prov, weights, gap_comments = _so_output_record(
+        output_dir, gap_file, norb_phys, None, None, None, eigenvalue_match,
+        kx_array, ky_array, kz_array, sz_residual=sz_residual,
+        provenance_members=members, bond_report=report, block_layout=block_layout,
+        pole_report=pole)
+    bond_lines = {
+        "bond_channels": "true",
+        "bond_n_channels": str(n_channels),
+        "bond_delta_r": delta_r_text,
+        "bond_max_shells": ("unset" if cfg.max_shells is None
+                            else str(int(cfg.max_shells))),
+        "so_bond_layout": block_layout,
+        "so_bond_layout_reason": layout_reason,
+        "bond_memory_cap": admission.cap_summary,
+        "g2_tail": "true" if cfg.g2_tail else "false",
+        "bond_coeff_tail": repr(float(cfg.coeff_tail)),
+        "bond_coeff_tail_source": str(cfg.coeff_tail_source),
+        "approximation": ("static RPA-ladder bond dressing" if borrowed_lines is None
+                          else "static RPA-ladder bond dressing on a borrowed Green "
+                          "function"),
+        "gap_status": str(report.gap_status),
+        "pp_sector": str(int(report.pp_sector)),
+        "selection": str(report.selection),
+    }
+    # iteration_converged ("both" only) is written by _save_results, after
+    # "# Iteration eigenvalue"
+    if borrowed_lines:
+        bond_lines.update(borrowed_lines)
+    clash = sorted(set(bond_lines) & set(prov))
+    if clash:
+        raise RuntimeError("_solve_so_bond_static: provenance keys written twice: "
+                           "{}".format(clash))
+    prov.update(bond_lines)
+
+    # the number under "# Iteration eigenvalue": the reported value, or the
+    # power iteration's in "both"
+    iteration_ok = None
+    eigenvalue_note = None
+    if run_iter:
+        iteration_ok = (report.eigen_converged if solver_mode == "iteration"
+                        else bool(report.iteration_converged))
+        if iteration.gap is None:
+            eigenvalue_note = _SO_BOND_NO_ITERATION.format(solver_mode)
+        elif iteration_shift is not None or not iteration_ok:
+            eigenvalue_note = _shifted_eigenvalue_note(
+                solver_mode, iteration_shift, iteration_ok, iteration.n_iter, info_i)
+    if solver_mode == "both":
+        number = float(np.real(iteration.value)) if iteration_ok else float("nan")
+    else:
+        number = report.reported
+    leading = None
+    if run_eigen:
+        leading = (complex(eigen.leading) if report.eigen_converged
+                   else complex(np.nan, np.nan))
+    _save_results(
+        output_dir, report.gap, number, report.vals if run_eigen else None,
+        kx_array, ky_array, kz_array, gap_file=gap_file, eigenvalue_file=eigenvalue_file,
+        eigenvalue_match=eigenvalue_match, provenance=prov,
+        eigenvalue_note=eigenvalue_note, eigenvalue_weights=weights,
+        gap_comments=gap_comments, eigen_converged=report.eigen_converged,
+        iteration_converged=report.iteration_converged, analysis_note=None,
+        leading_eigenvalue=leading)
+    logger.info("=== Done ===")
+    return report.reported
+
+
+
 def calc_eliashberg(input_dict):
     """Main calculation orchestration for linearized Eliashberg equation.
 
@@ -1363,6 +1676,19 @@ def calc_eliashberg(input_dict):
     _read_model(run)
     _check_bond_and_archives(run)
     _prepare_band(run)
+    _build_hamiltonian(run)
+    if run.spin_orbital_mode and run.so_bond_cfg.use_bond:
+        # the static spin-orbital bond path: its own Green function (and
+        # mu), operator, solve and outputs; none of the stages below runs
+        return _solve_so_bond_static(
+            run.input_dict, so_run=run.so_run, cfg=run.so_bond_cfg, epsilon_k=run.epsilon_k,
+            eli_param=run.eli_param, norb_phys=run.norb_phys, beta=run.beta, nmat=run.nmat,
+            filling=run.n_filling, shape=(run.Nx, run.Ny, run.Nz), cell=run.geom_info["rvec"],
+            kx_array=run.kx_array, ky_array=run.ky_array, kz_array=run.kz_array,
+            output_dir=run.output_dir, gap_file=run.gap_file,
+            eigenvalue_file=run.eigenvalue_file, solver_mode=run.solver_mode,
+            num_eigenvalues=run.num_eigenvalues, eigenvalue_method=run.eigenvalue_method,
+            max_iter=run.max_iter, alpha=run.alpha, tol=run.tol, init_gap_mode=run.init_gap_mode)
     _build_one_body(run)
     _build_pairing_vertex(run)
     _build_g2_and_seed(run)

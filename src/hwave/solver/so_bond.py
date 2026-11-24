@@ -61,6 +61,8 @@ frequency is not flipped. The production bond bubble
 
 import functools
 import logging
+import math
+import numbers
 import re
 import types
 from dataclasses import dataclass
@@ -68,20 +70,23 @@ from typing import NamedTuple, Optional
 
 import numpy as np
 
-from . import backend as _bk, bond_channels, bubble, flex_bond, matsubara as _ms
+from . import backend as _bk, bond_channels, bubble, flex_bond, host_memory, matsubara as _ms
 from .hartree_fock import NonFiniteError
 from .so_records import CompiledInteraction, _displacements
 
 __all__ = ["SlotConvention", "SLOT_CONVENTION", "BondSlotGeometry", "slot_geometry",
            "so_bond_topology", "parse_layout_key", "BandSzCheck", "band_conserves_sz",
-           "records_conserve_sz", "select_layout", "canonical_band_eigen", "green_leak",
+           "records_conserve_sz", "InputSzCheck", "input_conserves_sz", "select_layout",
+           "canonical_band_eigen", "green_leak",
            "project_green_sectors", "project_borrowed_green", "SECTOR_ORDER", "SectorCross",
            "PPGather",
            "SectorMap", "sz_sector_map", "PackedArrays", "SOBondCaps", "SOBondPlan",
+           "CAP_RANGE_TEXT", "resolve_host_cap", "ShellRow", "shell_rows", "envelope_text",
            "plan_so_bond", "estimate_sector_solver_bytes",
            "estimate_packed_kernel_workspace_bytes", "PackedBondBlockStore", "open_store",
            "so_bond_vertex", "gamma_p", "so_bond_bubble", "so_bond_dress",
            "so_bond_pairing_vertex_parts", "so_bond_pairing_vertex_batch", "p_b",
+           "so_bond_w_batch", "channel0_block", "inverse_per_sector",
            "PackedBondPairKernel", "sector_map_members", "packed_members",
            "check_sector_map_members", "read_slot_member"]
 
@@ -358,6 +363,19 @@ def _shell_numbers(resolve, wanted):
     return out
 
 
+def _topology_resolver(compiled, cell):
+    """``resolve(max_shells)``: the bond topology of the declared
+    displacements of ``compiled`` with that cutoff."""
+    disp = compiled.declared_topology
+
+    def resolve(cutoff):
+        return bond_channels.resolve_bond_topology(
+            {}, cell, compiled.norb_phys, max_shells=cutoff, active_types=(),
+            displacements=disp)
+
+    return resolve
+
+
 def so_bond_topology(compiled, cell, *, max_shells=None):
     """The bond channels of a compiled spin-orbital interaction.
 
@@ -380,13 +398,7 @@ def so_bond_topology(compiled, cell, *, max_shells=None):
         raise ValueError("so_bond_topology: compiled must be a CompiledInteraction "
                          "(so_records.compile_interaction), got {}".format(
                              type(compiled).__name__))
-    disp = compiled.declared_topology
-
-    def resolve(cutoff):
-        return bond_channels.resolve_bond_topology(
-            {}, cell, compiled.norb_phys, max_shells=cutoff, active_types=(),
-            displacements=disp)
-
+    resolve = _topology_resolver(compiled, cell)
     topo = resolve(max_shells)
     if max_shells is None:
         return topo
@@ -404,6 +416,26 @@ def so_bond_topology(compiled, cell, *, max_shells=None):
             "interaction records: {}. Use max_shells >= {}, or remove those "
             "declarations.".format(max_shells, "; ".join(parts), max(by_shell)))
     return topo
+
+
+def bond_run(compiled, cell, max_shells):
+    """``(topo, inputs, fp_resolved_topology)``: the bond topology of the
+    compiled interaction ``compiled`` on the lattice ``cell`` (rows are the
+    lattice vectors) with the shell cutoff ``max_shells`` (``None``: every
+    declared shell; :func:`so_bond_topology`, which refuses a cutoff that
+    drops a shell used by a nonzero interaction record), its
+    :class:`hwave.solver.fingerprint.BondInputs` (``delta_r``, ``reverse``,
+    :data:`SLOT_CONVENTION` and ``max_shells``, ``-1`` when no cutoff is set),
+    as the bond archives record it, and the digest of the resolved topology
+    (:func:`hwave.solver.fingerprint.resolved_topology_digest`)."""
+    from . import fingerprint
+    topo = so_bond_topology(compiled, cell, max_shells=max_shells)
+    delta_r = np.asarray(topo.delta_r)
+    reverse = np.asarray(topo.reverse)
+    inputs = fingerprint.BondInputs(delta_r, reverse, SLOT_CONVENTION,
+                                    -1 if max_shells is None else int(max_shells))
+    return topo, inputs, fingerprint.resolved_topology_digest(delta_r, reverse,
+                                                              SLOT_CONVENTION)
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +535,32 @@ def records_conserve_sz(compiled):
     return None
 
 
+class InputSzCheck(NamedTuple):
+    """Whether the input of a spin-orbital run conserves S_z
+    (:func:`input_conserves_sz`): ``band`` is the :class:`BandSzCheck` of its
+    Transfer table, ``record`` the first S_z-changing interaction record
+    (:func:`records_conserve_sz`; ``None`` when every record conserves S_z,
+    and not looked up when the band already breaks it)."""
+    conserving: bool
+    band: BandSzCheck
+    record: Optional[dict]
+
+
+def input_conserves_sz(transfer, extern, compiled, norb_phys):
+    """Whether the whole input of a spin-orbital run conserves S_z: its band
+    (:func:`band_conserves_sz` of ``transfer``, ``extern``) and every record
+    of its compiled interaction ``compiled`` (:func:`records_conserve_sz`).
+    The records are read only when the band conserves S_z. Returns
+    :class:`InputSzCheck`. The one S_z rule of the input: the layout
+    selection (:func:`select_layout`), the sector Dyson of the bond FLEX and
+    the projection of a borrowed Green function all take it from here."""
+    band = band_conserves_sz(transfer, extern, norb_phys)
+    if not band.conserving:
+        return InputSzCheck(False, band, None)
+    record = records_conserve_sz(compiled)
+    return InputSzCheck(record is None, band, record)
+
+
 def select_layout(compiled, transfer_table, *, override):
     """The layout of the spin-orbital bond objects and its reason line.
 
@@ -521,12 +579,12 @@ def select_layout(compiled, transfer_table, *, override):
                              type(compiled).__name__))
     if forced:
         return "dense", 'so bond layout: dense (reason: forced by so_bond_layout = "dense")'
-    band = band_conserves_sz(transfer_table, None, compiled.norb_phys)
-    if not band.conserving:
-        R, (i, j), v = band.entry
+    check = input_conserves_sz(transfer_table, None, compiled, compiled.norb_phys)
+    if not check.band.conserving:
+        R, (i, j), v = check.band.entry
         return "dense", ("so bond layout: dense (reason: spin-flip transfer entry R=({}, {}, {}) "
                          "({}, {}) = {!r})".format(R[0], R[1], R[2], i + 1, j + 1, complex(v)))
-    rec = records_conserve_sz(compiled)
+    rec = check.record
     if rec is not None:
         typ = str(rec["type"])
         if typ == "PairLift":
@@ -1284,8 +1342,17 @@ def read_slot_member(data, name, *, want, sector_map, file):
                              "run's map (B = {}, nd = {}); check it with "
                              "check_sector_map_members first".format(file, sector_map.B,
                                                                      sector_map.nd))
-        packed = PackedArrays(sector_map, tuple(
-            _member(data, _packed_key(name, s), file) for s in sector_map.sector_order))
+        blocks = []
+        for s in sector_map.sector_order:
+            # each block passes the dense member's dtype rule: complex128 in
+            # either byte order, returned native
+            key = _packed_key(name, s)
+            b = _member(data, key, file)
+            if not (b.dtype.kind == "c" and b.dtype.itemsize == 16):
+                raise ValueError("read_slot_member: '{}' of '{}' must be a complex128 array, "
+                                 "got {}".format(key, file, b.dtype))
+            blocks.append(b.astype(np.complex128, copy=False))
+        packed = PackedArrays(sector_map, tuple(blocks))
         if want == "sz_packed":
             return packed
         out = np.zeros(packed.lead_shape + (sector_map.ND, sector_map.ND), dtype=np.complex128)
@@ -1323,10 +1390,13 @@ def read_slot_member(data, name, *, want, sector_map, file):
 _GIB = float(2 ** 30)
 _ENTRY = 16                     # bytes per complex128 entry
 #: the consumers of a plan, in canonical order
-CONSUMERS = ("vertex", "chi_static", "chi_dynamic", "pairing_static")
+CONSUMERS = ("vertex", "chi_static", "chi_dynamic", "pairing_static", "flex_scf")
 #: what each consumer needs besides itself (closed transitively)
 _IMPLIES = {"vertex": (), "chi_static": ("vertex",), "chi_dynamic": ("vertex",),
-            "pairing_static": ("chi_static",)}
+            "pairing_static": ("chi_static",), "flex_scf": ("vertex",)}
+#: the solver word of the over-cap refusal per consumer, in precedence order
+#: (the first closed consumer of the map names the solver; "FLEX" otherwise)
+_SOLVER_WORD = {"pairing_static": "Eliashberg", "flex_scf": "FLEX"}
 #: the layouts of a plan and the reason line of a dense plan whose caller made no selection
 LAYOUTS = ("dense", "sz_packed")
 _DEFAULT_LAYOUT_REASON = "so bond layout: dense (reason: not selected by the caller)"
@@ -1340,6 +1410,176 @@ class SOBondCaps(NamedTuple):
     device_bytes: Optional[float]
 
 
+#: the refusal of a spin-orbital memory cap value out of range
+CAP_RANGE_TEXT = ("{key} must be a finite number >= 0 in spin-orbital mode (0 disables the "
+                  "check), got {raw!r}")
+#: the share of the available host memory the default cap admits
+_AVAILABLE_SHARE = 0.8
+
+
+def resolve_host_cap(raw_gb, *, key, log, info_out=None):
+    """The host cap of a spin-orbital bond plan from the user value
+    ``raw_gb`` of the setting ``key`` (in GiB).
+
+    * ``None`` (unset): ``0.8 x`` the available host memory
+      (:func:`hwave.solver.host_memory.available_host_bytes`, the source
+      named at INFO level); when no limit can be determined the cap is
+      unlimited, with a WARNING;
+    * ``> 0``: an absolute cap of ``raw_gb`` GiB;
+    * ``0``: no cap (the admission check is disabled), with a WARNING;
+    * a bool, a negative or non-finite value, or anything that is not a
+      real number: ``ValueError`` (:data:`CAP_RANGE_TEXT`).
+
+    Returns ``SOBondCaps(host_bytes, host_raw, None)``: ``host_bytes =
+    None`` is unlimited; ``host_raw`` is the user value as a float (``None``
+    when unset). ``info_out``, a dict, receives ``"summary"``: the one-line
+    description of the cap for the run's output."""
+    if raw_gb is None:
+        avail = host_memory.available_host_bytes()
+        if avail.nbytes is None:
+            log.warning("no memory limit could be determined; the admission check is "
+                        "disabled; set %s to enable it", key)
+            caps = SOBondCaps(None, None, None)
+            summary = "unlimited (no memory limit could be determined)"
+        else:
+            host = _AVAILABLE_SHARE * avail.nbytes
+            log.info("spin-orbital bond memory cap: %.2f GiB = 0.8 x available %.2f GiB "
+                     "(source: %s)", host / _GIB, avail.nbytes / _GIB, avail.source)
+            caps = SOBondCaps(host, None, None)
+            summary = "%.3f GiB (0.8 x available %.3f GiB, source: %s)" % (
+                host / _GIB, avail.nbytes / _GIB, avail.source)
+    else:
+        try:
+            raw = (float(raw_gb) if isinstance(raw_gb, numbers.Real)
+                   and not isinstance(raw_gb, (bool, np.bool_)) else None)
+        except OverflowError:                       # an integer beyond the float range
+            raw = None
+        if raw is None or not math.isfinite(raw) or raw < 0.0:
+            raise ValueError(CAP_RANGE_TEXT.format(key=key, raw=raw_gb))
+        if raw == 0.0:
+            log.warning("%s = 0: the memory admission check of the spin-orbital bond path is "
+                        "disabled", key)
+            caps = SOBondCaps(None, 0.0, None)
+            summary = "unlimited (%s = 0)" % (key,)
+        else:
+            host = raw * _GIB
+            log.info("spin-orbital bond memory cap: %.2f GiB (%s)", host / _GIB, key)
+            caps = SOBondCaps(host, raw, None)
+            summary = "%.3f GiB (%s = %r)" % (host / _GIB, key, raw)
+    if info_out is not None:
+        info_out["summary"] = summary
+    return caps
+
+
+class ShellRow(NamedTuple):
+    """One off-site bond shell of a topology: its number ``shell`` (the
+    count ``max_shells`` uses), its ``length`` ``|dr|`` (cell rows are the
+    lattice vectors), its ``displacements`` (the channels' ``dr`` in
+    topology order) and ``max_abs_v``, the largest ``|v|`` of the nonzero
+    interaction records with a particle-hole displacement in the shell
+    (``0.0`` when the shell is declared only with zero coupling)."""
+    shell: int
+    length: float
+    displacements: tuple
+    max_abs_v: float
+
+
+def shell_rows(compiled, topo, cell):
+    """The :class:`ShellRow` of every off-site shell of ``topo`` (a topology
+    of ``compiled``, e.g. :func:`so_bond_topology`), in shell order."""
+    if not isinstance(compiled, CompiledInteraction):
+        raise ValueError("shell_rows: compiled must be a CompiledInteraction "
+                         "(so_records.compile_interaction), got {}".format(
+                             type(compiled).__name__))
+    off = [tuple(int(x) for x in row) for row in np.asarray(topo.delta_r)[1:]]
+    declared = {tuple(int(x) for x in row) for row in compiled.declared_topology}
+    foreign = [d for d in off if d not in declared]
+    if foreign:
+        raise ValueError("shell_rows: the topology has displacement(s) {} that the compiled "
+                         "interaction does not declare; topo must be a topology of compiled "
+                         "(so_bond_topology)".format(foreign))
+    shell_of = _shell_numbers(_topology_resolver(compiled, cell), off)
+    largest = {}
+    for r in compiled.records:
+        mag = abs(complex(r["v"]))
+        for d in _displacements(tuple(tuple(int(x) for x in c) for c in r["cells"])):
+            for e in (d, tuple(-x for x in d)):
+                if e in shell_of:
+                    largest[shell_of[e]] = max(largest.get(shell_of[e], 0.0), mag)
+    members = {}
+    for d in off:
+        members.setdefault(shell_of[d], []).append(d)
+    return tuple(ShellRow(k, bond_channels._shell_length(members[k][0], cell),
+                          tuple(members[k]), float(largest.get(k, 0.0)))
+                 for k in sorted(members))
+
+
+#: the admitted cases of the static spin-orbital bond path on the CPU, per
+#: layout: (layout, title, rows of (host memory in GiB, cases)), a case
+#: (norb_phys, B, L, Nmat, estimated peak in GiB) on an L x L grid: the
+#: largest power-of-two Nmat whose estimated peak (static_so_bond_rows and
+#: plan_so_bond, solver_mode "eigenvalue", num_eigenvalues 10, max_iter 1000,
+#: spectral_shift unset) fits the default cap, 0.8 x the host memory
+_ENVELOPE = (
+    ("sz_packed", "S_z-packed layout (S_z-conserving input: Zeeman, no SOC, no PairLift)", (
+        (64, ((1, 9, 64, 8192, 45.5), (2, 9, 32, 2048, 35.9), (2, 5, 64, 512, 36.4))),
+        (256, ((1, 9, 64, 32768, 180.5), (2, 9, 32, 8192, 137.2), (2, 5, 64, 2048, 137.7))))),
+    ("dense", "dense layout (S_z broken by SOC or PairLift)", (
+        (64, ((1, 9, 64, 8192, 46.3), (2, 9, 32, 2048, 38.9), (2, 5, 64, 512, 40.1))),
+        (256, ((1, 9, 64, 32768, 181.3), (2, 9, 32, 8192, 140.1), (2, 5, 64, 2048, 141.4))))),
+)
+_ENVELOPE_PATH = "hwave_sc static, CPU"
+_ENVELOPE_NOTE = ("  (the largest power-of-two Nmat whose estimated peak fits the default cap, "
+                  "0.8 x the host memory, with the default solver settings)")
+
+
+def _envelope_case(case):
+    norb_phys, B, L, nmat, gib = case
+    return "norb_phys = {}: B = {}, {}², Nmat = {} ({:.1f} GiB)".format(norb_phys, B, L, nmat,
+                                                                       gib)
+
+
+def envelope_text(layout):
+    """The admitted cases of the static spin-orbital bond path on the CPU
+    (one table per layout, ``machine | path | admitted``; per host the
+    largest power-of-two ``Nmat`` admitted at the default cap for a few
+    model sizes), the table of ``layout`` marked ``<- this run``."""
+    if not (isinstance(layout, str) and layout in LAYOUTS):
+        raise ValueError("envelope_text: layout must be 'dense' or 'sz_packed', got {!r}"
+                         .format(layout))
+    lines = ["admitted cases (machine | path | admitted):"]
+    for lay, title, rows in _ENVELOPE:
+        lines.append("  {}{}".format(title, "  <- this run" if lay == layout else ""))
+        lines += ["    {} GiB host | {} | {}".format(host, _ENVELOPE_PATH,
+                                                      "; ".join(map(_envelope_case, cases)))
+                  for host, cases in rows]
+    lines.append(_ENVELOPE_NOTE)
+    return "\n".join(lines)
+
+
+def _shell_table(rows, max_shells_key):
+    """The per-shell table and, when the outer shells carry only
+    zero-coupling records, the clause naming the cutoff that removes them:
+    the number of the last shell with a nonzero coupling, ``0`` when no
+    off-site shell has one (``max_shells = 0`` keeps the on-site channel
+    only). The clause names ``max_shells_key``, or ``max_shells`` when the
+    caller gives no key."""
+    lines = ["shells (shell  |dr|  max|v|):"]
+    lines += ["  {}  {:.6g}  {:.6g}".format(r.shell, r.length, r.max_abs_v) for r in rows]
+    if not rows:
+        lines.append("  (no off-site shell)")
+    n = 0
+    for r in reversed(rows):
+        if r.max_abs_v != 0.0:
+            break
+        n += 1
+    if n:
+        keep = rows[len(rows) - n - 1].shell if n < len(rows) else 0
+        lines.append("{} outer shell(s) declared only with zero coupling; {} = {} removes "
+                     "them".format(n, max_shells_key or "max_shells", keep))
+    return "\n".join(lines)
+
+
 #: per helper (and bubble frequency mode): the observed fields compared with
 #: the plan, in check order, and the rows the plan must list
 _REQUIRE = {
@@ -1349,10 +1589,13 @@ _REQUIRE = {
     ("so_bond_bubble", "all"): (("nvol", "B", "nd", "ND", "layout", "nmat", "placement", "slots"),
                                 ("chibar", "bubble_pair_block")),
     "so_bond_dress": (("nvol", "ND", "batch"), ("dress_batch",)),
+    "so_bond_w_batch": (("nvol", "ND", "layout", "batch"), ("w_batch_workspace",)),
     "so_bond_pairing_vertex_parts": (("nvol", "ND", "B"),
                                      ("v_bare", "v_fluct", "pairing_q_workspace")),
     "so_bond_pairing_vertex_batch": (("nvol", "ND", "B", "layout", "batch"),
                                      ("vertex_batch_workspace",)),
+    "so_bond_static_kernel": (("nvol", "B", "nd", "ND", "layout", "n_gap"),
+                              ("v_static", "g2", "kernel_workspace", "eigensolver")),
 }
 #: optional observed fields (checked after the required ones) and their
 #: value when the call does not pass them
@@ -1377,8 +1620,9 @@ class SOBondPlan:
     nb : int
         The frequency batch size.
     dress_capacity : int
-        The largest batch the dressing may take: 1 when the closed consumer
-        set has no ``chi_dynamic``, ``nb`` otherwise.
+        The largest batch the dressing (and the W conversion) may take: 1
+        when the closed consumer set has neither ``chi_dynamic`` nor
+        ``flex_scf``, ``nb`` otherwise.
     consumers : tuple of str
         The transitively closed consumer set, canonical order.
     placement, layout, layout_reason, kernel_residency : str
@@ -1386,9 +1630,11 @@ class SOBondPlan:
         the selection) and ``"host"``.
     slots : tuple of str
         The store slots (``("chibar",)`` for ``chi_dynamic``, plus ``"chi"``
-        with ``keep_chi``).
+        with ``keep_chi``; ``("chibar",)`` for ``flex_scf`` with ``W`` in
+        place, ``("chibar", "W")`` without).
     aliases : tuple of (str, str)
-        In-place slot overwrites (none).
+        In-place slot overwrites: ``(("W", "chibar"),)`` for ``flex_scf``
+        with ``W`` written over ``chibar`` (the default), none otherwise.
     keep_chi, write_chibar : bool
     small_array_allowed, small_array_bytes : bool, float
         The small-array bound ``min(2**30, cap_host / 8)`` (``2**30`` when
@@ -1398,11 +1644,14 @@ class SOBondPlan:
         One entry per logical allocation; phase ``"resident"`` lives
         through every phase.
     peak_host, peak_device : float, None
-        ``max over phases of 1.25 * (resident + the phase's rows)``; no
-        device rows.
+        ``max over phases P of 1.25 * phase_total(P)`` (the phases: the
+        closed consumers and every other phase of the rows); no device rows.
     cap_host, cap_host_raw, cap_device : float or None
     reason : str
         The admission summary (logged).
+    peak_phase : str
+        The phase of ``peak_host`` (the first maximum: the consumers in
+        canonical order, then the other row phases in row order).
     """
 
     nmat: int
@@ -1431,12 +1680,25 @@ class SOBondPlan:
     cap_host_raw: Optional[float]
     cap_device: Optional[float]
     reason: str
+    peak_phase: str = ""
+
+    def phase_total(self, phase):
+        """The bytes alive in ``phase`` without the 1.25 margin: the resident
+        rows plus every row of ``phase`` (``resident`` alone for a closed
+        consumer without rows). ``phase`` must be a closed consumer or the
+        phase of a row other than ``"resident"`` (``ValueError``
+        otherwise)."""
+        phases = {ph for ph, _, _ in self.rows if ph != "resident"}
+        if not (isinstance(phase, str) and (phase in phases or phase in self.consumers)):
+            raise ValueError("SOBondPlan.phase_total: the plan has no phase {!r}".format(phase))
+        return _phase_total(self.rows, phase)
 
     def require(self, helper, **observed):
         """Check a helper's boundary against the plan before it allocates.
 
         ``helper`` is ``"so_bond_vertex"``, ``"so_bond_bubble"`` (with the
         observed ``freq``, ``"static"`` or ``"all"``), ``"so_bond_dress"``,
+        ``"so_bond_w_batch"``,
         ``"so_bond_pairing_vertex_parts"`` or
         ``"so_bond_pairing_vertex_batch"``. The observed fields are the
         dimensions visible at that boundary:
@@ -1447,13 +1709,20 @@ class SOBondPlan:
           ``"chibar"``);
         * dressing: ``nvol``, ``ND`` and the ``batch`` length
           (``1 <= batch <= dress_capacity``);
+        * W conversion (``"so_bond_w_batch"``): ``nvol``, ``ND``, ``layout``
+          and the ``batch`` length (``1 <= batch <= dress_capacity``; the
+          plan needs the consumer ``flex_scf``);
         * pairing parts: ``nvol``, ``ND`` and the geometry's ``B`` (with
           ``ND == plan.ND = plan.B * plan.nd**2`` this is
           ``ND == B * plan.nd**2``);
         * the dressing and the pairing parts also observe ``layout``, which
           a call may omit: an omitted ``layout`` is ``"dense"``;
         * pairing vertex batch: ``nvol``, ``ND``, ``B``, ``layout`` and the
-          ``batch`` length (the plan needs ``vertex_batch=True``).
+          ``batch`` length (the plan needs ``vertex_batch=True``);
+        * static pairing kernel (``"so_bond_static_kernel"``): ``nvol``,
+          ``B``, ``nd``, ``ND``, ``layout`` and the gap length ``n_gap``,
+          which must be ``nd**2 * nvol`` (the plan needs the rows of
+          :func:`static_so_bond_rows`).
 
         Raises ``ValueError`` naming the first mismatching field (or the
         first missing row) and :attr:`reason`."""
@@ -1495,6 +1764,12 @@ class SOBondPlan:
                 if "chibar" not in tuple(got):
                     raise ValueError("{}: the store slots {} do not include 'chibar' ({})"
                                      .format(helper, tuple(got), self.reason))
+            elif f == "n_gap":
+                want = self.nd ** 2 * self.nvol
+                if got != want:
+                    raise ValueError("{}: the admission plan has n_gap = nd^2 nvol = {} but the "
+                                     "call has n_gap = {} ({})".format(helper, want, got,
+                                                                       self.reason))
             elif got != getattr(self, f):
                 raise ValueError("{}: the admission plan has {} = {} but the call has {} = {} "
                                  "({})".format(helper, f, getattr(self, f), f, got, self.reason))
@@ -1504,6 +1779,14 @@ class SOBondPlan:
                 raise ValueError("{}: the admission plan has no row '{}' (closed consumers: {}; "
                                  "{})".format(helper, name, ", ".join(self.consumers),
                                               self.reason))
+
+
+def _phase_total(rows, phase):
+    """The resident rows plus the rows of ``phase`` (bytes, no margin): the
+    one sum behind :meth:`SOBondPlan.phase_total` and the peak of
+    :func:`plan_so_bond`."""
+    return int(sum(b for ph, _, b in rows if ph == "resident")
+               + sum(b for ph, _, b in rows if ph == phase))
 
 
 def _positive_int(name, value, *, even=False, what=""):
@@ -1546,8 +1829,16 @@ def _layout_entries(layout, B, nd):
     return n0 * n0 + 2 * n1 * n1
 
 
+def small_array_bound(caps):
+    """The largest member (bytes) a plan lets an output hold as one inline
+    array: 1 GiB, or one eighth of ``caps.host_bytes`` when that is
+    smaller (``caps.host_bytes = None`` is unlimited)."""
+    cap = caps.host_bytes
+    return _GIB if cap is None else min(_GIB, float(cap) / 8.0)
+
+
 def _plan_rows(consumers, *, nmat, nvol, nd, ND, dress_capacity, keep_chi, layout="dense",
-               vertex_batch=False):
+               vertex_batch=False, w_in_place=True):
     """The row table: ``(phase, name, bytes)``, one entry per logical
     allocation, ``"resident"`` first, then each closed consumer's phase.
 
@@ -1588,6 +1879,26 @@ def _plan_rows(consumers, *, nmat, nvol, nd, ND, dress_capacity, keep_chi, layou
                  ("pairing_static", "dress_batch", dress), ("pairing_static", "v_bare", full),
                  ("pairing_static", "v_fluct", full),
                  ("pairing_static", "pairing_q_workspace", 2 * _ENTRY * S)]
+    if "flex_scf" in consumers:
+        # the FLEX map's store slot (W written over it in place, or a second
+        # slot) lives through the whole solve; per map: the bubble, the
+        # dressing batch with the static slice copy and its eigen workspace
+        # (the pole indicator), and the W-conversion workspace of a batch
+        slot = _ENTRY * nmat * nvol * S
+        rows += [("resident", "chibar", slot)]
+        if not w_in_place:
+            rows += [("resident", "w_slot", slot)]
+        rows += [("bubble", "bubble_pair_block", pair_block),
+                 ("dressing", "dress_batch", dress),
+                 ("dressing", "pole_slice", 2 * _ENTRY * nvol * S),
+                 ("w_conversion", "w_batch_workspace", 4 * _ENTRY * dress_capacity * nvol * S)]
+        if keep_chi:
+            # the archive's final susceptibility pass: one more bubble and
+            # one more dressing, after the SCF (the live final-state rows
+            # come from flex_so_bond_rows(archive=...))
+            rows += [("archive_bubble", "bubble_pair_block", pair_block),
+                     ("archive_dressing", "dress_batch", dress),
+                     ("archive_dressing", "pole_slice", 2 * _ENTRY * nvol * S)]
     return tuple((ph, name, int(b)) for ph, name, b in rows)
 
 
@@ -1596,9 +1907,25 @@ def _row_table(rows):
         "  {}  {}  {}".format(ph, name, b) for ph, name, b in rows)
 
 
+#: the phases of static_so_bond_rows beside the consumer pairing_static
+_STATIC_PHASES = frozenset(("green_static", "g2_static", "kernel_static"))
+#: the scaling sentence of the static path's over-cap refusal (the rows of
+#: _plan_rows for pairing_static and of static_so_bond_rows)
+_STATIC_SCALING = (
+    "Memory grows as Nmat · nvol · norb_phys⁴ (the bubble's per-shift workspace) and "
+    "Nmat · nvol · norb_phys² (the Green function); independent of Nmat, as nvol · B² · "
+    "norb_phys⁴ (the vertex arrays and the kernel workspace); the eigensolver rows grow "
+    "with the reduced gap dimension dim (about nvol · (2·norb_phys)² / 2): linearly times "
+    "num_eigenvalues for Arnoldi, as dim² for the dense fallback (dim <= 2000), with "
+    "max_iter for the power iteration, and they depend on the layout and spectral_shift.")
+
+
 def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
                  placement_request="host", nb=None, keep_chi=False, write_chibar=False,
-                 layout="dense", layout_reason=None, vertex_batch=False):
+                 layout="dense", layout_reason=None, vertex_batch=False, cap_key=None,
+                 shell_rows=(), max_shells_key=None, envelope="", extra_rows=(),
+                 w_in_place=None, resident_rows=(), remedy_note=None, archive_remedy=None,
+                 log_summary=True):
     """The admission plan of the spin-orbital bond helpers (host placement).
 
     Parameters
@@ -1611,13 +1938,16 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         k points, bond channels and ``nd = 2 * norb_phys``.
     consumers : iterable of str
         A subset of ``("vertex", "chi_static", "chi_dynamic",
-        "pairing_static")``, closed transitively (``pairing_static =>
-        chi_static => vertex``, ``chi_dynamic => vertex``).
+        "pairing_static", "flex_scf")``, closed transitively
+        (``pairing_static => chi_static => vertex``, ``chi_dynamic =>
+        vertex``, ``flex_scf => vertex``).
     caps : SOBondCaps
         ``host_bytes = None`` means unlimited: the peak is only logged; a
         negative or non-finite ``host_bytes`` is refused.
     nb : int, optional
-        The frequency batch, default ``min(nmat, 16)``.
+        The frequency batch, default ``min(nmat, 16)``; a larger value is
+        reduced to ``nmat`` (a batch is never longer than the frequency
+        axis).
     layout : str
         ``"dense"`` (default) or ``"sz_packed"`` (the S_z-sector packed
         layout of the code-slot objects).
@@ -1630,6 +1960,49 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
         Add the row of the per-frequency pairing vertex batch
         (``vertex_batch_workspace = 2 * 16 S`` in the ``chi_dynamic``
         phase); needs the consumer ``chi_dynamic``.
+    cap_key : str, optional
+        The setting of the cap (e.g. ``"[eliashberg] bond_memory_cap_gb"``).
+        With it, a refusal names the setting, its remedies, and appends the
+        ``envelope`` text (:func:`envelope_text`), the per-shell table of
+        ``shell_rows`` (:class:`ShellRow`, :func:`shell_rows`) and, when the
+        outer shells carry only zero-coupling records, the
+        ``max_shells_key`` value that removes them (the clause says
+        ``max_shells`` when ``max_shells_key`` is None; an empty
+        ``envelope`` is left out). Without it the refusal names
+        ``caps.host_bytes`` and these three are not used.
+    extra_rows : iterable of (phase, name, bytes)
+        Rows appended to the consumers' rows (e.g.
+        :func:`static_so_bond_rows`); a phase other than the consumers'
+        becomes a phase of the plan, and its total enters the peak like a
+        consumer's. Each row is a tuple; ``phase`` and ``name`` are
+        non-empty strings, ``phase`` other than ``"resident"``, ``bytes`` an
+        integer >= 0.
+    w_in_place : bool, optional
+        Applies to ``flex_scf`` only (which is refused together with
+        ``chi_dynamic`` or ``write_chibar``; ``keep_chi`` adds the archive
+        phases). ``None`` or
+        ``True`` writes ``W`` over the store slot ``chibar``
+        (``slots = ("chibar",)``, ``aliases = (("W", "chibar"),)``); ``False`` keeps a second slot (``slots = ("chibar",
+        "W")``, a resident row ``w_slot``). Without ``flex_scf``, ``None``
+        is ignored and ``True`` / ``False`` are refused.
+    resident_rows : iterable of (name, bytes)
+        Rows alive in every phase (e.g. the SCF rows of
+        :func:`hwave.solver.flex_so_bond.flex_so_bond_rows`), appended as
+        ``("resident", name, bytes)`` after the consumers' rows: ``name`` a
+        non-empty string that names no other row of the plan, ``bytes`` an
+        integer >= 0.
+    remedy_note : str, optional
+        A sentence inserted after the head sentence of the over-cap refusal
+        (e.g. how the frequency batch was chosen); ``None`` leaves every
+        text unchanged.
+    archive_remedy : str, optional
+        A sentence inserted after ``remedy_note`` in the over-cap refusal,
+        only when the peak phase is an archive phase (its name starts with
+        ``archive_``); ``None`` leaves every text unchanged.
+    log_summary : bool
+        Log the plan's summary line (INFO) on success (default); ``False``
+        leaves it out for this call only (e.g. the trial plans of a batch
+        selection), without touching the module logger.
 
     Rows (16 bytes per complex entry): ``gamma_b = 16 nvol ND^2``
     (resident); the per-shift ``bubble_pair_block = 16 nvol (3 nmat P^2 +
@@ -1641,11 +2014,25 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
     ``dress_batch = 7 * 16 dress_capacity nvol ND^2`` in every phase that
     dresses; ``pairing_static``: the static bubble output and its temporary,
     the pair block, ``chi_static``, the dressing, ``v_bare``, ``v_fluct``
-    (``16 nvol ND^2`` each) and ``pairing_q_workspace = 2 * 16 ND^2``. The
-    peak is the maximum over the phases of ``1.25 (resident + the phase's
-    rows)``; a peak above ``caps.host_bytes`` is refused with the row table.
+    (``16 nvol ND^2`` each) and ``pairing_q_workspace = 2 * 16 ND^2``;
+    ``flex_scf``: the resident store slot ``chibar = 16 nmat nvol ND^2``
+    (and ``w_slot``, the same, with ``w_in_place=False``), the pair block
+    in phase ``bubble``, ``dress_batch = 7 * 16 nb nvol ND^2`` and
+    ``pole_slice = 2 * 16 nvol ND^2`` (the static slice copy and its eigen
+    workspace) in phase ``dressing``, ``w_batch_workspace = 4 * 16 nb nvol
+    ND^2`` in phase ``w_conversion``; with ``keep_chi``, the archive's
+    final susceptibility pass adds the pair block in phase
+    ``archive_bubble`` and ``dress_batch`` and ``pole_slice`` in phase
+    ``archive_dressing`` (the live final-state rows come from the caller's
+    ``extra_rows``). The peak is the maximum over the
+    phases of ``1.25 (resident + the phase's rows)``
+    (:meth:`SOBondPlan.phase_total`): the closed consumers in
+    canonical order, then the other phases of the rows in row order, the
+    first maximum naming the phase; a peak above ``caps.host_bytes`` is
+    refused with the row table.
     The refusal names the solver as ``Eliashberg`` when the consumers
-    include ``pairing_static`` and ``FLEX`` otherwise.
+    include ``pairing_static`` and ``FLEX`` otherwise (``flex_scf`` among
+    them).
 
     The ``ND^2`` above is the entry count ``S`` of one ``ND x ND`` code-slot
     matrix: ``S = ND^2`` dense and ``S = sum_sigma n_sigma^2 = (6/16) ND^2``
@@ -1672,6 +2059,15 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
     if not (isinstance(layout_reason, str) and layout_reason.startswith(head)):
         raise ValueError("plan_so_bond: layout_reason must be a string starting with {!r}, "
                          "got {!r}".format(head, layout_reason))
+    if cap_key is not None and not (isinstance(cap_key, str) and cap_key):
+        raise ValueError("plan_so_bond: cap_key must be None or the name of the cap setting, "
+                         "got {!r}".format(cap_key))
+    if not isinstance(envelope, str):
+        raise ValueError("plan_so_bond: envelope must be a string, got {!r}".format(envelope))
+    shell_rows = tuple(shell_rows)
+    if not all(isinstance(r, ShellRow) for r in shell_rows):
+        raise ValueError("plan_so_bond: shell_rows must hold ShellRow entries (so_bond."
+                         "shell_rows)")
     if caps.host_bytes is not None:
         try:
             cap_ok = float(caps.host_bytes) >= 0.0 and np.isfinite(float(caps.host_bytes))
@@ -1685,23 +2081,54 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
     B = _positive_int("B", B)
     nd = _positive_int("nd", nd, even=True, what=" (2·norb_phys)")
     nb = min(nmat, 16) if nb is None else _positive_int("nb", nb)
+    nb = min(nb, nmat)
     closed = _close_consumers(consumers)
+    if w_in_place is not None and not isinstance(w_in_place, (bool, np.bool_)):
+        raise ValueError("plan_so_bond: w_in_place must be None, True or False, got {!r}"
+                         .format(w_in_place))
+    flex = "flex_scf" in closed
+    if flex and "chi_dynamic" in closed:
+        raise ValueError("plan_so_bond: the consumer flex_scf cannot be combined with "
+                         "chi_dynamic (both own the store slot chibar)")
+    if flex and bool(write_chibar):
+        raise ValueError("plan_so_bond: the consumer flex_scf takes no write_chibar (its store "
+                         "writes no chibar archive), got write_chibar = {!r}".format(
+                             write_chibar))
+    if w_in_place is not None and not flex:
+        raise ValueError("plan_so_bond: w_in_place applies to the consumer flex_scf only, "
+                         "got {!r}".format(w_in_place))
+    w_in_place = True if w_in_place is None else bool(w_in_place)
+    if remedy_note is not None and not (isinstance(remedy_note, str) and remedy_note):
+        raise ValueError("plan_so_bond: remedy_note must be None or a non-empty string, got "
+                         "{!r}".format(remedy_note))
+    if archive_remedy is not None and not (isinstance(archive_remedy, str) and archive_remedy):
+        raise ValueError("plan_so_bond: archive_remedy must be None or a non-empty string, got "
+                         "{!r}".format(archive_remedy))
     vertex_batch = bool(vertex_batch)
     if vertex_batch and "chi_dynamic" not in closed:
         raise ValueError("plan_so_bond: vertex_batch needs the consumer chi_dynamic (the vertex "
                          "batch reads dressed frequency batches)")
     ND = B * nd * nd
-    dress_capacity = nb if "chi_dynamic" in closed else 1
+    dress_capacity = nb if ("chi_dynamic" in closed or flex) else 1
     keep_chi, write_chibar = bool(keep_chi), bool(write_chibar)
     rows = _plan_rows(closed, nmat=nmat, nvol=nvol, nd=nd, ND=ND,
                       dress_capacity=dress_capacity, keep_chi=keep_chi, layout=layout,
-                      vertex_batch=vertex_batch)
-    resident = sum(b for ph, _, b in rows if ph == "resident")
-    peaks = [(1.25 * (resident + sum(b for ph, _, b in rows if ph == c)), c) for c in closed]
+                      vertex_batch=vertex_batch, w_in_place=w_in_place)
+    extra = _extra_rows(extra_rows)
+    rows = rows + _resident_rows(resident_rows, rows + extra) + extra
+    phases = list(closed)
+    for ph, _, _ in rows:
+        if ph != "resident" and ph not in phases:
+            phases.append(ph)
+    peaks = [(1.25 * _phase_total(rows, c), c) for c in phases]
     peak, phase = max(peaks, key=lambda p: p[0])
     slots = (("chibar",) + (("chi",) if keep_chi else ())) if "chi_dynamic" in closed else ()
+    aliases = ()
+    if flex:
+        slots = ("chibar",) if w_in_place else ("chibar", "W")
+        aliases = (("W", "chibar"),) if w_in_place else ()
     cap = caps.host_bytes
-    small = _GIB if cap is None else min(_GIB, float(cap) / 8.0)
+    small = small_array_bound(caps)
     reason = ("spin-orbital bond plan: consumers {}; {} layout, host placement; nmat = {}, "
               "nvol = {}, B = {}, nd = {}, ND = {}, nb = {}, dress_capacity = {}; estimated "
               "peak {:.3f} GiB in phase {}; host cap {}".format(
@@ -1709,27 +2136,94 @@ def plan_so_bond(*, nmat, nvol, B, nd, half_grid=False, consumers, caps,
                   peak / _GIB,
                   phase, "unlimited" if cap is None else "{:.3f} GiB".format(cap / _GIB)))
     if cap is not None and peak > cap:
-        solver = "Eliashberg" if "pairing_static" in closed else "FLEX"
-        slot = ("16·Nmat·nvol·ND² bytes" if layout == "dense" else
-                "16·Nmat·nvol·Σn_σ² bytes (Σn_σ² = (6/16)·ND²)")
+        solver = next((w for c, w in _SOLVER_WORD.items() if c in closed), "FLEX")
+        note = "" if remedy_note is None else " " + remedy_note
+        if archive_remedy is not None and phase.startswith("archive_"):
+            note += " " + archive_remedy
+        # the static path's plan (the consumer pairing_static with the rows
+        # of static_so_bond_rows, as _admit_so_bond_static builds it) keeps
+        # no store slot: its refusal names the largest row of the peak phase
+        # and the static scaling; every other plan keeps the store-slot text
+        row_phases = {ph for ph, _, _ in rows}
+        if "pairing_static" in closed and _STATIC_PHASES <= row_phases:
+            name, nbytes = max(((nm, b) for ph, nm, b in rows if ph in ("resident", phase)),
+                               key=lambda r: r[1])
+            detail = "largest row in that phase: {} = {:.2f} GiB".format(name, nbytes / _GIB)
+            scaling = _STATIC_SCALING
+        else:
+            slot = ("16·Nmat·nvol·ND² bytes" if layout == "dense" else
+                    "16·Nmat·nvol·Σn_σ² bytes (Σn_σ² = (6/16)·ND²)")
+            detail = "one store slot = {} = {:.2f} GiB".format(
+                slot, _ENTRY * nmat * nvol * _layout_entries(layout, B, nd) / _GIB)
+            scaling = "Memory grows as Nmat · nvol · B² · norb_phys⁴."
+        if cap_key is not None:
+            raise ValueError(
+                "spin-orbital bond {} needs an estimated peak of {:.2f} GiB in phase {} (B = {} "
+                "channels, ND = B·(2·norb_phys)² = {}, nvol = {}, Nmat = {}; {}) but the cap "
+                "is {:.2f} GiB ({}).{} {} Reduce Nmat or the k grid, or raise {} (0 disables "
+                "the check); pruning bond shells helps only for shells the per-shell table "
+                "below shows with negligible coupling.\n{}".format(
+                    solver, peak / _GIB, phase, B, ND, nvol, nmat, detail, cap / _GIB,
+                    cap_key, note, scaling, cap_key, "\n".join(
+                        part for part in (_row_table(rows), envelope,
+                                          _shell_table(shell_rows, max_shells_key)) if part)))
         raise ValueError(
             "spin-orbital bond {} needs an estimated peak of {:.2f} GiB in phase {} (B = {} "
-            "channels, ND = B·(2·norb_phys)² = {}, nvol = {}, Nmat = {}; one store slot = "
-            "{} = {:.2f} GiB) but the cap is {:.2f} GiB (caps.host_bytes). "
-            "Memory grows as Nmat · nvol · B² · norb_phys⁴. Reduce Nmat or the k grid, or prune "
-            "bond shells.\n{}".format(
-                solver, peak / _GIB, phase, B, ND, nvol, nmat, slot,
-                _ENTRY * nmat * nvol * _layout_entries(layout, B, nd) / _GIB, cap / _GIB,
-                _row_table(rows)))
-    logger.info(reason)
+            "channels, ND = B·(2·norb_phys)² = {}, nvol = {}, Nmat = {}; {}) but the cap is "
+            "{:.2f} GiB (caps.host_bytes).{} {} Reduce Nmat or the k grid, or prune bond "
+            "shells.\n{}".format(
+                solver, peak / _GIB, phase, B, ND, nvol, nmat, detail, cap / _GIB, note,
+                scaling, _row_table(rows)))
+    if log_summary:
+        logger.info(reason)
     return SOBondPlan(
         nmat=nmat, nslices=nmat, nvol=nvol, B=B, nd=nd, ND=ND, nb=nb,
         dress_capacity=dress_capacity, consumers=closed, placement="host", layout=layout,
-        layout_reason=layout_reason, kernel_residency="host", slots=slots, aliases=(),
+        layout_reason=layout_reason, kernel_residency="host", slots=slots, aliases=aliases,
         keep_chi=keep_chi, write_chibar=write_chibar, small_array_allowed=False,
         small_array_bytes=small, rows=rows, peak_host=peak, peak_device=None,
         cap_host=None if cap is None else float(cap), cap_host_raw=caps.host_raw,
-        cap_device=caps.device_bytes, reason=reason)
+        cap_device=caps.device_bytes, reason=reason, peak_phase=phase)
+
+
+def _resident_rows(resident_rows, others):
+    """``resident_rows`` as a tuple of ``("resident", name, int bytes)``;
+    a name that repeats one of ``others`` (the plan's other rows) or another
+    resident row is refused."""
+    names = {name for _, name, _ in others}
+    out = []
+    for row in tuple(resident_rows):
+        ok = isinstance(row, tuple) and len(row) == 2
+        if ok:
+            name, b = row
+            ok = isinstance(name, str) and name and _is_int(b) and int(b) >= 0
+        if not ok:
+            raise ValueError("plan_so_bond: resident_rows must hold (name, bytes) tuples with a "
+                             "non-empty string name and bytes an integer >= 0, got {!r}"
+                             .format(row))
+        if name in names:
+            raise ValueError("plan_so_bond: resident row {!r} duplicates a row of the plan"
+                             .format(name))
+        names.add(name)
+        out.append(("resident", name, int(b)))
+    return tuple(out)
+
+
+def _extra_rows(extra_rows):
+    """``extra_rows`` as a tuple of ``(phase, name, int bytes)``."""
+    out = []
+    for row in tuple(extra_rows):
+        ok = isinstance(row, tuple) and len(row) == 3
+        if ok:
+            ph, name, b = row
+            ok = (isinstance(ph, str) and ph and ph != "resident" and isinstance(name, str)
+                  and name and _is_int(b) and int(b) >= 0)
+        if not ok:
+            raise ValueError("plan_so_bond: extra_rows must hold (phase, name, bytes) tuples "
+                             "with non-empty string phase and name, a phase other than "
+                             "'resident' and bytes an integer >= 0, got {!r}".format(row))
+        out.append((ph, name, int(b)))
+    return tuple(out)
 
 
 # ---------------------------------------------------------------------------
@@ -1763,7 +2257,152 @@ _CALL_OVERHEAD = 16 * 1024
 _EINSUM_BUFFER = 8192
 
 
-def estimate_sector_solver_bytes(dims, k, n_full_gap, *, n_sector_vec):
+#: the largest operator dimension the failure-only dense fallback of the
+#: ARPACK solve diagonalizes (``hwave.sc._DENSE_FALLBACK_MAX``, pinned equal
+#: by a test)
+DENSE_FALLBACK_MAX = 2000
+
+
+#: complex entries per dimension of the ``zgeev`` workspace ``work`` that
+#: ``np.linalg.eig`` allocates: the largest optimal ``lwork / dim`` seen
+#: across LAPACK builds (a library-independent bound), with a floor of
+#: ``_ZGEEV_WORK_FLOOR`` entries (the fixed minimum some builds, e.g.
+#: Accelerate, request at small dimensions)
+_ZGEEV_WORK_PER_DIM = 130
+_ZGEEV_WORK_FLOOR = 4352
+
+
+#: the eigenpairs of the which='LM' solve that sizes ``spectral_shift = "auto"``
+#: (``hwave.sc._solve_leading``: ``min(6, dim - 2)``)
+_SHIFT_ESTIMATE_PAIRS = 6
+
+
+def _arpack_retained_bytes(dim, k, shift_kind):
+    """The outputs an ARPACK solve keeps alive into its largest-real solve
+    (and into the dense fallback after it), by the kind of ``[eliashberg]
+    spectral_shift`` (:func:`_shift_kind`), with ``p = min(6, dim - 2)``:
+
+    * ``"numeric"``: ``0`` (one largest-real solve, nothing kept);
+    * ``"auto"``: ``16 p (dim + 1)``, the eigenvectors and eigenvalues of the
+      which='LM' spectral-radius solve that sizes the shift;
+    * ``"none"`` (unshifted): ``16 (p (dim + 1) + k)``, the same set (its
+      largest-real re-solve runs that spectral-radius solve) plus the
+      eigenvalues of the first which='LM' solve, whose eigenvectors are one
+      of the ``3 k`` reduced columns of the ARPACK branch."""
+    if shift_kind == "numeric":
+        return 0
+    radius_set = max(0, min(_SHIFT_ESTIMATE_PAIRS, dim - 2)) * (dim + 1)
+    return _ENTRY * (radius_set + (k if shift_kind == "none" else 0))
+
+
+def _arpack_working_set_bytes(dim, k):
+    """One ARPACK solve's Krylov working set, ``16 (ncv dim + 3 ncv^2 + 14
+    ncv + 3 dim)`` with ``ncv = min(max(2k + 1, 20), dim)``: the Krylov
+    basis, ``workl = 3 ncv^2 + 5 ncv``, ``workev``, ``rwork``, the Ritz
+    values, ``workd`` and ``resid``."""
+    ncv = min(max(2 * k + 1, 20), dim)
+    return _ENTRY * (ncv * dim + 3 * ncv * ncv + 14 * ncv + 3 * dim)
+
+
+def _shift_kind(name, spectral_shift):
+    """The kind of the run's ``[eliashberg] spectral_shift``: ``"none"``
+    (``None`` or ``"none"`` in any case: the unshifted solve), ``"auto"``,
+    or ``"numeric"`` (a value that is not a bool and converts by ``float()``
+    to a positive finite number, as the solver accepts it). Anything else is
+    refused (``ValueError`` naming ``name``)."""
+    if spectral_shift is None:
+        return "none"
+    if isinstance(spectral_shift, str):
+        if spectral_shift.strip().lower() == "none":
+            return "none"
+        if spectral_shift == "auto":
+            return "auto"
+    elif not isinstance(spectral_shift, (bool, np.bool_)):
+        try:
+            value = float(spectral_shift)
+        except (TypeError, ValueError, OverflowError):
+            value = float("nan")
+        if np.isfinite(value) and value > 0.0:
+            return "numeric"
+    raise ValueError('{}: spectral_shift must be None, "none", "auto" or a positive finite '
+                     "number, got {!r}".format(name, spectral_shift))
+
+
+def _arpack_retry_bytes(dim, k):
+    """The second Krylov working set of an ARPACK branch above
+    :data:`DENSE_FALLBACK_MAX`, whatever the shift: there no dense fallback
+    runs, and after a late failure of the largest-real solve (its arrays
+    kept alive by the exception's frames) the failed-solve contract runs a
+    which='LM' solve for finite placeholder vectors. At ``dim <=``
+    :data:`DENSE_FALLBACK_MAX` no second ARPACK solve starts while a failed
+    one is alive (the failure goes to the dense fallback, whose row is at
+    least one working set), so the term is ``0`` there."""
+    if dim > DENSE_FALLBACK_MAX:
+        return _arpack_working_set_bytes(dim, k)
+    return 0
+
+
+def _dense_fallback_bytes(dim):
+    """The bytes of the dense fallback after a failed ARPACK solve of a
+    ``dim``-dimensional operator, while ``np.linalg.eig`` runs: ``16 (4
+    dim^2 + 2 dim) + 16 max(130 dim, 4352) + 8 * 2 dim`` when ``dim <=``
+    :data:`DENSE_FALLBACK_MAX`, else ``0`` (no fallback runs).
+
+    The bound covers the two moments of the fallback. While
+    ``np.linalg.eig`` runs, the Python allocations (seen by ``tracemalloc``)
+    are ``16 (2 dim^2 + dim)``: the matrix built column by column and the
+    eigenvector and eigenvalue outputs of ``np.linalg.eig`` (the one basis
+    column of the build is left to the call allowance); the native ones are
+    ``16 (2 dim^2 + dim) + 16 max(130 dim, 4352) + 8 * 2 dim`` (inside
+    ``np.linalg.eig``; not seen by ``tracemalloc`` on numpy 1.x, partly
+    seen on some numpy 2 builds): its copy of the input,
+    LAPACK's right eigenvectors and eigenvalues, the ``zgeev`` workspace
+    ``work`` (``max(130 dim, 4352)`` complex entries,
+    :data:`_ZGEEV_WORK_PER_DIM`, :data:`_ZGEEV_WORK_FLOOR`) and ``rwork``
+    (``2 dim`` reals). After ``np.linalg.eig`` returns, its native buffers
+    are freed and the Python allocations are ``16 (3 dim^2 + dim)``: the
+    matrix, the eigenvectors and their copy reordered by largest real part,
+    with no native share; both moments stay within the bound. The ARPACK
+    work arrays of the failed solve stay alive during the fallback (the
+    exception keeps the solver's frame), so a row adds this to the ARPACK
+    branch, never in place of it. Above :data:`DENSE_FALLBACK_MAX` no
+    fallback runs: after a late failure the failed-solve contract runs a
+    second ``which='LM'`` solve for finite placeholder vectors while the
+    first one's work arrays are alive, for every shift, and the ARPACK
+    branch reserves that second working set there
+    (:func:`_arpack_retry_bytes`)."""
+    if dim > DENSE_FALLBACK_MAX:
+        return 0
+    return (_ENTRY * (4 * dim * dim + 2 * dim)
+            + _ENTRY * max(_ZGEEV_WORK_PER_DIM * dim, _ZGEEV_WORK_FLOOR) + 8 * 2 * dim)
+
+
+def _check_sector_dims(name, dims, n_sector_vec):
+    d = _int_list(dims)
+    if not d or any(v < 0 for v in d):
+        raise ValueError("{}: dims must be a non-empty sequence of integers >= 0, got {!r}"
+                         .format(name, dims))
+    n = _int_list(n_sector_vec)
+    if n is None or len(n) != len(d) or any(v < 0 for v in n):
+        raise ValueError("{}: n_sector_vec must be a sequence of {} integers >= 0 (one per "
+                         "dims entry), got {!r}".format(name, len(d), n_sector_vec))
+    for p, (dim, n_p) in enumerate(zip(d, n)):
+        if 2 * dim > n_p:
+            raise ValueError("{}: dims[{}] = {} exceeds n_sector_vec[{}] / 2 = {} / 2".format(
+                name, p, dim, p, n_p))
+    return d, n
+
+
+def _check_full_gap(name, n_full_gap, n):
+    total_n = sum(n)
+    if not _is_int(n_full_gap) or int(n_full_gap) < total_n:
+        raise ValueError("{}: n_full_gap must be an integer >= sum(n_sector_vec) = {}, got {!r}"
+                         .format(name, total_n, n_full_gap))
+    return int(n_full_gap)
+
+
+def estimate_sector_solver_bytes(dims, k, n_full_gap, *, n_sector_vec, dense_fallback=False,
+                                 spectral_shift=None):
     """The host bytes of the per-sector eigen solve of the S_z-packed pairing
     kernel, for ``k`` kept eigenpairs.
 
@@ -1785,11 +2424,22 @@ def estimate_sector_solver_bytes(dims, k, n_full_gap, *, n_sector_vec):
       the sector-vector temporaries; the returned eigenvectors, those the
       largest-real re-solve keeps from the first solve and the residual
       images of the ``k`` pairs: three reduced and three sector-vector
-      columns per pair);
+      columns per pair), plus the outputs kept alive into the largest-real
+      solve by ``spectral_shift`` (the run's ``[eliashberg]
+      spectral_shift``; default ``None``, unshifted;
+      :func:`_arpack_retained_bytes`: ``0`` for a number, ``16 p (dim + 1)``
+      for ``"auto"``, ``16 (p (dim + 1) + k)`` unshifted, ``p = min(6, dim -
+      2)``), plus, above :data:`DENSE_FALLBACK_MAX` only and for every shift,
+      a second Krylov working set ``16 (ncv dim + 3 ncv^2 + 14 ncv + 3
+      dim)`` (the placeholder which='LM' solve that runs after a late failure
+      while the failed solve's arrays are alive; :func:`_arpack_retry_bytes`);
     * null operator: ``16 (min(k, dim) (dim + n_p) + n_full_gap)`` (unit
       vectors, their lifts and one scattered gap).
 
-    A sector counts the larger of its branch and the null-operator row
+    With ``dense_fallback = True`` an ARPACK-branch sector also counts the
+    failure-only dense fallback of the solve (:func:`_dense_fallback_bytes`,
+    nonzero for ``dim <=`` :data:`DENSE_FALLBACK_MAX`) on its branch; the
+    default leaves it out. A sector counts the larger of its branch and the null-operator row
     (whether an operator vanishes is known only at run time). The result is
     the maximum over sectors plus ``16 (k + sum_p min(k, dim_p))
     n_full_gap`` (the candidate gaps of every sector, alive until the merge,
@@ -1797,33 +2447,24 @@ def estimate_sector_solver_bytes(dims, k, n_full_gap, *, n_sector_vec):
     eigenvectors) and :data:`_CALL_OVERHEAD`. Arguments outside these ranges
     are refused (``ValueError`` naming the argument)."""
     name = "estimate_sector_solver_bytes"
-    d = _int_list(dims)
-    if not d or any(v < 0 for v in d):
-        raise ValueError("{}: dims must be a non-empty sequence of integers >= 0, got {!r}"
-                         .format(name, dims))
-    n = _int_list(n_sector_vec)
-    if n is None or len(n) != len(d) or any(v < 0 for v in n):
-        raise ValueError("{}: n_sector_vec must be a sequence of {} integers >= 0 (one per "
-                         "dims entry), got {!r}".format(name, len(d), n_sector_vec))
-    for p, (dim, n_p) in enumerate(zip(d, n)):
-        if 2 * dim > n_p:
-            raise ValueError("{}: dims[{}] = {} exceeds n_sector_vec[{}] / 2 = {} / 2".format(
-                name, p, dim, p, n_p))
+    d, n = _check_sector_dims(name, dims, n_sector_vec)
     k = _int_at_least(name, "k", k, 1)
-    total_n = sum(n)
-    if not _is_int(n_full_gap) or int(n_full_gap) < total_n:
-        raise ValueError("{}: n_full_gap must be an integer >= sum(n_sector_vec) = {}, got {!r}"
-                         .format(name, total_n, n_full_gap))
-    n_full_gap = int(n_full_gap)
+    n_full_gap = _check_full_gap(name, n_full_gap, n)
+    if not isinstance(dense_fallback, (bool, np.bool_)):
+        raise ValueError("{}: dense_fallback must be a bool, got {!r}".format(
+            name, dense_fallback))
+    shift = _shift_kind(name, spectral_shift)
     cut = max(2 * k + 1, 20)
     worst = 0
     for dim, n_p in zip(d, n):
         if dim <= cut:
             branch = _ENTRY * (7 * dim * dim + 3 * n_p * dim + 4 * dim)
         else:
-            ncv = min(cut, dim)
-            branch = (_ENTRY * (ncv * dim + 3 * ncv * ncv + 14 * ncv + 3 * dim)
-                      + 24 * n_p + 6 * _ENTRY * n_p + _ENTRY * 3 * k * (dim + n_p))
+            branch = (_arpack_working_set_bytes(dim, k) + _arpack_retry_bytes(dim, k)
+                      + 24 * n_p + 6 * _ENTRY * n_p + _ENTRY * 3 * k * (dim + n_p)
+                      + _arpack_retained_bytes(dim, k, shift))
+            if dense_fallback:
+                branch += _dense_fallback_bytes(dim)
         null = _ENTRY * (min(k, dim) * (dim + n_p) + n_full_gap)
         worst = max(worst, branch, null)
     kept = sum(min(k, dim) for dim in d)
@@ -1879,6 +2520,344 @@ def estimate_packed_kernel_workspace_bytes(B, pp_pair_counts, nvol, nfreq):
             "g2_gather": _ENTRY * n * n * grid,
             "matvec_workspace": _ENTRY * (max(3 + B, 6) * n * grid + 3 * _EINSUM_BUFFER),
             "call_overhead": _CALL_OVERHEAD}
+
+
+# ---------------------------------------------------------------------------
+# Admission rows of the static spin-orbital bond path
+# ---------------------------------------------------------------------------
+
+_SOLVER_MODES = ("eigenvalue", "iteration", "both")
+
+
+def _shape3(helper, spatial_shape):
+    if (not isinstance(spatial_shape, (tuple, list, np.ndarray)) or len(spatial_shape) != 3
+            or not all(_is_int(x) and int(x) >= 1 for x in spatial_shape)):
+        raise ValueError("{}: spatial_shape must be three integers >= 1, got {!r}".format(
+            helper, spatial_shape))
+    return tuple(int(x) for x in spatial_shape)
+
+
+def _even_at_least_2(helper, name, value):
+    value = _int_at_least(helper, name, value, 2)
+    if value % 2:
+        raise ValueError("{}: {} must be an even integer >= 2, got {!r}".format(
+            helper, name, value))
+    return value
+
+
+def _solver_mode(helper, solver_mode):
+    if not (isinstance(solver_mode, str) and solver_mode in _SOLVER_MODES):
+        raise ValueError("{}: solver_mode must be 'eigenvalue', 'iteration' or 'both', got {!r}"
+                         .format(helper, solver_mode))
+    return solver_mode
+
+
+def n_trim(spatial_shape):
+    """The number of momenta fixed by ``k -> -k`` on the mesh
+    ``spatial_shape``: ``prod_i (2 if N_i is even else 1)`` (a singleton axis
+    gives 1)."""
+    out = 1
+    for x in _shape3("n_trim", spatial_shape):
+        out *= 2 if x % 2 == 0 else 1
+    return out
+
+
+class PPSectorDims(NamedTuple):
+    """The pair-S_z sectors ``(+1, 0, -1)`` of a static spin-orbital gap
+    ``(nd, nd) + spatial_shape``: the orbital pairs per momentum, the sector
+    vector lengths (``pair_counts * nvol``) and the antisymmetric
+    dimensions."""
+    pair_counts: tuple
+    n_sector_vec: tuple
+    dims: tuple
+
+
+def pp_sector_dims(nd, spatial_shape):
+    """The pair-S_z sector sizes of a static gap, with ``norb = nd / 2``,
+    ``nvol = prod(spatial_shape)`` and ``N_TRIM =`` :func:`n_trim`: pair
+    counts ``(norb^2, 2 norb^2, norb^2)``, dimensions ``((norb^2 nvol - norb
+    N_TRIM) / 2, norb^2 nvol, (norb^2 nvol - norb N_TRIM) / 2)`` (the two
+    equal-spin sectors carry the fixed points of the antisymmetry; their sum
+    is ``(nd^2 nvol - nd N_TRIM) / 2``). ``nd`` must be an even integer >= 2
+    (``ValueError`` naming the argument)."""
+    name = "pp_sector_dims"
+    nd = _even_at_least_2(name, "nd", nd)
+    shape = _shape3(name, spatial_shape)
+    nvol = int(np.prod(shape))
+    norb = nd // 2
+    trim = n_trim(shape)
+    pair_counts = (norb * norb, 2 * norb * norb, norb * norb)
+    equal = (norb * norb * nvol - norb * trim) // 2
+    return PPSectorDims(pair_counts, tuple(c * nvol for c in pair_counts),
+                        (equal, norb * norb * nvol, equal))
+
+
+def estimate_dense_layout_solver_bytes(dim, k, n, solver_mode, *, max_iter, spectral_shift=None):
+    """The host bytes of the dense layout's eigensolver on the antisymmetric
+    coordinates (``dim``) of a gap of length ``n``, for ``k`` eigenpairs and
+    at most ``max_iter`` power steps (16 bytes per complex entry):
+
+    * eigenvalue, the solver's own cut: the direct dense branch when ``k >=
+      dim - 1``, ``D = 16 (7 dim^2 + 3 n dim + 4 dim)`` (the identity input,
+      the lifted input, the operator's image column by column and stacked,
+      the reduced matrix, ``np.linalg.eig``'s copy and eigenvectors); else
+      ARPACK, ``A = 16 (ncv dim + 3 ncv^2 + 14 ncv + 3 dim) + 24 n + 6 * 16 n
+      + 16 * 3 k (dim + n) + R`` with ``ncv = min(max(2k + 1, 20), dim)`` and
+      ``R`` the outputs kept alive into the largest-real solve by
+      ``spectral_shift`` (default ``None``, unshifted;
+      :func:`_arpack_retained_bytes`: ``0`` for a number, ``16 p (dim + 1)``
+      for ``"auto"``, ``16 (p (dim + 1) + k)`` unshifted, ``p = min(6, dim -
+      2)``), plus, above :data:`DENSE_FALLBACK_MAX` only and for every shift,
+      a second Krylov working set ``16 (ncv dim + 3 ncv^2 + 14 ncv + 3 dim)``
+      (the placeholder which='LM' solve after a late failure;
+      :func:`_arpack_retry_bytes`), plus the
+      failure-only dense fallback (:func:`_dense_fallback_bytes`, for
+      ``dim <=`` :data:`DENSE_FALLBACK_MAX`); either branch adds ``16 k n +
+      16 k dim + 24 n`` (the mapped-back gaps, the reduced eigenvectors, the
+      basis index arrays) and :data:`_CALL_OVERHEAD`;
+    * iteration: ``16 (6 dim + 4 n) + 24 n + 80 max_iter`` (the iterates and
+      their lifts, the index arrays and the per-step bookkeeping of the
+      power loop) plus :data:`_CALL_OVERHEAD`;
+    * both: their sum.
+
+    Of these, the ARPACK work arrays and the iterates are Python allocations
+    (seen by ``tracemalloc``); ``np.linalg.eig``'s copy of its input, its
+    LAPACK eigenvectors and the ``zgeev`` workspace are native allocations,
+    sized from the LAPACK interface (:func:`_dense_fallback_bytes`): not
+    traced on numpy 1.x, partly traced on some numpy 2 builds. The row
+    budgets both shares.
+    In the fallback the native share exists only while
+    ``np.linalg.eig`` runs; after it the Python allocations grow to three
+    ``dim x dim`` arrays (the matrix, the eigenvectors and their reordered
+    copy), still within ``F``.
+    Arguments: ``dim, k, max_iter >= 1``, ``n >= 2 dim`` integers,
+    ``solver_mode`` one of ``"eigenvalue"``, ``"iteration"``, ``"both"``
+    (``ValueError`` naming the argument)."""
+    name = "estimate_dense_layout_solver_bytes"
+    dim = _int_at_least(name, "dim", dim, 1)
+    k = _int_at_least(name, "k", k, 1)
+    n = _int_at_least(name, "n", n, 2 * dim)
+    solver_mode = _solver_mode(name, solver_mode)
+    max_iter = _int_at_least(name, "max_iter", max_iter, 1)
+    shift = _shift_kind(name, spectral_shift)
+    total = 0
+    if solver_mode in ("eigenvalue", "both"):
+        if k >= dim - 1:
+            branch = _ENTRY * (7 * dim * dim + 3 * n * dim + 4 * dim)
+        else:
+            branch = (_arpack_working_set_bytes(dim, k) + _arpack_retry_bytes(dim, k)
+                      + 24 * n + 6 * _ENTRY * n + _ENTRY * 3 * k * (dim + n)
+                      + _arpack_retained_bytes(dim, k, shift) + _dense_fallback_bytes(dim))
+        total += branch + _ENTRY * k * n + _ENTRY * k * dim + 24 * n + _CALL_OVERHEAD
+    if solver_mode in ("iteration", "both"):
+        total += _ENTRY * (6 * dim + 4 * n) + 24 * n + 80 * max_iter + _CALL_OVERHEAD
+    return int(total)
+
+
+def estimate_sector_iteration_bytes(dims, n_full_gap, *, n_sector_vec, max_iter):
+    """The host bytes of the per-sector power iteration of the S_z-packed
+    pairing kernel: ``max_p 16 (6 dim_p + 3 n_p) + 16 * 4 n_full_gap + 80
+    max_iter`` plus :data:`_CALL_OVERHEAD` (one sector's run on its reduced
+    coordinates and sector vector, the three lifted sector gaps, the initial
+    gap and the per-step bookkeeping of the power loop). ``dims``,
+    ``n_sector_vec`` and ``n_full_gap`` follow
+    :func:`estimate_sector_solver_bytes`; ``max_iter >= 1`` (``ValueError``
+    naming the argument)."""
+    name = "estimate_sector_iteration_bytes"
+    d, n = _check_sector_dims(name, dims, n_sector_vec)
+    n_full_gap = _check_full_gap(name, n_full_gap, n)
+    max_iter = _int_at_least(name, "max_iter", max_iter, 1)
+    worst = max(_ENTRY * (6 * dim + 3 * n_p) for dim, n_p in zip(d, n))
+    return int(worst + _ENTRY * 4 * n_full_gap + 80 * max_iter + _CALL_OVERHEAD)
+
+
+#: numpy reuses a temporary operand in place only from this size on
+_NUMPY_ELIDE_BYTES = 256 * 1024
+
+
+def _green_static_transient(nmat, nvol, nd):
+    """The ``transient`` row of ``green_static`` (:func:`static_so_bond_rows`)."""
+    from hwave.solver import fingerprint
+    G = _ENTRY * nmat * nvol * nd * nd
+    slice_bytes = _ENTRY * nvol * nd * nd
+    chunk = fingerprint.CHUNK_BYTES
+    if slice_bytes <= chunk:
+        block = slice_bytes * min(fingerprint._MAX_FREQ_GATHER, nmat,
+                                  max(1, chunk // slice_bytes))
+    else:
+        row = _ENTRY * nd * nd
+        block = row * max(1, chunk // row)
+    build = 2 * slice_bytes + min(G, _NUMPY_ELIDE_BYTES)
+    digest = 3 * block + block // 8 - G
+    return max(build, digest)
+
+
+#: the fixed part of the resident row of a Green function read from a file
+#: (:func:`static_so_bond_resident_rows`): the zip and validator overhead of
+#: the read step that does not scale with the file, over its ``3G`` peak
+#: (inside ``carrier_build``); resident, because part of it is
+#: reference-cycle garbage that stays alive until the next cyclic collection
+_FILE_READ_BYTES = 262144
+#: the factor of the part of that row that scales with the file: the bytes of
+#: the members other than ``green`` (each is materialised once by the checks,
+#: and a check forms at most a few temporaries of a member's size; measured at
+#: most 2.3 times the member bytes, on ``wavevector_index``)
+_FILE_READ_MEMBER_FACTOR = 4
+
+
+def static_so_bond_rows(*, nmat, nvol, B, nd, layout, solver_mode, num_eigenvalues, max_iter,
+                        spatial_shape, spectral_shift=None):
+    """The admission rows ``(phase, name, bytes)`` of the static
+    spin-orbital bond path beyond the consumers' rows (pass them to
+    :func:`plan_so_bond` as ``extra_rows``).
+
+    With ``G = 16 nmat nvol nd^2`` (one Green function), ``T4 = 16 nvol
+    nd^4``, ``S`` the entries of one ``ND x ND`` code-slot matrix in
+    ``layout`` (``ND^2`` dense, ``sum_sigma n_sigma^2`` packed), ``n = nd^2
+    nvol`` (one gap), ``ND = B nd^2`` and ``OV =`` :data:`_CALL_OVERHEAD`:
+
+    * ``green_static``: ``carrier_build = 4G`` (the carrier and its build
+      temporaries), ``call_overhead = OV``, ``eigendecomposition = E = 16
+      nvol nd^2 + 8 nvol nd`` (the band's eigenvectors and eigenvalues, held
+      during the build) and ``transient = max(2 E_k + min(G, 256 KiB), 3 C +
+      C/8 - G)``. ``E_k = 16 nvol nd^2`` (the build's ``V^dagger`` and ``V
+      V^dagger``); ``min(G, 256 KiB)`` is the one Green-sized temporary of
+      the tail assembly that numpy reuses in place only from 256 KiB on; the
+      second term is the ``fp_green`` digest, which holds up to three
+      gathered blocks of ``C`` bytes and the finiteness mask (``C/8``) beside
+      the resident ``3G`` carrier, with ``C = E_k min(16, nmat, max(1,
+      CHUNK_BYTES / E_k))`` when one frequency slice ``E_k`` fits in
+      ``CHUNK_BYTES`` (the digest gathers at most 16 frequencies per block),
+      else ``C = 16 nd^2 max(1, CHUNK_BYTES / (16 nd^2))``;
+    * ``pairing_static``: ``carrier = 3G`` (the carrier stays resident from
+      here to the end of the solve);
+    * ``g2_static``: ``carrier = 3G``, ``v_static = 16 nvol S`` (``V_bare +
+      V_fluct`` formed in place in ``V_bare``), ``g2_roll = G``, ``g2_out = 2
+      T4``, ``call_overhead = OV``;
+    * ``kernel_static``: ``carrier``, ``v_static``, ``g2 = T4``,
+      ``kernel_workspace`` and ``eigensolver``. Dense: ``kernel_workspace =
+      16 nvol ND^2 + 3 T4 + (3 + B) 16 n + 16 nvol nd^2`` (the hoisted
+      blocks, one block's hoisting temporaries, the gap work and the
+      transformed bare block) and ``eigensolver =``
+      :func:`estimate_dense_layout_solver_bytes` on the antisymmetric
+      dimension ``(nd^2 nvol - nd N_TRIM) / 2``. Packed: ``kernel_workspace``
+      = the sum of :func:`estimate_packed_kernel_workspace_bytes` ``(B,
+      pair_counts, nvol, 1)`` and ``eigensolver`` =
+      :func:`estimate_sector_solver_bytes` (with the dense fallback) for the
+      eigenvalue, :func:`estimate_sector_iteration_bytes` for the iteration,
+      their sum for both, on :func:`pp_sector_dims`.
+
+    ``Gamma_B`` stays the plan's resident row. Arguments: ``nmat`` a
+    positive even integer, ``nvol == prod(spatial_shape)``, ``B >= 1``,
+    ``nd`` an even integer >= 2, ``layout`` ``"dense"`` or ``"sz_packed"``,
+    ``solver_mode`` as :func:`estimate_dense_layout_solver_bytes`,
+    ``num_eigenvalues >= 1``, ``max_iter >= 1``, ``spectral_shift`` the run's
+    ``[eliashberg] spectral_shift`` (``None``, ``"none"``, ``"auto"`` or a
+    positive finite number; it sets the outputs the ARPACK branch keeps
+    alive, see :func:`estimate_dense_layout_solver_bytes`) (``ValueError``
+    naming the
+    argument).
+
+    A Green function read from ``[eliashberg] bond_green`` adds the resident
+    row of :func:`static_so_bond_resident_rows`; the rows above are unchanged."""
+    name = "static_so_bond_rows"
+    _shift_kind(name, spectral_shift)
+    nmat = _even_at_least_2(name, "nmat", nmat)
+    nvol = _int_at_least(name, "nvol", nvol, 1)
+    B = _int_at_least(name, "B", B, 1)
+    nd = _even_at_least_2(name, "nd", nd)
+    if not (isinstance(layout, str) and layout in LAYOUTS):
+        raise ValueError("{}: layout must be 'dense' or 'sz_packed', got {!r}".format(
+            name, layout))
+    solver_mode = _solver_mode(name, solver_mode)
+    k = _int_at_least(name, "num_eigenvalues", num_eigenvalues, 1)
+    max_iter = _int_at_least(name, "max_iter", max_iter, 1)
+    shape = _shape3(name, spatial_shape)
+    if nvol != int(np.prod(shape)):
+        raise ValueError("{}: nvol must equal prod(spatial_shape) = {}, got {!r}".format(
+            name, int(np.prod(shape)), nvol))
+    G = _ENTRY * nmat * nvol * nd * nd
+    T4 = _ENTRY * nvol * nd ** 4
+    S = _layout_entries(layout, B, nd)
+    green_transient = _green_static_transient(nmat, nvol, nd)
+    eigen = _ENTRY * nvol * nd * nd + 8 * nvol * nd
+    n = nd * nd * nvol
+    ND = B * nd * nd
+    v_static = _ENTRY * nvol * S
+    sectors = pp_sector_dims(nd, shape)
+    if layout == "dense":
+        workspace = (_ENTRY * nvol * ND * ND + 3 * T4 + (3 + B) * _ENTRY * n
+                     + _ENTRY * nvol * nd * nd)
+        eigensolver = estimate_dense_layout_solver_bytes(sum(sectors.dims), k, n, solver_mode,
+                                                         max_iter=max_iter,
+                                                         spectral_shift=spectral_shift)
+    else:
+        workspace = sum(estimate_packed_kernel_workspace_bytes(
+            B, sectors.pair_counts, nvol, 1).values())
+        eigensolver = 0
+        if solver_mode in ("eigenvalue", "both"):
+            eigensolver += estimate_sector_solver_bytes(
+                sectors.dims, k, n, n_sector_vec=sectors.n_sector_vec, dense_fallback=True,
+                spectral_shift=spectral_shift)
+        if solver_mode in ("iteration", "both"):
+            eigensolver += estimate_sector_iteration_bytes(
+                sectors.dims, n, n_sector_vec=sectors.n_sector_vec, max_iter=max_iter)
+    rows = (("green_static", "carrier_build", 4 * G),
+            ("green_static", "call_overhead", _CALL_OVERHEAD),
+            ("green_static", "eigendecomposition", eigen),
+            ("green_static", "transient", green_transient),
+            ("pairing_static", "carrier", 3 * G),
+            ("g2_static", "carrier", 3 * G),
+            ("g2_static", "v_static", v_static),
+            ("g2_static", "g2_roll", G),
+            ("g2_static", "g2_out", 2 * T4),
+            ("g2_static", "call_overhead", _CALL_OVERHEAD),
+            ("kernel_static", "carrier", 3 * G),
+            ("kernel_static", "v_static", v_static),
+            ("kernel_static", "g2", T4),
+            ("kernel_static", "kernel_workspace", workspace),
+            ("kernel_static", "eigensolver", eigensolver))
+    return tuple((ph, nm, int(b)) for ph, nm, b in rows)
+
+
+def static_so_bond_resident_rows(*, green_source="band", member_bytes=None):
+    """The resident rows ``(name, bytes)`` (``plan_so_bond(...,
+    resident_rows=)``) the Green function source adds to the static
+    spin-orbital bond plan. ``green_source`` is ``"band"`` (the default: the
+    Green function is built from the run's band; no row, and
+    ``member_bytes`` must be ``None``) or ``"file"`` (it is read from
+    ``[eliashberg] bond_green``; ``member_bytes`` is then required).
+
+    ``file_read = 262144 + 4 * member_bytes``. The fixed 262144 bytes (256
+    KiB) are the zip and validator overhead of the read step that does not
+    scale with the file, measured at most 145 KB on top of its ``3G`` peak
+    (which ``carrier_build`` covers). ``member_bytes`` is the size of the
+    file's members other than ``green``, which the checks materialise (the
+    provenance tables among them, whose size scales with the input). The
+    caller takes it from the members' npy headers and zip records without
+    reading any member (``sc._so_bond_green_member_bytes``). The factor 4
+    bounds the member read plus the temporaries a check forms from it,
+    measured at most 2.3 times the member bytes. The row is resident, alive
+    in every phase from ``green_static`` on: part of that overhead (numpy's
+    npy-header parse of each member the validator reads) is reference-cycle
+    garbage that stays alive until the next cyclic collection, which may
+    come after the read's phase. ``ValueError`` for another
+    ``green_source``, or for ``member_bytes`` that is not a non-negative
+    integer with ``"file"`` or not ``None`` with ``"band"``."""
+    name = "static_so_bond_resident_rows"
+    if not (isinstance(green_source, str) and green_source in ("band", "file")):
+        raise ValueError("{}: green_source must be 'band' or 'file', got {!r}"
+                         .format(name, green_source))
+    if green_source == "band":
+        if member_bytes is not None:
+            raise ValueError("{}: member_bytes is read only with green_source = 'file', "
+                             "got {!r}".format(name, member_bytes))
+        return ()
+    if (isinstance(member_bytes, (bool, np.bool_))
+            or not isinstance(member_bytes, (int, np.integer)) or member_bytes < 0):
+        raise ValueError("{}: member_bytes must be a non-negative integer with green_source "
+                         "= 'file', got {!r}".format(name, member_bytes))
+    return (("file_read", _FILE_READ_BYTES + _FILE_READ_MEMBER_FACTOR * int(member_bytes)),)
 
 
 # ---------------------------------------------------------------------------
@@ -2303,6 +3282,226 @@ def _p_b_packed(M, nd, out):
             np.take(work, perm, axis=-1, out=dst[i], mode="clip")
         del work                    # one sector's workspace alive at a time
     return out
+
+
+# ---------------------------------------------------------------------------
+# The FLEX effective interaction of a dressed batch, channel 0, per-sector inverse
+# ---------------------------------------------------------------------------
+
+def _w_kernel(X, Y, gamma_b, half):
+    """``M = Gamma_B (Y - half X) Gamma_B`` per slice and momentum, by two
+    staged ``matmul`` calls (dense arrays, or :class:`PackedArrays` block
+    by block). A new array (packed: new blocks); the inputs are not
+    written. :func:`so_bond_w_batch` calls it with ``half = 0.5``."""
+    if isinstance(X, PackedArrays):
+        return PackedArrays(X.sector_map, tuple(
+            _w_kernel_dense(x, y, g, half)
+            for x, y, g in zip(X.blocks, Y.blocks, gamma_b.blocks)))
+    return _w_kernel_dense(X, Y, gamma_b, half)
+
+
+def _w_kernel_dense(X, Y, gamma_b, half):
+    """:func:`_w_kernel` of dense arrays (one sector block of a packed one)."""
+    t = np.multiply(X, -half)
+    np.add(t, Y, out=t)                                  # Y - half X
+    m = np.matmul(gamma_b[None], t)
+    np.matmul(m, gamma_b[None], out=t)
+    return t
+
+
+def so_bond_w_batch(X, Y, gamma_b, *, plan, out=None):
+    """The FLEX effective interaction of one dressed frequency batch:
+
+    ``W[l](q) = P_B[Gamma_B(q) (Y[l](q) - 1/2 X[l](q)) Gamma_B(q)]``,
+
+    ``X`` the bare bubble batch ``chibar_B``, ``Y`` its dressing ``chi_B``
+    (:func:`so_bond_dress`) and :func:`p_b` the bond map read by
+    ``flex_bond.calc_self_energy_bond``. Beyond second order this is the
+    ring sum ``Gamma (chi - chibar/2) Gamma``; at second order (``Y =
+    X``) it is ``P_B[1/2 Gamma X Gamma]``.
+
+    Dense layout: ``X`` and ``Y`` are complex128 ``(nb, nvol, ND, ND)``,
+    ``gamma_b`` ``(nvol, ND, ND)``. S_z-packed layout (a plan of layout
+    ``"sz_packed"``): all three are :class:`PackedArrays` on one sector
+    map (``X``, ``Y`` of leading shape ``(nb, nvol)``, ``gamma_b`` of
+    ``(nvol,)``); ``M@s = Gamma@s (Y@s - X@s / 2) Gamma@s`` per sector,
+    then ``p_b``, which reads block ``s`` of ``W`` from block ``-s`` of
+    ``M``.
+
+    The boundary is checked against ``plan`` first
+    (:meth:`SOBondPlan.require`: ``nvol``, ``ND``, the layout and the batch
+    length ``nb <= plan.dress_capacity``; the plan needs the consumer
+    ``flex_scf``), then the arguments, then that every input is finite
+    (``hartree_fock.NonFiniteError`` naming it). ``X``, ``Y`` and
+    ``gamma_b`` are never written. ``out`` (optional) receives ``W``: an
+    array of the layout and shape of ``X`` (packed: the same sector map
+    and leading shape) sharing no memory with ``X``, ``Y`` or ``gamma_b``;
+    ``None`` allocates it. Workspace beyond ``out``: two arrays of the
+    size of ``X``. ``M`` is formed by the module attribute ``_w_kernel``
+    and ``W`` by the module attribute ``p_b``, both looked up at call
+    time. Returns ``W``."""
+    name = "so_bond_w_batch"
+    if not isinstance(plan, SOBondPlan):
+        raise ValueError("{}: plan must be a SOBondPlan (plan_so_bond), got {}".format(
+            name, type(plan).__name__))
+    packed = isinstance(X, PackedArrays)
+    if packed:
+        layout, lead, ND = "sz_packed", X.lead_shape, X.sector_map.ND
+        shape = lead + (ND, ND)
+    else:
+        layout, shape = "dense", tuple(np.shape(X))
+    if len(shape) != 4 or shape[2] != shape[3]:
+        raise ValueError("{}: X must be a batch (nb, nvol, ND, ND), got shape {}".format(
+            name, shape))
+    plan.require(name, nvol=shape[1], ND=shape[2], layout=layout, batch=shape[0])
+    if any(isinstance(a, PackedArrays) != packed for a in (Y, gamma_b)) or (
+            out is not None and isinstance(out, PackedArrays) != packed):
+        raise ValueError("{}: X, Y and gamma_b must all be PackedArrays or all dense arrays "
+                         "(and out too)".format(name))
+    if packed:
+        sm = X.sector_map
+        for arg, arr in (("Y", Y), ("gamma_b", gamma_b)):
+            if not _same_sector_map(arr.sector_map, sm):
+                raise ValueError("{}: the sector map of {} is not the sector map of X".format(
+                    name, arg))
+        if Y.lead_shape != lead:
+            raise ValueError("{}: X and Y must both be packed batches of leading shape {}, got "
+                             "Y {}".format(name, lead, Y.lead_shape))
+        if gamma_b.lead_shape != lead[1:]:
+            raise ValueError("{}: the packed gamma_b has leading shape {}; X needs {}".format(
+                name, gamma_b.lead_shape, lead[1:]))
+        if out is not None:
+            if not (_same_sector_map(out.sector_map, sm) and out.lead_shape == lead):
+                raise ValueError("{}: out must be PackedArrays on the sector map of X with "
+                                 "leading shape {}".format(name, lead))
+    else:
+        for arg, arr in (("X", X), ("Y", Y)):
+            if not (isinstance(arr, np.ndarray) and arr.dtype == np.complex128
+                    and arr.shape == shape):
+                raise ValueError("{}: X and Y must both be complex128 (nb, nvol, ND, ND) arrays "
+                                 "of shape {}, got {} {}".format(name, shape, arg,
+                                                                 _describe(arr)))
+        if not (isinstance(gamma_b, np.ndarray) and gamma_b.dtype == np.complex128
+                and gamma_b.shape == shape[1:]):
+            raise ValueError("{}: gamma_b must be a complex128 array of shape {}, got {}".format(
+                name, shape[1:], _describe(gamma_b)))
+        if out is not None and not (isinstance(out, np.ndarray) and out.dtype == np.complex128
+                                    and out.shape == shape):
+            raise ValueError("{}: out must be a complex128 array of shape {}, got {}".format(
+                name, shape, _describe(out)))
+    if out is not None:
+        for arg, arr in (("X", X), ("Y", Y), ("gamma_b", gamma_b)):
+            if _shares(out, arr):
+                raise ValueError("{}: out shares memory with {}".format(name, arg))
+    for arg, arr in (("X", X), ("Y", Y), ("gamma_b", gamma_b)):
+        if not all(np.isfinite(b).all() for b in _blocks(arr)):
+            raise NonFiniteError("{}: {} has non-finite entries".format(name, arg))
+    M = _w_kernel(X, Y, gamma_b, 0.5)
+    return p_b(M, plan.nd, out=out)
+
+
+def channel0_block(X, *, nd=None):
+    """A new dense copy of the pair block of channel 0, ``X[..., :nd**2,
+    :nd**2]`` (the code slots ``(0; x, y)``), of shape ``lead + (nd**2,
+    nd**2)``, complex128, C-contiguous.
+
+    ``X`` is a dense complex128 ``(..., ND, ND)`` code-slot array, which
+    needs ``nd`` (``ND = B nd**2`` does not fix it), or a
+    :class:`PackedArrays`, whose channel-0 entries are scattered from the
+    sector blocks (the off-sector entries are exact zeros); ``nd``, when
+    given, must be the sector map's."""
+    if isinstance(X, PackedArrays):
+        sm = _consumer_map("store_scatter", X.sector_map)
+        if nd is not None and nd != sm.nd:
+            raise ValueError("channel0_block: the sector map of X has nd = {}, the call has nd "
+                             "= {}".format(sm.nd, nd))
+        P = sm.nd * sm.nd
+        out = np.zeros(X.lead_shape + (P, P), dtype=np.complex128)
+        for s, b in enumerate(X.blocks):
+            idx = sm.index[sm.offsets[s]:sm.offsets[s + 1]]
+            k = int(np.count_nonzero(idx < P))          # ascending: channel 0 is a prefix
+            c0 = idx[:k]
+            out[..., c0[:, None], c0] = b[..., :k, :k]
+        return out
+    if nd is None:
+        raise ValueError("channel0_block: a dense X needs nd (= 2*norb_phys); ND = B*nd**2 does "
+                         "not determine it")
+    if not (_is_int(nd) and int(nd) > 0 and int(nd) % 2 == 0):
+        raise ValueError("channel0_block: nd must be a positive even integer (nd = 2*norb_phys), "
+                         "got {!r}".format(nd))
+    P = int(nd) ** 2
+    if not (isinstance(X, np.ndarray) and X.dtype == np.complex128 and X.ndim >= 2
+            and X.shape[-1] == X.shape[-2] and X.shape[-1] > 0 and X.shape[-1] % P == 0):
+        raise ValueError("channel0_block: X must be a complex128 (..., ND, ND) array with ND a "
+                         "positive multiple of nd**2 = {}, got {}".format(P, _describe(X)))
+    return X[..., :P, :P].copy()
+
+
+def inverse_per_sector(A, norb_phys):
+    """The inverse of an S_z block-diagonal stack ``A`` ``(..., 2n, 2n)``
+    (spin-block modes, ``n = norb_phys``): ``A[..., :n, :n]`` and
+    ``A[..., n:, n:]`` are inverted separately and the result has exact
+    zeros between them. Every off-sector entry of ``A`` must be exactly
+    zero (``ValueError`` with the leak ``max|A_off| / max|A|`` otherwise).
+    A new complex128 array; ``A`` is not written."""
+    n = _check_norb_phys("inverse_per_sector", norb_phys)
+    A = np.asarray(A)
+    if A.ndim < 2 or A.shape[-2:] != (2 * n, 2 * n):
+        raise ValueError("inverse_per_sector: A must end in shape (2*norb_phys, 2*norb_phys) = "
+                         "({0}, {0}), got shape {1}".format(2 * n, A.shape))
+    up, dn = _spin_halves(n)
+    off = max(float(np.max(np.abs(A[..., up, dn]))), float(np.max(np.abs(A[..., dn, up]))))
+    if off != 0.0:
+        raise ValueError("inverse_per_sector: off-sector leak max|A_off| / max|A| = %.3e"
+                         % (off / float(np.max(np.abs(A)))))
+    out = np.zeros(A.shape, dtype=np.complex128)
+    out[..., up, up] = np.linalg.inv(A[..., up, up])
+    out[..., dn, dn] = np.linalg.inv(A[..., dn, dn])
+    return out
+
+
+def static_pole_indicator(X, gamma_b, shape):
+    """``(entry, per_sector, worst)``: the static RPA pole indicator ``max_q
+    eig[-chibar_B Gamma_B](q, 0)`` of the spinful channel, computed and not
+    logged (the caller reports it, e.g. through
+    :func:`hwave.solver.bond_channels.check_rpa_pole`).
+
+    ``X`` is one bosonic-frequency slice of the bond bubble, a dense
+    ``(nvol, ND, ND)`` array or a :class:`PackedArrays` of leading shape
+    ``(nvol,)``, and ``gamma_b`` the vertex in the same layout. Dense:
+    ``(bond_channels.static_pole_indicator(X, gamma_b, "spinful", shape),
+    None, None)``. S_z-packed: the indicator of every nonempty sector
+    (``per_sector``, ``{sector name: entry}``; the spectra of the sectors
+    are together the dense block's); ``entry`` is that of the sector with
+    the largest finite indicator, whose name is ``worst``. A sector whose
+    indicator could not be computed makes the entry
+    :data:`hwave.solver.bond_channels.POLE_UNAVAILABLE` (``worst`` None)
+    unless another sector is already past the pole; with no real eigenvalue
+    in any sector the entry is ``(nan, None, max max_re)`` (``worst`` None),
+    as on the dense path."""
+    if not isinstance(X, PackedArrays):
+        return bond_channels.static_pole_indicator(X, gamma_b, "spinful", shape), None, None
+    per = {}
+    for name, xb, gb in zip(X.sector_map.sector_order, X.blocks, gamma_b.blocks):
+        if xb.shape[-1]:
+            per[name] = bond_channels.static_pole_indicator(xb, gb, "spinful", shape)
+    finite = {k: v for k, v in per.items() if np.isfinite(v[0])}
+    unavailable = [k for k, v in per.items() if v[1] is None and not np.isfinite(v[2])]
+    if unavailable and not any(v[0] >= bond_channels.RPA_POLE_THRESHOLD
+                               for v in finite.values()):
+        # a sector without an indicator: the run cannot be certified
+        # below the pole (check_rpa_pole says so)
+        finite = {}
+    if finite:
+        worst = max(finite, key=lambda k: finite[k][0])
+        entry = finite[worst]
+    elif unavailable or not per:
+        worst, entry = None, bond_channels.POLE_UNAVAILABLE
+    else:
+        # no sector has a real eigenvalue: no indicator, as on the dense path
+        worst = None
+        entry = (float("nan"), None, max(float(v[2]) for v in per.values()))
+    return entry, per, worst
 
 
 # ---------------------------------------------------------------------------
@@ -3476,6 +4675,15 @@ class PackedBondPairKernel:
         op = SectorOp(self.pp_sectors[s], operator, basis, True)
         self._ops[s] = op
         return op
+
+    def drop_sector_ops(self):
+        """Forget the cached sector operators of :meth:`sector_op`. Each one
+        refers back to this kernel (its matvec calls the kernel), so the cache
+        is a reference cycle that keeps the kernel's arrays alive until the
+        next garbage collection; after this call dropping the last reference
+        to the kernel frees them at once. A later :meth:`sector_op` builds the
+        operator again."""
+        self._ops.clear()
 
     def _apply(self, s, x, adjoint=False):
         """The kernel (or its adjoint) of sector position ``s`` on a sector

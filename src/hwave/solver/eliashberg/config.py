@@ -6,10 +6,13 @@ re-exports every name here under its old spelling.
 from __future__ import annotations
 
 import logging
+from typing import NamedTuple
 import numpy as np
 
 from hwave.solver.ir_axis import is_ir_native, ir_native_meta
+from hwave.solver import backend
 from hwave.solver import bond_channels
+from hwave.solver.so_pairing import _SO_WHAT
 from hwave.solver.eliashberg.vertex import (  # noqa: F401
     _NONBOND_FOCK_TYPES, _offsite_rows)
 
@@ -304,6 +307,35 @@ def _resolve_bond_coeff_tail(eli_param):
     return value, "config"
 
 
+def _warn_stale_bond_options(eli_param):
+    """The WARNING naming every bond option set while ``bond_channels`` is
+    off (they are ignored, never parsed)."""
+    stale = [name for name in _BOND_OPTION_KEYS if name in eli_param]
+    if stale:
+        logger.warning(
+            "[eliashberg] %s set but bond_channels=false; the bond-channel "
+            "options only apply to bond_channels=true and are ignored "
+            "here.", ", ".join(stale))
+
+
+def _parse_bond_green(eli_param):
+    """``[eliashberg] bond_green`` of the mapping ``eli_param`` as given
+    (the spin-orbital mapping is case-insensitive, the non-spin-orbital one
+    is not): ``None`` when absent, else the value as a string, used verbatim
+    as a path (relative to the working directory); an empty string is
+    refused."""
+    bond_green = eli_param.get("bond_green")
+    if bond_green is None:
+        return None
+    bond_green = str(bond_green)
+    if not bond_green:
+        raise ValueError(
+            "[eliashberg] bond_green must be a path to a Green-function "
+            "npz file; got an empty string. Omit the key to build the "
+            "bare Green function from the transfer Hamiltonian.")
+    return bond_green
+
+
 def _read_bond_config(eli_param):
     """Read the ``[eliashberg]`` bond-channel options (spec S5).
 
@@ -327,24 +359,12 @@ def _read_bond_config(eli_param):
     """
     use_bond = _bond_bool_option(eli_param, "bond_channels", False)
     if not use_bond:
-        stale = [name for name in _BOND_OPTION_KEYS if name in eli_param]
-        if stale:
-            logger.warning(
-                "[eliashberg] %s set but bond_channels=false; the bond-channel "
-                "options only apply to bond_channels=true and are ignored "
-                "here.", ", ".join(stale))
+        _warn_stale_bond_options(eli_param)
         return False, None, None, None, {}, False
 
     bond_diagnostics = _bond_bool_option(eli_param, "bond_diagnostics", False)
 
-    bond_green = eli_param.get("bond_green")
-    if bond_green is not None:
-        bond_green = str(bond_green)
-        if not bond_green:
-            raise ValueError(
-                "[eliashberg] bond_green must be a path to a Green-function "
-                "npz file; got an empty string. Omit the key to build the "
-                "bare Green function from the transfer Hamiltonian.")
+    bond_green = _parse_bond_green(eli_param)
 
     max_shells = _bond_int_option(eli_param, "bond_max_shells")
     if max_shells is not None and max_shells < 0:
@@ -382,6 +402,161 @@ def _read_bond_config(eli_param):
                 "{}".format(dense_limit))
         pre_opts["dense_limit"] = dense_limit
     return True, bond_green, max_shells, cap_gb, pre_opts, bond_diagnostics
+
+
+_SO_BOND_LAYOUT_IGNORED = (
+    "[eliashberg] so_bond_layout set but bond_channels=false; it only applies to "
+    "the spin-orbital bond path and is ignored here.")
+_SO_BOND_DIAGNOSTICS_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] bond_diagnostics is not available in spin-orbital "
+    "mode (its character analysis is the singlet/triplet one of the "
+    "non-spin-orbital bond path); the gap.npz S_z and spin decompositions describe "
+    "the leading state. Remove bond_diagnostics.")
+#: ``{key}`` = the key as the user spelled it
+_SO_BOND_PRECONDITION_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] {key} tunes the Hermiticity check of the "
+    "non-spin-orbital bond kernel; the spin-orbital kernel is not Hermitian and has "
+    "no such check. Remove {key}.")
+_SO_BOND_FLEX_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] chi0q_mode = \"flex\" with bond_channels = true is "
+    "not available: the spin-orbital bond path builds its bond bubble from a Green "
+    "function (the band's, or the file named by bond_green) and reads no FLEX "
+    "susceptibility. Remove chi0q_mode (or leave it unset); to use a FLEX Green "
+    "function, set bond_green to the green.npz of a spin-orbital FLEX run with "
+    "[mode.param] longitudinal_bond_channels = true.")
+_SO_BOND_GPU_REQUIRED_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] gpu_required = true is not available with "
+    "bond_channels = true: the spin-orbital bond-resolved kernel runs on the CPU "
+    "only. Remove gpu_required (gpu = true alone is ignored with a warning).")
+#: WARNING texts (``%s`` arguments) of :func:`_so_bond_entry_warnings`
+_SO_BOND_CHI0Q_UNUSED = (
+    "[eliashberg] bond_channels=true in spin-orbital mode builds its own "
+    "bond-resolved bubble directly from the Green function, so chi0q_mode = '%s' "
+    "and chi0q_tensor = '%s' are not used: no chi0q file is read or computed on "
+    "this path.")
+_SO_BOND_GPU_IGNORED = (
+    "[eliashberg] gpu=true is ignored for bond_channels=true in spin-orbital mode: "
+    "the spin-orbital bond-resolved kernel is CPU-only (GPU support is a deferred "
+    "follow-up).")
+_SO_BOND_FLEX_KEYS_UNUSED = (
+    "[eliashberg] %s: not used for bond_channels=true in spin-orbital mode (the "
+    "spin-orbital bond path reads no FLEX susceptibility).")
+
+_SO_BOND_PRECONDITION_PREFIX = "bond_precondition_"
+_SO_BOND_CAP_KEY = "[eliashberg] bond_memory_cap_gb"
+
+
+class _SOBondConfig(NamedTuple):
+    """The ``[eliashberg]`` options of a spin-orbital run's bond path.
+
+    ``use_bond`` is ``bond_channels``; with it off every other field is
+    ``None``. ``layout_request`` is the ``so_bond_layout`` value in lower
+    case (``"auto"`` when unset); ``cap_raw`` the ``bond_memory_cap_gb`` value
+    as a float (``None`` when unset, ``0.0`` = no cap); ``max_shells`` the
+    ``bond_max_shells`` cutoff (``None`` = every shell); ``coeff_tail``,
+    ``coeff_tail_source`` the resolved ``bond_coeff_tail``
+    (:func:`_resolve_bond_coeff_tail`); ``g2_tail`` the Matsubara tail
+    switch; ``green`` the ``bond_green`` path (``None``: the Green function
+    is built from the band)."""
+    use_bond: bool
+    layout_request: object
+    cap_raw: object
+    max_shells: object
+    coeff_tail: object
+    coeff_tail_source: object
+    g2_tail: object
+    green: object = None
+
+
+def _read_so_bond_config(eli_param):
+    """Read the bond options of a spin-orbital run from the ``[eliashberg]``
+    table ``eli_param`` (keys case-insensitive).
+
+    With ``bond_channels`` off the bond options are ignored with a WARNING
+    (the non-spin-orbital one, plus one for ``so_bond_layout``) and never
+    parsed. With it on, the options the spin-orbital bond path does not use
+    are refused, the first offender winning, in this order:
+    ``bond_diagnostics`` (any value); any ``bond_precondition_*`` key (any
+    value; the first in lower-case order, named as spelled);
+    ``chi0q_mode = "flex"``; ``gpu_required = true``. Then the values are
+    validated: ``bond_green`` (:func:`_parse_bond_green`: a non-empty path;
+    the Green function of the static bond path is then read from that file,
+    the green.npz of a spin-orbital bond FLEX run, instead of being built
+    from the band), ``so_bond_layout``
+    (:func:`hwave.solver.so_bond.parse_layout_key`), ``bond_max_shells >=
+    0``, ``bond_memory_cap_gb`` a finite number ``>= 0`` (``0`` disables the
+    memory admission check), ``bond_coeff_tail`` and ``g2_tail``. Nothing
+    here reads a file or selects a backend."""
+    from requests.structures import CaseInsensitiveDict
+    from hwave.solver import so_bond
+    eli = CaseInsensitiveDict(eli_param or {})
+    if not _bond_bool_option(eli, "bond_channels", False):
+        _warn_stale_bond_options(eli)
+        if "so_bond_layout" in eli:
+            logger.warning(_SO_BOND_LAYOUT_IGNORED)
+        return _SOBondConfig(False, None, None, None, None, None, None)
+
+    if "bond_diagnostics" in eli:
+        raise ValueError(_SO_BOND_DIAGNOSTICS_REFUSAL)
+    precondition = sorted(
+        (key for key in eli if key.lower().startswith(_SO_BOND_PRECONDITION_PREFIX)),
+        key=lambda key: (key.lower(), key))
+    if precondition:
+        raise ValueError(_SO_BOND_PRECONDITION_REFUSAL.format(key=precondition[0]))
+    if eli.get("chi0q_mode") == "flex":
+        raise ValueError(_SO_BOND_FLEX_REFUSAL)
+    if backend.as_bool(eli.get("gpu_required", False)):
+        raise ValueError(_SO_BOND_GPU_REQUIRED_REFUSAL)
+
+    green = _parse_bond_green(eli)
+    layout = eli.get("so_bond_layout")
+    layout_request = so_bond.parse_layout_key(
+        "auto" if layout is None else layout, key="[eliashberg] so_bond_layout")
+    max_shells = _bond_int_option(eli, "bond_max_shells")
+    if max_shells is not None and max_shells < 0:
+        raise ValueError(
+            "[eliashberg] bond_max_shells must be >= 0 (shell 0 = the "
+            "on-site Delta r = 0 point), got {}".format(max_shells))
+    cap_given = eli.get("bond_memory_cap_gb")
+    cap_raw = None
+    if cap_given is not None:
+        if isinstance(cap_given, (bool, np.bool_)):
+            cap_raw = float("nan")                  # refused below
+        else:
+            try:
+                cap_raw = _bond_float_option(eli, "bond_memory_cap_gb")
+            except OverflowError:                   # an integer beyond the float range
+                cap_raw = float("nan")
+        if not np.isfinite(cap_raw) or cap_raw < 0.0:
+            raise ValueError(so_bond.CAP_RANGE_TEXT.format(
+                key=_SO_BOND_CAP_KEY, raw=cap_given))
+    coeff_tail, coeff_tail_source = _resolve_bond_coeff_tail(eli)
+    g2_tail = _coerce_g2_tail(eli.get("g2_tail", True))
+    return _SOBondConfig(True, layout_request, cap_raw, max_shells, coeff_tail,
+                         coeff_tail_source, g2_tail, green)
+
+
+def _so_bond_entry_warnings(eli_param, log):
+    """The WARNINGs, at most one each, of the options a spin-orbital bond
+    run accepts but does not use: ``chi0q_mode`` / ``chi0q_tensor`` (no
+    chi0q is read or computed), ``gpu = true`` (the kernel is CPU-only) and
+    ``flex_chi_s`` / ``flex_chi_c`` (no FLEX susceptibility is read; a FLEX
+    Green function is read only through ``bond_green``)."""
+    from requests.structures import CaseInsensitiveDict
+    eli = CaseInsensitiveDict(eli_param or {})
+
+    def shown(key):
+        val = eli.get(key)
+        return "unset" if val is None else val
+
+    if "chi0q_mode" in eli or "chi0q_tensor" in eli:
+        log.warning(_SO_BOND_CHI0Q_UNUSED, shown("chi0q_mode"), shown("chi0q_tensor"))
+    if backend.as_bool(eli.get("gpu", False)):
+        log.warning(_SO_BOND_GPU_IGNORED)
+    flex_keys = sorted((key for key in eli if key.lower() in ("flex_chi_s", "flex_chi_c")),
+                       key=lambda key: (key.lower(), key))
+    if flex_keys:
+        log.warning(_SO_BOND_FLEX_KEYS_UNUSED, ", ".join(flex_keys))
 
 
 def _validate_bond_prereqs(chi0q_mode, norb, interactions,

@@ -14,8 +14,15 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
-numpy = "^1.14"
-scipy = "^1.7"
+# numpy: both majors are supported and both are exercised by CI (the fast
+# gate on the latest numpy 2.x, plus one numpy < 2 leg per job). The floor is
+# the version the code actually needs (np.fft norm="forward", max(initial=),
+# numpy.lib.format.read_magic) and the last 1.x line that ships wheels for
+# every supported Python. The previous "^1.14" meant "< 2.0" under Poetry's
+# caret rule and silently kept every install on numpy 1.26 while the
+# equivalence calibration was already being run on numpy 2.
+numpy = ">=1.26,<3"
+scipy = ">=1.11,<2"
 requests = "^2.28.1"
 tomli = "^2.0.1"
 

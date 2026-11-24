@@ -1050,6 +1050,14 @@ def _stall_advice(diffs, tol, max_iter, window=20):
             "leading eigenvalue can never be reached by a power iteration).")
 
 
+#: the WARNING of a sigma_shift given with eigenvalue_method = "arnoldi" (every
+#: eigenvalue solve that takes sigma_shift: the ARPACK path, the dense
+#: spin-orbital branch and the S_z-packed sector solve)
+_SIGMA_SHIFT_IGNORED = (
+    "[eliashberg] sigma_shift is ignored for eigenvalue_method='arnoldi' (it targets the "
+    "shift-invert methods); use spectral_shift to bias the arnoldi selection.")
+
+
 def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
                    max_iter=1000, convergence_tol=1.0e-5, init_vec=None,
                    sigma_shift=None, alpha=0.5, project_fn=None, seed_vec=None,
@@ -1502,10 +1510,7 @@ def _solve_leading(make_operator, vec_size, solver_mode, num_eigenvalues=10,
     # arnoldi path (which uses spectral_shift instead). Warn rather than fail so
     # existing configs keep working.
     if sigma_shift is not None and solver_mode == "arnoldi":
-        logger.warning(
-            "[eliashberg] sigma_shift is ignored for eigenvalue_method="
-            "'arnoldi' (it targets the shift-invert methods); use "
-            "spectral_shift to bias the arnoldi selection.")
+        logger.warning(_SIGMA_SHIFT_IGNORED)
 
     if vec_size < 1:
         raise ValueError("Eliashberg operator has empty vector space")

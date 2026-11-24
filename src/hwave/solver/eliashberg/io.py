@@ -6,6 +6,7 @@ re-exports every name here under its old spelling.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import zipfile
 from typing import NamedTuple
@@ -15,7 +16,8 @@ from hwave.solver import npy_header as _npy_header
 import hwave.qlmsio.wan90 as wan90
 from hwave.solver.rpa import validate_chi0q_index_convention, TAIL_ENDPOINT_CONVENTION
 from hwave.solver.ir_axis import is_ir_native, ir_native_meta
-from hwave.solver.eliashberg.vertex import placement_sensitive_types, check_placement_stamp
+from hwave.solver.so_pairing import _SO_WHAT
+from hwave.solver.eliashberg.vertex import placement_sensitive_types, check_placement_stamp, PLACEMENT_VERSION, _decode_version_stamp
 from hwave.solver.eliashberg.config import _reject_ir_native, _check_spin_block_discarded, _finite_positive_float64, _coerce_run_beta, _resolve_spin_orbital_flag
 from hwave.solver.eliashberg.band import _MeanFieldBand, _checked_band, _check_green_init_spin_free, SPIN_FREE_ATOL, _ONE_BODY_FILE_KEYS
 
@@ -1129,18 +1131,49 @@ def _read_so_extern(input_dict, norb_phys):
     return table, file_name
 
 
-def _so_check_archive(data, path, so_run, nmat_rule, kind, producer, **kw):
+def _same_bond_inputs(a, b):
+    """Whether two :class:`hwave.solver.fingerprint.BondInputs` hold the same
+    channels, reversal map, slot convention and cutoff."""
+    def conv(c):
+        to_string = getattr(c, "to_string", None)
+        return to_string() if callable(to_string) else str(c)
+    return (np.array_equal(np.asarray(a.delta_r), np.asarray(b.delta_r))
+            and np.array_equal(np.asarray(a.reverse), np.asarray(b.reverse))
+            and conv(a.slot_convention) == conv(b.slot_convention)
+            and int(a.max_shells) == int(b.max_shells))
+
+
+def _so_check_archive(data, path, so_run, nmat_rule, kind, producer, *,
+                      need="so_onsite", run_bond=None, **kw):
     """:func:`hwave.solver.fingerprint.check_so_archive` of the ``kind``
     archive (``"chi0q"``, ``"chiq"``, ``"green"`` or ``"sigma"``) against
     ``so_run``: its band, state and the interaction fingerprints of its
-    entry context; this run consumes on-site (``"so_onsite"``) artifacts.
+    entry context. ``need`` is the capability this consumer reads:
+    ``"so_onsite"`` (the default; ``run_bond`` must then be ``None``) or
+    ``"so_bond"``, whose bond inputs are ``run_bond`` when given (it must
+    equal ``so_run.bond.inputs`` when the run carries a topology), else
+    ``so_run.bond.inputs`` (a run without a topology is refused).
     ``producer`` (:data:`_SO_RPA_PRODUCER` or :data:`_SO_FLEX_PRODUCER`)
     is the run that writes the archive."""
     from hwave.solver import fingerprint
+    if need == "so_onsite":
+        if run_bond is not None:
+            raise ValueError("_so_check_archive: run_bond applies to a so_bond "
+                             "consumer only")
+    elif need == "so_bond":
+        if run_bond is None:
+            if so_run.bond is None:
+                raise ValueError("_so_check_archive: a so_bond consumer needs the run's "
+                                 "bond topology (so_run.bond)")
+            run_bond = so_run.bond.inputs
+        elif so_run.bond is not None and not _same_bond_inputs(run_bond,
+                                                               so_run.bond.inputs):
+            raise ValueError("_so_check_archive: run_bond differs from the run's bond "
+                             "topology (so_run.bond.inputs)")
     return fingerprint.check_so_archive(
         data, path, kind=kind, run_band=so_run.band, run_state=so_run.state,
         nmat_rule=nmat_rule, run_interaction=so_run.context.interaction,
-        need="so_onsite", expected_producer=producer, **kw)
+        need=need, run_bond=run_bond, expected_producer=producer, **kw)
 
 
 def _so_green_fp(green_kw):
@@ -1148,6 +1181,239 @@ def _so_green_fp(green_kw):
     hwave_sc gap archive records it."""
     from hwave.solver import fingerprint
     return fingerprint.green_digest(green_kw, "sc_o_o_xyz_f")
+
+
+#: the texts of a Green function read from ``[eliashberg] bond_green`` on the
+#: static spin-orbital bond path (``{path}`` the configured path, ``{label}``
+#: the producer it names)
+T_BG_MISSING = "[eliashberg] bond_green file not found: {path}"
+T_BG_SHAPE = ("'{path}' is malformed or truncated: green shape differs from this run "
+              "({stored} vs {expected}). Regenerate it with {label}.")
+T_BG_NONFINITE = ("'{path}' is malformed or truncated: green has non-finite values at "
+                  "frequency index {n}. Regenerate it with {label}.")
+T_BG_MARKER = ("'{path}' is malformed or truncated: {member} is missing or older than this "
+               "build requires. Regenerate it with {label}.")
+T_BG_KGRID = ("'{path}' is malformed or truncated: wavevector_index is not the k grid {shape} "
+              "of this run (CellShape / SubShape). Regenerate it with {label}.")
+T_BG_SCF = ("'{path}' is malformed or truncated: scf_converged is not a 0-d boolean. "
+            "Regenerate it with {label}.")
+_SO_BOND_GREEN_ONSITE_REMEDY = (
+    "[eliashberg] bond_green needs the green.npz of a spin-orbital FLEX run with "
+    "[mode.param] longitudinal_bond_channels = true (the bond-resolved run); re-run FLEX "
+    "with it.")
+_SO_BOND_GREEN_IS_ARCHIVE = (
+    _SO_WHAT + ": [eliashberg] bond_green = '{path}' is the bond archive of a spin-orbital "
+    "FLEX run, not a Green function; set bond_green to its companion green file '{green}'.")
+_SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN = (
+    _SO_WHAT + ": [eliashberg] bond_green = '{path}' is the bond archive of a spin-orbital "
+    "FLEX run, not a Green function, and it records no readable companion green file; set "
+    "bond_green to the green.npz written by that FLEX run ([file.output] green).")
+_SO_BOND_GREEN_IS_FLEX_OUTPUT = (
+    _SO_WHAT + ": [eliashberg] bond_green = '{path}' is the {kind} file of a FLEX run, not a "
+    "Green function; set bond_green to the green.npz written by that run ([file.output] "
+    "green).")
+#: the payload members of the other FLEX output files, in the order they are
+#: named by :data:`_SO_BOND_GREEN_IS_FLEX_OUTPUT`
+_FLEX_OUTPUT_PAYLOADS = ("sigma", "chi0q", "chiq", "chiq_s", "chiq_c")
+_SO_BOND_GREEN_NONSO_ARCHIVE = (
+    _SO_WHAT + ": [eliashberg] bond_green = '{path}' is a bond archive, not a Green "
+    "function; set bond_green to the green.npz of a spin-orbital FLEX run with [mode.param] "
+    "longitudinal_bond_channels = true.")
+
+
+class _SOBorrowed(NamedTuple):
+    """The Green function a static spin-orbital bond run reads from
+    ``[eliashberg] bond_green`` (:func:`_so_borrowed_green`): ``used`` the
+    canonical ``(1, nmat, nvol, nd, nd)`` G the kernel uses (read-only; the
+    array read from the file, or its S_z-sector projection), ``fp_file``
+    the digest of the G as stored (equal to the file's ``fp_green``),
+    ``fp_used`` that of ``used``, ``leak`` its S_z leak (``None`` when the
+    input does not conserve S_z), ``projected`` whether ``used`` is the
+    projection, ``state`` the file's recorded state, ``label`` its
+    producer and ``scf_converged`` the file's marker (``None`` when
+    absent)."""
+    used: object
+    fp_file: str
+    fp_used: str
+    leak: object
+    projected: bool
+    state: object
+    label: str
+    scf_converged: object
+
+
+def _so_bond_green_archive_hint(z, path):
+    """Refuse (ValueError) a ``bond_green`` that names another output file
+    instead of a Green function: a bond archive index (a schema-4
+    spin-orbital index, naming its companion green file when that resolves
+    to a readable regular file, or any other bond archive), or a FLEX
+    output file without a ``green`` member whose payload is one of
+    :data:`_FLEX_OUTPUT_PAYLOADS` (sigma.npz, chi0q.npz, chiq*.npz). The
+    decode is the archive reader's own (``so_bond_archive._schema_four`` /
+    ``_zero_d_string``); only member names and 0-d markers are read."""
+    from hwave.solver import so_bond_archive
+    files = set(z.files)
+    if "bond_archive_schema" not in files:
+        if "green" not in files:
+            kind = next((k for k in _FLEX_OUTPUT_PAYLOADS if k in files), None)
+            if kind is not None:
+                raise ValueError(_SO_BOND_GREEN_IS_FLEX_OUTPUT.format(path=path, kind=kind))
+        return
+    so = None
+    if "spin_orbital" in files:
+        so = np.asarray(z["spin_orbital"])
+    if (so_bond_archive._schema_four(z, files) and so is not None and so.ndim == 0
+            and so.dtype.kind == "b" and bool(so[()])):
+        green = so_bond_archive._zero_d_string(z, "green_file", files)
+        if green:
+            companion = os.path.join(os.path.dirname(path), green)
+            if os.path.isfile(companion) and os.access(companion, os.R_OK):
+                raise ValueError(_SO_BOND_GREEN_IS_ARCHIVE.format(path=path, green=companion))
+        raise ValueError(_SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=path))
+    raise ValueError(_SO_BOND_GREEN_NONSO_ARCHIVE.format(path=path))
+
+
+def _so_bond_green_member_bytes(path):
+    """The bytes of the members other than ``green`` of the npz file
+    ``path`` (``[eliashberg] bond_green``), which the checks of
+    :func:`_so_borrowed_green` materialise: for each member, the larger of
+    the array bytes its npy header declares (``shape`` and ``dtype``) and
+    its uncompressed size in the zip record (the header included). Only the
+    zip directory and the member headers are read; no member is
+    materialised, so the admission can size its ``file_read`` row before
+    any allocation (:func:`hwave.solver.so_bond.static_so_bond_resident_rows`).
+    A member whose header cannot be read counts its zip record size. A path
+    that is missing or not a zip archive gives 0: the read step refuses it
+    before any member is materialised."""
+    try:
+        zf = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile):
+        return 0
+    total = 0
+    with zf:
+        for info in zf.infolist():
+            if info.filename == "green.npy":
+                continue
+            size = int(info.file_size)
+            try:
+                with zf.open(info) as fh:
+                    head = _npy_header.read_npy_header(fh)
+                size = max(size, math.prod(int(x) for x in head.shape)
+                           * int(head.dtype.itemsize))
+            except Exception:  # an unreadable header: the zip record bounds it
+                pass
+            total += size
+    return total
+
+
+def _so_borrowed_green(path, so_run, *, norb_phys, nmat, shape, conserving_input):
+    """Read and check the Green function of ``[eliashberg] bond_green =
+    path`` for the static spin-orbital bond run ``so_run`` (``nmat``
+    frequencies on the k grid ``shape = (Nx, Ny, Nz)``, ``nd = 2
+    norb_phys``) and return the :class:`_SOBorrowed` record.
+
+    The checks, in this order, every one before the payload is read: the
+    file exists (FileNotFoundError) and is an npz; it is not a bond archive
+    index nor another FLEX output file (:func:`_so_bond_green_archive_hint`);
+    its structure
+    (:func:`hwave.solver.fingerprint.validate_structure`, a ``green``
+    archive); its compatibility with this run
+    (:func:`hwave.solver.fingerprint.check_so_compatibility` with the green
+    step deferred: residual, band, interaction, capability ``so_bond``, the
+    declared and resolved bond topology, the state point at the same Nmat);
+    the ``scf_converged`` marker (optional; when present a 0-d boolean); the
+    ``momentum_convention``, ``wavevector_index`` (the C-order k grid of
+    ``shape``) and ``sc_vertex_version`` (``>= PLACEMENT_VERSION``) markers;
+    the ``green`` header shape ``(1, nmat, nvol, nd, nd)``. An on-site
+    spin-orbital FLEX Green function is refused on capability with a remedy
+    sentence. Then the payload is read once, from the open handle, and the
+    handle closed; the G must be finite, and its digest must be the file's
+    ``fp_green``. When ``conserving_input`` (:func:`_so_conserving_input`),
+    the G goes through :func:`hwave.solver.so_bond.project_borrowed_green`
+    (no leak: used as is; a round-off leak up to 1e-12: projected, with a
+    WARNING; more: refused). Otherwise it is used as stored and no leak is
+    measured. The file's ``scf_converged`` is returned, not logged (the
+    caller logs it once the file is accepted)."""
+    from hwave.solver import fingerprint, so_bond
+    from hwave.solver import rpa as _rpa
+    norb_phys = int(norb_phys)
+    nd = 2 * norb_phys
+    shape = tuple(int(x) for x in shape)
+    nvol = int(np.prod(shape))
+    if not os.path.exists(path):
+        raise FileNotFoundError(T_BG_MISSING.format(path=path))
+    z = _require_npz(np.load(path, allow_pickle=False), path, "[eliashberg] bond_green file")
+    with z:
+        _so_bond_green_archive_hint(z, path)
+        vs = fingerprint.validate_structure(z, path, kind="green",
+                                            expected_producer=_SO_FLEX_PRODUCER)
+        label = fingerprint._readable_label(z, set(z.files))
+        if label == fingerprint.UNKNOWN_PRODUCER:
+            label = _SO_FLEX_PRODUCER
+        try:
+            info = fingerprint.check_so_compatibility(
+                z, path, validated=tuple(vs) + (label,), run_band=so_run.band,
+                run_state=so_run.state, nmat_rule="exact",
+                run_interaction=so_run.context.interaction, need="so_bond",
+                run_bond=so_run.bond.inputs, expected_producer=_SO_FLEX_PRODUCER,
+                check_green=False)
+        except fingerprint.SOArchiveError as e:
+            if (e.check == "capability"
+                    and fingerprint.STAGE_CAPABILITY.get(vs[1]) == "so_onsite"):
+                raise fingerprint.SOArchiveError(
+                    str(e) + ". " + _SO_BOND_GREEN_ONSITE_REMEDY, check="capability") from e
+            raise
+        label = info.producer_label
+        files = set(z.files)
+        # the markers: scf_converged is remembered (logged once the file is
+        # accepted); the others are required
+        scf_converged = None
+        if "scf_converged" in files:
+            flag = np.asarray(z["scf_converged"])
+            if not (flag.ndim == 0 and flag.dtype.kind == "b"):
+                raise fingerprint.SOArchiveError(T_BG_SCF.format(path=path, label=label))
+            scf_converged = bool(flag[()])
+        if not _rpa.check_momentum_marker(z, path):
+            raise fingerprint.SOArchiveError(T_BG_MARKER.format(
+                path=path, member="momentum_convention", label=label))
+        if "wavevector_index" not in files:
+            raise fingerprint.SOArchiveError(T_BG_MARKER.format(
+                path=path, member="wavevector_index", label=label))
+        index = np.asarray(z["wavevector_index"])
+        grid = np.indices(shape).reshape(3, -1).T
+        if not (index.dtype.kind in "iu" and index.shape == (nvol, 3)
+                and np.array_equal(np.mod(index, shape), grid)):
+            raise fingerprint.SOArchiveError(T_BG_KGRID.format(
+                path=path, shape=list(shape), label=label))
+        version = _decode_version_stamp(z, "sc_vertex_version", path)
+        if version is None or version < PLACEMENT_VERSION:
+            raise fingerprint.SOArchiveError(T_BG_MARKER.format(
+                path=path, member="sc_vertex_version", label=label))
+        with z.zip.open("green.npy") as fh:
+            stored = tuple(int(x) for x in _npy_header.read_npy_header(fh).shape)
+        expected = (1, int(nmat), nvol, nd, nd)
+        if stored != expected:
+            raise fingerprint.SOArchiveError(T_BG_SHAPE.format(
+                path=path, stored=stored, expected=expected, label=label))
+        raw = z["green"]
+    for n in range(raw.shape[1]):
+        if not np.isfinite(raw[:, n]).all():
+            raise fingerprint.SOArchiveError(T_BG_NONFINITE.format(path=path, n=n, label=label))
+    fp_file = fingerprint.green_digest(raw, fingerprint.GREEN_LAYOUT)
+    fingerprint.check_green_digest(info.producer_fp_green, path, label=label,
+                                   green_fp=fp_file, green_only=True)
+    if conserving_input:
+        used, leak = so_bond.project_borrowed_green(raw, norb_phys=norb_phys, source=path)
+        projected = used is not raw
+        del raw
+        fp_used = (fingerprint.green_digest(used, fingerprint.GREEN_LAYOUT) if projected
+                   else fp_file)
+    else:
+        used, leak, projected, fp_used = raw, None, False, fp_file
+        del raw
+    used.setflags(write=False)
+    return _SOBorrowed(used, fp_file, fp_used, None if leak is None else float(leak),
+                       bool(projected), info.producer_state, label, scf_converged)
 
 
 def _resolve_flex_dir(input_dict):
@@ -1919,6 +2185,23 @@ def _peek_green_npz_nfreq(green_path, label="Green"):
     return int(shape[1])
 
 
+def _require_npz(loaded, path, what):
+    """Return ``loaded`` (the result of ``np.load(path)``) when it is an npz
+    archive; a single ``.npy`` array under that name is refused with a
+    ValueError naming ``what`` and ``path``."""
+    if not hasattr(loaded, "files"):
+        raise ValueError(
+            "{} '{}' is not an npz archive (it holds a single .npy array); "
+            "point the configuration at the .npz file the FLEX run wrote.".format(
+                what, path))
+    return loaded
+
+
+#: the labels of the spin-orbital FLEX companions in the npz refusal
+_SO_FLEX_LABEL = {"green": "FLEX Green archive",
+                  "sigma": "FLEX self-energy archive"}
+
+
 def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
                      interactions=None):
     """Load the FLEX dressed Green's function, or ``None`` if absent.
@@ -1932,7 +2215,7 @@ def _load_flex_green(input_dict, norb, Nx, Ny, Nz, allow_ir=False,
     if not os.path.exists(green_path):
         return (None, None) if allow_ir else None
     logger.info("Loading FLEX dressed Green from: {}".format(green_path))
-    data_g = np.load(green_path)
+    data_g = _require_npz(np.load(green_path), green_path, "green file")
     if interactions is not None:
         _grid_cs = input_dict.get("mode", {}).get("param", {}).get("CellShape")
         check_placement_stamp(
@@ -2371,6 +2654,42 @@ def _load_flex_so_sigma(eli, flex_dir, nd, nvol, so_run, fp_green, green_path,
     return np.ascontiguousarray(st[0, 0], dtype=np.complex128)
 
 
+#: the refusal of a spin-orbital FLEX output written with bond channels
+#: (producer_stage = "flex_so_bond") by the on-site spin-orbital FLEX loader
+T_ONSITE_BOND = (
+    _SO_WHAT + ": '{path}' was written by the spin-orbital FLEX with bond channels "
+    "([mode.param] longitudinal_bond_channels = true): the chi0q, chiq and green of "
+    "that run describe the bond-resolved run, which [eliashberg] chi0q_mode = "
+    "\"flex\" cannot use. Re-run FLEX with longitudinal_bond_channels = false for "
+    "this mode.")
+
+
+def _refuse_bond_flex_output(path):
+    """Refuse ``path`` when it is an output of the spin-orbital bond FLEX
+    (``producer_stage = "flex_so_bond"``). Only the 0-d stage member is read;
+    a missing or unreadable file, a file that is not an npz archive (a
+    single ``.npy`` array), or one without the member, is left to the checks
+    that follow."""
+    import zipfile
+    if not os.path.exists(path):
+        return
+    try:
+        loaded = np.load(path, allow_pickle=False)
+    except (OSError, ValueError, EOFError, zipfile.BadZipFile):
+        return
+    if not hasattr(loaded, "files"):
+        return
+    try:
+        with loaded as z:
+            if "producer_stage" not in z.files:
+                return
+            stage = z["producer_stage"]
+    except (OSError, ValueError, EOFError, zipfile.BadZipFile):
+        return
+    if stage.ndim == 0 and stage.dtype.kind == "U" and str(stage) == "flex_so_bond":
+        raise ValueError(T_ONSITE_BOND.format(path=path))
+
+
 def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
                   so_run=None):
     """The outputs of a spin-orbital FLEX run (``calc_scheme = "general"``,
@@ -2437,6 +2756,10 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             "[mode] enable_spin_orbital = true, [file.output] chiq, chi0q, green "
             "and sigma)")
 
+    # an output of the bond FLEX is refused before any other check (a
+    # missing file is left to the existence checks below)
+    for path in (chi_path, chi0_path, green_path, _so_flex_sigma_path(eli, flex_dir)):
+        _refuse_bond_flex_output(path)
     if not os.path.exists(chi_path):
         raise ValueError(
             "FLEX susceptibility archive '{}' not found. {}; set [eliashberg] "
@@ -2520,7 +2843,8 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             sigma_path = _so_flex_sigma_path(eli, flex_dir)
             for path, kind in ((green_path, "green"), (sigma_path, "sigma")):
                 if os.path.exists(path):
-                    with np.load(path) as other:
+                    with _require_npz(np.load(path), path,
+                                      _SO_FLEX_LABEL[kind]) as other:
                         _so_check_archive(other, path, so_run, "exact", kind,
                                           _SO_FLEX_PRODUCER)
         chiq = data["chiq"]
@@ -2540,7 +2864,8 @@ def _load_flex_so(input_dict, nd, Nx, Ny, Nz, interactions=None, full=False,
             "FLEX Green archive '{}' not found. {}; set [eliashberg] flex_green "
             "to the file the FLEX run wrote as [file.output] green.".format(
                 green_path, hint))
-    with np.load(green_path) as gdata:
+    with _require_npz(np.load(green_path), green_path,
+                      _SO_FLEX_LABEL["green"]) as gdata:
         gtag = (str(gdata["index_convention"]) if "index_convention" in gdata
                 else None)
     if gtag != spin_orbital.INDEX_CONVENTION:

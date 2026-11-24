@@ -1517,17 +1517,20 @@ class TestBondGreenFlow(unittest.TestCase):
             raise AssertionError(
                 "_build_bond_green must never re-run a mu search")
 
-        # bond binds no _determine_mu of its own (a module-level import would
-        # be bound before the patch below and slip past it); a lazy import at
-        # call time would read band's patched name and trip _boom
-        self.assertFalse(hasattr(sc_bond, "_determine_mu"))
+        # bond binds _determine_mu for the spin-orbital bond Green function
+        # (_so_bond_green), so the trap sits in bond's namespace, where
+        # _build_bond_green would call it, and in band's, which a lazy
+        # import at call time would read
+        self.assertIs(sc_bond._determine_mu, sc_band._determine_mu)
         orig = sc_band._determine_mu
         sc_band._determine_mu = _boom
+        sc_bond._determine_mu = _boom
         try:
             carrier = sc_bond._build_bond_green(
                 eigenvalues, eigenvectors, mu, beta, nmat, 1.0, None)
         finally:
             sc_band._determine_mu = orig
+            sc_bond._determine_mu = orig
         oracle = _direct_green_sc(eigenvalues, eigenvectors, mu, beta, nmat)
         assert_approx_array(carrier.full_sc, oracle, rel=0, abs=1e-13)
 

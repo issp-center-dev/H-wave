@@ -78,13 +78,20 @@ _SU2_TYPES = tuple(_SU2_VALUES)
 
 _IY = np.array([[0, 1], [-1, 0]], complex)
 
-#: the off-site refusal of the spin-orbital entries, with the row and its
-#: source filled in
+#: the off-site refusal of the static spin-orbital entry without bond
+#: channels, with the row and its source filled in
 OFFSITE_TEXT = ("[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site row "
-                "(R = {R}, orbitals {orbs}) in {src} is not supported; the spin-orbital "
-                "pairing vertex supports on-site and in-cell (R = 0) interactions only "
-                "(the exchange crossing of an off-site term depends on k + k'). Remove "
-                "the off-site rows.")
+                "(R = {R}, orbitals {orbs}) in {src} needs [eliashberg] bond_channels = "
+                "true: the exchange crossing of an off-site term depends on k + k', which "
+                "only the bond-resolved pairing path treats. Set bond_channels = true (with "
+                "frequency = \"static\"), or remove the off-site rows.")
+#: the off-site refusal of the dynamic spin-orbital entry (no bond-resolved
+#: path there), with the row and its source filled in
+OFFSITE_DYNAMIC_TEXT = ("[mode] enable_spin_orbital = true (hwave_sc, issue #83): an off-site "
+                        "row (R = {R}, orbitals {orbs}) in {src} is not supported; the "
+                        "spin-orbital pairing vertex supports on-site and in-cell (R = 0) "
+                        "interactions only (the exchange crossing of an off-site term depends "
+                        "on k + k'). Remove the off-site rows.")
 
 
 @contextlib.contextmanager
@@ -545,8 +552,11 @@ class TestRefusals(_TmpDir):
         self._refused(r"matsubara_basis", {"Frequency": "dynamic",
                                            "Matsubara_Basis": "ir"})
 
-    def test_bond_channels(self):
-        self._refused(r"bond_channels", {"bond_channels": True})
+    def test_bond_channels_dynamic(self):
+        # bond_channels = true is supported with frequency = "static" (the
+        # static spin-orbital bond path); with "dynamic" it is refused
+        self._refused("^" + re.escape(so_pairing._SO_DYNAMIC_BOND_REFUSAL) + "$",
+                      {"bond_channels": True, "frequency": "dynamic"})
 
     def test_offsite_coulomb_inter(self):
         files = _write_model(self.d, so=True, extra_rows={
@@ -1705,6 +1715,43 @@ class TestFlexMode(unittest.TestCase):
                     side_effect=AssertionError("vertex built before the check")):
                 self._refused(pattern, _flex_input(
                     self.d, self.files, bad, out=self._out("out_bad_" + tag)))
+
+    def test_green_npy_refused(self):
+        """A green companion that is a single ``.npy`` array under the
+        configured name is refused with a ValueError naming the file, on the
+        path with the run's provenance (the public entry) and on the one
+        without (a direct ``_load_flex_so`` call), with valid chiq, chi0q
+        and sigma alongside."""
+        bad = os.path.join(self.d, "flex_green_npy")
+        self.addCleanup(shutil.rmtree, bad, True)
+        shutil.copytree(self.flex, bad)
+        gpath = os.path.join(bad, "green.npz")
+        with np.load(os.path.join(self.flex, "green.npz")) as z:
+            green = np.array(z["green"])
+        with open(gpath, "wb") as f:
+            np.save(f, green)
+        self.assertFalse(hasattr(np.load(gpath), "files"))
+        pattern = (r"^FLEX Green archive '" + re.escape(gpath)
+                   + r"' is not an npz archive \(it holds a single \.npy "
+                   r"array\); point the configuration at the \.npz file the "
+                   r"FLEX run wrote\.$")
+        with self.subTest(path="public entry"), mock.patch.object(
+                sc_static, "_so_rpa_vertex",
+                side_effect=AssertionError("vertex built before the check")), \
+                mock.patch.object(
+                    sc_so, "_so_rpa_vertex",
+                    side_effect=AssertionError("vertex built before the check")):
+            self._refused(pattern, _flex_input(
+                self.d, self.files, bad, out=self._out("out_green_npy")))
+        with np.load(os.path.join(self.flex, "chiq.npz")) as z:
+            nd = z["chiq"].shape[2]
+        with self.subTest(path="direct, no provenance"):
+            with self.assertRaisesRegex(ValueError, pattern):
+                with _quiet():
+                    sc_io._load_flex_so(
+                        _flex_input(self.d, self.files, bad,
+                                    out=self._out("out_green_npy_direct")),
+                        nd, *CELL)
 
     def test_unconverged_flex_warns(self):
         """A chiq archive recording ``scf_converged = false`` is used, with a

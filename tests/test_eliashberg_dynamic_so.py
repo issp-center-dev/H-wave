@@ -49,7 +49,7 @@ from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.eliashberg import eigen as sc_eigen
-from hwave.solver import backend, bubble
+from hwave.solver import backend, bubble, so_pairing
 from hwave.solver.eliashberg import dynamic as dyn
 from hwave.solver.eliashberg import dynamic_so as dso
 from hwave.solver.so_pairing import so_pairing_vertex, so_pairing_vertex_parts
@@ -844,12 +844,13 @@ class TestRefusals(unittest.TestCase):
         self.assertFalse(os.path.exists(out) and os.listdir(out))
 
     def test_bond_channels(self):
-        self._refused("bond_channels", {"bond_channels": True})
+        self._refused("^" + re.escape(so_pairing._SO_DYNAMIC_BOND_REFUSAL) + "$",
+                      {"bond_channels": True})
 
     def test_offsite_row(self):
         files = S._write_model(self.d, so=True, extra_rows={
             "CoulombInter": [(1, 0, 0, 0.2), (-1, 0, 0, 0.2)]})
-        self._refused("^" + re.escape(S.OFFSITE_TEXT.format(
+        self._refused("^" + re.escape(S.OFFSITE_DYNAMIC_TEXT.format(
             R=(1, 0, 0), orbs=(1, 1), src="the CoulombInter file")) + "$", {}, files=files)
 
     def test_cross_site_row_under_orbital_site(self):

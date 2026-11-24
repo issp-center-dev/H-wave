@@ -6,6 +6,7 @@ re-exports every name here under its old spelling.
 from __future__ import annotations
 
 import logging
+from typing import NamedTuple
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
 
@@ -13,10 +14,12 @@ from hwave.solver.rpa import TAIL_ENDPOINT_CONVENTION
 from hwave.solver import bond_channels
 from hwave.solver import bubble
 from hwave.solver import green as green_mod
-from hwave.solver.eliashberg.config import _validate_bond_green_nmat
+from hwave.solver.so_pairing import _SO_WHAT
+from hwave.solver.eliashberg.config import _validate_bond_green_nmat, _SO_BOND_CAP_KEY
+from hwave.solver.eliashberg.band import _determine_mu
 from hwave.solver.eliashberg.kernel import _green_sc_to_canonical, _green_canonical_to_sc, _BondGreen
-from hwave.solver.eliashberg.eigen import _odd_harmonic_basis, _project_gap_parity
-from hwave.solver.eliashberg.io import _refuse_so_green_file, _load_green_npz
+from hwave.solver.eliashberg.eigen import _odd_harmonic_basis, _project_gap_parity, _SOAntisymmetricBasis
+from hwave.solver.eliashberg.io import _refuse_so_green_file, _load_green_npz, _so_green_fp, _so_borrowed_green, _so_bond_green_member_bytes
 
 logger = logging.getLogger("hwave_sc")
 
@@ -403,6 +406,13 @@ def _bond_kernel_parts(S, C, dressed, green_kw, view, norb, spatial_shape,
     return A, A_fl, A_pp, vec_size
 
 
+#: what a static bond run past the RPA pole means for its result (issue #345)
+_BOND_POLE_CONSEQUENCE = (
+    "The pairing eigenvalue lambda of this run is built on that susceptibility, so it "
+    "describes no physical state; it is still reported (eigen_converged keeps its meaning "
+    "of eigen-solver convergence).")
+
+
 def _build_bond_operator(topo, split, green_carrier, norb, kx_array, ky_array,
                          kz_array, beta, pairing_type, *, bond_max_shells,
                          bond_memory_cap_gb, precondition_opts=None,
@@ -471,6 +481,12 @@ def _build_bond_operator(topo, split, green_carrier, norb, kx_array, ky_array,
         spatial_shape=shape)
 
     S, C = _build_bond_vertices(topo, split, norb, shape)
+    # the static RPA pole (issue #345): read-only, before the dressing
+    pole = bond_channels.check_rpa_pole(
+        {ch: bond_channels.static_pole_indicator(chi_bar, W, ch, shape)
+         for ch, W in (("spin", S), ("charge", C))},
+        where="eliashberg bond_channels (static)", consequence=_BOND_POLE_CONSEQUENCE,
+        log=logger)
 
     def _dressed(chi_bar, S, C):
         # one dressed channel at a time, on a one-slice batch at the zero
@@ -556,6 +572,8 @@ def _build_bond_operator(topo, split, green_carrier, norb, kx_array, ky_array,
     provenance["kernel_hermiticity_method"] = diagnostics["method"]
     provenance["pair_weight_min_eigenvalue"] = "{:.6e}".format(
         diagnostics["weight_min_eigenvalue"])
+    # written only past the pole: a stable run's eigenvalue.dat is unchanged
+    provenance.update(pole.text_members())
 
     return (A, vec_size), provenance, attribution
 
@@ -657,6 +675,370 @@ def _build_bond_green(eigenvalues, eigenvectors, mu, beta, nmat,
         coeff_tail_requested=float(coeff_tail_requested),
         coeff_tail_applied=float(coeff_tail_requested),
         source="internal")
+
+
+class _SOBondGreen(NamedTuple):
+    """The Green function of a static spin-orbital bond run.
+
+    ``carrier`` is the :class:`_BondGreen` of the run (``full_sc`` ``(nd,
+    nd, Nx, Ny, Nz, nmat)`` in spin-block order, on the centered fermionic
+    grid ``w_n = (2n + 1 - nmat) pi / beta``): built on the canonical band
+    (``source = "internal"``), or read from ``[eliashberg] bond_green``
+    (``source = "external_npz"``, no tail correction). ``fp_green`` is the
+    digest of the Green function the kernel uses (:func:`_so_green_fp`;
+    for a borrowed one projected onto the S_z sectors, the projected one);
+    ``conserving`` whether the band conserves S_z (decided by the Transfer
+    table alone on both paths; then the band's G has exactly zero
+    S_z-off-sector entries); ``eigenvalues`` the band ``(Nx, Ny, Nz, nd)``,
+    ascending per k (``None`` for a borrowed G: no band is diagonalized);
+    ``mu`` the chemical potential (a borrowed G: the file's ``state_mu``).
+
+    A borrowed G also records: ``state``, the producer's recorded state of
+    that Green function (the gap archive records it);
+    ``fp_green_source``, the file's digest when the G was projected (else
+    ``None``); ``leak``, its S_z leak (``None`` when the input does not
+    conserve S_z and no leak was measured); ``scf_converged``, the file's
+    ``scf_converged`` (``None`` when it records none). On the internal path
+    these are ``None`` and ``source`` is ``"internal"``."""
+    carrier: object
+    fp_green: str
+    conserving: bool
+    eigenvalues: object
+    mu: float
+    state: object = None
+    fp_green_source: object = None
+    leak: object = None
+    source: str = "internal"
+    scf_converged: object = None
+
+
+#: INFO (``%s``: path, producer label, leak text, ``"yes"`` / ``"no"``)
+_SO_BOND_GREEN_ACCEPTED_INFO = (
+    "[eliashberg] bond_green: '%s' (written by %s) passed the archive checks; S_z leak %s; "
+    "projected: %s.")
+_SO_BOND_GREEN_LEAK_UNCHECKED = "not checked (the input does not conserve S_z)"
+#: WARNING (``%s`` path)
+_SO_BOND_GREEN_UNCONVERGED = (
+    "[eliashberg] bond_green '%s' records scf_converged = false: the FLEX run did not "
+    "converge; its Green function is used as stored.")
+#: WARNING (``%r`` the configured bond_coeff_tail, ``%s`` path)
+_SO_BOND_TAIL_NOT_APPLIED = (
+    "[eliashberg] bond_coeff_tail = %r is not applied with bond_green = '%s': the tail "
+    "correction is implemented for the band Green function only (bond_coeff_tail_applied = "
+    "0), so the bond bubble carries the Matsubara truncation error, which decreases only "
+    "about as 1/Nmat; check the eigenvalue against Nmat.")
+#: INFO
+_SO_BOND_TAIL_DEFAULT_INFO = (
+    "[eliashberg] bond_coeff_tail: the default 1.0 applies to the band Green function only; "
+    "the Green function read from bond_green is used without a tail correction.")
+
+
+def _so_conserving_input(so_run, norb_phys):
+    """Whether the whole input of ``so_run`` conserves S_z (its band AND its
+    interaction records; :func:`hwave.solver.so_bond.input_conserves_sz`):
+    the rule that decides whether a borrowed Green function is checked for
+    S_z leakage and projected. The ``so_bond_layout`` override never
+    decides it."""
+    from hwave.solver import so_bond
+    return bool(so_bond.input_conserves_sz(
+        so_run.band.transfer, so_run.band.extern, so_run.context.compiled,
+        norb_phys).conserving)
+
+
+def _so_bond_green(epsilon_k, so_run, *, norb_phys, filling, beta, nmat,
+                   coeff_tail, bond_green=None, coeff_tail_source="default"):
+    """The :class:`_SOBondGreen` of a static spin-orbital bond run.
+
+    ``epsilon_k`` is the run's spin-block band (:func:`_so_epsilon_k`) and
+    ``so_run`` its :class:`_SORun`. Whether the band conserves S_z is decided
+    by the Transfer table alone
+    (:func:`hwave.solver.so_bond.band_conserves_sz`; never by the layout of
+    the bond objects, so a forced dense layout gives the same G).
+
+    Without ``bond_green`` the Green function is built from the band: the
+    band is diagonalized per spin sector when it conserves S_z
+    (:func:`hwave.solver.so_bond.canonical_band_eigen`), mu holds
+    ``filling`` electrons per orbital per spin, counted over the ``nd = 2
+    norb_phys`` spin-orbitals, and ``coeff_tail`` (the resolved
+    ``[eliashberg] bond_coeff_tail``, :func:`_resolve_bond_coeff_tail`)
+    changes only the deflated Green function of the bubble, never
+    ``full_sc``.
+
+    With ``bond_green`` (a path) the Green function is read from that file
+    (:func:`_so_borrowed_green`; the band still decides the checks and,
+    with the interaction, whether the G is projected onto the S_z sectors,
+    :func:`_so_conserving_input`); mu and the state are the file's, and no
+    tail correction is applied (``coeff_tail_applied = 0``): the default
+    ``bond_coeff_tail`` (``coeff_tail_source = "default"``) is noted at
+    INFO, a configured non-zero one gets a WARNING. Once the file is
+    accepted, one INFO line gives its leak and whether it was projected,
+    and a file that records ``scf_converged = false`` gets one WARNING.
+
+    The carrier's arrays are returned read-only."""
+    from hwave.solver import so_bond
+    norb_phys = int(norb_phys)
+    if coeff_tail is None:
+        raise ValueError("_so_bond_green: coeff_tail must be the resolved "
+                         "[eliashberg] bond_coeff_tail, got None")
+    conserving = bool(so_bond.band_conserves_sz(
+        so_run.band.transfer, so_run.band.extern, norb_phys).conserving)
+    if bond_green is not None:
+        shape = tuple(int(x) for x in np.shape(epsilon_k)[2:5])
+        conserving_input = _so_conserving_input(so_run, norb_phys)
+        borrowed = _so_borrowed_green(bond_green, so_run, norb_phys=norb_phys, nmat=nmat,
+                                      shape=shape, conserving_input=conserving_input)
+        full_sc = _green_canonical_to_sc(borrowed.used, shape)
+        full_sc.setflags(write=False)
+        carrier = _BondGreen(full_sc=full_sc, deflated_kw=borrowed.used, green0_tail=None,
+                             coeff_tail_requested=float(coeff_tail), coeff_tail_applied=0.0,
+                             source="external_npz")
+        logger.info(_SO_BOND_GREEN_ACCEPTED_INFO, bond_green, borrowed.label,
+                    _SO_BOND_GREEN_LEAK_UNCHECKED if borrowed.leak is None
+                    else "%.3e" % borrowed.leak, "yes" if borrowed.projected else "no")
+        if borrowed.scf_converged is False:
+            logger.warning(_SO_BOND_GREEN_UNCONVERGED, bond_green)
+        if coeff_tail_source == "default":
+            logger.info(_SO_BOND_TAIL_DEFAULT_INFO)
+        elif float(coeff_tail) != 0.0:
+            logger.warning(_SO_BOND_TAIL_NOT_APPLIED, float(coeff_tail), bond_green)
+        return _SOBondGreen(
+            carrier, borrowed.fp_used, conserving, None, float(borrowed.state.mu),
+            state=borrowed.state,
+            fp_green_source=borrowed.fp_file if borrowed.projected else None,
+            leak=borrowed.leak, source="external_npz", scf_converged=borrowed.scf_converged)
+    eigenvalues, eigenvectors = so_bond.canonical_band_eigen(
+        epsilon_k, norb_phys, conserving=conserving)
+    mu = _determine_mu(eigenvalues, beta, filling, 2 * norb_phys)
+    carrier = _build_bond_green(eigenvalues, eigenvectors, mu, beta, nmat,
+                                coeff_tail, None, spin_orbital_mode=True)
+    del eigenvectors
+    # fp_green is taken once here and travels with the carrier to the end of
+    # the solve, so the carrier's arrays are read-only from now on
+    for a in (carrier.full_sc, carrier.deflated_kw, carrier.green0_tail):
+        if a is not None:
+            a.setflags(write=False)
+    return _SOBondGreen(carrier, _so_green_fp(carrier.full_sc), conserving,
+                        eigenvalues, float(mu))
+
+
+#: ``{method}`` = the configured ``[eliashberg] eigenvalue_method`` (repr)
+_SO_BOND_METHOD_REFUSAL = (
+    _SO_WHAT + ": [eliashberg] eigenvalue_method = {method} is not available on the "
+    "spin-orbital bond path; only \"arnoldi\" is. Set eigenvalue_method = \"arnoldi\" "
+    "(or remove the key).")
+
+
+class _SOBondAdmission(NamedTuple):
+    """The admission of a static spin-orbital bond run, decided before the
+    vertex, the bubble or the kernel is built: the resolved memory ``caps``
+    and their one-line ``cap_summary``, the slot geometry ``geom``, the
+    ``layout`` (``"dense"`` or ``"sz_packed"``) and its ``layout_reason``
+    line, the S_z ``sector_map`` (packed layout; ``None`` dense) and the
+    admitting ``plan`` (:func:`hwave.solver.so_bond.plan_so_bond`), the one
+    memory authority of the run."""
+    caps: object
+    cap_summary: str
+    geom: object
+    layout: str
+    layout_reason: str
+    sector_map: object
+    plan: object
+
+
+class _SOBondStatic(NamedTuple):
+    """The static spin-orbital bond pairing operator.
+
+    Dense layout: ``operator`` is the kernel on the flat gap ``(nd, nd, Nx,
+    Ny, Nz)`` (a ``LinearOperator``), ``basis`` its fermion-antisymmetric
+    basis and ``kernel`` ``None``. S_z-packed layout: ``kernel`` is the
+    :class:`hwave.solver.so_bond.PackedBondPairKernel` (one operator per pair
+    S_z sector, :meth:`sector_op`) and ``operator``, ``basis`` are ``None``.
+    ``r_V`` and ``r_G`` are the S_z-conservation residuals of the pairing
+    vertex and of the Green function (``r_V = 0`` by construction in the
+    packed layout). ``pole`` is the static RPA pole check of the run
+    (:func:`_so_bond_static_pole`; ``None`` when not made)."""
+    layout: str
+    layout_reason: str
+    geom: object
+    plan: object
+    operator: object
+    basis: object
+    kernel: object
+    r_V: float
+    r_G: float
+    pole: object = None
+
+
+def _admit_so_bond_static(so_run, *, cfg, cell, nmat, nd, shape, solver_mode,
+                          num_eigenvalues, max_iter, spectral_shift, eigenvalue_method, log):
+    """The :class:`_SOBondAdmission` of a static spin-orbital bond run.
+
+    The host cap is resolved from ``[eliashberg] bond_memory_cap_gb``
+    (``cfg.cap_raw``), the layout is selected from the compiled interaction
+    and the Transfer table of ``so_run`` (``cfg.layout_request``; its reason
+    line is logged), an ``eigenvalue_method`` other than ``"arnoldi"`` is
+    refused in either layout, and the plan is built with the rows of every
+    phase of the static path (``spectral_shift`` is the run's raw
+    ``[eliashberg] spectral_shift``: the eigensolver rows keep the outputs it
+    implies; a Green function read from ``bond_green`` adds its resident read
+    row, sized from the zip records and npy headers of the file's members,
+    :func:`_so_bond_green_member_bytes`, without reading a member).
+    An over-cap run is refused here, before any bond array is allocated."""
+    from hwave.solver import so_bond
+    info = {}
+    caps = so_bond.resolve_host_cap(cfg.cap_raw, key=_SO_BOND_CAP_KEY, log=log,
+                                    info_out=info)
+    cap_summary = info["summary"]
+    topo = so_run.bond.topo
+    compiled = so_run.context.compiled
+    geom = so_bond.slot_geometry(topo, shape)
+    layout, reason = so_bond.select_layout(compiled, so_run.band.transfer,
+                                           override=cfg.layout_request)
+    log.info(reason)
+    if eigenvalue_method != "arnoldi":
+        raise ValueError(_SO_BOND_METHOD_REFUSAL.format(method=repr(eigenvalue_method)))
+    nvol = int(np.prod(shape))
+    plan = so_bond.plan_so_bond(
+        nmat=nmat, nvol=nvol, B=geom.B, nd=nd, consumers=("pairing_static",), caps=caps,
+        layout=layout, layout_reason=reason, cap_key=_SO_BOND_CAP_KEY,
+        shell_rows=so_bond.shell_rows(compiled, topo, cell),
+        max_shells_key="[eliashberg] bond_max_shells",
+        envelope=so_bond.envelope_text(layout),
+        extra_rows=so_bond.static_so_bond_rows(
+            nmat=nmat, nvol=nvol, B=geom.B, nd=nd, layout=layout, solver_mode=solver_mode,
+            num_eigenvalues=num_eigenvalues, max_iter=max_iter, spatial_shape=shape,
+            spectral_shift=spectral_shift),
+        resident_rows=(so_bond.static_so_bond_resident_rows() if cfg.green is None
+                       else so_bond.static_so_bond_resident_rows(
+                           green_source="file",
+                           member_bytes=_so_bond_green_member_bytes(cfg.green))))
+    sector_map = so_bond.sz_sector_map(geom, nd) if layout == "sz_packed" else None
+    return _SOBondAdmission(caps, cap_summary, geom, layout, reason, sector_map, plan)
+
+
+def _so_bond_static_pole(X, gamma_b, shape):
+    """The static RPA pole check of a spin-orbital bond run (issue #345):
+    the indicator ``max_q eig[-chibar_B Gamma_B](q, 0)`` of the spinful
+    channel, over the dense block or over the S_z sectors of the packed
+    layout (whose spectra are together the dense block's), logged and
+    returned as the :class:`~hwave.solver.bond_channels.RpaPoleReport`."""
+    from hwave.solver import so_bond
+    entry, per, worst = so_bond.static_pole_indicator(X, gamma_b, shape)
+    if per is not None:
+        logger.info("spin-orbital bond (static, S_z-packed): the spinful pole indicator "
+                    "per S_z sector: %s", "; ".join("{} {:.6f}".format(k, v[0]) for k, v in per.items()))
+        where = ("eliashberg bond_channels (spin-orbital, static, S_z-packed{})".format(
+            "" if worst is None else "; S_z sector " + worst))
+    else:
+        where = "eliashberg bond_channels (spin-orbital, static)"
+    return bond_channels.check_rpa_pole({"spinful": entry}, where=where,
+                                        consequence=_BOND_POLE_CONSEQUENCE, log=logger)
+
+
+def _so_bond_static_vertex(so_run, admission, so_green, *, beta, nmat, pole_out=None):
+    """``(Gamma_B, V)``: the bond vertex of the run's compiled interaction and
+    the static pairing vertex ``V = V_bare + V_fluct``, ``V_bare = 0.25
+    (Gamma_B + Gamma_B^P)``, ``V_fluct = -Gamma_B chi_B Gamma_B`` with the
+    dressed ``chi_B = [1 + chibar_B Gamma_B]^{-1} chibar_B`` of the static
+    bubble of the carrier's deflated Green function (a batch of one at the
+    grid index ``l0 = nmat // 2``, the zero bosonic frequency). ``V`` is
+    formed in place in ``V_bare``; the temporaries are released before
+    return. ``pole_out`` (a dict, optional) receives ``"report"``, the RPA
+    pole check of the static bubble (:func:`_so_bond_static_pole`); it is
+    made in either case."""
+    from hwave.solver import so_bond
+    plan, geom = admission.plan, admission.geom
+    shape = tuple(geom.spatial_shape)
+    nvol = geom.nvol
+    carrier = so_green.carrier
+    gamma_b = so_bond.so_bond_vertex(so_run.context.compiled, so_run.bond.topo, shape,
+                                     plan=plan)
+    if admission.layout == "sz_packed":
+        sm = admission.sector_map
+        sink = so_bond.PackedArrays.zeros(sm, (nvol,))
+    else:
+        sink = np.zeros((nvol, plan.ND, plan.ND), dtype=np.complex128)
+    X = so_bond.so_bond_bubble(carrier.deflated_kw, carrier.green0_tail, beta, geom, shape,
+                               plan=plan, freq="static", sink=sink)
+    del sink
+    report = _so_bond_static_pole(X, gamma_b, shape)
+    if pole_out is not None:
+        pole_out["report"] = report
+    if admission.layout == "sz_packed":
+        Xb = so_bond.PackedArrays(sm, tuple(b[None] for b in X.blocks))
+        cb = so_bond.so_bond_dress(Xb, gamma_b, plan=plan, l0=nmat // 2, spatial_shape=shape)
+        chi_b = so_bond.PackedArrays(sm, tuple(b[0] for b in cb.blocks))
+        v_bare, v_fluct = so_bond.so_bond_pairing_vertex_parts(gamma_b, chi_b, geom, plan=plan)
+        for b, f in zip(v_bare.blocks, v_fluct.blocks):
+            b += f
+        del b, f, v_fluct, chi_b, cb, Xb, X
+    else:
+        chi_b = so_bond.so_bond_dress(X[None], gamma_b, plan=plan, l0=nmat // 2,
+                                      spatial_shape=shape)[0]
+        v_bare, v_fluct = so_bond.so_bond_pairing_vertex_parts(gamma_b, chi_b, geom, plan=plan)
+        v_bare += v_fluct
+        del v_fluct, chi_b, X
+    V = v_bare
+    return gamma_b, V
+
+
+def _so_bond_static_g2(so_green, *, beta, g2_tail):
+    """The static pair propagator ``G2 (nd, nd, nd, nd, Nx, Ny, Nz, 1)`` of
+    the carrier's full Green function (``1/beta`` included; the Matsubara
+    tail correction when ``g2_tail``)."""
+    return bond_channels._g2_from_green(so_green.carrier.full_sc, beta, tail=g2_tail)[..., None]
+
+
+def _so_bond_static_kernel(so_run, admission, V, G2, so_green, *, beta, norb_phys):
+    """The :class:`_SOBondStatic` of the pairing vertex ``V`` and the pair
+    propagator ``G2``: the kernel ``out_AD(k) = -(1/N) sum_{alpha, beta}
+    e^{-ik.R_beta} sum_{k'} V_{alpha beta; ABCD}(k - k') e^{-ik'.R_alpha}
+    F_BC(k')`` on the uniform static grid (no instantaneous vertex), checked
+    against the plan's kernel rows before it is built. The kernels' own
+    memory checks are off (the plan admitted the run)."""
+    from hwave.solver.eliashberg import bond_dynamic as _eb
+    from hwave.solver import so_bond, so_pairing
+    plan, geom = admission.plan, admission.geom
+    shape = tuple(geom.spatial_shape)
+    nvol, B = geom.nvol, geom.B
+    nd = 2 * int(norb_phys)
+    plan.require("so_bond_static_kernel", nvol=nvol, B=B, nd=nd, ND=B * nd * nd,
+                 layout=admission.layout, n_gap=nd * nd * nvol)
+    r_G = so_bond.green_leak(so_green.carrier.full_sc, norb_phys, axes=(0, 1))
+    if admission.layout == "sz_packed":
+        sm = admission.sector_map
+        kernel = so_bond.PackedBondPairKernel(
+            so_bond.PackedArrays(sm, tuple(b[None] for b in V.blocks)), G2, geom, sm,
+            plan=plan, spatial_shape=shape, beta=beta, nfreq=1, host_cap=None)
+        return _SOBondStatic(admission.layout, admission.layout_reason, geom, plan, None,
+                             None, kernel, 0.0, float(r_G))
+    vertex = _eb.PairVertexUniform(_eb.ArrayBlockSource({"V": V[None]}, nd * nd), "V", B,
+                                   nd * nd, 1, nvol)
+    kernel = _eb.BondPairKernel(vertex, G2, geom, xp=np, spatial_shape=shape, norb=nd,
+                                beta=beta, nfreq=1, V_inst=None, residency="host",
+                                host_cap=np.inf)
+    n = nd * nd * nvol
+    operator = LinearOperator((n, n), matvec=kernel.matvec, dtype=complex)
+    basis = _SOAntisymmetricBasis((nd, nd) + shape)
+    r_V = so_pairing.bond_sz_conservation_residual(V, nd=nd, B=B)
+    return _SOBondStatic(admission.layout, admission.layout_reason, geom, plan, operator,
+                         basis, None, float(r_V), float(r_G))
+
+
+def _build_so_bond_operator(so_run, admission, so_green, *, beta, nmat, g2_tail, norb_phys):
+    """The :class:`_SOBondStatic` of an admitted static spin-orbital bond run:
+    :func:`_so_bond_static_vertex`, :func:`_so_bond_static_g2` and
+    :func:`_so_bond_static_kernel` in order (each phase releases its
+    temporaries before the next starts)."""
+    pole = {}
+    gamma_b, V = _so_bond_static_vertex(so_run, admission, so_green, beta=beta, nmat=nmat,
+                                        pole_out=pole)
+    # Gamma_B is released here; the admission rows keep counting it as resident
+    # to the end of the solve (conservative)
+    del gamma_b
+    G2 = _so_bond_static_g2(so_green, beta=beta, g2_tail=g2_tail)
+    return _so_bond_static_kernel(so_run, admission, V, G2, so_green, beta=beta,
+                                  norb_phys=norb_phys)._replace(pole=pole["report"])
 
 
 def _bond_diagnostics_record(provenance, gap, eigenvalues, weight, norb,

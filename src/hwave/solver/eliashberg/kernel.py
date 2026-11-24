@@ -13,6 +13,7 @@ from scipy.sparse.linalg import LinearOperator, eigs, bicgstab, gmres, lgmres
 
 from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver import backend
+from hwave.solver import bond_channels
 from hwave.solver.eliashberg.config import (  # noqa: F401
     _finite_positive_float64)
 
@@ -224,13 +225,9 @@ def _calc_g2(green_kw, beta, tail=True):
     G2 = G2.reshape(norb, norb, norb, norb, Nx, Ny, Nz)
     G2 = G2 / beta
     if tail:
-        # Dimensionless form of the window complement: with
-        # wn = r * pi / beta for the odd integers r = 2n + 1 - nmat,
-        # beta/4 - (1/beta) sum 1/wn^2 = beta * (1/4 - (1/pi^2) sum 1/r^2).
-        # Working in r keeps every intermediate O(1) regardless of beta
-        # (the wn-based form underflows wn^2 to 0 for extreme beta).
-        r = 2.0 * np.arange(nmat) + 1.0 - nmat
-        coeff = beta * (0.25 - np.sum(1.0 / r**2) / np.pi**2)
+        # the window complement beta/4 - (1/beta) sum 1/wn^2, shared with
+        # the bond pair propagator (bond_channels._g2_from_green)
+        coeff = bond_channels.g2_tail_coefficient(nmat, beta)
         di = np.arange(norb)
         # G2[i, i, l, l] += coeff for every (i, l), all k
         G2[di[:, None], di[:, None], di[None, :], di[None, :]] += coeff
