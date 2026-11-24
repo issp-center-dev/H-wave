@@ -207,6 +207,7 @@
 
 -  並進ベクトルは全て\ ``CellShape``\ 内に収まるとします。
    ``r_x``, ``r_y``, ``r_z``\ の範囲が\ ``CellShape``\ のx,y,z軸のサイズを超える場合はエラーで終了します。
+   \ **リリースノート（RPA / FLEX）:**\ 並進ベクトルがセルの大きさに達する（\ :math:`r_i \ge L_i`\ または\ :math:`r_i < -L_i`\ ）Transfer・Extern の行は、以前は一体項の構築が\ ``IndexError``\ で停止していましたが、現在は\ ``CellShape``\ を法として扱われ、その周期像に加算されます。
 
 -  ``mode.enable_spin_orbital``\ が\ ``true``\ の場合、Transfer項の軌道インデックスは
    インターリーブ規約で解釈され、1〜\ :math:`2 N_\text{orbital}`\ の値をとります。
@@ -215,6 +216,8 @@
    :math:`s \in \{0, 1\}`\ がスピンインデックスです。
    ``mode.enable_spin_orbital``\ が\ ``false``\ の場合は、インデックスの範囲が
    1〜\ :math:`N_\text{orbital}`\ の行のみ考慮します。
+   無視した Transfer・Extern の行は、ファイルごとに件数つきで 1 回警告されます
+   （\ **リリースノート:**\ 以前のリリースでは何も出力せずに読み飛ばしていました）。
 
    .. note::
 
