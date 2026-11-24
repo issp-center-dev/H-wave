@@ -516,8 +516,8 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     at the enlarged bond-major index (spec S4.4).
 
     Batched linear solves (not explicit inverses), one system per q-point,
-    mirroring the exact orientation of the existing ``sc.py`` dressing
-    (``_compute_vertices_general``, ``sc.py:1098-1104``) generalized from the
+    mirroring the exact orientation of the existing hwave_sc dressing
+    (``eliashberg.vertex._compute_vertices_general``) generalized from the
     plain orbital-pair size ``nd`` to the enlarged bond-major size ``ND``::
 
         chi_s = solve(I_ND - chi_bar @ S_bond, chi_bar)

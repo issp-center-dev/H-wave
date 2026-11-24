@@ -1992,7 +1992,7 @@ class RPA:
         companion options (Phase W experimental gate, spec
         2026-08-15-bond-transverse-design.md "Production surface").
 
-        Mirrors sc.py's ``_read_bond_config`` for the (eliashberg)
+        Mirrors ``eliashberg.config._read_bond_config`` for the (eliashberg)
         longitudinal bond gate: the switch defaults to ``False``, is
         parsed ONLY under ``calc_type='ring+ladder'`` (the transverse
         ladder channel itself is unreachable otherwise), and every
