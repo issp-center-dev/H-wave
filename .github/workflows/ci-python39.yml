@@ -261,10 +261,12 @@ jobs:
     - name: Upload coverage to Codecov
       # v6 is the first codecov-action release on the Node 24 runtime (the
       # action itself is composite; its one JavaScript step is github-script
-      # v8). `file` was renamed `files` in v5. No upload token is configured
-      # in this repository, so the upload runs tokenless -- which codecov
-      # supports for public repositories -- and fail_ci_if_error stays
-      # false so a rejected upload cannot fail the gate.
+      # v8). `file` was renamed `files` in v5. The upload is best-effort:
+      # no Codecov token (and no OIDC) is configured in this repository,
+      # and since codecov-action v4 a tokenless upload is accepted only for
+      # pull requests from forks, so pushes and same-repository pull
+      # requests may be rejected. fail_ci_if_error stays false, so a
+      # rejected upload cannot fail the gate.
       uses: codecov/codecov-action@v6
       with:
         files: ./coverage.xml
