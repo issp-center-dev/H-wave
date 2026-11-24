@@ -101,6 +101,7 @@ import unittest
 
 import numpy as np
 
+from tests.ed_oracle_util import lehmann_frequency_sum
 from tests.heavy_tests import heavy
 from tests import test_flex_sopt_index_order as ref
 from tests.test_second_order_factors import _write_wan
@@ -364,15 +365,11 @@ def _green_ed(H, iws):
     w = np.exp(-BETA * E)
     Z = w.sum()
     with ref._quiet_matmul():
-        cm = [V.conj().T @ C[ref._so(m, UP)] @ V for m in range(NORB)]
-    boltz = w[:, None] + w[None, :]
-    dE = E[None, :] - E[:, None]
-    G = np.zeros((len(iws), NORB, NORB), complex)
-    for m in range(NORB):
-        for n in range(NORB):
-            num = cm[m] * np.conj(cm[n]) * boltz
-            for i, iw in enumerate(iws):
-                G[i, m, n] = (num / (iw - dE)).sum()
+        cm = np.stack([(V.conj().T @ C[ref._so(m, UP)] @ V).ravel() for m in range(NORB)])
+    boltz = (w[:, None] + w[None, :]).ravel()
+    dE = (E[None, :] - E[:, None]).ravel()
+    # every (m, n) cell and every frequency as one product
+    G = lehmann_frequency_sum(np.asarray(iws, dtype=complex), cm, np.conj(cm), boltz, dE)
     return G / Z
 
 

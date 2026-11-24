@@ -25,7 +25,9 @@ as cluster projectors.
 """
 import contextlib
 import functools
+import gc
 import unittest
+import weakref
 from unittest import mock
 
 import numpy as np
@@ -37,7 +39,8 @@ from hwave.solver.so_bond import (PackedArrays, PackedBondBlockStore, PackedBond
                                   estimate_packed_kernel_workspace_bytes, plan_so_bond)
 from tests.so_bond_fixtures import (KAPPA_MAX, MATCH_TOL, NOCAP, assert_recomputed,
                                     cluster_projector, dense_spectrum, exact, match_spectrum,
-                                    pp_flat_index, quiet, static_pair_kernels)
+                                    pp_flat_index, quiet, random_g2, random_vertex,
+                                    static_pair_kernels)
 from tests.so_bond_fixtures import FIXTURE_NAMES as NAMES
 from tests.so_bond_fixtures import cvec as _cvec
 from tests.so_bond_fixtures import gap_shape as _gap_shape
@@ -189,6 +192,35 @@ class TestPackedKernelSectors(unittest.TestCase):
                     again = packed.sector_op(p)
                     self.assertIs(again.basis, b)
             self.assertEqual(dims, full.dim)
+
+    def test_drop_sector_ops(self):
+        # a cached sector operator refers back to its kernel (a reference
+        # cycle): after drop_sector_ops the kernel is freed by reference
+        # counting alone, and a later sector_op builds the operator again
+        fx = FIXTURE_SZ_RING
+        geom, sm, plan = _setup(fx)
+        # a kernel of its own (random_kernels caches its kernels)
+        packed = PackedBondPairKernel(random_vertex(sm, 1, fx.nvol, 5), random_g2(fx, 1, 6),
+                                      geom, sm, plan=plan, spatial_shape=fx.spatial_shape,
+                                      beta=fx.beta)
+        first = packed.sector_op(0)
+        x = _cvec(np.random.default_rng(3), first.operator.shape[1])
+        before = first.operator.matvec(x)
+        del first
+        packed.drop_sector_ops()
+        again = packed.sector_op(0)
+        np.testing.assert_array_equal(again.operator.matvec(x), before)
+        del again
+        packed.drop_sector_ops()
+        ref = weakref.ref(packed)
+        enabled = gc.isenabled()
+        gc.disable()
+        try:
+            del packed
+            self.assertIsNone(ref())
+        finally:
+            if enabled:
+                gc.enable()
 
     def test_bad_sector(self):
         packed = _kernels(FIXTURE_SZ_RING, 1)[0]

@@ -333,6 +333,32 @@ HEAVY_TESTS = (
     # --- tests/test_rpa_vs_ed_oracle.py ----------------------------------
     ("test_rpa_vs_ed_oracle", "TestRPAGeneralVsED", "test_first_order",
      "general-scheme RPA first-order response vs ED"),
+    # --- tests/test_sc_spin_orbital_bond_full.py -- #270 spin-orbital bond --
+    ("test_sc_spin_orbital_bond_full", "TestAdmission", "test_phase_rows_iteration",
+     "the traced per-phase memory rows of the static spin-orbital bond path in "
+     "the iteration solver mode at Nmat 32 (S_z-packed Zeeman fixture, up to "
+     "1000 power-iteration steps); below the rule, kept out of the fast set by "
+     "its time budget; the fast module keeps the Nmat 8 smoke; macOS 0.43 s, "
+     "Linux 1.0 s"),
+    ("test_sc_spin_orbital_bond_full", "TestLayoutSelectionThroughEntry",
+     "test_layout_selection_through_entry",
+     "the public-entry layout pair of the static spin-orbital bond path (the "
+     "S_z-conserving Zeeman fixture in the automatic S_z-packed and the forced "
+     "dense layout, full spectrum); below the rule, kept out of the fast set by "
+     "its time budget; macOS 0.10 s, Linux 0.14 s"),
+    ("test_sc_spin_orbital_bond_full", "TestReportingThroughEntry", "test_state_rows",
+     "the forced sector-solver states of the static spin-orbital bond path through "
+     "the public entry (rows 2-7 S_z-packed, rows 3 and 7 dense, three solver modes "
+     "each, 24 runs); below the rule, kept out of the fast set by its time budget; "
+     "macOS 1.0 s, Linux 2.4 s"),
+    ("test_sc_spin_orbital_bond_full", "TestZeroFieldThroughEntry",
+     "test_zero_field_limit_through_entry",
+     "the zero-field limit of the static spin-orbital bond path through the public "
+     "entry (4x4, B = 1 and B = 5, one and two orbitals, both layouts, five fields, "
+     "complete listings; 40 runs, plus the Extern/Transfer route pair and the "
+     "operator at the first two fields for the isolation of the selected clusters); "
+     "the fast module keeps the 4x2 operator-level variant; macOS 2.7 s, "
+     "Linux 6.3 s"),
     # --- tests/test_so_bond_chi_ed.py -- spinful bond correlators vs ED ---
     ("test_so_bond_chi_ed", "TestChiFirstOrderED", "test_fixture_ii",
      "the first-order longitudinal and transverse bond correlators of the "
@@ -366,6 +392,41 @@ HEAVY_TESTS = (
      "each), 3.7 s measured on macOS, 7.7 s on Linux (numpy 1.26); heavy because "
      "of the fast-gate budget, not its own runtime; the two-orbital subset "
      "stays in the fast gate"),
+    # --- tests/test_so_bond_second_order.py -- spin-orbital bond 2nd order identity
+    ("test_so_bond_second_order", "TestFullGrid", "test_adjoint_64_directions",
+     "the directional check of the spin-orbital bond second-order self-energy "
+     "against its functional on FIXTURE_I at Nmat 64, 64 directions and both Green "
+     "functions (stacked eight-node stencils at two radii), 15.7 s measured on "
+     "macOS with numpy 1.26 (17 s with one BLAS thread; 3.8 s with numpy 2), "
+     "about 42 s on Linux (x2.7 projection of the numpy 1.26 time); smoke: "
+     "TestAdjoint.test_directional_fast"),
+    ("test_so_bond_second_order", "TestFullGrid", "test_formula_and_mapping",
+     "C1a-F and C1a-P at Nmat 64: the controls (controls_pass(64)), the "
+     "second-order formula against the explicit Wick second order and "
+     "the production chain through p_b against it on both fixtures and both Green "
+     "functions, every wrong filing and rejected reading missing, 9.8 s measured "
+     "on macOS with numpy 1.26 (10 s with one BLAS thread; 3.6 s with numpy 2), "
+     "about 26 s on Linux (x2.7 projection of the numpy 1.26 time); smoke: "
+     "TestFormula.test_formula_fast and TestMapping.test_chain_fast"),
+    # --- tests/test_so_bond_second_order_ed.py -- spin-orbital bond 2nd order vs ED
+    ("test_so_bond_second_order_ed", "TestSecondOrderED", "test_all_types",
+     "the C1a-ED gate: the second-order coefficient of the exact self-energy of "
+     "FIXTURE_I's five-site ring with every interaction type (four ED couplings, "
+     "Nmat 4096, x = 6.25e-3) against the production chain, plus the roughly "
+     "1/Nmat fall of its residual from the smoke point, 8.0 s measured on macOS "
+     "with numpy 1.26 (10.5 s with one BLAS thread; 4.5 s with numpy 2), about "
+     "22 s on Linux (x2.7 projection of the numpy 1.26 time); over the 5 s rule "
+     "on the CI numpy; smoke: TestSecondOrderEDSmoke.test_all_types_smoke (the "
+     "same row at Nmat 512, x = 0.0125, tolerance 2e-2) and its mutation rows"),
+    ("test_so_bond_second_order_ed", "TestSecondOrderED", "test_each_type",
+     "the second-order coefficient of the exact self-energy of FIXTURE_I's "
+     "five-site ring for each of the seven interaction types alone (four ED "
+     "couplings per type, production chain at the gate's working point Nmat 4096, "
+     "x = 6.25e-3), each held to the gate's bounds (dev <= 2e-3, extraction "
+     "<= 5e-4) and an anti-vacuity floor, 34.0 s measured on macOS with numpy 1.26 (55 s "
+     "with one BLAS thread; 20.5 s with numpy 2), about 92 s on Linux (x2.7 "
+     "projection of the numpy 1.26 time); smoke: "
+     "TestSecondOrderEDSmoke.test_all_types_smoke"),
     # --- tests/test_so_pairing_ed.py -- spin-orbital pairing vertex vs ED (#83)
     ("test_so_pairing_ed", "TestSOPairingVertexAgainstED",
      "test_first_and_second_order",
@@ -491,3 +552,101 @@ def heavy_test_ids():
     return frozenset(
         "{}.{}.{}".format(mod, cls, meth)
         for mod, cls, meth, _reason in HEAVY_TESTS)
+
+
+#: The registry's own consistency gate, which the FULL job runs alongside
+#: the registered tests (it is the one fast test whose meaning depends on
+#: the full-suite switch: it drives both shapes in child processes).
+REGISTRY_TEST_FILE = "tests/test_heavy_tests_registry.py"
+
+
+def heavy_node_ids(shard=None):
+    """The registry as pytest node ids, ``tests/<module>.py::Class::method``,
+    in registry order. The FULL CI job selects exactly these (plus
+    :data:`REGISTRY_TEST_FILE`), so the list is derived here at run time
+    and never written out by hand.
+
+    ``shard`` (1-based) restricts the list to the files of that shard of
+    ``tests/heavy_shards.py``; a registered file that is in no shard is an
+    error, so it can never be left out of every job."""
+    ids = [("tests/{}.py::{}::{}".format(mod, cls, meth), mod)
+           for mod, cls, meth, _reason in HEAVY_TESTS]
+    if shard is None:
+        return [node for node, _mod in ids]
+    from tests import heavy_shards
+
+    if not 1 <= shard <= heavy_shards.N_SHARDS:
+        raise ValueError("shard {} out of 1..{}".format(shard, heavy_shards.N_SHARDS))
+    where = heavy_shards.shard_of_module()
+    unplaced = sorted({mod for _node, mod in ids if mod not in where})
+    if unplaced:
+        raise ValueError(
+            "registered heavy test file(s) in no shard of tests/heavy_shards.py: "
+            "{}".format(unplaced))
+    return [node for node, mod in ids if where[mod] == shard]
+
+
+def run_list(shard=None):
+    """What one FULL job runs: :func:`heavy_node_ids` of the shard, plus
+    :data:`REGISTRY_TEST_FILE` in shard 1 (and in the unsharded run)."""
+    out = heavy_node_ids(shard)
+    if shard in (None, 1):
+        out.append(REGISTRY_TEST_FILE)
+    return out
+
+
+def missing_from_collection(expected, collect_output):
+    """The ``expected`` node ids that do NOT appear in ``collect_output``,
+    the text ``pytest --collect-only -q`` printed (one node id per line).
+
+    A registered test that was renamed or removed without updating the
+    registry must fail the FULL job rather than drop out of it silently.
+    pytest does exit non-zero on a node id it cannot resolve, but that
+    behaviour is the runner's, not this project's, and its message names
+    only the first miss; the comparison here is explicit and names every
+    missing id."""
+    collected = set(line.strip() for line in collect_output.splitlines())
+    return [node for node in expected if node not in collected]
+
+
+def _main(argv=None):
+    """Command line used by the FULL CI job.
+
+    ``python -m tests.heavy_tests node-ids [--shard N]``
+        print the node ids to run, one per line (:func:`run_list`).
+    ``python -m tests.heavy_tests check-collected FILE [--shard N]``
+        exit non-zero, naming them, if any registered node id (of shard N)
+        is absent from FILE (the output of ``pytest --collect-only -q``).
+    """
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m tests.heavy_tests")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    ids_p = sub.add_parser("node-ids")
+    ids_p.add_argument("--shard", type=int, default=None)
+    chk = sub.add_parser("check-collected")
+    chk.add_argument("collect_output")
+    chk.add_argument("--shard", type=int, default=None)
+    args = parser.parse_args(argv)
+
+    if args.cmd == "node-ids":
+        for node in run_list(args.shard):
+            print(node)
+        return 0
+    ids = heavy_node_ids(args.shard)
+    with open(args.collect_output) as fh:
+        text = fh.read()
+    missing = missing_from_collection(ids, text)
+    if missing:
+        sys.stderr.write(
+            "registered heavy test(s) NOT collected by pytest -- renamed or "
+            "removed without updating tests/heavy_tests.py:\n  "
+            + "\n  ".join(missing) + "\n")
+        return 1
+    print("all {} registered heavy tests collected".format(len(ids)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

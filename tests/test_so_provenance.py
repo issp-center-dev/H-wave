@@ -832,8 +832,14 @@ class TestConsumerChecks(_Dir):
         from hwave import sc
         T, E, _ = _tables_and_meta_from_input(self.inp_soc_extern)
 
+        from hwave.solver import spin_orbital
+        ctx = spin_orbital.build_so_entry_context(
+            None, {"CoulombIntra": {((0, 0, 0), (0, 0)): 2.0}}, 1,
+            logging.getLogger("qlms.test_so_provenance"))
+
         def run(param):
-            return sc._so_run_inputs({"mode": {"param": param}}, T, E, 1, 10.0, 64, 0.5)
+            return sc._so_run_inputs({"mode": {"param": param}}, T, E, 1, 10.0, 64, 0.5,
+                                     context=ctx)
         canon = run({"CellShape": [4, 2], "SubShape": [1, 1, 1], "coeff_extern": 0.5})
         mixed = run({"cellshape": [4, 2], "SUBSHAPE": [1, 1, 1], "Coeff_Extern": 0.5})
         self.assertEqual(canon.band.meta.cell_shape, (4, 2, 1))

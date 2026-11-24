@@ -358,14 +358,16 @@ class TestEstimatorByHand(unittest.TestCase):
         dense = 16 * 707                                          # 11312
         # the ARPACK branch (dim 21 > 20, ncv = 20):
         # 16 (20 * 21 + 3 * 400 + 14 * 20 + 3 * 21) + 24 * 44 + 6 * 16 * 44
-        # + 16 * 3 * 1 * (21 + 44)
-        arpack = 16 * 1963 + 1056 + 4224 + 3120                   # 39808
+        # + 16 * 3 * 1 * (21 + 44), plus the retained sets: the spectral-radius solve of
+        # spectral_shift="auto" (6 vectors and values) and the one eigenvalue of
+        # the first which='LM' solve, 16 (6 * 22 + 1)
+        arpack = 16 * 1963 + 1056 + 4224 + 3120 + 2128            # 41936
         # the null rows: 16 (1 * (7 + 16) + 64) and 16 (1 * (21 + 44) + 64)
         null = max(16 * 87, 16 * 129)
         worst = max(dense, arpack, null)
         # candidate and kept gaps 16 (1 + 2) 64, reduced vectors 16 (7 + 21)
         want = worst + 16 * 3 * 64 + 16 * 28 + 16 * 1024
-        self.assertEqual(want, 59712)
+        self.assertEqual(want, 61840)
         self.assertEqual(estimate_sector_solver_bytes([7, 21], 1, 64, n_sector_vec=[16, 44]),
                          want)
 

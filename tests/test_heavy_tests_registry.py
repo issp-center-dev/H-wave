@@ -401,3 +401,85 @@ class TestFullSuiteEnvParsing(unittest.TestCase):
     def test_truthy_spellings_are_on(self):
         for value in ("1", "true", "TRUE", "yes", "on", "anything"):
             self.assertTrue(self._with_env(value), value)
+
+
+class TestFullJobSelection(unittest.TestCase):
+    """The FULL CI job runs ``heavy_node_ids()`` plus this file, and fails
+    when ``missing_from_collection`` reports a registered id that pytest
+    did not collect."""
+
+    def test_node_ids_mirror_the_registry(self):
+        ids = heavy_tests.heavy_node_ids()
+        self.assertEqual(len(ids), len(heavy_tests.HEAVY_TESTS))
+        self.assertEqual(len(ids), len(set(ids)))
+        for node, (mod, cls, meth, _r) in zip(ids, heavy_tests.HEAVY_TESTS):
+            self.assertEqual(node, "tests/{}.py::{}::{}".format(mod, cls, meth))
+
+    def test_missing_from_collection_names_every_miss(self):
+        ids = heavy_tests.heavy_node_ids()
+        text = "\n".join(ids[1:-1]) + "\n\n{} tests collected\n".format(len(ids) - 2)
+        self.assertEqual(
+            heavy_tests.missing_from_collection(ids, text), [ids[0], ids[-1]])
+        self.assertEqual(
+            heavy_tests.missing_from_collection(ids, "\n".join(ids)), [])
+
+
+class TestShardMap(unittest.TestCase):
+    """``tests/heavy_shards.py`` places every file holding a registered
+    test in exactly one ``test-full`` job, and its shard count is the
+    workflow's."""
+
+    def _registered_modules(self):
+        return {mod for mod, _c, _m, _r in heavy_tests.HEAVY_TESTS}
+
+    def test_every_registered_file_is_in_exactly_one_shard(self):
+        from tests import heavy_shards
+
+        where = heavy_shards.shard_of_module()      # raises on a duplicate
+        registered = self._registered_modules()
+        self.assertEqual(sorted(registered - set(where)), [],
+                         "registered heavy test files in no shard")
+        self.assertEqual(sorted(set(where) - registered), [],
+                         "shards name files that hold no registered test")
+        self.assertEqual(len(heavy_shards.SHARDS), heavy_shards.N_SHARDS)
+        for mods in heavy_shards.SHARDS:
+            self.assertTrue(mods, "an empty shard")
+
+    def test_files_that_share_eds_share_a_shard(self):
+        from tests import heavy_shards
+
+        where = heavy_shards.shard_of_module()
+        for grp in heavy_shards.TOGETHER:
+            self.assertEqual(len({where[mod] for mod in grp}), 1, grp)
+
+    def test_the_shards_cover_the_unsharded_run_once(self):
+        from tests import heavy_shards
+
+        lists = [heavy_tests.run_list(i)
+                 for i in range(1, heavy_shards.N_SHARDS + 1)]
+        flat = [node for lst in lists for node in lst]
+        self.assertEqual(len(flat), len(set(flat)), "a node id in two shards")
+        self.assertEqual(sorted(flat), sorted(heavy_tests.run_list()))
+
+    def test_the_workflow_matrix_has_one_job_per_shard(self):
+        import os
+        import re
+
+        from tests import heavy_shards
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, ".github", "workflows", "ci-python39.yml")) as fh:
+            text = fh.read()
+        found = re.findall(r"^\s*shard:\s*\[([0-9,\s]+)\]\s*$", text, re.M)
+        self.assertEqual(len(found), 1, "one shard matrix expected in the workflow")
+        shards = [int(x) for x in found[0].split(",") if x.strip()]
+        self.assertEqual(shards, list(range(1, heavy_shards.N_SHARDS + 1)))
+
+    def test_lpt_partition(self):
+        from tests import heavy_shards
+
+        bins, loads = heavy_shards.lpt_partition(
+            {"a": 7.0, "b": 5.0, "c": 4.0, "d": 3.0, "e": 1.0}, 2)
+        # a -> 0, b -> 1, c -> 1 (5 < 7), d -> 0 (7 < 9), e -> 1 (9 < 10)
+        self.assertEqual(bins, [["a", "d"], ["b", "c", "e"]])
+        self.assertEqual(loads, [10.0, 10.0])

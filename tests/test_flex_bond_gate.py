@@ -593,7 +593,7 @@ class TestDeviceAdmission(unittest.TestCase):
                 guard_all = mode == "all"
                 # the leading u is the bubble: B^2 blocks of Nmat nvol P^2 16,
                 # brought back one channel pair at a time (issue #196)
-                d2h = (u + u * (1 + 2 * int(guard_all)) + 3 * C_b + 2 * S_b
+                d2h = (u + u * (1 + 2 * int(guard_all)) + 3 * C_b + 3 * S_b
                        + (0 if guard_all else 2 * S_b) + G_b)
                 gib = 1024.0 ** 3
                 self.assertIn("{:.4f}".format(d2h / gib), line)
@@ -612,7 +612,7 @@ class TestDeviceAdmission(unittest.TestCase):
         line = [m for m in cm.output if "transfer volume" in m][0]
         u = est["nmat"] * est["nvol"] * est["ND"] ** 2 * 16
         S_b, C_b, G_b = est["S_bytes"], est["C_bytes"], est["G_bytes"]
-        d2h = u + 3 * u + 3 * C_b + 2 * S_b + G_b
+        d2h = u + 3 * u + 3 * C_b + 3 * S_b + G_b
         gib = 1024.0 ** 3
         self.assertIn("{:.4f}".format(d2h / gib), line)
         self.assertNotIn("{:.4f}".format((d2h + 2 * G_b) / gib), line)

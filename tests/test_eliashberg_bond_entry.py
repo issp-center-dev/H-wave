@@ -180,7 +180,7 @@ class TestLoadBondArchive(unittest.TestCase):
         self._rewrite(bond_archive_schema=np.int64(1))
         with self.assertRaisesRegex(ValueError, "longitudinal_bond_output_full = true"):
             self._load()
-        self._rewrite(bond_archive_schema=np.int64(4))
+        self._rewrite(bond_archive_schema=np.int64(5))
         with self.assertRaisesRegex(ValueError, "unsupported archive schema"):
             self._load()
 
@@ -350,6 +350,78 @@ class TestLoadBondArchive(unittest.TestCase):
             call(bad_stamp)
         # the valid archive still loads
         self._load()
+
+
+class TestSOArchiveRefused(unittest.TestCase):
+    """The non-spin-orbital loader refuses a spin-orbital bond archive with
+    one text, before it reaches the S_bond gate."""
+
+    TEXT = ("bond archive {}: this is a spin-orbital bond archive (written by the "
+            "spin-orbital FLEX with bond channels); the non-spin-orbital bond consumers "
+            "cannot read it, and hwave_sc does not read it in this version (read it with "
+            "hwave.solver.so_bond_archive.load_so_bond_archive).")
+
+    @classmethod
+    def setUpClass(cls):
+        from tests import so_bond_archive_fixtures as fx
+        from hwave.solver import so_bond_archive as sa
+        import logging
+        cls.tmp = tempfile.mkdtemp()
+        inputs = fx.archive_inputs()
+        cls.so_path = os.path.join(cls.tmp, "so.npz")
+        sa.write_so_bond_archive(cls.so_path, output_layout="npz",
+                                 log=logging.getLogger("test_so_refusal"), **inputs.kwargs)
+        cls.nonso_dir = tempfile.mkdtemp()
+        cls.s, _ = _run_gate(cls.nonso_dir)
+        cls.nonso_path = os.path.join(cls.nonso_dir, "longitudinal_bond.npz")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        shutil.rmtree(cls.nonso_dir, ignore_errors=True)
+
+    def _load(self, path):
+        from hwave.solver.eliashberg_bond_io import load_bond_archive
+        s = self.s
+        return load_bond_archive(path, norb=s.norb, nmat_expected=s.nmat,
+                                 cell_shape_expected=tuple(int(x) for x in s.lattice.shape),
+                                 beta_expected=1.0 / s.T)
+
+    def _marked(self, marker, drop_s_bond=False):
+        with np.load(self.nonso_path) as d:
+            members = {k: d[k] for k in d.files}
+        members["spin_orbital"] = marker
+        if drop_s_bond:
+            members.pop("S_bond")
+        path = os.path.join(self.nonso_dir, "marked.npz")
+        np.savez(path, **members)
+        return path
+
+    def test_schema4_archive_refused(self):
+        with self.assertRaises(ValueError) as cm:
+            self._load(self.so_path)
+        self.assertEqual(str(cm.exception), self.TEXT.format(self.so_path))
+
+    def test_marker_true_refused(self):
+        path = self._marked(np.bool_(True))
+        with self.assertRaises(ValueError) as cm:
+            self._load(path)
+        self.assertEqual(str(cm.exception), self.TEXT.format(path))
+
+    def test_malformed_marker_refused_before_s_bond_gate(self):
+        for marker in (np.array([1, 0]), np.array(["x"]), np.array([], dtype=float)):
+            with self.subTest(marker=repr(marker)):
+                path = self._marked(marker, drop_s_bond=True)
+                with self.assertRaises(ValueError) as cm:
+                    self._load(path)
+                self.assertEqual(str(cm.exception), self.TEXT.format(path))
+
+    def test_marker_false_is_not_refused(self):
+        path = self._marked(np.bool_(False))
+        self.assertEqual(self._load(path).B, self._load(self.nonso_path).B)
+
+    def test_unmarked_non_so_loads(self):
+        self._load(self.nonso_path)
 
 
 class TestSidecarLoader(unittest.TestCase):

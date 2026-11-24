@@ -614,6 +614,44 @@ class TestSectorIteration(unittest.TestCase):
         c = b0.to_reduced(it.gap.ravel()[b0.indices])
         self.assertLess(np.linalg.norm(red.matvec(c) - 2.0 * c), 1e-6 * np.linalg.norm(c))
 
+    def test_leader_iteration_record(self):
+        """The iteration leg of the S_z-packed layout carries the record of
+        the sector it reports: its ``_solve_leading`` info (the Rayleigh
+        residual, the shift and two-cycle diagnostics) and its own step
+        count, not the largest over the sectors; with a failed sector, the
+        first failed sector's; with no iterated sector, none."""
+        b1, b0, bm = _bases((5, 6, 3))
+        ops = [_sector(1, b1, _normal([1.0, 0.3, -0.2, -0.4, -0.5], 8)),
+               _sector(0, b0, _normal([2.0, 0.5, 0.3, -0.1, -0.4, -0.6], 9)),
+               _sector(-1, bm, np.zeros((3, 3)))]
+        seen = {}
+
+        def spy(make_operator, vec_size, solver_mode, *a, **kw):
+            out = _REAL_SOLVE_LEADING(make_operator, vec_size, solver_mode, *a, **kw)
+            seen[vec_size] = out[2]
+            return out
+        with mock.patch.object(sc, "_solve_leading", spy):
+            it = _iterate(ops)
+        lead = it.leaders[1]
+        self.assertIs(lead.info, seen[b0.dim])
+        self.assertIsNone(it.leaders[2].info)                   # null: not iterated
+        self.assertIn("rayleigh_residual", lead.info)
+        leg = sc.IterationLeg.from_sectors(it)
+        self.assertIs(leg.info, lead.info)
+        self.assertEqual(leg.n_iter, lead.n_iter)
+        self.assertNotEqual(lead.n_iter, it.leaders[0].n_iter)
+        # a failed sector: its record
+        with mock.patch.object(sc, "_solve_leading", _failing_iteration(b1.dim)):
+            it = _iterate(ops)
+        leg = sc.IterationLeg.from_sectors(it)
+        self.assertEqual((leg.pp_sector, leg.n_iter, leg.info),
+                         (1, 7, {"converged": False, "n_iter": 7}))
+        # no iterated sector
+        b1, b0 = _bases((0, 4))
+        it = _iterate([_sector(1, b1, np.zeros((0, 0))), _sector(0, b0, np.zeros((4, 4)))])
+        leg = sc.IterationLeg.from_sectors(it)
+        self.assertEqual((leg.n_iter, leg.info), (0, None))
+
     def test_iteration_leaders(self):
         b1, b0, bm = _bases((0, 4, 5))
         ops = [_sector(1, b1, np.zeros((0, 0))), _sector(0, b0, np.zeros((4, 4))),

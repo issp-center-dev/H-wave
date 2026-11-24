@@ -10,7 +10,10 @@ obtained by the wave-number space UHF method
 are outputted.
 The filename is specified by the keyword ``energy`` in ``file.output`` section in the parameter file.
 
-An example of the file is shown as follows.
+An example of the file is shown as follows. The solver pads the key names
+with spaces before ``=`` (``Sz      =``, ``Sx      =``); the padding is
+omitted from the other lines of the example. Read the values by key name
+and strip the spaces.
 
 ::
 
@@ -22,6 +25,19 @@ An example of the file is shown as follows.
     NCond = 8.000000000000007
     Sz = 3.2822430107160017e-07
     ChemicalPotential = 0.123456789
+    Sx      = 0.0
+    Sy      = 0.0
+
+.. note::
+
+   **Changed in this version.** UHFk now writes ``Sx`` and ``Sy`` as the
+   last two lines of the file in normal mode too (spin-orbital mode already
+   wrote them there); all other lines are unchanged. Files written
+   by older versions lack them. A script that reads the last line (for
+   example ``tail -n 1`` to obtain ``ChemicalPotential``) now gets ``Sy``;
+   read the value by its key instead. The mean-field state can point along
+   any spin axis, so Sx and Sy can be nonzero also without spin-orbit
+   coupling.
 
 
 File format
@@ -42,6 +58,10 @@ File format
 -  ``Sz = [sz]``
 
 -  ``ChemicalPotential = [mu]``
+
+-  ``Sx = [sx]``
+
+-  ``Sy = [sy]``
 
 Parameters
 ^^^^^^^^^^
@@ -124,6 +144,21 @@ Parameters
    finite-temperature :math:`\mu` is not uniquely fixed within the gap.
    When several :math:`\mu`-groups exist, the value is written per group as
    ``ChemicalPotential_{g}``.
+
+-  ``[sx]``, ``[sy]``
+
+   **Type :**
+   Float
+
+   **Description :**
+   The expectation values of the :math:`x` and :math:`y` components of the
+   total spin, in units of :math:`\hbar` and summed over all sites like
+   ``[sz]``:
+   :math:`S_x = \sum_{i}\mathrm{Re}\,(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle + \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)/2`
+   and
+   :math:`S_y = \sum_{i}\mathrm{Re}\,[-i(\langle c^{\dagger}_{i\uparrow}c_{i\downarrow}\rangle - \langle c^{\dagger}_{i\downarrow}c_{i\uparrow}\rangle)]/2`.
+   The mean-field state can point along any spin axis, so Sx and Sy can be
+   nonzero also without spin-orbit coupling.
 
 
 .. raw:: latex
