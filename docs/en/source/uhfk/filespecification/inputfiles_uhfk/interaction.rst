@@ -227,6 +227,8 @@ Usage rules
 
 -  Header cannot be omitted.
 
+-  Every coefficient row has exactly seven columns, ``[rx] [ry] [rz] [alpha] [beta] [J.real] [J.imag]``. **Release note:** earlier releases ignored any tokens after the seventh column (a trailing comment, for example); such a row is now an error that names the file and the line. Remove the extra tokens.
+
 -  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.
