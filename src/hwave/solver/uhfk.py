@@ -1357,9 +1357,9 @@ class UHFk(solver_base):
         calculation. Running on is kept, so that inputs that run today
         still run; this logs one WARNING per run (``_detect_blocks`` runs
         once per ``solve``). The test reads the raw spin tables
-        (:func:`hartree_fock.sz_breaking_types`), so it costs one pass
-        over at most seven ``(2, 2, 2, 2)`` tables and leaves the
-        numerics untouched.
+        (:func:`hartree_fock.sz_breaking_types`): one nonzero test per
+        declared coefficient table and one look at its ``(2, 2, 2, 2)``
+        spin table, once per run; the numerics are untouched.
         """
         dropped = hartree_fock.sz_breaking_types(self.inter_table,
                                                  self.spin_table)
@@ -1368,7 +1368,8 @@ class UHFk(solver_base):
                 "2Sz-fixed mode: the interaction term(s) {} do not conserve "
                 "S_z and are ignored under a fixed 2Sz (the spin-block "
                 "structure removes every spin-off-diagonal element they "
-                "contribute). Omit 2Sz (Sz-free mode) to include them."
+                "contribute). Omit 2Sz (or set 2Sz = \"free\") to include "
+                "them."
                 .format(", ".join(dropped)))
 
     def _so_to_virtual_green(self, G_so):

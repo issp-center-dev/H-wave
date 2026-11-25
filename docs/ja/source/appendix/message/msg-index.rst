@@ -43,9 +43,9 @@
 
   **モード :** UHFk (read_input_k)
 
-- ``read_input_k:`` *file* ``: row`` *i s j t* ``appears twice with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
+- ``read_input_k:`` *file*\ ``: row`` *i s j t* ``appears twice with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
 
-  **説明 :** ``initial_uhf``\ のファイル *file* で行 *i s j t* が繰り返され、その値の差が\ :math:`10^{-10}`\ を超えている
+  **説明 :** ``initial_uhf``\ のファイル *file* で行 *i s j t* が繰り返され、その値の差が\ :math:`10^{-10}`\ を超えている。その行の値を 1 つにしてください
 
   **モード :** UHFk (read_input_k)
 
@@ -73,9 +73,9 @@
 
   **モード :** UHFk
 
-- ``initial_uhf: rows (`` *i s j t* ``) and (`` *i' s j' t* ``) give the same element G[...](d=[...]) with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
+- ``initial_uhf: rows (``\ *i s j t*\ ``) and (``\ *i' s j' t*\ ``) give the same element G[...](d=[...]) with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
 
-  **説明 :** ``initial_uhf``\ の 2 つの行が初期グリーン関数の同じ要素を与え (たとえば変位を\ ``CellShape``\ を法として取ると\ ``j``\ と\ ``j'``\ が同じサイトになる)、その値の差が\ :math:`10^{-10}`\ を超えている
+  **説明 :** ``initial_uhf``\ の 2 つの行が初期グリーン関数の同じ要素を与え (たとえば変位を\ ``CellShape``\ を法として取ると\ ``j``\ と\ ``j'``\ が同じサイトになる)、その値の差が\ :math:`10^{-10}`\ を超えている。\ ``d``\ はその変位です。\ ``geometry_uhf``\ と\ ``CellShape``\ がファイルと合っているか確認し、その要素の値を 1 つにしてください
 
   **モード :** UHFk
 
@@ -354,6 +354,12 @@
   **説明 :** ``mode``\ パラメータの値が不正
 
   **モード :** RPA [warning]
+
+- ``2Sz-fixed mode: the interaction term(s)`` *terms* ``do not conserve S_z and are ignored under a fixed 2Sz`` ...
+
+  **説明 :** ``2Sz``\ を固定すると、相互作用項 *terms* (``PairLift``) は平均場ハミルトニアンのスピン非対角成分にしか寄与せず、スピンブロック構造によって取り除かれる。計算はこれらの項なしで続く。含めるには\ ``2Sz``\ を指定しないか、\ ``2Sz = "free"``\ を指定する
+
+  **モード :** UHFk [warning]
 
 - ``FATAL: 2Sz=`` *value* ``. 2Sz should be even for calculating fij``
 
