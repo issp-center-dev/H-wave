@@ -30,13 +30,23 @@ function:
 
 **Order.** Runs and rows are listed per ``SubShape`` (in the order given),
 and within one in the order para, ferro, random, user and literature
-(as given), baseline. The baseline order (design section 5.3) is q-major:
-for each commensurate q (by increasing order n, so Gamma first and the q
-= -q points next, then lexicographically),
-the spin directions (x, y, z, or z alone), then charge; within one (q,
-channel) the sign patterns of :func:`sign_patterns`; within one sign
-pattern its phase rows, the -O row of each phase, and the spiral. Order
-decides only the run order, the display and which rows a quota cuts.
+(as given), baseline. The baseline order (design section 5.3) is
+round-robin over q by sign-pattern rank: for rank r = 0, 1, ... (the r-th
+representative eta of :func:`sign_patterns` in each (q, channel)), every
+commensurate q in q-order (by increasing order n, so Gamma first and the
+q = -q points next, then lexicographically), within one q the spin
+directions (x, y, z, or z alone), then charge; within one sign pattern
+its phase rows, the -O row of each phase, and the spiral. Every q thus
+gets its low-rank patterns before any q gets a higher-rank one, so a
+quota is spent evenly over q (lattice-equivalent q such as (0, 1/2) and
+(1/2, 0) are treated alike). Order decides only the run order, the
+display and which rows a quota cuts.
+
+**The uniform charge at q = 0.** The all-+ sign pattern of the q = 0
+charge channel is a uniform density change, fixed by N; it is skipped
+before the sign-pattern cap (it takes no slot) and listed in the
+``skipped_patterns`` of the SubShape's ``cells`` record with that reason
+(:data:`UNIFORM_CHARGE_REASON`).
 
 **Sign patterns and +-O** (plan calls). The site sign patterns eta run over
 the interacting sites of the primitive cell (site groups with at least one
@@ -97,7 +107,8 @@ from hwave.initial.seed import (
 
 __all__ = [
     "Limits", "RESERVED_FAMILIES", "EXEMPT_FAMILIES", "GENERATED_FAMILIES", "PRECEDENCE",
-    "NC_ZERO_NOTE", "EMPTY_FULL_NOTE", "LARGE_TIER_SKIP", "sign_patterns",
+    "NC_ZERO_NOTE", "EMPTY_FULL_NOTE", "LARGE_TIER_SKIP", "UNIFORM_CHARGE_REASON",
+    "sign_patterns", "skipped_patterns",
     "interacting_sites", "baseline_candidates", "reserved_candidates", "expand_runs",
     "deduplicate", "apply_quotas", "candidate_states",
 ]
@@ -118,6 +129,8 @@ NC_ZERO_NOTE = ("n_c = 0: no orbital takes part in an interaction, so UHF is "
 #: the note of an empty or full model (design section 5.2)
 EMPTY_FULL_NOTE = ("every mu-group is empty or full (Ncond = 0 or Ncond = Nstate): "
                    "only para is written; every pattern row is degenerate with para")
+#: why the all-+ charge pattern at q = 0 is not emitted
+UNIFORM_CHARGE_REASON = "uniform density change, fixed by N"
 #: the hint skip reason of the large tier
 LARGE_TIER_SKIP = "large tier: no instability analysis"
 
@@ -277,23 +290,39 @@ def _spin_axes(su2, problem):
 
 
 def _named(family, spec, facts, subshape, *, eta, spiral, rank, phase_index, neg, taken,
-           amplitude, sources):
+           amplitude, sources, patterns=None):
     """The candidate of ``spec``, named by its pattern (owner decision O8),
     and its realised ``O(k)`` on ``subshape``."""
     O = realise(spec, facts, subshape)
     lab = labels.pattern_label(O, facts, q=spec.q, eta=eta, phase=spec.phase,
                                sign=spec.sign, spiral=spiral)
     cid = make_candidate_id(family, spec.q, lab.ascii_name, rank, phase_index, neg, taken)
-    return Candidate(candidate_id=cid, family=family, sources=tuple(sources), pattern=spec,
-                     amplitude_requested=amplitude, label=lab.name), O
+    cand = Candidate(candidate_id=cid, family=family, sources=tuple(sources), pattern=spec,
+                     amplitude_requested=amplitude, label=lab.name)
+    if patterns is not None:
+        patterns[CandidateRun(cand, subshape).run_id] = O
+    return cand, O
 
 
 def _neg(spec):
     return dataclasses.replace(spec, sign=-spec.sign)
 
 
-def _channel_rows(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken):
-    """The baseline candidates of one (q, channel) on the cell B."""
+def _etas(n_s, cap, both, skip_uniform):
+    """The sign patterns of one (q, channel): :func:`sign_patterns` with the
+    all-+ class removed before the cap when ``skip_uniform``."""
+    if not skip_uniform:
+        return list(sign_patterns(n_s, cap=cap, both_signs=both))
+    plus = (1,) * n_s
+    minus = (-1,) * n_s
+    it = (e for e in sign_patterns(n_s, cap=1 << n_s, both_signs=both)
+          if e != plus and e != minus)
+    return list(itertools.islice(it, cap))
+
+
+def _channel_units(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken, patterns):
+    """The baseline candidates of one (q, channel) on the cell B, one list
+    per sign-pattern representative in rank order."""
     p = facts.problem
     self_conj = cells.is_self_conjugate(q)
     traceless = kind == "charge" and all(x == 0 for x in q)
@@ -301,6 +330,8 @@ def _channel_rows(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken):
     # the merge of eta and -eta, decided on the first non-zero pattern
     first = None
     for eta in sign_patterns(n_s, cap=1 << (n_s - 1)):
+        if traceless and eta == (1,) * n_s:
+            continue
         A = _site_summed(sites, eta, mu, traceless=traceless)
         if A:
             first = A
@@ -313,11 +344,11 @@ def _channel_rows(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken):
         O0 = realise(spec0, facts, B)
         merged = symmetry.find_map(O0, -O0, problem=p, su2=su2, tr=tr)
     both = self_conj and merged is None
-    etas = list(sign_patterns(n_s, cap=limits.max_site_patterns, both_signs=both))
+    etas = _etas(n_s, limits.max_site_patterns, both, traceless)
     yielded = set(etas)
     spiral_ok = (kind == "spin" and not self_conj and su2 is not None
                  and su2.status == "passed")
-    out = []
+    units = []
     rank = -1
     for eta in etas:
         if eta[0] != 1:
@@ -325,7 +356,8 @@ def _channel_rows(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken):
         rank += 1
         A = _site_summed(sites, eta, mu, traceless=traceless)
         if not A:
-            continue                 # the uniform charge at q = 0 (removed by the trace)
+            continue
+        out = []
         neg_listed = self_conj and (merged is not None or tuple(-x for x in eta) in yielded)
         flipped = fix_sign(A, q) != tuple(A)
         eta_name = tuple(-x for x in eta) if flipped else eta
@@ -341,21 +373,38 @@ def _channel_rows(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken):
             index = 0 if row.spiral else k
             cand, _ = _named("baseline", spec, facts, B, eta=eta_name, spiral=row.spiral,
                              rank=rank, phase_index=index, neg=False, taken=taken,
-                             amplitude=limits.amplitude, sources=("baseline",))
+                             amplitude=limits.amplitude, sources=("baseline",),
+                             patterns=patterns)
             out.append(cand)
             if neg_listed and not row.spiral:
                 twin, _ = _named("baseline", _neg(spec), facts, B, eta=eta_name,
                                  spiral=False, rank=rank, phase_index=index, neg=True,
                                  taken=taken, amplitude=limits.amplitude,
-                                 sources=("baseline",))
+                                 sources=("baseline",), patterns=patterns)
                 out.append(twin)
             if not row.spiral:
                 k += 1
-    return out
+        units.append(out)
+    return units
+
+
+def _q_order(B):
+    return sorted(cells.commensurate_q(B), key=lambda q: (cells.order(q), q))
+
+
+def skipped_patterns(facts, subshape) -> list:
+    """The patterns :func:`baseline_candidates` leaves out on purpose, as
+    JSON records ``{"q", "channel", "eta", "reason"}``: the all-+ charge
+    pattern at q = 0 (:data:`UNIFORM_CHARGE_REASON`)."""
+    sites = interacting_sites(facts)
+    if not sites:
+        return []
+    return [{"q": "0,0,0", "channel": "charge", "eta": [1] * len(sites),
+             "reason": UNIFORM_CHARGE_REASON}]
 
 
 def baseline_candidates(facts, subshape, *, su2, tr, limits=None, tier="large",
-                        taken=None) -> List[Candidate]:
+                        taken=None, patterns=None) -> List[Candidate]:
     """The baseline candidates of the cell ``subshape`` (design section
     5.3): for every q commensurate with it, the site-summed spin patterns
     (x, y, z; z alone under a passed SU(2) check or with 2Sz fixed; plus
@@ -371,7 +420,9 @@ def baseline_candidates(facts, subshape, *, su2, tr, limits=None, tier="large",
     large tier has spin and charge only (owner decision Q1); orbital
     patterns (``family = "orbital"``) arrive with the small and medium
     tiers (``NotImplementedError``). ``taken``: the ids already used
-    (:func:`make_candidate_id`)."""
+    (:func:`make_candidate_id`). ``patterns``: an optional dict that
+    receives each candidate's realised ``O(k)`` keyed by its run id on
+    ``subshape`` (the ``cache`` of :func:`deduplicate`)."""
     if tier != "large":
         raise NotImplementedError("tier {!r} arrives in a later release: the orbital "
                                   "baseline patterns come with it".format(tier))
@@ -385,11 +436,14 @@ def baseline_candidates(facts, subshape, *, su2, tr, limits=None, tier="large",
     if not sites:
         return []
     channels = [("spin", mu) for mu in _spin_axes(su2, facts.problem)] + [("charge", "0")]
+    units = [_channel_units(facts, B, q, kind, mu, sites, su2=su2, tr=tr, limits=limits,
+                            taken=taken, patterns=patterns)
+             for q in _q_order(B) for kind, mu in channels]
     out = []
-    for q in sorted(cells.commensurate_q(B), key=lambda q: (cells.order(q), q)):
-        for kind, mu in channels:
-            out.extend(_channel_rows(facts, B, q, kind, mu, sites, su2=su2, tr=tr,
-                                     limits=limits, taken=taken))
+    for r in range(max((len(u) for u in units), default=0)):
+        for u in units:
+            if r < len(u):
+                out.extend(u[r])
     return out
 
 
@@ -503,7 +557,8 @@ def _row(run, cellshape, *, representable=True, reason=None):
         "lambda_imag": None, "subshape": list(run.subshape), "cellshape": list(cellshape),
         "representable": bool(representable), "reason": reason, "proposed_subshape": None,
         "proposed_cellshape": None, "proposal_note": None,
-        "equivalent_to": _equivalent_to(c), "citation": c.citation, "seed": spec.seed,
+        "equivalent_to": _equivalent_to(c), "duplicate_of": None,
+        "citation": c.citation, "seed": spec.seed,
         "amplitude_requested": c.amplitude_requested,
         "tried": bool(representable),
         "not_tried_reason": None if representable else _UNREPRESENTABLE,
@@ -668,6 +723,27 @@ def _same_invariants(a, b):
     return True
 
 
+def _candidates_by_invariants(kept, inv, i):
+    """The kept runs whose invariants match those of run ``i``
+    (:func:`_same_invariants`, vectorised over ``kept``), in order."""
+    if not kept:
+        return []
+    ok = np.ones(len(kept), dtype=bool)
+    for a, x in enumerate(inv[i]):
+        ys = [inv[j][a] for j in kept]
+        same = np.array([y.shape == x.shape for y in ys])
+        ok &= same
+        if not ok.any():
+            return []
+        sel = np.flatnonzero(ok)
+        Y = np.stack([ys[k] for k in sel])
+        scale = np.maximum(np.maximum(1.0, np.max(np.abs(x), initial=0.0)),
+                           np.max(np.abs(Y), axis=1, initial=0.0))
+        diff = np.max(np.abs(Y - x[None, :]), axis=1, initial=0.0)
+        ok[sel] = diff <= _INVARIANT_RTOL * scale
+    return [kept[k] for k in np.flatnonzero(ok)]
+
+
 def deduplicate(runs, *, facts, su2, tr, cache=None):
     """Merge runs that a verified map takes into one another (design
     section 5 step 6), per evaluated ``SubShape``.
@@ -681,8 +757,12 @@ def deduplicate(runs, *, facts, su2, tr, cache=None):
     ``"duplicate of <run_id> (<map>)"`` naming the kept run on the same B,
     and the kept run's row ``sources`` gain the duplicate's sources and
     ``"merged <run_id> (<map>)"`` (the frozen ``Candidate.sources`` is not
-    changed). Reserved runs are never removed. ``cache``: an optional dict
-    ``run_id -> O(k)`` shared with other steps.
+    changed). Reserved runs are never removed, and neither are user and
+    literature runs (design section 5.1: "never removed"): such a run that
+    matches a kept one stays a run, and its row is only marked,
+    ``duplicate_of = "<run_id> (<map>)"`` (``None`` otherwise), the kept
+    row's ``sources`` gaining ``"equivalent <run_id> (<map>)"``. ``cache``:
+    an optional dict ``run_id -> O(k)`` shared with other steps.
 
     Returns ``(kept runs, rows)``: one row per input run, in input order
     (rows of kept runs ``tried = True``)."""
@@ -700,21 +780,24 @@ def deduplicate(runs, *, facts, su2, tr, cache=None):
         for i in idx:
             run = runs[i]
             O = _realised(run, facts, cache)
-            inv[i] = symmetry.map_invariants(O, problem=f.problem)
+            inv[i] = symmetry.map_invariants(O, problem=f.problem, su2=su2)
             rows[i] = _row(run, f.cellshape)
             target = None
-            for j in kept:
-                if not _same_invariants(inv[j], inv[i]):
-                    continue
+            for j in _candidates_by_invariants(kept, inv, i):
                 m = symmetry.find_map(_realised(runs[j], facts, cache), O, problem=f.problem,
                                       su2=su2, tr=tr)
                 if m is not None:
                     target = (j, m)
                     break
-            if target is None or run.candidate.family in RESERVED_FAMILIES:
+            if target is None:
                 kept.append(i)
                 continue
             j, m = target
+            if run.candidate.family in RESERVED_FAMILIES + EXEMPT_FAMILIES:
+                rows[i]["duplicate_of"] = "{} ({})".format(runs[j].run_id, m)
+                rows[j]["sources"].append("equivalent {} ({})".format(run.run_id, m))
+                kept.append(i)
+                continue
             rows[i] = _not_tried(rows[i], "duplicate of {} ({})".format(runs[j].run_id, m))
             src = rows[j]["sources"]
             for s in run.candidate.sources:
@@ -737,6 +820,15 @@ def apply_quotas(runs, rows, limits):
     <family>"`` (``tried = False``); rows of not-tried pairs consume no
     quota. Runs keep their order; the later rows of a family are cut.
 
+    A duplicate row (``"duplicate of <X> (<map>)"``) whose referent X is cut
+    is promoted to X's place in the quota order and carries the note
+    ``"referent not run"``. A duplicate always follows its referent and
+    belongs to the same quota family (reserved, user and literature runs
+    are never cut, and generated runs are never referents of earlier
+    ones), so X's place lies past the quota and the promoted row is cut
+    with it: it reads ``"quota: <family> (duplicate of <X>; referent not
+    run)"``, so no row claims a basin that was not run.
+
     Returns ``(runs, rows)``; ``rows`` is a new list, one entry per input
     row."""
     by_B = {}
@@ -751,8 +843,19 @@ def apply_quotas(runs, rows, limits):
         cut.update(base[n_base:])
         cut.update(inst[n_inst:])
     reasons = {runs[i].run_id: "quota: {}".format(runs[i].candidate.family) for i in cut}
-    out = [(_not_tried(r, reasons[r["run_id"]]) if r.get("run_id") in reasons else dict(r))
-           for r in rows]
+    out = []
+    for r in rows:
+        if r.get("run_id") in reasons:
+            out.append(_not_tried(r, reasons[r["run_id"]]))
+            continue
+        why = r.get("not_tried_reason") or ""
+        if why.startswith("duplicate of "):
+            target = why[len("duplicate of "):].split(" ", 1)[0]
+            if target in reasons:
+                out.append(_not_tried(r, "{} (duplicate of {}; referent not run)".format(
+                    reasons[target], target)))
+                continue
+        out.append(dict(r))
     return [r for i, r in enumerate(runs) if i not in cut], out
 
 
@@ -804,6 +907,15 @@ def _extras(extra):
             raise ValueError("extra[{}]: a user or literature Candidate is required "
                              "(Candidate.user / Candidate.literature), got {!r}".format(i, c))
         out.append(c)
+    seen = {}
+    for i, c in enumerate(out):
+        if c.candidate_id in seen:
+            raise ValueError(
+                "extra[{}]: candidate_id {!r} is also the id of extra[{}]; build the "
+                "candidates with one shared taken= set (Candidate.user(..., taken=ids)) so "
+                "that a collision gets a -2 suffix".format(i, c.candidate_id,
+                                                           seen[c.candidate_id]))
+        seen[c.candidate_id] = i
     return out
 
 
@@ -897,15 +1009,15 @@ def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=
     reserved = reserved_candidates(base, subshapes, su2=su2, tr=tr, n_random=lim.n_random,
                                    base_seed=lim.base_seed, amplitude=lim.amplitude,
                                    taken=taken)
+    cache = {}
     baseline = []
     for B in subshapes:
         baseline.extend(baseline_candidates(facts[B], B, su2=su2, tr=tr, limits=lim,
-                                            tier=tier, taken=taken))
+                                            tier=tier, taken=taken, patterns=cache))
     cands = reserved + extras + baseline
 
     runs, rows = expand_runs(cands, subshapes, cellshape=base.cellshape,
                              max_denominator=lim.max_denominator)
-    cache = {}
     nc_zero = base.n_c == 0
     only_para = _only_para(base.problem)
     runs, rows = _response_checks(runs, rows, facts, nc_zero=nc_zero, only_para=only_para,
@@ -924,7 +1036,8 @@ def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=
     with_rows = {r["candidate_id"] for r in rows}
     cell_records = [{"subshape": list(B),
                      "commensurate_q": [cells.q_string(q) for q in cells.commensurate_q(B)],
-                     "cellshape": list(base.cellshape), "cellshape_compatible": True}
+                     "cellshape": list(base.cellshape), "cellshape_compatible": True,
+                     "skipped_patterns": skipped_patterns(facts[B], B)}
                     for B in subshapes]
     return CandidateSet(model=_model_record(base, su2, tr, hint, warnings), tier=tier,
                         cells=cell_records,

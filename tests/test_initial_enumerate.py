@@ -478,17 +478,54 @@ class TestBaselineAndDedup(_Tmp):
         u = symmetry.spin_rotation((0.3, -0.5, 0.8), 1.1, p.norb)
         images = [symmetry._translate(o, p, (1, 0, 0)), symmetry._time_reverse_r(o, p),
                   u @ o @ u.conj().T]
-        ref = symmetry.map_invariants(O, problem=p)
+        su2 = symmetry.su2_check(p)
+        self.assertEqual(su2.status, "passed")
+        ref = symmetry.map_invariants(O, problem=p, su2=su2)
         for img in images:
             ok = np.fft.ifftn(img, axes=(0, 1, 2), norm="forward").reshape(O.shape)
-            self.assertTrue(en._same_invariants(ref, symmetry.map_invariants(ok, problem=p)))
+            self.assertTrue(en._same_invariants(
+                ref, symmetry.map_invariants(ok, problem=p, su2=su2)))
+        # without SU(2) the per-axis norms tell x from z
+        ref_off = symmetry.map_invariants(O, problem=p)
+        self.assertTrue(en._same_invariants(ref_off, symmetry.map_invariants(
+            np.fft.ifftn(images[1], axes=(0, 1, 2), norm="forward").reshape(O.shape),
+            problem=p)))
+        self.assertFalse(en._same_invariants(ref_off, symmetry.map_invariants(
+            np.fft.ifftn(images[2], axes=(0, 1, 2), norm="forward").reshape(O.shape),
+            problem=p)))
         for toml in (self.square(), self.two_site_chain(delta=0.0, interactions={
                 "CoulombIntra": {((0, 0, 0), 0, 0): 4.0, ((0, 0, 0), 1, 1): 4.0},
                 "Ising": {((0, 0, 0), 0, 1): 1.0, ((0, 0, 0), 1, 0): 1.0}})):
             a = en.candidate_states(toml, n_random=2, max_candidates=1000)
-            with mock.patch.object(en, "_same_invariants", lambda x, y: True):
+            with mock.patch.object(en, "_candidates_by_invariants",
+                                   lambda kept, inv, i: list(kept)):
                 b = en.candidate_states(toml, n_random=2, max_candidates=1000)
             self.assertEqual(a.to_json()["rows"], b.to_json()["rows"])
+
+    def test_translate_strided_input(self):
+        """The cached translation writes a C-ordered result for any input
+        layout (a strided or Fortran-ordered O(R) included)."""
+        import numpy as np
+        from hwave.initial import symmetry
+        from hwave.initial.facts import model_facts
+        p = model_facts(self.square()).problem
+        rng = np.random.default_rng(1)
+        o = rng.normal(size=tuple(p.shape) + (p.nd, p.nd)) + 0j
+        want = symmetry._translate(np.ascontiguousarray(o), p, (1, 1, 0))
+        self.assertGreater(np.linalg.norm(want), 0)
+        for variant in (np.asfortranarray(o), np.swapaxes(np.swapaxes(o, 0, 1).copy(), 0, 1)):
+            np.testing.assert_array_equal(symmetry._translate(variant, p, (1, 1, 0)), want)
+
+    def test_invariant_tolerance(self):
+        import numpy as np
+        from hwave.initial import enumerate as en
+        ref = (np.array([-0.5, 0.5]), np.array([1.0, -1.0]), np.array([0.0, 1.0]))
+        near = tuple(x + 1e-9 for x in ref)
+        far = (ref[0], ref[1] + 1e-3, ref[2])
+        inv = {0: ref, 1: near, 2: far, 3: ref}
+        self.assertEqual(en._candidates_by_invariants([0, 1, 2], inv, 3), [0, 1])
+        self.assertTrue(en._same_invariants(ref, near))
+        self.assertFalse(en._same_invariants(ref, far))
 
     def test_site_pattern_cap(self):
         """max_site_patterns bounds the sign patterns of one (q, channel),
@@ -514,13 +551,18 @@ class TestBaselineAndDedup(_Tmp):
         self.assertEqual(count(full, "spin-z"), 8)
         self.assertEqual(count(full, "charge"), 6)
         self.assertEqual(count(capped, "spin-z"), 6)
-        # (+,+,+), (-,-,-), (+,-,+): the zero pattern and a pair cut by the cap
-        self.assertEqual(count(capped, "charge"), 1)
+        # the uniform charge (+,+,+) is skipped before the cap and takes no
+        # slot: (+,-,+), (-,+,-), (+,+,-), the last pair cut by the cap
+        self.assertEqual(count(capped, "charge"), 3)
+        skipped = full.cells[0]["skipped_patterns"]
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]["reason"], "uniform density change, fixed by N")
+        self.assertEqual(skipped[0]["eta"], (1, 1, 1))
         # the name follows the sign the pattern was given: (+,-,+) has its
         # largest entry negative after the trace is removed, so it is named
         # (-,+,-); (+,+,-) likewise (-,-,+)
         labels = [r["pattern_label"] for r in capped.rows if r["channel"] == "charge"]
-        self.assertEqual(len(labels), 1)
+        self.assertEqual(len(labels), 3)
         self.assertIn("η=(-,+,-)", labels[0])
         names = " ".join(r["pattern_label"] for r in full.rows if r["channel"] == "charge")
         self.assertIn("η=(-,-,+)", names)
@@ -569,7 +611,8 @@ class TestQuotasAndEdges(_Tmp):
             if r["family"] == "baseline":
                 self.assertFalse(r["tried"])
                 if not (r["not_tried_reason"] or "").startswith(("duplicate", "no response")):
-                    self.assertEqual(r["not_tried_reason"], "quota: baseline")
+                    self.assertRegex(r["not_tried_reason"],
+                                     r"^quota: baseline( \(duplicate of \S+; referent not run\))?$")
         self.assertEqual([r.candidate.family for r in cset.runs if r.candidate.family == "baseline"],
                          [])
         # every candidate keeps its rows
@@ -605,6 +648,88 @@ class TestQuotasAndEdges(_Tmp):
         kept, out = apply_quotas(runs, rows, Limits(max_candidates=2, quota_instability=2))
         self.assertEqual([r["not_tried_reason"] for r in out],
                          [None, None, "quota: baseline"] + ["quota: instability"] * 3)
+
+    def test_quota_spread_over_q(self):
+        """Three sites, SU(2) broken (x, y, z): the baseline is round-robin
+        over q by sign-pattern rank, so Neel is tried and the C4 partners
+        (0,1/2) and (1/2,0) get the same rows."""
+        import collections
+        from hwave.initial.enumerate import candidate_states
+        L = 4
+        tr = {((0, 0, 0), a, b): -1.0 for a in range(3) for b in range(3) if a != b}
+        for a in range(3):
+            for R in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)):
+                tr[(R, a, a)] = -1.0
+        toml = initial_fixtures.write_input(
+            self.dest(), cellshape=(L, L, 1), norb=3, transfer=tr,
+            centers=[(0, 0, 0), (0.3, 0, 0), (0.6, 0, 0)],
+            interactions={"CoulombIntra": {((0, 0, 0), a, a): 4.0 for a in range(3)},
+                          "Ising": {((0, 0, 0), 0, 1): 0.5, ((0, 0, 0), 1, 0): 0.5}},
+            param={"Ncond": 3 * L * L, "T": 0.1, "SubShape": [2, 2, 1]})
+        # q = 0 alone has 18 counted rows (3 axes x 4 sign patterns, charge
+        # 3 pairs): a q-major order would spend the whole quota there
+        cset = candidate_states(toml, n_random=0, max_candidates=16)
+        self.assertEqual(cset.model["su2"]["status"], "failed")
+        base = [r for r in cset.rows if r["family"] == "baseline"]
+        tried = collections.Counter(r["q_string"] for r in base if r["tried"])
+        self.assertEqual(sum(tried.values()), 16)
+        self.assertGreater(tried["0,1/2,0"], 0)
+        self.assertEqual(tried["0,1/2,0"], tried["1/2,0,0"])
+        neel = [r for r in base if r["q_string"] == "1/2,1/2,0" and r["sign"] == 1
+                and r["channel"] == "spin-z" and "η=(+,+,+)" in r["pattern_label"]]
+        self.assertEqual(len(neel), 1)
+        self.assertTrue(neel[0]["tried"])
+        for q in ("0,1/2,0", "1/2,0,0"):
+            self.assertTrue(any(r["tried"] and r["channel"] == "spin-z" and r["q_string"] == q
+                                for r in base))
+
+    def test_duplicate_referent_cut_by_quota(self):
+        from hwave.initial.enumerate import Limits, apply_quotas
+        from hwave.initial import Candidate, CandidateRun, PatternSpec, Entry
+        spec = PatternSpec(q=("1/2", "0", "0"), subshape=(2, 1, 1), phase=0.0, sign=1,
+                           modulation="cos", entries=(Entry(0, 0, (0, 0, 0), cz=1.0),))
+        runs = [CandidateRun(Candidate(candidate_id="baseline-{}".format(i), family="baseline",
+                                       sources=("baseline",), pattern=spec), (2, 1, 1))
+                for i in range(2)]
+        rows = [{"run_id": r.run_id, "family": "baseline", "tried": True,
+                 "not_tried_reason": None} for r in runs]
+        rows.append({"run_id": "baseline-9-b2x1x1", "family": "baseline", "tried": False,
+                     "not_tried_reason": "duplicate of baseline-1-b2x1x1 (translation)"})
+        rows.append({"run_id": "baseline-8-b2x1x1", "family": "baseline", "tried": False,
+                     "not_tried_reason": "duplicate of baseline-0-b2x1x1 (translation)"})
+        kept, out = apply_quotas(runs, rows, Limits(max_candidates=1))
+        self.assertEqual([r.run_id for r in kept], ["baseline-0-b2x1x1"])
+        self.assertEqual(out[2]["not_tried_reason"],
+                         "quota: baseline (duplicate of baseline-1-b2x1x1; referent not run)")
+        self.assertEqual(out[3]["not_tried_reason"],
+                         "duplicate of baseline-0-b2x1x1 (translation)")
+
+    def test_user_rows_never_removed_by_dedup(self):
+        """A user ferro equals the reserved ferro: it stays a run, marked."""
+        from hwave.initial import Candidate, Entry, PatternSpec
+        from hwave.initial.enumerate import candidate_states
+        ferro = PatternSpec(q=("0", "0", "0"), subshape=(1, 1, 1), phase=0.0, sign=1,
+                            modulation="cos", entries=(Entry(0, 0, (0, 0, 0), cz=2.0),))
+        user = Candidate.user(pattern=ferro, label="my ferro")
+        cset = candidate_states(self.square(), extra=[user], n_random=0)
+        row = self.rows_of(cset, candidate_id=user.candidate_id)[0]
+        self.assertTrue(row["tried"])
+        self.assertIn(row["run_id"], [r.run_id for r in cset.runs])
+        f_run = next(r for r in cset.runs if r.candidate.family == "ferro")
+        self.assertEqual(row["duplicate_of"], "{} (translation)".format(f_run.run_id))
+        f_row = self.rows_of(cset, run_id=f_run.run_id)[0]
+        self.assertIn("equivalent {} (translation)".format(row["run_id"]), f_row["sources"])
+
+    def test_colliding_extra_ids_refused_up_front(self):
+        from unittest import mock
+        from hwave.initial import enumerate as en
+        a = _literature(_NEEL)
+        b = _literature(_NEEL, citation="B. Author")
+        self.assertEqual(a.candidate_id, b.candidate_id)
+        with mock.patch.object(en, "model_facts", side_effect=AssertionError("loaded")):
+            with self.assertRaises(ValueError) as cm:
+                en.candidate_states(self.square(), extra=[a, b])
+        self.assertIn("taken=", str(cm.exception))
 
     def test_nc_zero_only_para(self):
         from hwave.initial.enumerate import candidate_states, NC_ZERO_NOTE

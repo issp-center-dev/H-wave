@@ -854,9 +854,10 @@ def _accumulate(o_h, blocks, layout, N, q, phi, sign):
     ``D = -c_sup``."""
     B = layout.B
     offsets = [(x, y, z) for z in range(B[2]) for y in range(B[1]) for x in range(B[0])]
+    phases = [0.5 * cmath.exp(sign * 1j * (2 * math.pi * float(_qdot(q, rb)) + phi))
+              for rb in offsets]
     for (a, b, r), X in blocks.items():
-        for rb in offsets:
-            ph = 0.5 * cmath.exp(sign * 1j * (2 * math.pi * float(_qdot(q, rb)) + phi))
+        for rb, ph in zip(offsets, phases):
             pos = [rb[i] + r[i] for i in range(3)]
             c_sup = [pos[i] // B[i] for i in range(3)]
             ra = tuple(pos[i] % B[i] for i in range(3))

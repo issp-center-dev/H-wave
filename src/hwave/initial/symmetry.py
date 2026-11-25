@@ -37,6 +37,7 @@ cell. A folded orbital is ``aa = a + norb_orig * ir`` with the in-cell index
 interleaved inside ``a`` in spin-orbital mode).
 """
 import dataclasses
+import functools
 import itertools
 import logging
 from dataclasses import dataclass
@@ -475,22 +476,11 @@ def _translations(problem):
     return list(itertools.product(range(bx), range(by), range(bz)))
 
 
-def _translate(o_r, problem, tau):
-    """``O`` translated by the primitive-cell vector ``tau``.
-
-    In the Hamiltonian convention ``O(R)[aa, bb]`` couples folded orbital
-    ``aa`` of supercell 0 (in-cell offset ``r_i``) with ``bb`` of supercell
-    ``R`` (offset ``r_j``). Moving both by ``tau`` sends ``r -> (r + tau)
-    mod B`` with the carries ``c``, so ``O'(R + c_j - c_i)[aa', bb'] =
-    O(R)[aa, bb]``."""
-    B = np.array(_subshape(problem))
-    shape = np.array(problem.shape)
-    nd = problem.nd
-    if problem.enable_spin_orbital:
-        norb_cell, nspin = problem.norb_orig, 1
-    else:
-        norb_cell, nspin = problem.norb_orig, 2
-    norb = problem.norb
+@functools.lru_cache(maxsize=256)
+def _translation_index(shape, B, nd, norb, norb_cell, nspin, tau):
+    """The flat destination index of every entry of ``O(R)`` under the
+    translation ``tau`` (see :func:`_translate`); cached per layout."""
+    B = np.array(B)
     idx = np.arange(nd)
     if nspin == 2:
         s, aa = idx // norb, idx % norb
@@ -509,8 +499,31 @@ def _translate(o_r, problem, tau):
     d = carry[None, :, :] - carry[:, None, :]
     dst = [(np.arange(n).reshape([-1 if ax == k else 1 for k in range(3)] + [1, 1])
             + d[None, None, None, :, :, ax]) % n for ax, n in enumerate(shape)]
-    out = np.zeros_like(o_r)
-    out[dst[0], dst[1], dst[2], new[:, None], new[None, :]] = o_r
+    full = tuple(np.broadcast_to(x, tuple(shape) + (nd, nd)) for x in
+                 (dst[0], dst[1], dst[2], new[:, None], new[None, :]))
+    flat = np.ravel_multi_index(full, tuple(shape) + (nd, nd)).ravel()
+    flat.setflags(write=False)
+    return flat
+
+
+def _translate(o_r, problem, tau):
+    """``O`` translated by the primitive-cell vector ``tau``.
+
+    In the Hamiltonian convention ``O(R)[aa, bb]`` couples folded orbital
+    ``aa`` of supercell 0 (in-cell offset ``r_i``) with ``bb`` of supercell
+    ``R`` (offset ``r_j``). Moving both by ``tau`` sends ``r -> (r + tau)
+    mod B`` with the carries ``c``, so ``O'(R + c_j - c_i)[aa', bb'] =
+    O(R)[aa, bb]``."""
+    nspin = 1 if problem.enable_spin_orbital else 2
+    flat = _translation_index(tuple(int(x) for x in problem.shape),
+                              tuple(int(x) for x in _subshape(problem)), int(problem.nd),
+                              int(problem.norb), int(problem.norb_orig), nspin,
+                              tuple(int(x) for x in tau))
+    o_r = np.asarray(o_r)
+    # a C-ordered result, so the flat view below is the array itself
+    # (zeros_like would keep a strided input's layout, and reshape would copy)
+    out = np.zeros(o_r.shape, dtype=o_r.dtype)
+    out.reshape(-1)[flat] = o_r.reshape(-1)
     return out
 
 
@@ -623,26 +636,56 @@ def find_map(O1, O2, *, problem, su2, tr) -> Optional[
                    plain_translations=True)
 
 
-def map_invariants(O, *, problem) -> Tuple[np.ndarray, np.ndarray]:
-    """Two quantities that every map of :func:`find_map` keeps, for a cheap
-    pre-filter before it: the sorted eigenvalues of ``O(k)`` over every k
-    (the spectrum of the pattern on the whole lattice; translations, spin
-    rotations and time reversal are unitary or anti-unitary), and the
-    translation autocorrelation ``Re <O, T_tau O> / ||O||^2`` for every
-    in-cell translation ``tau`` of :func:`find_map` (translations commute
-    with each other, with a global spin rotation and with time reversal;
-    the real part is kept by the complex conjugation of time reversal). A
-    zero pattern gives zeros. Two patterns whose invariants differ are
+def _channel_norms(o_r, problem):
+    """``||c^mu||`` for mu = 0, x, y, z of ``O(R)`` (``c^mu = tr_s(sigma^mu
+    O)`` on every orbital pair and R), in either index layout."""
+    nd = problem.nd
+    idx = np.arange(nd)
+    if problem.enable_spin_orbital:
+        up, dn = idx[0::2], idx[1::2]
+    else:
+        up, dn = idx[:nd // 2], idx[nd // 2:]
+    uu = o_r[..., up[:, None], up[None, :]]
+    dd = o_r[..., dn[:, None], dn[None, :]]
+    ud = o_r[..., up[:, None], dn[None, :]]
+    du = o_r[..., dn[:, None], up[None, :]]
+    return np.array([np.linalg.norm(uu + dd), np.linalg.norm(ud + du),
+                     np.linalg.norm(ud - du), np.linalg.norm(uu - dd)])
+
+
+def map_invariants(O, *, problem, su2=None) -> Tuple[np.ndarray, ...]:
+    """Quantities that every map :func:`find_map` may use keeps, for a
+    cheap pre-filter before it.
+
+    * the sorted eigenvalues of ``O(k)`` over every k (the spectrum of the
+      pattern on the whole lattice; translations, spin rotations and time
+      reversal are unitary or anti-unitary);
+    * the translation autocorrelation ``Re <O, T_tau O> / ||O||^2`` for
+      every in-cell translation ``tau`` of :func:`find_map` (translations
+      commute with each other, with a global spin rotation and with time
+      reversal; the real part is kept by the complex conjugation of time
+      reversal);
+    * the channel norms ``||c^0||``, ``||c^x||``, ``||c^y||``, ``||c^z||``
+      over ``||O||`` (translations move entries; time reversal maps ``c^mu``
+      to ``+-conj(c^mu)``); when ``su2`` passed (spin rotations are maps)
+      only the rotation-invariant pair ``||c^0||`` and ``(sum_i
+      ||c^i||^2)^(1/2)``.
+
+    A zero pattern gives zeros. Two patterns whose invariants differ are
     related by no map; equal invariants decide nothing."""
     o = _to_r(O, problem)
     spectrum = np.sort(np.linalg.eigvalsh(np.asarray(O, dtype=np.complex128)).ravel())
     n2 = float(np.vdot(o, o).real)
     taus = _translations(problem)
+    rotation = _su2_ok(problem, su2)
     if n2 == 0.0:
-        return spectrum, np.zeros(len(taus))
+        return spectrum, np.zeros(len(taus)), np.zeros(2 if rotation else 4)
     corr = np.array([float(np.vdot(o, _translate(o, problem, tau)).real) / n2
                      for tau in taus])
-    return spectrum, corr
+    ch = _channel_norms(o, problem) / np.sqrt(n2)
+    if rotation:
+        ch = np.array([ch[0], float(np.sqrt(np.sum(ch[1:] ** 2)))])
+    return spectrum, corr, ch
 
 
 def sign_map_verified(O, *, problem, su2, tr) -> bool:
