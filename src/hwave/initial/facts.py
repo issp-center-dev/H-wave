@@ -107,7 +107,10 @@ class ModelFacts:
 def _read_toml(path):
     import tomli
     with open(path, "rb") as f:
-        return tomli.load(f)
+        try:
+            return tomli.load(f)
+        except tomli.TOMLDecodeError as exc:
+            raise ValueError("{}: not a valid TOML file: {}".format(path, exc)) from None
 
 
 def _mode_of(path):
@@ -129,7 +132,12 @@ def _resolve_toml(input_path):
             raise ValueError("{}: expected exactly one *.toml input, found {}{}".format(
                 p, len(found), ": " + listing if found else " (no *.toml file)"))
         toml = found[0]
-        mode = _read_toml(toml).get("mode", {})
+        doc = _read_toml(toml)
+        variants = [k for k in doc if k != "mode" and k.lower() == "mode"]
+        if variants and "mode" not in doc:
+            raise ValueError("{}: [{}] is not read: table names are case-sensitive, write it "
+                             "as [mode].".format(toml, variants[0]))
+        mode = doc.get("mode", {})
         if not isinstance(mode, Mapping) or mode.get("mode") != "UHFk":
             hint = ""
             if isinstance(mode, Mapping) and mode.get("mode") == "UHFr":

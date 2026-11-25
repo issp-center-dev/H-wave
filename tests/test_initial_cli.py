@@ -186,6 +186,9 @@ class TestPrepare(_Base):
             d["file"]["output"].update(scf_status="status.dat", onebodyg="greenone.dat")))
         work = self.path("WORK")
         self.prepare(src, work)
+        with open(os.path.join(work, "coverage.json")) as f:
+            labels = {r["family"]: r["label"] for r in json.load(f)["rows"] if r["tried"]}
+        self.assertEqual(labels["para"], "para")
         for i in self.run_ids(work):
             doc = _read_toml(os.path.join(work, i, "input.toml"))
             fin = doc["file"]["input"]
@@ -256,9 +259,10 @@ class TestPrepare(_Base):
             self.assertEqual(rc, 1, name)
             self.assertIn(spelling, err, name)
             self.assertFalse(os.path.exists(work), name)
-            # a directory input is refused too
-            rc, _, _ = self.main("prepare", src, "--out", work)
+            # a directory input is refused too, naming the solver spelling
+            rc, _, err = self.main("prepare", src, "--out", work)
             self.assertEqual(rc, 1, name)
+            self.assertIn(spelling, err, name)
 
     def test_prepare_output_paths(self):
         from hwave.results import open_run
@@ -533,6 +537,37 @@ class TestPrepare(_Base):
         shutil.move(w2, self.path("W3"))
         self.assertIn("already prepared", self.prepare(src2, self.path("W3")))
 
+    def test_prepare_refuses_outputs_on_run_files(self):
+        src = self.model()
+        toml = os.path.join(src, "input.toml")
+        cases = (({"path_to_output": "", "green": "initial"}, "initial.npz"),
+                 ({"path_to_output": "inputs"}, "path_to_output"),
+                 ({"path_to_output": ".", "energy": "input.toml"}, "input.toml"),
+                 ({"path_to_output": "", "eigen": "inputs/transfer.dat"}, "inputs"),
+                 ({"path_to_output": "", "onebodyg": "hwave.log"}, "hwave.log"))
+        for i, (out, word) in enumerate(cases):
+            _edit(toml, lambda d: d["file"].update(output=dict(out)))
+            w = self.path("W{}".format(i))
+            rc, _, err = self.main("prepare", src, "--out", w)
+            self.assertEqual(rc, 1, out)
+            self.assertIn(word, err, out)
+            self.assertFalse(os.path.exists(w))
+        # outputs in the run directory itself, on other names, are fine
+        _edit(toml, lambda d: d["file"].update(output={"path_to_output": "",
+                                                       "green": "green_out"}))
+        self.prepare(src, self.path("W_ok"))
+
+    def test_prepare_toml_syntax_error_names_file(self):
+        src = self.model()
+        with open(os.path.join(src, "input.toml"), "a") as f:
+            f.write("bad = = 1\n")
+        for arg in (src, os.path.join(src, "input.toml")):
+            rc, _, err = self.main("prepare", arg, "--out", self.path("W"))
+            self.assertEqual(rc, 1)
+            self.assertIn(os.path.join(src, "input.toml"), err)
+            self.assertIn("not a valid TOML file", err)
+            self.assertEqual(len(err.strip().splitlines()), 1, err)
+
     def test_prepare_extra_candidates(self):
         src = self.model()
         pattern = {"patternspec_version": 1, "q": ["1/2", "0", "0"], "subshape": [2, 1, 1],
@@ -701,6 +736,57 @@ class TestCollect(_Base):
         ranked = [e["run_id"] for lst in doc["ranking"]["lists"] for e in lst["entries"]]
         self.assertNotIn(rid, ranked)
         self.assertIn(rid, [u["run_id"] for u in doc["ranking"]["unranked"]])
+        # no absolute path in the collected result
+        for text in (r["error_summary"], err):
+            self.assertNotIn(self.tmp, text)
+            self.assertNotIn(os.path.realpath(self.tmp), text)
+        self.assertIn("output/scf_status.dat", r["error_summary"])
+
+    def test_collect_final_label_carries_q(self):
+        # U = 8 at half filling: the para seed falls into the Neel state, the
+        # ferro seed stays ferro; the names must tell them apart
+        src = self.model(U=8.0, param={"IterationMax": 2000, "EPS": 8})
+        work = self.path("WORK")
+        self.prepare(src, work)
+        ids = self.run_ids(work)
+        for i in ids:
+            self.run_hwave(os.path.join(work, i))
+        rows = self.collect(work)[0]
+        para = rows[self.para(ids)]
+        ferro = rows[[i for i in ids if i.startswith("ferro-")][0]]
+        self.assertEqual((para["status"], ferro["status"]), ("converged", "converged"))
+        self.assertLess(para["free_energy_per_cell"], ferro["free_energy_per_cell"] - 0.1)
+        self.assertIn("q=(1/2,1/2,0)", para["final_label"])
+        self.assertIn("q=(0,0,0)", ferro["final_label"])
+        self.assertNotEqual(para["final_label"], ferro["final_label"])
+
+    def test_dominant_q_near_tie(self):
+        from hwave.initial.cli import _dominant_q
+        op = {"q": ["0,0,0", "1/2,0,0", "0,1/2,0", "1/2,1/2,0"],
+              "spin_amplitude": [0.0, 0.30, 0.29, 0.01],
+              "charge_amplitude": [1.0, 0.0, 0.0, 0.0]}
+        self.assertEqual(_dominant_q(op), ["1/2,0,0", "0,1/2,0"])
+        op["spin_amplitude"] = [0.0, 0.3, 0.1, 0.0]
+        self.assertEqual(_dominant_q(op), ["1/2,0,0"])
+        op["spin_amplitude"] = [0.0] * 4
+        self.assertEqual(_dominant_q(op), [])
+
+    def test_collect_broken_manifest_one_line(self):
+        work, ids = self.prepared()
+        m = self.manifest(work)
+        for breaker, word in ((lambda m: m.pop("runs"), "runs"),
+                              (lambda m: m["runs"][0].pop("input_sha256"), "input_sha256"),
+                              (lambda m: m["runs"][0].update(run_dir="/abs"), "/abs")):
+            bad = json.loads(json.dumps(m))
+            breaker(bad)
+            with open(os.path.join(work, "manifest.json"), "w") as f:
+                json.dump(bad, f)
+            rc, _, err = self.main("collect", work)
+            self.assertEqual(rc, 1)
+            self.assertIn("manifest.json", err)
+            self.assertIn(word, err)
+            self.assertNotIn("Traceback", err)
+            self.assertEqual(len(err.strip().splitlines()), 1, err)
 
     def test_collect_status_input_changed(self):
         work, ids = self.prepared()
@@ -774,6 +860,19 @@ class TestHelp(_Base):
                              env=self.env, stdout=subprocess.PIPE, text=True)
         self.assertEqual(res.returncode, 0)
         self.assertIn("prepare", res.stdout)
+
+    def test_no_profile_table_in_command_output(self):
+        src = self.model()
+        work = self.path("WORK")
+        self.prepare(src, work)
+        toml = os.path.join(work, self.run_ids(work)[0], "input.toml")
+        for argv in (["check", "--require-provenance", toml], ["collect", work]):
+            res = subprocess.run([sys.executable, "-m", "hwave.initial"] + argv,
+                                 env=self.env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, text=True)
+            self.assertEqual(res.returncode, 0, res.stdout)
+            self.assertNotIn("Statistics", res.stdout)
+            self.assertNotIn("msec", res.stdout)
 
     def test_toml_serialiser(self):
         import tomli

@@ -261,6 +261,29 @@ def _check_outputs(foutput, flog):
                              "reads; remove the key or name a file".format(key, key))
     if "print_check" in flog:
         _check_relative(flog["print_check"], "[log] print_check")
+    # nothing the solver writes may land on the run directory's own files
+    reserved = {RUN_TOML.lower(), RUN_INITIAL.lower(), RUN_LOG.lower()}
+
+    def clobbers(rel):
+        rel = pathlib.PurePosixPath(os.path.normpath(rel).replace(os.sep, "/")).as_posix()
+        low = rel.lower()
+        return (low in reserved or low == RUN_INPUTS.lower()
+                or low.startswith(RUN_INPUTS.lower() + "/"))
+
+    if clobbers(pto) and os.path.normpath(pto) not in (".", ""):
+        raise ValueError("[file.output] path_to_output = {!r} lies on the run directory's "
+                         "{} or input copies; choose another directory".format(pto, RUN_INPUTS))
+    targets = [("[file.output] {}".format(k), foutput[k]) for k in OUTPUT_FILE_KEYS
+               if isinstance(foutput.get(k), str) and foutput.get(k)]
+    if isinstance(flog.get("print_check"), str) and flog["print_check"]:
+        targets.append(("[log] print_check", flog["print_check"]))
+    for where, name in targets:
+        for cand in (name, name if name.endswith(".npz") else name + ".npz"):
+            rel = os.path.join(pto, cand)
+            if clobbers(rel):
+                raise ValueError("{} = {!r} with path_to_output = {!r} would overwrite the "
+                                 "run directory's {}; choose another name".format(
+                                     where, name, pto, os.path.normpath(rel)))
     return pto
 
 
@@ -381,7 +404,11 @@ def stage_run_dir(run_dir, doc, *, source_dir, overrides, source_name=None) -> S
     ``green = ""`` and ``energy = ""`` are refused; an absent ``energy`` is
     set to ``"energy.dat"``. The written TOML is re-parsed and checked by
     the solver's input reader. ``source_name`` (the original file name)
-    goes into the header comment.
+    goes into the header comment. ``initial = "initial.npz"`` is always
+    written; the caller writes that file (a stage-0 caller must write its
+    starting npz there too). Output names that would overwrite
+    ``input.toml``, ``initial.npz``, ``hwave.log`` or ``inputs/`` are
+    refused.
 
     Raises ``ValueError`` naming the key on any refusal; nothing is written
     outside ``run_dir``."""
@@ -583,6 +610,33 @@ def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False
                         spiral=spiral).name
 
 
+#: q vectors whose weight is at least this fraction of the largest one are
+#: named together (a near tie)
+Q_TIE = 0.9
+#: below this squared amplitude a state has no ordering vector
+_Q_FLOOR = 1e-16
+
+
+def _dominant_q(op):
+    """The ordering vectors of a converged state, from the PR 1a order
+    parameters ``op`` (the JSON of :func:`report.order_parameter_records`,
+    per orbital): the weight of q is ``|S(q)|^2 + |dn(q)|^2`` (the q = 0
+    density, fixed by N, left out); the q of the largest weight and every q
+    within :data:`Q_TIE` of it, as ``"a,b,c"`` strings in the reader's
+    order. ``[]`` when nothing is ordered."""
+    qs = op.get("q") or []
+    spin = op.get("spin_amplitude") or [0.0] * len(qs)
+    charge = op.get("charge_amplitude") or [0.0] * len(qs)
+    w = []
+    for q, a, b in zip(qs, spin, charge):
+        zero = all(x.strip() == "0" for x in q.split(","))
+        w.append(float(a) ** 2 + (0.0 if zero else float(b) ** 2))
+    top = max(w, default=0.0)
+    if top <= _Q_FLOOR:
+        return []
+    return [q for q, x in zip(qs, w) if x >= Q_TIE * top]
+
+
 def _commands_text(run_ids):
     lines = ['cd "$(dirname "$0")" || exit 1',
              "# Candidate runs written by python -m hwave.initial prepare.",
@@ -651,7 +705,10 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
         "limits": {k: lim[k] for k in sorted(lim)},
     }
     with open(toml, "rb") as f:
-        doc = tomli.load(f)
+        try:
+            doc = tomli.load(f)
+        except tomli.TOMLDecodeError as exc:
+            raise ValueError("{}: not a valid TOML file: {}".format(toml, exc)) from None
     site = _orbital_site_file(site_path) if site_path else None
     # the input is read by the solver's rules first (case variants refused)
     base = model_facts(toml, subshape=(1, 1, 1), orbital_site=site)
@@ -720,8 +777,11 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
                 raise AssertionError("{}: the written seed is not verified".format(rd))
             spec = run.candidate.pattern
             row.update(_seed_fields(res))
-            row["label"] = _state_label(res.G, facts, cache, q=spec.q, phase=spec.phase,
-                                        sign=spec.sign, spiral=spec.modulation == "spiral")
+            modulated = spec.modulation in ("cos", "spiral")
+            row["label"] = _state_label(
+                res.G, facts, cache, q=spec.q if modulated else None,
+                phase=spec.phase if modulated else None,
+                sign=spec.sign if modulated else None, spiral=spec.modulation == "spiral")
             kept.append(run)
             staged_bytes += sum(s.nbytes for s in {s.name: s for s in staged.staged}.values())
             entries.append({
@@ -904,7 +964,12 @@ def _read_outputs(row, run, run_toml, model, facts_cache, para_cache):
     G = g.sublattice.green if g.sublattice is not None else g.green
     if G is None:
         raise UnsupportedLayoutError("{}: the output green cannot be read".format(run_toml))
-    row["final_label"] = _state_label(G, facts, para_cache)
+    qs = _dominant_q(row["order_parameters"]["per_orbital"])
+    name = _state_label(G, facts, para_cache,
+                        q=qs[0].split(",") if len(qs) == 1 else None)
+    if len(qs) > 1 and name != "para":
+        name += " " + " ".join("q=({})".format(q) for q in qs)
+    row["final_label"] = name
 
 
 _OUTPUT_ROW_FIELDS = ("energy_total", "free_energy_total", "rest", "free_energy_per_cell",
@@ -912,7 +977,29 @@ _OUTPUT_ROW_FIELDS = ("energy_total", "free_energy_total", "rest", "free_energy_
                       "order_parameters", "final_label")
 
 
+def _relative_text(text, run_dir, work):
+    """``text`` with the run directory and WORK written relative (so the
+    collected result does not depend on where WORK is)."""
+    if not isinstance(text, str):
+        return text
+    roots = []
+    for base, rel in ((run_dir, "."), (work, "WORK")):
+        for p in {str(base), os.path.realpath(str(base))}:
+            roots.append((p, rel))
+    for p, rel in sorted(roots, key=lambda x: -len(x[0])):
+        text = text.replace(p + os.sep, "" if rel == "." else rel + "/").replace(p, rel)
+    return text
+
+
 def _collect_row(row, entry, work, model, warnings, facts_cache, para_cache):
+    n = len(warnings)
+    _collect_row_paths(row, entry, work, model, warnings, facts_cache, para_cache)
+    run_dir = work / entry["run_dir"]
+    row["error_summary"] = _relative_text(row.get("error_summary"), run_dir, work)
+    warnings[n:] = [_relative_text(w, run_dir, work) for w in warnings[n:]]
+
+
+def _collect_row_paths(row, entry, work, model, warnings, facts_cache, para_cache):
     from hwave.results import ResultsError, UnsupportedLayoutError, open_run, read_scf_status
     run_dir = work / entry["run_dir"]
     run_toml = run_dir / entry["input_toml"]
@@ -991,6 +1078,37 @@ def _collect_row(row, entry, work, model, warnings, facts_cache, para_cache):
                    error_summary="{}: {}".format(type(exc).__name__, exc))
 
 
+_ENTRY_KEYS = {"run_id": str, "run_dir": str, "input_toml": str, "initial": str,
+               "initial_sha256": str, "input_sha256": dict}
+
+
+def _check_manifest(manifest, path):
+    """The run entries of ``manifest`` by run id; ``ValueError`` naming the
+    file and the key when its shape is not the one prepare writes."""
+    if not isinstance(manifest, dict):
+        raise ValueError("{}: a JSON object expected".format(path))
+    if manifest.get("manifest_version") != MANIFEST_VERSION:
+        raise ValueError("{}: manifest_version {!r} is not {}".format(
+            path, manifest.get("manifest_version"), MANIFEST_VERSION))
+    runs = manifest.get("runs")
+    if not isinstance(runs, list):
+        raise ValueError("{}: 'runs' must be a list of run entries".format(path))
+    out = {}
+    for i, e in enumerate(runs):
+        if not isinstance(e, dict):
+            raise ValueError("{}: runs[{}] must be an object".format(path, i))
+        for key, typ in _ENTRY_KEYS.items():
+            if not isinstance(e.get(key), typ):
+                raise ValueError("{}: runs[{}].{} is missing or not a {}".format(
+                    path, i, key, "string" if typ is str else "object"))
+        for name in (e["run_dir"], e["input_toml"], e["initial"]):
+            if os.path.isabs(name) or ".." in _parts(name):
+                raise ValueError("{}: runs[{}]: {!r} is not a path inside WORK".format(
+                    path, i, name))
+        out[e["run_id"]] = e
+    return out
+
+
 def collect(work, *, stdout=None, stderr=None) -> int:
     """``python -m hwave.initial collect`` (returns the exit code).
 
@@ -1011,14 +1129,17 @@ def collect(work, *, stdout=None, stderr=None) -> int:
     stdout, stderr = stdout or sys.stdout, stderr or sys.stderr
     work = pathlib.Path(os.path.abspath(os.fspath(work)))
     manifest = _read_json(work / MANIFEST, "manifest")
-    if manifest.get("manifest_version") != MANIFEST_VERSION:
-        raise ValueError("{}: manifest_version {!r} is not {}".format(
-            work / MANIFEST, manifest.get("manifest_version"), MANIFEST_VERSION))
+    entries = _check_manifest(manifest, work / MANIFEST)
     data = _read_json(work / CANDIDATES, "candidate set")
+    if not isinstance(data, dict):
+        raise ValueError("{}: a JSON object expected".format(work / CANDIDATES))
     chosen = data.pop("tier_chosen_by", "auto (interim rule)")
-    cset = CandidateSet.from_json(data)
+    try:
+        cset = CandidateSet.from_json(data)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("{}: not a candidate set of this version: {}: {}".format(
+            work / CANDIDATES, type(exc).__name__, exc)) from None
     model = _thaw_json(cset.model)
-    entries = {e["run_id"]: e for e in manifest["runs"]}
     rows, warnings, facts_cache, para_cache = [], [], {}, {}
     for r in cset.rows:
         row = _thaw_json(r)
