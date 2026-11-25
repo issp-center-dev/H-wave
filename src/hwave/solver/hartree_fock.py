@@ -21,6 +21,15 @@ mode calls them on the virtual spin-block frame of
 
 The FLEX-side density evaluator of the same spec lives here too
 (:func:`equal_time_density`, section 2.1).
+
+The module also holds the one Fermi function of the solvers and what the
+chemical-potential searches build on it:
+
+* :func:`masked_fermi` -- the overflow-guarded distribution (UHFk, RPA,
+  FLEX, hwave_sc and the density evaluator above call it);
+* :func:`masked_fermi_delta_n` -- the particle-number counter and its
+  derivative, the function ``RPA._find_mu`` and hwave_sc root-find;
+* :func:`polish_mu_root` -- the Newton polish of a root of that counter.
 """
 from collections import namedtuple
 from dataclasses import dataclass
@@ -252,11 +261,8 @@ def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
     and never reaches ``exp``.
 
     ``ev`` is a NumPy or a CuPy array; the result is an array of the same
-    module. This is the one distribution function of RPA, FLEX and
-    hwave_sc: ``RPA._find_mu`` returns it at the root, the counter
-    :func:`masked_fermi_delta_n` sums it, FLEX takes its non-interacting
-    references from it, and so does the Heff-referenced equal-time
-    density below.
+    module. ``ene_cutoff`` is the caller's: UHFk and RPA pass the
+    ``ene_cutoff`` of the input file; FLEX and hwave_sc use 100.
     """
     xp = _bk.array_module_of(ev)
     w = (ev - mu) / t
