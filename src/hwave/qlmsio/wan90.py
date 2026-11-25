@@ -25,6 +25,7 @@ write_w90(name_in, info_int, info_geometry, interact_shape)
 from __future__ import print_function
 
 import itertools
+import math
 import re
 import numpy as np
 import logging
@@ -457,10 +458,19 @@ def read_w90(name_in, allow_spin_columns=False):
                 deg_of_r[irvec] = ndegen[idx_r]
             deg = deg_of_r[irvec]
 
+        # a coefficient that is not a finite number (nan, inf, or a literal
+        # too large for a float) is refused here, for every file of this
+        # format, with the line that carries it
+        re_val, im_val = float(re_im[0]), float(re_im[1])
+        if not (math.isfinite(re_val) and math.isfinite(im_val)):
+            raise ValueError(
+                "{}: line {}: non-finite coefficient: {} {}"
+                .format(name_in, body_first_line + i, re_im[0], re_im[1]))
+
         key = (irvec, orbvec)
         if key in data:
             ndup += 1
-        data[key] = (float(re_im[0]) + 1J * float(re_im[1])) / deg
+        data[key] = (re_val + 1J * im_val) / deg
 
     # Reject duplicate (R, orbital) entries, matching the strictness of the
     # real-space reader (read_input.py). In the spin-resolved format the

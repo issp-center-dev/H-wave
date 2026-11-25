@@ -229,6 +229,8 @@ Usage rules
 
 -  Every coefficient row has exactly seven columns, ``[r_x] [r_y] [r_z] [alpha] [beta] [J.real] [J.imag]``. **Release note:** earlier releases ignored any tokens after the seventh column (a trailing comment, for example); such a row is now an error that names the file and the line. Remove the extra tokens.
 
+-  Every coefficient must be a finite number. **Release note:** ``nan``, ``inf`` or a value too large for a floating-point number is now an error that names the file and the line, in every file of this format. Earlier releases refused it in the two-body definition files only. In the Transfer file it was read: UHFk treated an entry with such a coefficient as absent and ran to the end with only a Hermiticity warning; the other solvers stopped later with a message that did not name the file.
+
 -  The unspecified elements of the coefficient matrix are assumed to be zero. Note that a declared entry whose Hermitian partner :math:`X_{ba}(-R)` is unspecified is rejected at read time (as of version 2.0): both directions of a coupling must be declared.
 
 -  The translation vectors need to be enclosed within the CellShape. If the range of ``r_x``, ``r_y``, or ``r_z`` exceeds the extent of ``x``, ``y``, or ``z`` dimension of CellShape, the program terminates with an error.

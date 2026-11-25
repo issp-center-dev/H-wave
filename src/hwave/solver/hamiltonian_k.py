@@ -67,6 +67,13 @@ def dense_table(table, shape, dim, *, out_of_range="raise", label="Transfer"):
     Returns
     -------
     ndarray, complex128, shape ``(nx, ny, nz, dim, dim)``
+
+    Raises
+    ------
+    ValueError
+        For an out-of-range index under ``out_of_range="raise"``, and for
+        a coefficient that is not a finite number (NaN, +-inf) at an index
+        that is kept.
     """
     if out_of_range not in ("raise", "drop"):
         raise ValueError("out_of_range must be 'raise' or 'drop', got {!r}"
@@ -85,6 +92,11 @@ def dense_table(table, shape, dim, *, out_of_range="raise", label="Transfer"):
                 "{}: orbital index {} (1-based {}) is outside [0, {}) at "
                 "R = {}".format(label, (a, b), (a + 1, b + 1), dim,
                                 tuple(irvec)))
+        if not np.isfinite(v):
+            # a table built in memory; a file is refused when it is read
+            raise ValueError(
+                "{}: non-finite coefficient {} of orbitals {} at R = {}"
+                .format(label, v, (a + 1, b + 1), tuple(irvec)))
         rx, ry, rz = (int(r) for r in irvec)
         tab[rx % nx, ry % ny, rz % nz, a, b] += v
     if dropped:

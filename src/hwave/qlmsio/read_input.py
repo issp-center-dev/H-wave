@@ -97,7 +97,7 @@ class QLMSInput():
         ndup = 0
         ncols = None
         comment = re.compile(r'^\s*(#.*)?$')
-        for line in lines[5:]:
+        for lineno, line in enumerate(lines[5:], start=6):
             # skip blank and comment lines in the data section
             if comment.match(line):
                 continue
@@ -112,6 +112,13 @@ class QLMSInput():
                 exit(1)
             list = tuple([int(i) for i in values[:-value_width]])
             value = _make_value(values[-value_width:])
+            # a value that is not a finite number (nan, inf) is refused
+            # here, with the line that carries it
+            if value is not None and not np.isfinite(value):
+                logger.error(
+                    "{}: line {}: non-finite value: {}".format(
+                        file_name, lineno, " ".join(values[-value_width:])))
+                exit(1)
             if list in data:
                 ndup += 1
                 data[list] += value
