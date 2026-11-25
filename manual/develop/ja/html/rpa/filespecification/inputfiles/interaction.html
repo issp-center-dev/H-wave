@@ -244,6 +244,35 @@ Extern はどのモードでも物理軌道インデックス（1〜<span class=
 虚部は Dzyaloshinskii-Moriya 型の項になります。この拡張は issue #302 で扱っています。
 物理的な複素位相をもつのは<code class="docutils literal notranslate"><span class="pre">PairHop</span></code>だけで、虚部があっても受け入れられます。
 <code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span></code>を使わない場合の動作は変わりません。</p></li>
+<li><p><strong>スピン列つき拡張形式（9 列）の Transfer。</strong> 1 行目に<code class="docutils literal notranslate"><span class="pre">w90spin/1</span></code>を含み、各行が
+<code class="docutils literal notranslate"><span class="pre">Rx</span> <span class="pre">Ry</span> <span class="pre">Rz</span> <span class="pre">a</span> <span class="pre">b</span> <span class="pre">s</span> <span class="pre">t</span> <span class="pre">Re</span> <span class="pre">Im</span></code>（<code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code>は 1 始まりの物理軌道、<code class="docutils literal notranslate"><span class="pre">s</span></code>, <code class="docutils literal notranslate"><span class="pre">t</span></code>は
+0 始まりのスピン）の Transfer ファイルも受け付けます（形式の規則と例は UHFk の
+相互作用ファイルの説明を参照）。ファイルの 2 行目は物理軌道の数で、幾何ファイルの
+<code class="docutils literal notranslate"><span class="pre">norb</span></code>と一致しなければなりません。幾何ファイルと相互作用定義ファイルは物理軌道の
+ままで、<code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>との併用はエラーです。各行にはエルミート
+共役の相手<span class="math notranslate nohighlight">\(T_{as,bt}(R) = T_{bt,as}(-R)^*\)</span>が必要で、相手が欠けている行や複素共役になっていない行は拒否されます。</p>
+<p>RPA は一体項を<span class="math notranslate nohighlight">\(2N_\text{orbital} \times 2N_\text{orbital}\)</span>のスピンブロック順で
+持ち、スピン構造を行列から判定します: スピン非依存なら spin-free（7 列ファイルと同じ結果）、
+スピン対角で非対称なら spin-diag、スピン非対角（<span class="math notranslate nohighlight">\(s \ne t\)</span>）成分があれば
+spinful です。<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>の判定は 7 列・スピン軌道モードと同じ規則で、
+軌道間ホッピングまたはスピン反転があれば general に昇格します。</p>
+<p>FLEX も行列で判定します。スピンに依存しない Transfer（up-up と down-down のブロックが
+値まで同一で、スピン反転がない）は同等の 7 列ファイルとして読まれ、<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>を
+含め、すべてのスキームとオプションが 7 列ファイルと同じに動作します。スピンに依存する
+Transfer（up-up と down-down のブロックが異なる、またはスピン反転がある）はスピン軌道モードの spinful 経路を
+通り、同じ条件が課されます: <code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;general&quot;</span></code>と<code class="docutils literal notranslate"><span class="pre">flex_hartree_fock</span> <span class="pre">=</span> <span class="pre">true</span></code>、
+オンサイトとセル内の相互作用のみ、<code class="docutils literal notranslate"><span class="pre">longitudinal_bond_channels</span></code>は不可です。
+このような Transfer とスピン軌道モードでは、FLEX の<code class="docutils literal notranslate"><span class="pre">calc_scheme</span> <span class="pre">=</span> <span class="pre">&quot;auto&quot;</span></code>は
+<code class="docutils literal notranslate"><span class="pre">&quot;general&quot;</span></code>に決まります。</p>
+<p>Extern はこの形式でも物理軌道インデックスで書き、<span class="math notranslate nohighlight">\(h\sigma^z\)</span>として、Transfer
+ファイルが持つスピン依存性に加算されます。hwave_sc は現在この形式を受け付けません。
+RPA がこの形式から計算した chi0q / chiq と、FLEX がスピンに依存する Transfer から計算した
+chi0q / chiq には<code class="docutils literal notranslate"><span class="pre">spin_resolved</span> <span class="pre">=</span> <span class="pre">True</span></code>のマーカーが記録され、<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>は
+7 列の計算・9 列の計算・スピン軌道モードの計算の間で共有できません。別の種類の計算の
+ファイルは拒否されます（軌道数 2N のスピン非依存模型と同じ配列の形になるためです）。
+FLEX がスピンに依存しない Transfer を読んだ計算は 7 列の計算として扱われ、同じ 9 列ファイルでの
+RPA の計算ではなく、7 列の計算と<code class="docutils literal notranslate"><span class="pre">chi0q_init</span></code>を共有します。</p>
+</li>
 <li><p><strong>スピン軌道モードでの Extern。</strong><code class="docutils literal notranslate"><span class="pre">mode.enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>の場合も、
 Extern ファイルは<strong>物理</strong>軌道インデックスで書きます。各<span class="math notranslate nohighlight">\(R\)</span>について
 <span class="math notranslate nohighlight">\(N_\text{orbital} \times N_\text{orbital}\)</span>行列であり、インデックスは

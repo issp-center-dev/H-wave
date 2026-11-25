@@ -237,6 +237,38 @@
    物理的な複素位相をもつのは\ ``PairHop``\ だけで、虚部があっても受け入れられます。
    ``enable_spin_orbital``\ を使わない場合の動作は変わりません。
 
+-  **スピン列つき拡張形式（9 列）の Transfer。** 1 行目に\ ``w90spin/1``\ を含み、各行が
+   ``Rx Ry Rz a b s t Re Im``\ （\ ``a``, ``b``\ は 1 始まりの物理軌道、\ ``s``, ``t``\ は
+   0 始まりのスピン）の Transfer ファイルも受け付けます（形式の規則と例は UHFk の
+   相互作用ファイルの説明を参照）。ファイルの 2 行目は物理軌道の数で、幾何ファイルの
+   ``norb``\ と一致しなければなりません。幾何ファイルと相互作用定義ファイルは物理軌道の
+   ままで、\ ``mode.enable_spin_orbital = true``\ との併用はエラーです。各行にはエルミート
+   共役の相手\ :math:`T_{as,bt}(R) = T_{bt,as}(-R)^*`\ が必要で、相手が欠けている行や複素共役になっていない行は拒否されます。
+
+   RPA は一体項を\ :math:`2N_\text{orbital} \times 2N_\text{orbital}`\ のスピンブロック順で
+   持ち、スピン構造を行列から判定します: スピン非依存なら spin-free（7 列ファイルと同じ結果）、
+   スピン対角で非対称なら spin-diag、スピン非対角（\ :math:`s \ne t`\ ）成分があれば
+   spinful です。\ ``calc_scheme = "auto"``\ の判定は 7 列・スピン軌道モードと同じ規則で、
+   軌道間ホッピングまたはスピン反転があれば general に昇格します。
+
+   FLEX も行列で判定します。スピンに依存しない Transfer（up-up と down-down のブロックが
+   値まで同一で、スピン反転がない）は同等の 7 列ファイルとして読まれ、\ ``calc_scheme = "auto"``\ を
+   含め、すべてのスキームとオプションが 7 列ファイルと同じに動作します。スピンに依存する
+   Transfer（up-up と down-down のブロックが異なる、またはスピン反転がある）はスピン軌道モードの spinful 経路を
+   通り、同じ条件が課されます: ``calc_scheme = "general"``\ と\ ``flex_hartree_fock = true``\ 、
+   オンサイトとセル内の相互作用のみ、\ ``longitudinal_bond_channels``\ は不可です。
+   このような Transfer とスピン軌道モードでは、FLEX の\ ``calc_scheme = "auto"``\ は
+   ``"general"``\ に決まります。
+
+   Extern はこの形式でも物理軌道インデックスで書き、\ :math:`h\sigma^z`\ として、Transfer
+   ファイルが持つスピン依存性に加算されます。hwave_sc は現在この形式を受け付けません。
+   RPA がこの形式から計算した chi0q / chiq と、FLEX がスピンに依存する Transfer から計算した
+   chi0q / chiq には\ ``spin_resolved = True``\ のマーカーが記録され、\ ``chi0q_init``\ は
+   7 列の計算・9 列の計算・スピン軌道モードの計算の間で共有できません。別の種類の計算の
+   ファイルは拒否されます（軌道数 2N のスピン非依存模型と同じ配列の形になるためです）。
+   FLEX がスピンに依存しない Transfer を読んだ計算は 7 列の計算として扱われ、同じ 9 列ファイルでの
+   RPA の計算ではなく、7 列の計算と\ ``chi0q_init``\ を共有します。
+
 -  **スピン軌道モードでの Extern。**\ ``mode.enable_spin_orbital = true``\ の場合も、
    Extern ファイルは\ **物理**\ 軌道インデックスで書きます。各\ :math:`R`\ について
    :math:`N_\text{orbital} \times N_\text{orbital}`\ 行列であり、インデックスは
