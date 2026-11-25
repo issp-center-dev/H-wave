@@ -34,13 +34,16 @@ every group is empty or full. Every quantity is shift-invariant: ``H0 ->
 H0 + C`` moves each ``E_F,g`` by C and nothing else.
 
 The band-range and window membership tests are inclusive with a
-tolerance of ``1e-12 * max(W_all, 1)`` (shift-invariant), so a tie at an
-edge does not depend on the rounding of the absolute energy origin. The
+tolerance of ``1e-12 * W_all,g`` (the span of the group's eigenvalues; no
+absolute energy enters, so it is shift-invariant), so a tie at an edge
+does not depend on the rounding of the absolute energy origin. The
 bands come from :func:`hwave.solver.initial_facade.primitive_h0_k`, the
 solver's own ``H(k)`` builder.
 
-Warnings: the wide-window warning (``W_all > 3*W_act``) is recorded for
-every ``t_hint_source``, ``input`` and ``user`` included, because ``W0``
+Warnings: the wide-window warning is evaluated per mu-group, ``W_all,g >
+3*W_act,g`` (strictly greater) for a group with a window, so the splitting
+between the sectors of a fixed ``2Sz`` never triggers it; it is recorded
+for every ``t_hint_source``, ``input`` and ``user`` included, because ``W0``
 is also the scale of the field seeding; the no-mesh-axis warning only when
 the ``W0/8`` cap is the ``T_hint`` used.
 
@@ -67,11 +70,11 @@ W_FLOOR_ACT = 1e-3
 T_HINT_REL_FLOOR = 1e-4
 #: a ``CellShape`` axis of at most this length is structural, not a k mesh
 STRUCTURAL_AXIS_MAX = 2
-#: the wide-window warning fires when ``W_all > WIDE_WINDOW_FACTOR * W_act``
+#: the wide-window warning fires when ``W_all,g > WIDE_WINDOW_FACTOR * W_act,g``
 WIDE_WINDOW_FACTOR = 3.0
 
-#: the relative tolerance (of ``max(W_all, 1)``) of the band-range and
-#: window membership tests, so that a tie at a window edge does not depend
+#: the relative tolerance (of the group span ``W_all,g``) of the band-range
+#: and window membership tests, so that a tie at a window edge does not depend
 #: on the rounding of the absolute energy origin
 _MEMBER_RTOL = 1e-12
 
@@ -173,12 +176,13 @@ def group_bands(problem):
     return out
 
 
-def _group_window(eps, n, tol):
+def _group_window(eps, n):
     """``(E_F, D, W_act)`` of one group with bands ``eps`` ``(nvol, nb)``
     and ``n`` electrons; ``None`` for an empty or full group."""
     flat = np.sort(eps, axis=None)
     if n <= 0 or n >= flat.size:
         return None
+    tol = _MEMBER_RTOL * float(flat[-1] - flat[0])
     e_f = 0.5 * (float(flat[n - 1]) + float(flat[n]))
     lo = eps.min(axis=0)
     hi = eps.max(axis=0)
@@ -224,23 +228,25 @@ def t_hint_bare(problem, *, t_user: Optional[float] = None) -> THint:
         t_user = _check_t_user(t_user)
     bands = group_bands(problem)
     w_all = float(max(e.max() for e in bands) - min(e.min() for e in bands))
-    tol = _MEMBER_RTOL * max(w_all, 1.0)
-    e_fs, ds, w_groups = [], [], []
+    e_fs, ds, w_groups, wide = [], [], [], []
     for eps, n in zip(bands, problem.blocks.group_nconds):
-        res = _group_window(eps, int(n), tol)
+        res = _group_window(eps, int(n))
         if res is None:
             e_fs.append(None); ds.append(None); w_groups.append(None)
-        else:
-            e_fs.append(res[0]); ds.append(res[1]); w_groups.append(res[2])
+            continue
+        e_fs.append(res[0]); ds.append(res[1]); w_groups.append(res[2])
+        w_all_g = float(eps.max() - eps.min())
+        if w_all_g > WIDE_WINDOW_FACTOR * res[2]:
+            text = WIDE_WARNING.format("{:.6g}".format(res[2]), "{:.6g}".format(w_all_g))
+            if text not in wide:
+                wide.append(text)
     active = [w for w in w_groups if w is not None]
     w_act = max(active) if active else w_all
     w0 = max(w_act, W_FLOOR_ACT)
     w_source = "active_window" if w_act >= W_FLOOR_ACT else "floor"
     l_min = _l_min(problem.cellshape)
 
-    warnings = []
-    if w_all > WIDE_WINDOW_FACTOR * w_act:
-        warnings.append(WIDE_WARNING.format("{:.6g}".format(w_act), "{:.6g}".format(w_all)))
+    warnings = list(wide)
     t_hint_rule = None
     if t_user is not None:
         t_hint, rule, source = t_user, RULE_USER, "user"

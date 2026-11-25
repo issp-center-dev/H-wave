@@ -173,6 +173,64 @@ class TestTHint(_Tmp):
         self.assertAlmostEqual(h2.W_all, 42.0, delta=1e-9)
         self.assertEqual(h2.warnings, (WIDE.format(4, 42),))
 
+    def test_wide_window_per_sector(self):
+        # a deep ligand inside each sector of a fixed 2Sz still warns
+        transfer = dict(_chain(1.0, 0))
+        transfer[((0, 0, 0), 1, 1)] = -22.0
+        h = self.hint(self.load(cellshape=(16, 1, 1), norb=2, transfer=transfer,
+                                param={"Ncond": 48, "2Sz": 0, "T": 0.0}))
+        self.assertEqual(len(h.E_F), 2)
+        self.assertEqual(h.warnings, (WIDE.format(4, 24),))
+
+    def test_wide_window_boundary(self):
+        # an L = 4 chain has exact levels -2, 0, 0, 2: W_act = 4 exactly;
+        # a ligand at -10 gives W_all = 12 = 3*W_act exactly (no warning,
+        # the test is strict), at -10.5 W_all = 12.5 > 12 (warning)
+        def model(ligand):
+            transfer = dict(_chain(1.0, 0))
+            transfer[((0, 0, 0), 1, 1)] = ligand
+            return self.hint(self.load(cellshape=(4, 1, 1), norb=2, transfer=transfer,
+                                       param={"Ncond": 12, "T": 0.0}))
+        h = model(-10.0)
+        self.assertEqual(h.W_act, 4.0)
+        self.assertEqual(h.W_all, 12.0)
+        self.assertEqual(h.warnings, ())
+        h = model(-10.5)
+        self.assertEqual(h.W_all, 12.5)
+        self.assertEqual(h.warnings, (WIDE.format(4, 12.5),))
+
+    def test_window_edge_tie_shifted_origin(self):
+        # a flat empty level exactly at the window edge E_F + D = 4 belongs
+        # to the window (inclusive): W_act = 6, at every energy origin
+        for C in (0.0, 7.3, 1000.0):
+            with self.subTest(C=C):
+                transfer = dict(_chain(1.0, 0))
+                transfer[((0, 0, 0), 1, 1)] = 4.0 + C
+                if C:
+                    transfer[((0, 0, 0), 0, 0)] = C
+                h = self.hint(self.load(cellshape=(16, 1, 1), norb=2, transfer=transfer,
+                                        param={"Ncond": 16, "T": 0.0}))
+                self.assertRel(h.D[0], 4.0, 1e-12)
+                self.assertRel(h.W_act, 6.0, 1e-12)
+                self.assertRel(h.E_F[0], C, 1e-12)
+
+    def test_membership_tolerance_scale(self):
+        """The inclusive tolerance is 1e-12 of the group span (6 here),
+        whatever the origin: a level 4e-15 past the edge belongs to the
+        window, one 1e-9 past it does not, at C = 0 and at C = 1e6."""
+        import numpy as np
+        from hwave.initial import hints
+        for C in (0.0, 1e6):
+            for delta, w_act in ((4e-15, 6.0), (1e-9, 4.0)):
+                with self.subTest(C=C, delta=delta):
+                    # one band [-2, 2] (two k points, one electron) and a
+                    # flat level at the edge E_F + D = 4
+                    eps = np.array([[-2.0, 4.0 + delta], [2.0, 4.0 + delta]]) + C
+                    e_f, d, w = hints._group_window(eps, 1)
+                    self.assertEqual(e_f, C)
+                    self.assertEqual(d, 4.0)
+                    self.assertAlmostEqual(w, w_act, delta=1e-6)
+
     def test_band_insulator_window(self):
         # lower band [-4, -2] full, upper band [2, 4] empty, a ligand at -30
         transfer = dict(_chain(0.5, 0)); transfer.update(_chain(0.5, 1))
@@ -206,6 +264,9 @@ class TestTHint(_Tmp):
         self.assertRel(h1.W_act, 4.0)
         self.assertRel(h1.E_F[1], h0.E_F[1] + 30.0)
         self.assertAlmostEqual(h1.W_all, 34.0, delta=1e-9)
+        # the inter-sector offset is not a wide window: checked per sector
+        self.assertEqual(h1.warnings, ())
+        self.assertEqual(h0.warnings, ())
         # an empty down sector (2Sz = Ncond): its wider band never enters
         h2 = self.hint(self.spin_chain(t_up=1.0, t_dn=3.0, offset=0.0, ncond=8, two_sz=8))
         self.assertEqual(len(h2.E_F), 2)
