@@ -37,6 +37,7 @@ null on every ``pre_run`` row and on every not-tried row; a tried
 """
 import dataclasses
 import math
+from fractions import Fraction
 from typing import Literal, Mapping, Optional, Tuple
 
 import numpy as np
@@ -50,8 +51,10 @@ from hwave.initial.symmetry import SZ_WARNING
 __all__ = [
     "SCHEMA_VERSION", "FIXED_SENTENCE", "STRUCTURAL_EXCLUSIONS", "CHOSEN_BY",
     "DEGENERACY_TOL", "STATUSES", "SEED_FIELDS", "POST_RUN_FIELDS", "ROW_FIELDS",
-    "PHASE_MARKERS", "coverage_document", "validate_coverage", "energy_fields",
-    "RankEntry", "RankList", "Ranking", "rank", "order_parameter_records",
+    "PHASE_MARKERS", "FAILURE_KINDS", "coverage_document", "validate_coverage",
+    "energy_fields",
+    "RankEntry", "RankList", "Ranking", "rank", "failure_kind", "unranked_reason",
+    "order_parameter_records",
     "orbital_centres", "summary_text",
 ]
 
@@ -64,14 +67,17 @@ SCHEMA_VERSION = 4
 FIXED_SENTENCE = ("The selected state is the lowest free energy among the candidates "
                   "tried. It is not a proof of the ground state.")
 
-#: the structural exclusions of design section 8.2 (v1), verbatim
+#: the structural exclusions of design section 8.2 (v1); the wording of the
+#: design, with its internal section and decision references replaced by
+#: plain words (they reach coverage.json and every summary)
 STRUCTURAL_EXCLUSIONS = (
     "multi-q superpositions (double-Q, triple-Q, vortex crystals)",
     "sliding-phase variants beyond the two kept phases, including an Umklapp phase "
-    "offset not pinned by symmetry (§6.3)",
+    "offset not pinned by symmetry",
     "combinations within a degenerate eigenspace other than the canonical basis",
     "rotated cells such as √3×√3, and cells outside subshapes",
-    "orbital and bond patterns in the large tier (Q1), and bond patterns other than hints",
+    "orbital and bond patterns in the large tier (it has spin and charge patterns "
+    "only), and bond patterns other than hints",
     "one amplitude per candidate",
     "hints describe the paramagnet only (static, at T_hint)",
     "spirals constructed only under a passed spin-rotation check",
@@ -108,7 +114,17 @@ POST_RUN_FIELDS = ("run_dir", "status", "exit_code", "error_summary", "wall_time
                    "iterations", "rest", "scf_residual", "scf_eps_tol", "scf_note",
                    "energy_total", "free_energy_total", "free_energy_per_cell",
                    "free_energy_per_site", "free_energy_per_site_reason",
-                   "order_parameters", "final_label", "iteration_max", "eps", "mix")
+                   "order_parameters", "final_label", "iteration_max", "eps", "mix",
+                   "failure_kind")
+
+#: why a ``failed`` row failed (``failure_kind``, set by collect; inferred
+#: from ``iterations`` and ``exit_code`` when null): the solver crashed or
+#: aborted, its outputs are missing or unreadable, or it performed no SCF
+#: step (``IterationMax = 0``; the status file only)
+FAILURE_KINDS = ("crash", "unreadable_output", "zero_steps")
+_FAILURE_TEXT = {"crash": "solver crash or abort",
+                 "unreadable_output": "outputs missing or unreadable",
+                 "zero_steps": "zero SCF steps"}
 
 #: every key of a row of the document
 ROW_FIELDS = (
@@ -333,9 +349,16 @@ def _check_row(i, row, phase_marker, errs):
         if k not in allowed and row.get(k) is not None:
             errs.append("{}.{}: must be null for this row ({})".format(
                 where, k, row["not_tried_reason"] or row["family"]))
-    if tried and allowed is _PARA_SEED and row.get("h_used") not in (None, 0, 0.0):
-        errs.append("{}.h_used: a para row is seeded at h = 0, got {!r}".format(
-            where, row["h_used"]))
+    if tried and allowed is _PARA_SEED and row.get("seed_base") is not None \
+            and (isinstance(row.get("h_used"), bool) or row.get("h_used") != 0):
+        # a para row whose seed is recorded (seed_base set) has h_used = 0
+        # exactly; before the seed is merged every seed field is null
+        errs.append("{}.h_used: a seeded para row has h_used = 0, got {!r}".format(
+            where, row.get("h_used")))
+    fk = row.get("failure_kind")
+    if fk is not None and (row.get("status") != "failed" or fk not in FAILURE_KINDS):
+        errs.append("{}.failure_kind: one of {} on a failed row only, got {!r} (status "
+                    "{!r})".format(where, ", ".join(FAILURE_KINDS), fk, row.get("status")))
     if phase_marker == "pre_run" or not tried:
         for k in POST_RUN_FIELDS:
             if row.get(k) is not None:
@@ -499,6 +522,10 @@ def energy_fields(row, *, facts) -> dict:
                           "Energy_Total is the internal energy, not the free energy")
     else:
         out["refused"] = "no FreeEnergy_Total or Energy_Total in energy.dat"
+    key = out["free_energy_per_cell"]
+    if key is not None and not math.isfinite(key):
+        out.update(free_energy_per_cell=None, key_source=None,
+                   refused="the energy in energy.dat is not finite ({})".format(key))
     n, reason = _sites_per_cell(f)
     if out["free_energy_per_cell"] is not None:
         if n is None:
@@ -527,11 +554,13 @@ class RankEntry:
     key_source: str
     flags: Tuple[str, ...]
     near_degenerate_with: Tuple[str, ...]
+    group: Optional[Mapping] = None
 
     def to_json(self):
         out = dataclasses.asdict(self)
         out["flags"] = list(self.flags)
         out["near_degenerate_with"] = list(self.near_degenerate_with)
+        out["group"] = None if self.group is None else dict(self.group)
         return out
 
 
@@ -566,24 +595,77 @@ class Ranking:
     flagged_unverified: RankList
     unranked: Tuple[Mapping, ...]
     warnings: Tuple[str, ...]
+    degeneracy_tol: float = DEGENERACY_TOL
 
     def to_json(self):
         return {"lists": [l.to_json() for l in self.lists],
                 "flagged_unverified": self.flagged_unverified.to_json(),
                 "unranked": [dict(r) for r in self.unranked],
-                "warnings": list(self.warnings), "degeneracy_tol": DEGENERACY_TOL}
+                "warnings": list(self.warnings), "degeneracy_tol": self.degeneracy_tol,
+                "degeneracy_tol_unit": "input energy units"}
+
+
+def _canon_ncond(v):
+    """Ncond per cell as a canonical value: an exact ``Fraction`` for an
+    int, a rational string or a float that is one (``1``, ``"1"`` and
+    ``1.0`` agree), else the float."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        raise ValueError("Ncond per cell: a number, got {!r}".format(v))
+    if isinstance(v, Fraction):
+        return v
+    if isinstance(v, str):
+        try:
+            return Fraction(v.strip())
+        except (ValueError, ZeroDivisionError):
+            raise ValueError("Ncond per cell: a number, got {!r}".format(v)) from None
+    x = float(v)
+    fr = Fraction(x).limit_denominator(10 ** 6)
+    return fr if float(fr) == x else Fraction(x)
+
+
+def _canon_sz(v):
+    """2Sz as ``None`` (free: unset or ``"free"`` in any case) or an int."""
+    if v is None or (isinstance(v, str) and v.strip().lower() == "free"):
+        return None
+    if isinstance(v, bool):
+        raise ValueError("2Sz: an integer or 'free', got {!r}".format(v))
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        raise ValueError("2Sz: an integer or 'free', got {!r}".format(v)) from None
+    if not x.is_integer():
+        raise ValueError("2Sz: an integer or 'free', got {!r}".format(v))
+    return int(x)
+
+
+def _canon(T, ncond, cellshape, sz):
+    return (float(T), _canon_ncond(ncond), tuple(int(x) for x in cellshape), _canon_sz(sz))
 
 
 def _group(row, f):
-    return (_row_T(row, f),
-            row["Ncond_per_cell"] if row.get("Ncond_per_cell") is not None
-            else f["Ncond_per_cell"],
-            tuple(int(x) for x in (row.get("cellshape") or f["cellshape"])),
-            row["2Sz"] if "2Sz" in row else f["2Sz"])
+    """The comparison group of a row, in canonical form (T a float, Ncond
+    per cell a Fraction, 2Sz None or an int), so equal values of different
+    types (``1`` and ``"1"``) are one group."""
+    return _canon(_row_T(row, f),
+                  row["Ncond_per_cell"] if row.get("Ncond_per_cell") is not None
+                  else f["Ncond_per_cell"],
+                  row.get("cellshape") or f["cellshape"],
+                  row["2Sz"] if "2Sz" in row else f["2Sz"])
+
+
+def _ncond_text(v):
+    return None if v is None else str(v)
+
+
+def _sz_text(v):
+    return "free" if v is None else str(v)
 
 
 def _group_json(g):
-    return {"T": g[0], "Ncond_per_cell": g[1], "cellshape": list(g[2]), "2Sz": g[3]}
+    return {"T": g[0], "Ncond_per_cell": _ncond_text(g[1]), "cellshape": list(g[2]),
+            "2Sz": g[3]}
 
 
 def _build_list(kind, items, group, tol):
@@ -621,7 +703,7 @@ def _build_list(kind, items, group, tol):
             delta_per_cell=e["free_energy_per_cell"] - lo_cell,
             delta_per_site=None if site is None or lo_site is None else site - lo_site,
             key_source=e["key_source"], flags=tuple(flags),
-            near_degenerate_with=tuple(near[i])))
+            near_degenerate_with=tuple(near[i]), group=group))
     return RankList(kind, group, tuple(entries), scale)
 
 
@@ -640,10 +722,73 @@ def _split_warning(g, main, n):
         if name == "CellShape":
             parts.append("CellShape {} differs from the model's {} (a k-mesh mismatch)"
                          .format(list(a), list(b)))
+        elif name == "2Sz":
+            parts.append("2Sz {} differs from the model's {}".format(_sz_text(a),
+                                                                       _sz_text(b)))
         else:
-            parts.append("{} = {} differs from the model's {}".format(name, a, b))
+            parts.append("{} = {} differs from the model's {}".format(
+                name, _ncond_text(a) if name == "Ncond per cell" else a,
+                _ncond_text(b) if name == "Ncond per cell" else b))
     return ("{} row(s) with {} are ranked in a separate list; they are not comparable "
             "with the model's list".format(n, "; ".join(parts)))
+
+
+def failure_kind(row) -> Optional[str]:
+    """The :data:`FAILURE_KINDS` entry of a ``failed`` row: its
+    ``failure_kind`` when set, else ``"zero_steps"`` for ``iterations = 0``,
+    ``"crash"`` for a non-zero ``exit_code``, else ``"unreadable_output"``;
+    ``None`` for any other status."""
+    if row.get("status") != "failed":
+        return None
+    if row.get("failure_kind") is not None:
+        return row["failure_kind"]
+    if row.get("iterations") == 0:
+        return "zero_steps"
+    if row.get("exit_code") not in (None, 0):
+        return "crash"
+    return "unreadable_output"
+
+
+def unranked_reason(row) -> str:
+    """Why a tried row is not ranked, specific to its status: the failure
+    kind and ``error_summary`` of a failed row (a crash, unreadable outputs
+    and zero SCF steps are told apart), the iterations and residual of a
+    not-converged row, the check of a seed-unverified row."""
+    status = row.get("status")
+    summary = row.get("error_summary")
+    if status is None:
+        return "not collected (no post-run status)"
+    if status == "failed":
+        kind = failure_kind(row)
+        text = "failed ({})".format(_FAILURE_TEXT[kind])
+        if kind == "crash" and row.get("exit_code") not in (None, 0):
+            text += ", exit code {}".format(row["exit_code"])
+        if summary:
+            text += ": {}".format(summary)
+        elif kind == "zero_steps":
+            text += ": no SCF step performed"
+        return text
+    if status == "not_converged":
+        parts = []
+        if row.get("iterations") is not None:
+            parts.append("{} iterations{}".format(
+                row["iterations"], "" if row.get("iteration_max") is None
+                else " of IterationMax = {}".format(row["iteration_max"])))
+        if row.get("scf_residual") is not None:
+            parts.append("residual {}".format(_num(row["scf_residual"], "{:.3e}")))
+        if row.get("scf_eps_tol") is not None:
+            parts.append("tolerance {}".format(_num(row["scf_eps_tol"], "{:.3e}")))
+        text = "not converged"
+        if parts:
+            text += " ({})".format(", ".join(parts))
+        return text + (": {}".format(summary) if summary else "")
+    if status == "not_run":
+        return "not run (neither hwave.log nor an output exists)"
+    if status == "seed_unverified":
+        return "seed unverified: {}".format(
+            summary or "an input or the initial file differs from the one prepared, or "
+                       "the initial-state check refused it")
+    return "status {}: not ranked".format(status)
 
 
 def rank(rows, *, facts, degeneracy_tol: float = DEGENERACY_TOL) -> Ranking:
@@ -663,17 +808,19 @@ def rank(rows, *, facts, degeneracy_tol: float = DEGENERACY_TOL) -> Ranking:
     ``unranked`` with its reason.
 
     ``facts``: a ModelFacts or the document's model record."""
+    tol = float(degeneracy_tol)
+    if not math.isfinite(tol) or tol < 0:
+        raise ValueError("degeneracy_tol: a finite number >= 0, got {!r}".format(
+            degeneracy_tol))
     f = _facts_record(facts)
-    main = (f["T"], f["Ncond_per_cell"], tuple(f["cellshape"]), f["2Sz"])
-    groups, unverified, unranked = {}, [], []
+    main = _canon(f["T"], f["Ncond_per_cell"], f["cellshape"], f["2Sz"])
+    groups, unverified, unranked = {}, {}, []
     for row in rows:
         if not row.get("tried"):
             continue
         status = row.get("status")
         if status not in ("converged", "convergence_unverified"):
-            why = ("not collected (no post-run status)" if status is None
-                   else "status {}: not ranked".format(status))
-            unranked.append(dict(row, unranked_reason=why))
+            unranked.append(dict(row, unranked_reason=unranked_reason(row)))
             continue
         e = energy_fields(row, facts=f)
         if e["refused"]:
@@ -682,21 +829,30 @@ def rank(rows, *, facts, degeneracy_tol: float = DEGENERACY_TOL) -> Ranking:
         if status == "converged":
             groups.setdefault(_group(row, f), []).append((row, e))
         else:
-            unverified.append((row, e))
+            unverified.setdefault(_group(row, f), []).append((row, e))
     order = sorted(groups, key=lambda g: (g != main, repr(g)))
     lists, warnings = [], []
     for g in order:
-        lists.append(_build_list("converged", groups[g], _group_json(g), degeneracy_tol))
+        lists.append(_build_list("converged", groups[g], _group_json(g), tol))
         if g != main:
             warnings.append(_split_warning(g, main, len(groups[g])))
-    ugroups = {_group(r, f) for r, _ in unverified}
-    ugroup = _group_json(next(iter(ugroups))) if len(ugroups) == 1 else (
-        _group_json(main) if not ugroups else None)
-    if len(ugroups) > 1:
+    uorder = sorted(unverified, key=lambda g: (g != main, repr(g)))
+    if len(uorder) <= 1:
+        g = uorder[0] if uorder else main
+        flagged = _build_list("convergence_unverified", unverified.get(g, []),
+                              _group_json(g), tol)
+    else:
+        # deltas and near-degeneracy per comparison group; each entry names its group
+        parts = [_build_list("convergence_unverified", unverified[g], _group_json(g), tol)
+                 for g in uorder]
+        scale = ("per site" if all(p.degeneracy_scale == "per site" for p in parts)
+                 else "per cell")
+        flagged = RankList("convergence_unverified", None,
+                           tuple(e for p in parts for e in p.entries), scale)
         warnings.append("the convergence-unverified rows span {} comparison groups; their "
-                        "flagged list mixes them".format(len(ugroups)))
-    flagged = _build_list("convergence_unverified", unverified, ugroup, degeneracy_tol)
-    return Ranking(tuple(lists), flagged, tuple(unranked), tuple(warnings))
+                        "deltas and near-degeneracy flags are computed within each group"
+                        .format(len(uorder)))
+    return Ranking(tuple(lists), flagged, tuple(unranked), tuple(warnings), tol)
 
 
 # --------------------------------------------------------------------------
@@ -829,6 +985,38 @@ def _table(header, rows):
         [line(r) for r in rows]
 
 
+def _reason_key(reason):
+    """The not-tried count key: the full reason, with the referent and map of
+    a duplicate left out (``"duplicate"``, and ``"quota: <family>
+    (duplicate of a row cut by its quota)"`` for a promoted duplicate)."""
+    if reason.startswith("duplicate of "):
+        return "duplicate"
+    if reason.startswith("quota:") and "(duplicate of " in reason:
+        return reason.split(" (duplicate of ")[0] + " (duplicate of a row cut by its quota)"
+    return reason
+
+
+def _near_clusters(lst):
+    """The near-degenerate entries of a list as clusters (connected by the
+    near-degeneracy relation), each once, in rank order."""
+    ids = [e.run_id for e in lst.entries]
+    adj = {e.run_id: set(e.near_degenerate_with) for e in lst.entries}
+    seen, out = set(), []
+    for rid in ids:
+        if rid in seen or not adj[rid]:
+            continue
+        stack, comp = [rid], set()
+        while stack:
+            x = stack.pop()
+            if x in comp:
+                continue
+            comp.add(x)
+            stack.extend(adj.get(x, ()))
+        seen |= comp
+        out.append([i for i in ids if i in comp])
+    return out
+
+
 def _rank_rows(lst):
     out = []
     for e in lst.entries:
@@ -855,8 +1043,7 @@ def summary_text(doc, ranking=None) -> str:
                    m.get("norb_phys"), m.get("n_c"),
                    "on" if m.get("spin_orbital") else "off",
                    "on" if m.get("iflag_fock") else "off", m.get("Ncond"),
-                   m.get("Ncond_per_cell"), m.get("T"),
-                   "free" if m.get("2Sz") is None else m.get("2Sz"),
+                   m.get("Ncond_per_cell"), m.get("T"), _sz_text(_canon_sz(m.get("2Sz"))),
                    m.get("cellshape"), su2))
     est = tier.get("estimate") or {}
     cost = ("no cost estimate in this release" if est.get("bytes") is None
@@ -877,8 +1064,7 @@ def summary_text(doc, ranking=None) -> str:
     reasons = {}
     for r in rows:
         if not r.get("tried"):
-            key = (r.get("not_tried_reason") or "").split(" (")[0]
-            key = key.split(" of ")[0] if key.startswith("duplicate") else key
+            key = _reason_key(r.get("not_tried_reason") or "")
             reasons[key] = reasons.get(key, 0) + 1
     out.append("Rows: {} ({} tried); not tried: {}".format(
         len(rows), len(tried), ", ".join("{} {}".format(n, k) for k, n in
@@ -897,7 +1083,7 @@ def summary_text(doc, ranking=None) -> str:
             out.append("Ranking {} (converged; T = {}, Ncond per cell {}, CellShape {}, "
                        "2Sz {}; near-degeneracy judged {}):".format(
                            i + 1, g.get("T"), g.get("Ncond_per_cell"), g.get("cellshape"),
-                           g.get("2Sz"), lst.degeneracy_scale))
+                           _sz_text(g.get("2Sz")), lst.degeneracy_scale))
             hdr = list(header)
             if lst.degeneracy_scale == "per cell":
                 hdr[3] = "dF per cell"
@@ -910,9 +1096,11 @@ def summary_text(doc, ranking=None) -> str:
             out.append("")
         if ranking.unranked:
             out.append("Not ranked (listed, never dropped):")
-            out.extend(_table(["id", "label", "status", "final label", "reason"],
+            out.extend(_table(["id", "label", "status", "iterations", "final label",
+                               "reason"],
                               [[r["run_id"], r.get("pattern_label") or "-",
-                                r.get("status") or "-", r.get("final_label") or "-",
+                                r.get("status") or "-", _num(r.get("iterations")),
+                                r.get("final_label") or "-",
                                 r.get("unranked_reason")] for r in ranking.unranked]))
             out.append("")
         for lst in tuple(ranking.lists) + (ranking.flagged_unverified,):
@@ -920,10 +1108,10 @@ def summary_text(doc, ranking=None) -> str:
                 if "cap hit" in e.flags:
                     flags.append("cap hit: {} (the seed field reached the cap without the "
                                  "target amplitude)".format(e.run_id))
-                if "near-degenerate" in e.flags:
-                    flags.append("near-degenerate: {} with {} (|dF| {} < {:g})".format(
-                        e.run_id, ", ".join(e.near_degenerate_with), lst.degeneracy_scale,
-                        DEGENERACY_TOL))
+            for cluster in _near_clusters(lst):
+                flags.append("near-degenerate: {} (|dF| {} < {:g} in input energy units)"
+                             .format(", ".join(cluster), lst.degeneracy_scale,
+                                     ranking.degeneracy_tol))
         flags.extend(ranking.warnings)
     for qb in lim.get("quota_boundary") or ():
         counts = "; ".join("{} {} of {}".format(q, c["tried"], c["tried"] + c["cut"])

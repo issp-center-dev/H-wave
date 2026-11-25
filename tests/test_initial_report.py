@@ -13,14 +13,15 @@ import numpy as np
 from tests import initial_fixtures
 from tests.initial_reference_capture import dump_toml
 
-#: design section 8.2, verbatim (formatting marks removed)
+#: design section 8.2 (formatting marks removed, internal references in plain words)
 EXCLUSIONS = (
     "multi-q superpositions (double-Q, triple-Q, vortex crystals)",
     "sliding-phase variants beyond the two kept phases, including an Umklapp phase "
-    "offset not pinned by symmetry (§6.3)",
+    "offset not pinned by symmetry",
     "combinations within a degenerate eigenspace other than the canonical basis",
     "rotated cells such as √3×√3, and cells outside subshapes",
-    "orbital and bond patterns in the large tier (Q1), and bond patterns other than hints",
+    "orbital and bond patterns in the large tier (it has spin and charge patterns only), "
+    "and bond patterns other than hints",
     "one amplitude per candidate",
     "hints describe the paramagnet only (static, at T_hint)",
     "spirals constructed only under a passed spin-rotation check",
@@ -160,6 +161,15 @@ class TestSchema(_Tmp):
         for key in ("pattern_label", "proposal_note", "duplicate_of", "amplitude_requested"):
             self.assertIn(key, doc["rows"][0])
         self.assertTrue(doc["cells"][0]["skipped_patterns"])
+        # the not-tried counts keep every reason apart, duplicates merged
+        line = next(l for l in report.summary_text(doc).splitlines()
+                    if l.startswith("Rows:"))
+        for part in ("1 no response,", "1 no response (constraint)",
+                     "1 no response (degenerate with para)", "1 unrepresentable",
+                     " duplicate,", "1 refused: writer check: not Hermitian"):
+            self.assertIn(part, line)
+        self.assertNotIn("duplicate of baseline", line)
+        self.assertIn("quota: baseline (duplicate of a row cut by its quota)", line)
 
     def test_validate_refuses(self):
         from hwave.initial import report
@@ -197,6 +207,10 @@ class TestSchema(_Tmp):
         bad(lambda d: d["limits"].update(fixed_sentence=SENTENCE[:-1]), "sentence")
         bad(lambda d: d["hint"].update(q_set=["0,0,0"]), "skipped hint q_set")
         bad(lambda d: d["model"]["su2"].update(sz_residual=0.0), "su2 sz_residual")
+        # a seeded para row has h_used = 0 exactly
+        bad(lambda d: row(d, lambda r: r["family"] == "para").update(h_used=None),
+            "seeded para h_used null")
+        bad(lambda d: row(d, quota).update(failure_kind="crash"), "failure_kind not failed")
         for ok in ("auto", "user", "auto (interim rule)"):
             d = copy.deepcopy(doc)
             d["tier"]["chosen_by"] = ok
@@ -347,7 +361,8 @@ class TestRanking(unittest.TestCase):
                          sorted([((4, 2, 1), 0.1, None), ((4, 4, 1), 0.2, None),
                                  ((4, 4, 1), 0.1, 0)], key=repr))
         self.assertEqual(len(rk.lists), 4)
-        self.assertTrue(any("2Sz = 0" in w for w in rk.warnings), rk.warnings)
+        self.assertTrue(any("2Sz 0 differs from the model's free" in w
+                            for w in rk.warnings), rk.warnings)
         self.assertTrue(any("CellShape [4, 2, 1]" in w and "k-mesh" in w
                             for w in rk.warnings), rk.warnings)
         self.assertTrue(any("T = 0.2" in w for w in rk.warnings), rk.warnings)
@@ -358,7 +373,7 @@ class TestRanking(unittest.TestCase):
         # unranked, never dropped
         un = {r["run_id"]: r for r in rk.unranked}
         self.assertEqual(sorted(un), ["e", "f", "g", "h"])
-        self.assertIn("not_converged", un["e"]["unranked_reason"])
+        self.assertIn("not converged", un["e"]["unranked_reason"])
         self.assertNotIn("j", un)
         js = rk.to_json()
         self.assertEqual(js["lists"][0]["entries"][0]["run_id"], "a")
@@ -435,6 +450,118 @@ class TestRanking(unittest.TestCase):
         self.assertIn("not_converged", text)
         self.assertIn("cap hit", text)
         self.assertIn("lowest among the candidates tried", text.lower())
+
+
+class TestRankingFixRound(unittest.TestCase):
+
+    def test_failed_reasons_are_specific(self):
+        from hwave.initial import report
+        rows = [
+            _r("z", "failed", iterations=0, error_summary="no SCF step performed"),
+            _r("z2", "failed", iterations=0),
+            _r("x", "failed", exit_code=1, error_summary="Traceback: ValueError"),
+            _r("u", "failed", iterations=12,
+               error_summary="green.npz: the 'green' member is not readable"),
+            _r("k", "failed", failure_kind="crash", error_summary="solver abort"),
+            _r("n", "not_converged", F=-1.0, iterations=2, iteration_max=2,
+               scf_residual=3.5e-3, scf_eps_tol=1e-8),
+            _r("s", "seed_unverified"),
+            _r("g", "not_run"),
+        ]
+        rk = report.rank(rows, facts=_facts())
+        un = {r["run_id"]: r["unranked_reason"] for r in rk.unranked}
+        self.assertEqual(un["z"], "failed (zero SCF steps): no SCF step performed")
+        self.assertEqual(un["z2"], "failed (zero SCF steps): no SCF step performed")
+        self.assertEqual(un["x"], "failed (solver crash or abort), exit code 1: "
+                                  "Traceback: ValueError")
+        self.assertEqual(un["u"], "failed (outputs missing or unreadable): green.npz: the "
+                                  "'green' member is not readable")
+        self.assertEqual(un["k"], "failed (solver crash or abort): solver abort")
+        self.assertIn("2 iterations of IterationMax = 2", un["n"])
+        self.assertIn("residual 3.500e-03", un["n"])
+        self.assertIn("tolerance 1.000e-08", un["n"])
+        self.assertTrue(un["s"].startswith("seed unverified"))
+        self.assertTrue(un["g"].startswith("not run"))
+        self.assertEqual(len(set(un[k] for k in ("z", "x", "u"))), 3)
+        text = report.summary_text(_summary_doc(rows), rk)
+        for k in ("z", "x", "u", "n"):
+            self.assertIn(un[k], text)
+
+    def test_group_key_is_canonical(self):
+        from hwave.initial import report
+        facts = dict(_facts(T=0), **{"Ncond_per_cell": "1", "2Sz": 0})
+        rows = [_r("a", F=-16.0, Ncond_per_cell=1), _r("b", F=-15.0, Ncond_per_cell="1"),
+                _r("c", F=-14.0, Ncond_per_cell=1.0, **{"2Sz": "0"}),
+                _r("d", F=-13.0, T=0, **{"2Sz": 0.0}), _r("e", F=-12.0)]
+        rk = report.rank(rows, facts=facts)
+        self.assertEqual(len(rk.lists), 1)
+        self.assertEqual(rk.warnings, ())
+        self.assertEqual([e.run_id for e in rk.lists[0].entries], ["a", "b", "c", "d", "e"])
+        self.assertEqual(rk.lists[0].group["Ncond_per_cell"], "1")
+        # free spelled two ways is one group; a different value is not
+        facts = dict(_facts(), **{"2Sz": None})
+        rk = report.rank([_r("a", F=-16.0, **{"2Sz": "free"}), _r("b", F=-15.0),
+                          _r("c", F=-14.0, Ncond_per_cell="3/2")], facts=facts)
+        self.assertEqual(len(rk.lists), 2)
+        self.assertEqual(len(rk.warnings), 1)
+        self.assertIn("Ncond per cell = 3/2", rk.warnings[0])
+
+    def test_tolerance_clusters_and_notation(self):
+        from hwave.initial import report
+        vol = 16
+        rows = [_r("a", F=-1.0 * vol), _r("b", F=(-1.0 + 6e-4) * vol),
+                _r("c", F=(-1.0 + 1.2e-3) * vol), _r("d", F=-0.5 * vol)]
+        rk = report.rank(rows, facts=_facts(groups=((0,),), interacting=(0,)),
+                         degeneracy_tol=1e-3)
+        self.assertEqual(rk.degeneracy_tol, 1e-3)
+        self.assertEqual(rk.to_json()["degeneracy_tol"], 1e-3)
+        text = report.summary_text(_summary_doc(rows), rk)
+        lines = [l for l in text.splitlines() if l.strip().startswith("near-degenerate:")]
+        self.assertEqual(lines, ["  near-degenerate: a, b, c (|dF| per site < 0.001 in "
+                                 "input energy units)"])
+        self.assertIn("2Sz free", text)
+        self.assertNotIn("2Sz None", text)
+        self.assertIn("2Sz = free", text)
+
+    def test_unverified_groups_kept_apart(self):
+        from hwave.initial import report
+        vol = 16
+        rows = [_r("a", "convergence_unverified", F=-1.0 * vol),
+                _r("b", "convergence_unverified", F=-2.0 * 8, cellshape=(4, 2, 1)),
+                _r("c", "convergence_unverified", F=(-1.0 + 1e-6) * vol)]
+        rk = report.rank(rows, facts=_facts())
+        fl = rk.flagged_unverified
+        self.assertIsNone(fl.group)
+        e = {x.run_id: x for x in fl.entries}
+        self.assertEqual(e["b"].delta_per_cell, 0.0)
+        self.assertEqual(e["a"].delta_per_cell, 0.0)
+        self.assertEqual(e["b"].near_degenerate_with, ())
+        self.assertEqual(e["a"].near_degenerate_with, ("c",))
+        self.assertEqual(e["b"].group["cellshape"], [4, 2, 1])
+        self.assertTrue(any("within each group" in w for w in rk.warnings))
+
+    def test_non_finite_energy_unranked(self):
+        from hwave.initial import report
+        rk = report.rank([_r("a", F=float("nan")), _r("b", F=float("inf")),
+                          _r("c", F=-1.0)], facts=_facts())
+        self.assertEqual([e.run_id for e in rk.lists[0].entries], ["c"])
+        un = {r["run_id"]: r["unranked_reason"] for r in rk.unranked}
+        self.assertIn("not finite", un["a"])
+        self.assertIn("not finite", un["b"])
+
+
+def _summary_doc(rows):
+    return {"schema_version": 4, "phase_marker": "post_run",
+            "model": dict(_facts(), norb_phys=2, n_c=2, spin_orbital=False,
+                          iflag_fock=True, Ncond=32, warnings=[], su2={"status": "passed"}),
+            "tier": {"name": "large", "chosen_by": "auto (interim rule)",
+                     "estimate": {"bytes": None, "seconds": None, "class": None}},
+            "hint": {"status": "skipped", "skip_reason": "large tier"},
+            "rows": rows,
+            "limits": {"T_hint": {"value": 0.1, "rule": "T_hint = T", "constants": {}},
+                       "label_thresholds": {"dominant_weight": 0.1, "tr_minor_weight": 0.1},
+                       "quota_boundary": [], "structural_exclusions": list(EXCLUSIONS),
+                       "fixed_sentence": SENTENCE}}
 
 
 # --------------------------------------------------------------------------
