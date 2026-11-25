@@ -914,6 +914,11 @@ def realise(spec: "PatternSpec", facts, subshape, *, normalise=True) -> np.ndarr
       interacting physical orbital in spin-orbital mode) within the solver
       blocks of ``facts.problem`` (spin-diagonal in 2Sz mode); ``facts``
       must be loaded on ``subshape`` and ``spec.subshape`` must be it.
+      Only ``O_H(D = 0)`` is filled: on-site entries and the bonds between
+      the in-cell offsets of one supercell are random, but bonds that cross
+      the supercell boundary (``D != 0``) are absent, so the pattern is not
+      uniform over bonds and is not meant to be (an unbiased escape row
+      that may break every translation of the cell).
     * ``none`` (para): zeros.
 
     With ``normalise`` (default) ``||O||_F = 1`` per primitive cell

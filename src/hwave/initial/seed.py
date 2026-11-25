@@ -30,6 +30,7 @@ outside them is refused, naming it), then against the constraint modes
 ``T_hint`` never enters: ``W0`` only scales the shell tolerance.
 """
 import dataclasses
+import logging
 import math
 import numbers
 from dataclasses import dataclass
@@ -39,9 +40,11 @@ import numpy as np
 
 from hwave.solver import initial_facade
 
+logger = logging.getLogger("qlms").getChild("initial").getChild("seed")
+
 __all__ = [
     "SEED_BASES", "BLOCK_RTOL", "NO_RESPONSE_TOL", "W_FLOOR_MIN", "SHELL_RTOL",
-    "BISECTION_RTOL", "BISECTION_STEPS", "CAP_DOUBLINGS", "CAP_REASON",
+    "BISECTION_RTOL", "BISECTION_STEPS", "CAP_DOUBLINGS", "N_RTOL", "CAP_REASON",
     "DEGENERATE_REASON", "CONSTRAINT_REASON", "BLOCK_REASON", "SeedResult",
     "block_check", "m_value", "m_inf", "constraint_mode", "w_floor", "op_norm",
     "density_at", "moments_of", "seed_pattern",
@@ -65,7 +68,9 @@ BISECTION_RTOL = 1e-3
 BISECTION_STEPS = 60
 #: the numerical guard: at most ``2^CAP_DOUBLINGS * W_floor``
 CAP_DOUBLINGS = 40
-_CAP_DOUBLINGS = CAP_DOUBLINGS
+#: the electron count of every mu-group must match to this times
+#: ``max(1, Ncond)`` (see :func:`density_at`)
+N_RTOL = 1e-9
 #: a constraint mode is ``O`` within this fraction of its norm of a
 #: combination of the mu-group number operators
 CONSTRAINT_RTOL = 1e-10
@@ -92,7 +97,8 @@ class SeedResult:
     ``m_target`` (``m0 + Delta m*``), ``m_used``, ``h_hi`` (the upper end of
     the doubling bracket), ``h_used``, ``amplitude_requested``,
     ``amplitude_used`` (``Delta m(h_used) / (m_inf - m0)``) and
-    ``cap_reason`` (only at the cap).
+    ``cap_reason`` (only at the cap). ``meta`` (tried rows):
+    ``{"n_residual", "mu_refined"}`` of the written G (:func:`density_at`).
 
     Set fields per state: seeded: all (``cap_reason`` only at the cap);
     para: ``G``, ``seed_base``, ``shell``, ``moments_h0``, ``h_used = 0``;
@@ -116,6 +122,7 @@ class SeedResult:
     amplitude_requested: Optional[float] = None
     amplitude_used: Optional[float] = None
     cap_reason: Optional[str] = None
+    meta: Optional[Mapping] = None
 
     @classmethod
     def not_performed(cls, reason: str) -> "SeedResult":
@@ -267,11 +274,50 @@ def op_norm(O_k) -> float:
 # the density
 # --------------------------------------------------------------------------
 
-def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None):
+def _group_counts(G, problem):
+    """The electron number of each mu-group in the stored ``G``:
+    ``nvol * sum_{i in group} G(r = 0)_ii``."""
+    d = np.real(np.diagonal(np.asarray(G)[0].reshape(problem.nd, problem.nd)))
+    counts = [0.0] * len(problem.blocks.group_nconds)
+    for blk, g in zip(problem.blocks.block_info, problem.blocks.block_to_group):
+        counts[int(g)] += float(np.sum(d[np.asarray(blk, dtype=int)]))
+    return [problem.nvol * c for c in counts]
+
+
+def _count_residual(G, problem):
+    return max((abs(n - float(n0)) for n, n0 in
+                zip(_group_counts(G, problem), problem.blocks.group_nconds)), default=0.0)
+
+
+def _count_tol(problem):
+    return N_RTOL * max(1.0, float(problem.ncond))
+
+
+def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta=False):
     """``(G(h), FillInfo)``: the stored Green function of ``H_base - h O``
     on the cell of ``facts.problem`` with the solver's blocks, mu rule
     and Fermi cut, uniform shell fill at T = 0 with ``shell_tol = 1e-10 *
-    max(1, W0, h ||O||_op)`` (``o_norm`` may pass ``||O||_op``)."""
+    max(1, W0, h ||O||_op)`` (``o_norm`` may pass ``||O||_op``).
+
+    **Electron number at T > 0.** The solver finds mu by
+    ``scipy.optimize.bisect`` with its default tolerances, ``xtol = 2e-12``
+    and ``rtol = 4 eps`` relative to ``|mu|``. Since ``mu`` is of order
+    ``-h lambda`` for a large field, the electron-count error grows with h
+    (about 1e-9 at ``h = 1e5``, up to a sizeable fraction of an electron
+    near the ``2^40 W_floor`` guard). After each fill the count of every
+    mu-group is checked: when ``|N_g - Ncond_g| > N_RTOL * max(1, Ncond)``
+    the fill is repeated on the same Hamiltonian with each group's
+    diagonal shifted by its ``-mu_g`` (a constant per group, which leaves
+    the occupation rule and every occupation unchanged but brings the
+    root near 0, where the bisection's absolute tolerance governs); the
+    reported ``mu`` is shifted back. A count still off after that is
+    logged as a WARNING with its size. Far beyond that (a field splitting
+    larger than ``ene_cutoff * T`` over a degenerate lowest level of a
+    group, e.g. about ``2^26 W_floor`` on a two-site chain at T = 0.1) the
+    solver's own mu search can fail outright; its error is not caught
+    here. With ``return_meta`` the result is
+    ``(G, FillInfo, meta)``, ``meta = {"n_residual": float, "mu_refined":
+    bool}`` (the largest group-count error of the returned G)."""
     p = facts.problem
     base = np.asarray(base_ham_k)
     h = float(h)
@@ -282,9 +328,34 @@ def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None):
         ham = base - h * o
         scale = h * (op_norm(o) if o_norm is None else float(o_norm))
     tol = SHELL_RTOL * max(1.0, float(W0), scale)
-    return initial_facade.green_function(
-        ham, T_run, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb, fill="uniform",
-        shell_tol=tol, ene_cutoff=p.ene_cutoff, return_info=True)
+
+    def fill(hk):
+        return initial_facade.green_function(
+            hk, T_run, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb, fill="uniform",
+            shell_tol=tol, ene_cutoff=p.ene_cutoff, return_info=True)
+
+    G, info = fill(ham)
+    residual = _count_residual(G, p)
+    refined = False
+    if T_run > 0 and residual > _count_tol(p):
+        shift = np.zeros(p.nd)
+        for blk, g in zip(p.blocks.block_info, p.blocks.block_to_group):
+            shift[np.asarray(blk, dtype=int)] = info.mu[int(g)]
+        G2, info2 = fill(ham - np.diag(shift)[None, :, :])
+        res2 = _count_residual(G2, p)
+        refined = True
+        if res2 < residual:
+            G, residual = G2, res2
+            info = initial_facade.FillInfo(
+                mu=tuple(float(m) + float(info.mu[g]) for g, m in enumerate(info2.mu)),
+                shell=info2.shell)
+        if residual > _count_tol(p):
+            logger.warning(
+                "field seeding: the electron count of the seed is off by %.3g at h = "
+                "%.6g after refining mu (tolerance %.3g)", residual, h, _count_tol(p))
+    if return_meta:
+        return G, info, {"n_residual": residual, "mu_refined": refined}
+    return G, info
 
 
 def _sites(facts):
@@ -380,11 +451,12 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
                          f"got {base.shape}")
 
     if O_k is None:                                         # para
-        G0, info0 = density_at(facts, base, None, 0.0, T_run=T_run, W0=W0)
+        G0, info0, meta0 = density_at(facts, base, None, 0.0, T_run=T_run, W0=W0,
+                                      return_meta=True)
         shell0 = _shell(info0)
         return SeedResult(tried=True, G=_read_only(G0), seed_base=seed_base,
                           shell={"h0": shell0, "h_used": shell0},
-                          moments_h0=moments_of(G0, facts), h_used=0.0)
+                          moments_h0=moments_of(G0, facts), h_used=0.0, meta=meta0)
 
     o = _as_pattern(O_k, p.nvol, p.nd)
     norm = float(np.linalg.norm(o))
@@ -417,18 +489,19 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
     o_norm = op_norm(o)
 
     def evaluate(h):
-        G, info = density_at(facts, base, o, h, T_run=T_run, W0=W0, o_norm=o_norm)
-        return m_value(o, G, problem=p) - m0, G, info
+        G, info, meta = density_at(facts, base, o, h, T_run=T_run, W0=W0, o_norm=o_norm,
+                                   return_meta=True)
+        return m_value(o, G, problem=p) - m0, G, (info, meta)
 
     h = w_floor(base)
     h_lo = 0.0
     found = None
-    for j in range(_CAP_DOUBLINGS + 1):
+    for j in range(CAP_DOUBLINGS + 1):
         d, G, info = evaluate(h)
         if d >= target:
             found = (h, d, G, info)
             break
-        if j == _CAP_DOUBLINGS:
+        if j == CAP_DOUBLINGS:
             break
         h_lo = h
         h *= 2.0
@@ -455,7 +528,7 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
                     a = mid
     return SeedResult(
         tried=True, G=_read_only(G_used), seed_base=seed_base,
-        shell={"h0": shell0, "h_used": _shell(info_used)}, moments_h0=moments,
+        shell={"h0": shell0, "h_used": _shell(info_used[0])}, moments_h0=moments,
         m0=m0, m_inf=minf, m_target=m0 + target, m_used=m0 + d_used, h_hi=h_hi,
         h_used=h_used, amplitude_requested=amplitude, amplitude_used=d_used / dm_sat,
-        cap_reason=cap_reason)
+        cap_reason=cap_reason, meta=info_used[1])

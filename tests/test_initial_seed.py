@@ -332,6 +332,59 @@ class TestSearch(_Tmp):
         want = [1e-10, 3e-10, 3e-10, 1e-10 * 1e4 * op]
         np.testing.assert_allclose(seen, want, rtol=1e-14)
 
+    def test_cap_doublings_takes_effect(self):
+        """Patching the public CAP_DOUBLINGS moves the guard: with 1 the
+        seed stops at 2 W_floor."""
+        from hwave.initial import seed
+        f = self.chain(4, (2, 1, 1), ncond=4, T=0.1)
+        spec = _spec([_e(c0=1.0)], ("1/2", "0", "0"), (2, 1, 1))
+        free, _ = self.seed(f, spec, amplitude=0.999)
+        self.assertIsNone(free.cap_reason)
+        self.assertGreater(free.h_used, 2 * seed.w_floor(f.problem.ham_trans_k))
+        with mock.patch.object(seed, "CAP_DOUBLINGS", 1):
+            res, _ = self.seed(f, spec, amplitude=0.999)
+        self.assertEqual(res.cap_reason, "target not reached at the cap")
+        self.assertEqual(res.h_used, 2 * seed.w_floor(f.problem.ham_trans_k))
+        self.assertEqual(res.h_hi, res.h_used)
+
+    def test_electron_count_at_large_h(self):
+        """At T > 0 the solver's mu bisection has a tolerance relative to
+        |mu| ~ h, so the raw count error grows with h; density_at refines mu
+        and keeps every group's count within N_RTOL * max(1, Ncond), also at
+        h far above the plateau (2^24 W_floor; beyond about 2^26 W_floor the
+        solver's own mu search fails on this fixture, see density_at)."""
+        from hwave.initial import patterns, seed
+        f = self.chain(4, (2, 1, 1), ncond=4, T=0.1, two_sz=2)
+        p = f.problem
+        O = patterns.realise(_spec([_e(cz=1.0)], ("1/2", "0", "0"), (2, 1, 1)), f, (2, 1, 1))
+        wf = seed.w_floor(p.ham_trans_k)
+        refined = []
+        for fac in (1e5, 1e6, 2.0 ** 24):
+            G, info, meta = seed.density_at(f, p.ham_trans_k, O, fac * wf, T_run=0.1, W0=4.0,
+                                            return_meta=True)
+            counts = seed._group_counts(G, p)
+            for n, n0 in zip(counts, p.blocks.group_nconds):
+                self.assertLessEqual(abs(n - n0), 1e-9 * max(1, p.ncond))
+            self.assertLessEqual(meta["n_residual"], 1e-9 * max(1, p.ncond))
+            refined.append(meta["mu_refined"])
+        self.assertTrue(refined[-1])          # the raw fill was off at large h
+        # the seeded row records it
+        res, _ = self.seed(f, _spec([_e(cz=1.0)], ("1/2", "0", "0"), (2, 1, 1)))
+        self.assertEqual(sorted(res.meta), ["mu_refined", "n_residual"])
+
+    def test_electron_count_warning(self):
+        """A count still off after the refinement is logged with its size."""
+        from hwave.initial import patterns, seed
+        f = self.chain(4, (2, 1, 1), ncond=4, T=0.1)
+        p = f.problem
+        O = patterns.realise(_spec([_e(cz=1.0)], ("1/2", "0", "0"), (2, 1, 1)), f, (2, 1, 1))
+        with mock.patch.object(seed, "N_RTOL", -1.0), \
+                self.assertLogs("qlms.initial.seed", level="WARNING") as cm:
+            _, _, meta = seed.density_at(f, p.ham_trans_k, O, 1.0, T_run=0.1, W0=4.0,
+                                         return_meta=True)
+        self.assertTrue(meta["mu_refined"])
+        self.assertIn("electron count", cm.output[0])
+
     def test_amplitude_range(self):
         f = self.chain(4, (2, 1, 1), ncond=4, T=0.1)
         spec = _spec([_e(c0=1.0)], ("1/2", "0", "0"), (2, 1, 1))
@@ -480,7 +533,7 @@ class TestNullTable(_Tmp):
         self.assert_set(res, all_but_cap)
         self.assertEqual(sorted(res.shell), ["h0", "h_used"])
         # seeded at the cap
-        with mock.patch.object(seed, "_CAP_DOUBLINGS", 0):
+        with mock.patch.object(seed, "CAP_DOUBLINGS", 0):
             res, _ = self.seed(f, stag, amplitude=0.99)
         self.assertTrue(res.tried)
         self.assert_set(res, set(_FIELDS))
