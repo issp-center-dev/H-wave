@@ -321,6 +321,16 @@ HEAVY_TESTS = (
      "without and with the spin-mixing block, the field through Transfer and "
      "through Extern (all seven types, Nmat = 4096, 58 s measured); the "
      "three-type Nmat = 512 smoke variant stays in the fast gate"),
+    # --- tests/test_initial_cli.py -- prepare, bash commands.txt, collect --
+    ("test_initial_cli", "TestPrepare", "test_prepare_layout_and_commands",
+     "prepare, then bash commands.txt runs a check and an hwave subprocess per "
+     "run; 2.9 s on macOS, about 8 s on the Linux CI runners"),
+    ("test_initial_cli", "TestPrepare", "test_prepare_path_to_input_inputs",
+     "two prepared WORKs each run with bash commands.txt (check and hwave "
+     "subprocesses); 2.8 s on macOS, about 8 s on the Linux CI runners"),
+    ("test_initial_cli", "TestPrepare", "test_work_relocatable",
+     "prepare, move WORK, bash commands.txt, collect twice; 1.7 s on macOS, "
+     "about 5 s on the Linux CI runners"),
     # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
     ("test_offsite_exchange_ed_longitudinal",
      "TestOffsiteExchangeLongitudinalControls",

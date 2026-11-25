@@ -913,7 +913,6 @@ _OUTPUT_ROW_FIELDS = ("energy_total", "free_energy_total", "rest", "free_energy_
 
 
 def _collect_row(row, entry, work, model, warnings, facts_cache, para_cache):
-    from types import MappingProxyType
     from hwave.results import ResultsError, UnsupportedLayoutError, open_run, read_scf_status
     run_dir = work / entry["run_dir"]
     run_toml = run_dir / entry["input_toml"]
@@ -942,12 +941,14 @@ def _collect_row(row, entry, work, model, warnings, facts_cache, para_cache):
             try:
                 st = read_scf_status(run)
             except UnsupportedLayoutError as exc:
-                warnings.append("{}: the status file {} is ignored: {}".format(
-                    entry["run_id"], os.path.relpath(status_path, work), exc))
-                # read the outputs as if the file were absent
-                run = dataclasses.replace(run, outputs=MappingProxyType(
-                    {k: v for k, v in run.outputs.items() if k != "scf_status"}))
-                st = None
+                # every output reader refuses a run whose status file cannot be
+                # read (the zero-step guard), so the run's results are not
+                # usable: failed, never ranked
+                name = status_path.name
+                warnings.append("{}: {} unreadable: {}".format(entry["run_id"], name, exc))
+                row.update(status="failed", failure_kind="unreadable_output",
+                           error_summary="{} unreadable: {}".format(name, exc))
+                return
         if st is not None:
             row["iterations"] = st.iterations
             row["scf_residual"] = _plain(st.residual)
@@ -964,7 +965,7 @@ def _collect_row(row, entry, work, model, warnings, facts_cache, para_cache):
                 row["status"] = "not_converged"
             return
         log = run_dir / RUN_LOG
-        has_out = _any_output(run) or status_path is not None
+        has_out = _any_output(run)
         if not log.is_file() and not has_out:
             row["status"] = "not_run"
             return
@@ -1000,7 +1001,9 @@ def collect(work, *, stdout=None, stderr=None) -> int:
     initial-state check refuses it; otherwise a valid status file decides
     (``iterations = 0`` gives ``failed``); otherwise ``hwave.log``
     (``not_run``, ``convergence_unverified``, ``failed``, ``not_converged``,
-    ``converged``). Outputs of a converged run must be readable, else
+    ``converged``). A status file that exists but cannot be read makes the
+    row ``failed`` (``"<file> unreadable: <message>"``): the output readers
+    refuse such a run. Outputs of a converged run must be readable, else
     ``failed``. Every reader gets ``base_dir`` = the run directory.
     Idempotent: the result depends only on WORK."""
     from hwave.initial.candidates import CandidateSet, _thaw_json

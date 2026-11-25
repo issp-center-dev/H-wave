@@ -21,6 +21,7 @@ import numpy as np
 
 import hwave
 from tests import initial_fixtures
+from tests.heavy_tests import heavy
 from tests.initial_reference_capture import dump_toml
 
 _SRC = os.path.dirname(os.path.dirname(os.path.abspath(hwave.__file__)))
@@ -129,6 +130,7 @@ class _Base(unittest.TestCase):
 
 
 class TestPrepare(_Base):
+    @heavy
     def test_prepare_layout_and_commands(self):
         from hwave.initial.writer import solver_initial_path
         src = self.model()
@@ -377,6 +379,7 @@ class TestPrepare(_Base):
         _write_toml(os.path.join(base, "input.toml"), doc)
         return base
 
+    @heavy
     def test_prepare_path_to_input_inputs(self):
         from hwave.initial.writer import solver_initial_path
         for variant in ("inputs", "data"):
@@ -402,6 +405,7 @@ class TestPrepare(_Base):
                     self.assertIn("read initial from initial.npz", f.read())
                 self.assertTrue(os.path.isfile(os.path.join(rd, "output", "greenone.dat")))
 
+    @heavy
     def test_work_relocatable(self):
         src = self.model(param={"IterationMax": 1})
         work = self.path("a", "WORK")
@@ -685,11 +689,18 @@ class TestCollect(_Base):
         self.run_hwave(rd)
         with open(os.path.join(rd, "output", "scf_status.dat"), "w") as f:
             f.write("format_version = 2\n")
-        rows, _, err = self.collect(work)
-        self.assertIn("scf_status.dat", err)
-        self.assertIn("ignored", err)
-        self.assertEqual(rows[rid]["status"], "converged")   # from hwave.log
-        self.assertIsNone(rows[rid]["iterations"])
+        rows, doc, err = self.collect(work)
+        r = rows[rid]
+        self.assertEqual(r["status"], "failed")
+        self.assertEqual(r["failure_kind"], "unreadable_output")
+        self.assertTrue(r["error_summary"].startswith("scf_status.dat unreadable: "),
+                        r["error_summary"])
+        self.assertIn("format_version", r["error_summary"])
+        self.assertIn("scf_status.dat unreadable", err)
+        self.assertIsNone(r["free_energy_per_cell"])
+        ranked = [e["run_id"] for lst in doc["ranking"]["lists"] for e in lst["entries"]]
+        self.assertNotIn(rid, ranked)
+        self.assertIn(rid, [u["run_id"] for u in doc["ranking"]["unranked"]])
 
     def test_collect_status_input_changed(self):
         work, ids = self.prepared()
