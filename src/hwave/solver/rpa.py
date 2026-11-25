@@ -966,9 +966,9 @@ class Interaction:
                                                    label="Transfer")
             except ValueError as exc:
                 raise ValueError(
-                    "{}; in spin-orbital mode the geometry norb (the "
-                    "spin-orbital count, 2 x physical) must cover all "
-                    "Transfer indices".format(exc)) from exc
+                    "{}; in spin-orbital mode the norb of the geometry file "
+                    "(the spin-orbital count, 2 x physical) must cover every "
+                    "1-based Transfer index".format(exc)) from exc
             tab_r = spin_orbital.interleaved_to_spinblock(tab_so, norb)
         else:
             # physical orbital indices; the spin block of a spin-orbital-
