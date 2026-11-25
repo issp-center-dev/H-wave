@@ -822,7 +822,13 @@ class UHFk(solver_base):
         _data = None
         if "initial" in green_info and green_info["initial"] is not None:
             logger.info("load initial green function from file")
-            _data = self._read_green_from_data(green_info["initial"])
+            try:
+                _data = self._read_green_from_data(green_info["initial"])
+            except ValueError as exc:
+                # a "green" array of another lattice/orbital layout (e.g. a
+                # file from a run with another CellShape) cannot be folded
+                logger.error("initial green function: {}".format(exc))
+                exit(1)
         elif "initial_uhf" in green_info:
             if not "geometry_uhf" in green_info:
                 logger.error("initial green function in coord space requires geometry.dat")

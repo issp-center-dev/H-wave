@@ -12,6 +12,9 @@ norb)`` with ``norb = norb_orig * Bvol``.  They must reproduce, bit for bit:
 * the folded Transfer table that ``fold.reshape_interaction`` builds
   (``hamiltonian=True`` on a primitive H(R)).
 """
+import os
+import shutil
+import tempfile
 import types
 import unittest
 
@@ -46,7 +49,8 @@ def _layout(cellshape, subshape, norb_orig, ns):
 def _random_distinct(rng, shape):
     g = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
     # distinct entries, so a wrong index cannot hide behind equal values
-    assert np.unique(g).size == g.size
+    if np.unique(g).size != g.size:
+        raise RuntimeError("random test array has repeated entries")
     return g
 
 
@@ -118,7 +122,7 @@ class TestFoldLayoutMatchesLegacy(unittest.TestCase):
                     got = fold.fold_layout(g, hamiltonian=ham, **_kw(lay))
                     ref = RPA._reshape_green(_rpa_stub(lay), g,
                                              hamiltonian=ham)
-                    self.assertTrue(np.array_equal(got, ref))
+                    _assert_bitwise(self, got, ref)
 
     def test_uhfk_methods_delegate_bitwise(self):
         rng = np.random.default_rng(367)
@@ -246,6 +250,27 @@ class TestFoldLayoutProperties(unittest.TestCase):
             fold.unfold_layout(orig, **_kw(lay))
         with self.assertRaisesRegex(ValueError, "norb_orig"):
             _uhfk_stub(lay)._deflate_green(orig)
+
+    def test_wrong_shape_initial_file_is_a_logged_error(self):
+        # a user "initial" file whose green has another layout ends the run
+        # with one logged error line and exit(1), like the other input checks
+        lay = _layout((4, 4, 1), (2, 2, 1), 1, 2)
+        solver = _uhfk_stub(lay)
+        solver.has_sublattice = True
+        tmp = tempfile.mkdtemp()
+        try:
+            path = os.path.join(tmp, "green.npz")
+            np.savez(path, green=np.zeros((lay.lvol, lay.ns, 2, lay.ns, 2),
+                                          dtype=np.complex128))
+            with np.load(path) as ginfo:
+                with self.assertLogs("qlms.uhfk", level="ERROR") as logs:
+                    with self.assertRaises(SystemExit) as cm:
+                        solver._initial_green({"initial": ginfo})
+        finally:
+            shutil.rmtree(tmp)
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("norb_orig", logs.output[0])
 
     def test_subshape_must_divide_cellshape(self):
         with self.assertRaisesRegex(ValueError, "subshape"):
