@@ -378,7 +378,8 @@ def _determine_mu(eigenvalues, beta, n_target, norb):
     as RPA: ``brentq`` with ``xtol=1e-14`` bracketed on the eigenvalue span
     (falling back to the wide bracket only when that span is not
     sign-bracketed), followed by the transactional Newton polish
-    ``rpa._polish_mu_root``, and it reuses ``rpa._masked_fermi_delta_n`` so
+    ``hartree_fock.polish_mu_root``, and it reuses
+    ``hartree_fock.masked_fermi_delta_n`` so
     the overflow-guarded Fermi arithmetic (and the particle-number residual
     it drives to round-off) is bit-for-bit identical to RPA's.  The former
     overflow cutoff of 100 becomes the ``ene_cutoff`` of the masked helper.
@@ -399,7 +400,7 @@ def _determine_mu(eigenvalues, beta, n_target, norb):
     mu : float
         Chemical potential.
     """
-    from hwave.solver import rpa as _rpa
+    from hwave.solver import hartree_fock as _hf
 
     Nx, Ny, Nz = eigenvalues.shape[:3]
     nvol = Nx * Ny * Nz
@@ -414,7 +415,7 @@ def _determine_mu(eigenvalues, beta, n_target, norb):
     target = n_target * norb * nvol
 
     def _delta_n_and_deriv(mu):
-        return _rpa._masked_fermi_delta_n(w, T, mu, target, ene_cutoff)
+        return _hf.masked_fermi_delta_n(w, T, mu, target, ene_cutoff)
 
     def _calc_delta_n(mu):
         return _delta_n_and_deriv(mu)[0]
@@ -431,6 +432,6 @@ def _determine_mu(eigenvalues, beta, n_target, norb):
 
     # Transactional Newton polish (#160): drives the particle-number residual
     # toward round-off; never returns a worse root than brentq's.
-    mu = _rpa._polish_mu_root(_delta_n_and_deriv, mu,
-                              bracket=(lo, hi) if bracketed else None)
+    mu = _hf.polish_mu_root(_delta_n_and_deriv, mu,
+                            bracket=(lo, hi) if bracketed else None)
     return float(mu)

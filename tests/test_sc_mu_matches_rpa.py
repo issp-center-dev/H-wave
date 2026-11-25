@@ -5,7 +5,7 @@ with RPA's to round-off.
 ``mu = _determine_mu(eigenvalues, beta, n_filling, norb)`` line) and passes it
 downstream as ``precomputed_mu``, bypassing ``RPA._find_mu``.  RPA's search
 (brentq xtol=1e-14 + Newton fallback + the transactional Newton polish
-``_polish_mu_root``) drives the particle-number residual to round-off; a plain
+``polish_mu_root``) drives the particle-number residual to round-off; a plain
 bisection with default tolerances does not.  This test runs the SAME band
 through both mu searches and checks that they agree.
 
@@ -21,7 +21,9 @@ import unittest
 import numpy as np
 
 from hwave.solver.eliashberg.band import _determine_mu
-from hwave.solver.rpa import RPA, _masked_fermi_delta_n
+from hwave.solver.hartree_fock import (
+    masked_fermi_delta_n as _masked_fermi_delta_n)
+from hwave.solver.rpa import RPA
 
 
 class _Host:

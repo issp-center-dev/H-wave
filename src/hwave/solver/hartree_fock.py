@@ -21,12 +21,22 @@ mode calls them on the virtual spin-block frame of
 
 The FLEX-side density evaluator of the same spec lives here too
 (:func:`equal_time_density`, section 2.1).
+
+The module also holds the one Fermi function of the solvers and what the
+chemical-potential searches build on it:
+
+* :func:`masked_fermi` -- the overflow-guarded distribution (UHFk, RPA,
+  FLEX, hwave_sc and the density evaluator above call it);
+* :func:`masked_fermi_delta_n` -- the particle-number counter and its
+  derivative, the function ``RPA._find_mu`` and hwave_sc root-find;
+* :func:`polish_mu_root` -- the Newton polish of a root of that counter.
 """
 from collections import namedtuple
 from dataclasses import dataclass
 
 import numpy as np
 
+from . import backend as _bk
 from .kgrid import fold_rvec, reverse_fft_axes
 from ..qlmsio import wan90
 
@@ -242,18 +252,78 @@ def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
 
 
 # =============================================================================
-# The Heff-referenced equal-time density (spec section 2.1)
+# The Fermi function, the particle-number counter and the mu polish
 # =============================================================================
 
 def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
-    """Fermi function with the overflow guard of ``RPA._find_mu`` /
-    ``FLEX._fermi_occupation`` (same arithmetic)."""
+    """Fermi function ``1 / (1 + exp((ev - mu) / t))`` with an overflow
+    guard: an entry with ``(ev - mu) / t >= ene_cutoff`` is exactly zero
+    and never reaches ``exp``.
+
+    ``ev`` is a NumPy or a CuPy array; the result is an array of the same
+    module. ``ene_cutoff`` is the caller's: UHFk and RPA pass the
+    ``ene_cutoff`` of the input file; FLEX and hwave_sc use 100.
+    """
+    xp = _bk.array_module_of(ev)
     w = (ev - mu) / t
     mask = w < ene_cutoff
-    w1 = np.where(mask, w, 0.0)
-    v1 = 1.0 / (1.0 + np.exp(w1))
-    return np.where(mask, v1, 0.0)
+    w1 = xp.where(mask, w, 0.0)
+    v1 = 1.0 / (1.0 + xp.exp(w1))
+    return xp.where(mask, v1, 0.0)
 
+
+def masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
+    """delta_n(mu) = sum over ALL (block, k, band) entries of the masked
+    Fermi factor, minus ``target`` -- the exact counter ``RPA._find_mu``
+    root-finds (a PLAIN sum: no k normalization, no spin factor; the
+    caller pre-halves the target for spin-free) -- and its exact
+    analytic derivative sum f(1-f)/T under the IDENTICAL mask. At the
+    mask boundary the neglected derivative term is O(exp(-ene_cutoff)),
+    far below every tolerance in use (#160 spec, Change 1).
+    """
+    f = masked_fermi(T, mu, w, ene_cutoff)
+    n = float(np.sum(f).real) - target
+    dn = float(np.sum(f * (1.0 - f)).real / T)
+    return n, dn
+
+
+def polish_mu_root(delta_n_and_deriv, mu_root, bracket=None, max_iter=3):
+    """Transactional Newton polish of a mu root (#160 spec, Change 1).
+
+    Accepts a candidate ONLY on a strictly smaller finite residual, so
+    it can never return a worse root than ``mu_root``. Guards: zero/
+    non-finite derivative, non-finite candidate, non-finite candidate
+    residual, optional bracket clipping, ``max_iter`` rounds. Module
+    level (not a closure) so the guard branches are unit-testable with
+    synthetic counters.
+    """
+    best_mu = float(mu_root)
+    n, dn = delta_n_and_deriv(best_mu)
+    best_r = abs(n)
+    if not np.isfinite(best_r):
+        return best_mu
+    for _ in range(max_iter):
+        if best_r == 0.0:
+            break
+        if not (np.isfinite(dn) and dn > 0.0):
+            break
+        cand = best_mu - n / dn
+        if not np.isfinite(cand):
+            break
+        if bracket is not None:
+            cand = min(max(cand, bracket[0]), bracket[1])
+        n_c, dn_c = delta_n_and_deriv(cand)
+        r = abs(n_c)
+        if np.isfinite(r) and r < best_r:
+            best_mu, best_r, n, dn = cand, r, n_c, dn_c
+        else:
+            break
+    return best_mu
+
+
+# =============================================================================
+# The Heff-referenced equal-time density (spec section 2.1)
+# =============================================================================
 
 @dataclass(frozen=True)
 class DensityResult:
