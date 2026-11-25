@@ -52,7 +52,7 @@ def test_e2e_dynamic_eliashberg_two_rungs_real_solver(tmp_path):
     Eliashberg entirely (test_e2e_flex_only_two_rungs) or (in unit tests
     elsewhere) mock/stub the solver. Here FLEX actually writes chiq_s.npz /
     chiq_c.npz / green.npz per rung, and hwave.sc.calc_eliashberg dispatches
-    to the real hwave.solver.eliashberg_dynamic.solve_dynamic path on them.
+    to the real hwave.solver.eliashberg.dynamic.solve_dynamic path on them.
     It regression-guards two fixed bugs:
       * C1: tsweep.preflight requires [eliashberg] solver_mode="eigenvalue"
         (or "both") so the per-rung eigenvalue.dat has the parity-analysis

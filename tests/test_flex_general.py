@@ -424,7 +424,8 @@ class TestGeneralOutputConvention(unittest.TestCase):
         match exactly."""
         import os
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         flex = _make_general_flex(norb=2)   # J=0 on-site 2-orbital fixture
         flex._myo_sc_cache = None
@@ -451,11 +452,11 @@ class TestGeneralOutputConvention(unittest.TestCase):
             "Geometry": "geom.dat", "Transfer": "transfer.dat",
             "CoulombIntra": "coulombintra.dat",
             "CoulombInter": "coulombinter.dat"}}}}
-        _, _, interactions = sc._read_interaction_files(input_dict)
+        _, _, interactions = sc_io._read_interaction_files(input_dict)
         kx = np.linspace(0, 2 * np.pi, Nx, endpoint=False)
         ky = np.linspace(0, 2 * np.pi, Ny, endpoint=False)
         kz = np.linspace(0, 2 * np.pi, Nz, endpoint=False)
-        inter_k = sc._build_interaction_k(kx, ky, kz, interactions, norb)
+        inter_k = sc_vertex._build_interaction_k(kx, ky, kz, interactions, norb)
 
         # load path consumes chi0q as (a,c,b,d, Nx,Ny,Nz, nmat)
         chi0q_load = chi0q_out.transpose(2, 3, 4, 5, 1, 0).reshape(
@@ -465,10 +466,10 @@ class TestGeneralOutputConvention(unittest.TestCase):
         chic_stat = chi_c[si].reshape(Nx, Ny, Nz, nd, nd)
 
         for pairing in ("singlet", "triplet"):
-            Vs_flex = sc._compute_vertices_flex(
+            Vs_flex = sc_vertex._compute_vertices_flex(
                 chis_stat, chic_stat, inter_k, norb, Nx, Ny, Nz,
                 pairing_type=pairing, convention="myo")
-            Vs_load = sc._compute_vertices_general(
+            Vs_load = sc_vertex._compute_vertices_general(
                 chi0q_load, inter_k, norb, Nx, Ny, Nz, nmat,
                 pairing_type=pairing, static_index=si)
             np.testing.assert_allclose(
@@ -486,7 +487,7 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
 
     def _save_and_reload_convention(self, flex):
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         d = tempfile.mkdtemp()
         nd = flex.norb * flex.norb
         shape = (flex.nmat, flex.lattice.nvol, nd, nd)
@@ -499,7 +500,7 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         input_dict = {"file": {"output": {"path_to_output": d}},
                       "eliashberg": {}}
         nx, ny, nz = flex.lattice.shape
-        _, _, _, conv = sc._load_flex_susceptibilities(
+        _, _, _, conv = sc_io._load_flex_susceptibilities(
             input_dict, flex.norb, nx, ny, nz)
         return conv
 
@@ -533,7 +534,7 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
 
     def test_legacy_file_without_tag_defaults_kuroki(self):
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         d = tempfile.mkdtemp()
         # write a legacy chiq file with NO chi_convention field
         nd = 4
@@ -545,12 +546,12 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         input_dict = {"file": {"output": {"path_to_output": d}},
                       "mode": {"param": {"Nmat": 4}},
                       "eliashberg": {}}
-        _, _, _, conv = sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
+        _, _, _, conv = sc_io._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
         self.assertEqual(conv, "kuroki")
 
     def test_mismatched_s_c_conventions_raise(self):
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         d = tempfile.mkdtemp()
         nd = 4
         arr = np.zeros((4, 4, nd, nd), dtype=complex)
@@ -564,7 +565,7 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
                       "mode": {"param": {"Nmat": 4}},
                       "eliashberg": {}}
         with self.assertRaises(ValueError):
-            sc._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
+            sc_io._load_flex_susceptibilities(input_dict, 2, 2, 2, 1)
 
     def test_real_rank6_chi_roundtrips_to_native_flattening(self):
         """Save REAL general-path (rank-6) chi_s/chi_c, reload through the
@@ -573,7 +574,7 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
         orbital convention (issue #78), so the loader passes the orbital-pair
         arrays through unchanged and the round trip is an identity."""
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         flex = _make_general_flex(norb=2)
         flex._myo_sc_cache = None
         chi0 = _fake_general_chi0q(flex)
@@ -590,7 +591,7 @@ class TestGeneralChiConventionRoundTrip(unittest.TestCase):
             {"chiq_s": chi_s, "chiq_c": chi_c})
         input_dict = {"file": {"output": {"path_to_output": d}},
                       "eliashberg": {}}
-        chis, chic, _, conv = sc._load_flex_susceptibilities(
+        chis, chic, _, conv = sc_io._load_flex_susceptibilities(
             input_dict, flex.norb, nx, ny, nz)
         self.assertEqual(conv, "myo")
         self.assertEqual(chis.shape, (nx, ny, nz, nd, nd))
@@ -700,35 +701,35 @@ class TestChiOrbitalLayoutMarker(unittest.TestCase):
 
     def test_reader_rejects_myo_without_layout_marker(self):
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         inp = self._write_pair(tempfile.mkdtemp(),
                                meta_s={"chi_convention": "myo"},
                                meta_c={"chi_convention": "myo"})
         with self.assertRaisesRegex(ValueError, "chi_orbital_layout"):
-            sc._read_flex_chi_raw(inp)
+            sc_io._read_flex_chi_raw(inp)
 
     def test_reader_rejects_unknown_layout_marker(self):
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         meta = {"chi_convention": "myo", "chi_orbital_layout": "myo_pair"}
         inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
         with self.assertRaisesRegex(ValueError, "acbd"):
-            sc._read_flex_chi_raw(inp)
+            sc_io._read_flex_chi_raw(inp)
 
     def test_reader_accepts_kuroki_without_marker(self):
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         meta = {"chi_convention": "kuroki"}
         inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
-        _, _, conv, _tags = sc._read_flex_chi_raw(inp)
+        _, _, conv, _tags = sc_io._read_flex_chi_raw(inp)
         self.assertEqual(conv, "kuroki")
 
     def test_reader_accepts_myo_with_acbd_marker(self):
         import tempfile
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         meta = {"chi_convention": "myo", "chi_orbital_layout": "acbd"}
         inp = self._write_pair(tempfile.mkdtemp(), meta_s=meta, meta_c=meta)
-        _, _, conv, _tags = sc._read_flex_chi_raw(inp)
+        _, _, conv, _tags = sc_io._read_flex_chi_raw(inp)
         self.assertEqual(conv, "myo")
 
 
@@ -1052,7 +1053,7 @@ class TestChargeDiagonalIntersiteV(unittest.TestCase):
         self.assertGreater(np.ptp(np.abs(V_aa[0, 0])), 1e-6)
 
     def test_kuroki_builder(self):
-        from hwave.sc import _build_sc_matrices_all_q
+        from hwave.solver.eliashberg.vertex import _build_sc_matrices_all_q
         self._assert_charge_diagonal(_build_sc_matrices_all_q)
 
     def test_myo_builder(self):
@@ -1066,7 +1067,7 @@ class TestChargeDiagonalIntersiteV(unittest.TestCase):
         accept such an entry (#93).  Widening the density case to include
         ``a == b`` must not let those through -- they would move S as well.
         """
-        from hwave.sc import _build_sc_matrices_all_q
+        from hwave.solver.eliashberg.vertex import _build_sc_matrices_all_q
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
         shape = (2, 2, 2, 2, 1)
         diag = np.zeros(shape, dtype=complex)
@@ -1079,7 +1080,7 @@ class TestChargeDiagonalIntersiteV(unittest.TestCase):
     def test_single_q_builder_agrees_with_the_all_q_builder(self):
         """The private single-q sibling is used as a reference by other tests,
         so it must not drift from the all-q builder."""
-        from hwave.sc import _build_sc_matrices_all_q, _build_sc_matrices
+        from hwave.solver.eliashberg.vertex import _build_sc_matrices_all_q, _build_sc_matrices
         norb, Nx, Ny, Nz = 2, 2, 2, 1
         ik = _intersite_v_inter_k(norb=norb, Nx=Nx, Ny=Ny, Nz=Nz)
         Sa, Ca = _build_sc_matrices_all_q(ik, norb, Nx, Ny, Nz)
@@ -1163,7 +1164,7 @@ class TestMYOSCMatrices(unittest.TestCase):
         Kanamori combination. With that fixed, `build_sc_matrices_myo`
         delegates to `_build_sc_matrices_all_q`; assert equality so any
         future re-divergence fails loudly."""
-        from hwave.sc import _build_sc_matrices_all_q
+        from hwave.solver.eliashberg.vertex import _build_sc_matrices_all_q
         from hwave.solver._sc_matrices_myo import build_sc_matrices_myo
         U, Up, J, Jp = 4.0, 2.0, 0.5, 0.3   # J != J' on purpose
         ik = _kanamori_inter_k(norb=2, U=U, Up=Up, J=J, Jp=Jp,

@@ -33,7 +33,7 @@ from unittest import mock
 
 import numpy as np
 
-from hwave.solver import eliashberg_bond as eb
+from hwave.solver.eliashberg import bond_dynamic as eb
 from hwave.solver import flex_bond, flex_so_bond, so_bond
 from hwave.solver.so_bond import (PackedArrays, plan_so_bond, select_layout, slot_geometry,
                                   so_bond_topology, so_bond_vertex, sz_sector_map)

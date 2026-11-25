@@ -120,7 +120,7 @@ def build_green(eigenvalues, eigenvectors, mu, beta, nmat, coeff_tail,
     # contributed; g_deflated was consumed building Vg) -- without this,
     # both stay alive through the green0_tail/full_kw assembly below,
     # pushing the real transient peak well past the documented carrier
-    # budget in sc._bond_memory_estimate (measured: ~5-7x S_in undeleted
+    # budget in eliashberg.bond._bond_memory_estimate (measured: ~5-7x S_in undeleted
     # vs. ~3.2-4.1x S_in with this del, across fixtures).
     del Vg, g_deflated
 

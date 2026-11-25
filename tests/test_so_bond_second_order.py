@@ -118,7 +118,7 @@ import numpy as np
 
 from hwave.solver import flex_bond, hartree_fock, matsubara
 from hwave.solver.flex_hf import build_flex_hf_tables, hf_map_spin_orbital
-from hwave.solver import eliashberg_bond as eb
+from hwave.solver.eliashberg import bond_dynamic as eb
 from tests.so_bond_fixtures import (C1A_NMAT_FAST, C1A_NMAT_FULL, C1A_ONSITE_GEOM, C1A_ONSITE_TABLES, READINGS,
                                     c1a_gamma_label, c1a_green, c1a_hf_param_ham,
                                     c1a_onsite_flex_sigma, c1a_rho_r,
