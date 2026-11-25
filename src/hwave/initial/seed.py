@@ -47,7 +47,7 @@ __all__ = [
     "BISECTION_RTOL", "BISECTION_STEPS", "CAP_DOUBLINGS", "N_RTOL", "CAP_REASON",
     "DEGENERATE_REASON", "CONSTRAINT_REASON", "BLOCK_REASON", "SeedResult",
     "block_check", "m_value", "m_inf", "constraint_mode", "w_floor", "op_norm",
-    "density_at", "moments_of", "seed_pattern",
+    "density_at", "moments_of", "seed_pattern", "MuSearchFailed",
 ]
 
 #: the recorded base Hamiltonian of a seed
@@ -97,8 +97,12 @@ class SeedResult:
     ``m_target`` (``m0 + Delta m*``), ``m_used``, ``h_hi`` (the upper end of
     the doubling bracket), ``h_used``, ``amplitude_requested``,
     ``amplitude_used`` (``Delta m(h_used) / (m_inf - m0)``) and
-    ``cap_reason`` (only at the cap). ``meta`` (tried rows):
-    ``{"n_residual", "mu_refined"}`` of the written G (:func:`density_at`).
+    ``cap_reason`` (only at the cap: ``"target not reached at the cap"``,
+    or ``"mu search failed at h=<h>"`` when the solver's T > 0 mu search
+    failed at a larger h, the seed then stopping at the last h that
+    succeeded). ``meta`` (tried rows): ``{"n_residual", "mu_refined"}`` of
+    the written G (:func:`density_at`), plus ``"mu_search_failed_at"``
+    after such a failure.
 
     Set fields per state: seeded: all (``cap_reason`` only at the cap);
     para: ``G``, ``seed_base``, ``shell``, ``moments_h0``, ``h_used = 0``;
@@ -274,6 +278,17 @@ def op_norm(O_k) -> float:
 # the density
 # --------------------------------------------------------------------------
 
+class MuSearchFailed(RuntimeError):
+    """The solver's T > 0 mu search failed for the seed Hamiltonian at field
+    ``h`` (``cause`` is the solver's error)."""
+
+    def __init__(self, h, cause):
+        super().__init__("the mu search of the T > 0 fill failed at h = {:.6g}: {}"
+                         .format(h, cause))
+        self.h = float(h)
+        self.cause = cause
+
+
 def _group_counts(G, problem):
     """The electron number of each mu-group in the stored ``G``:
     ``nvol * sum_{i in group} G(r = 0)_ii``."""
@@ -314,8 +329,10 @@ def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta
     logged as a WARNING with its size. Far beyond that (a field splitting
     larger than ``ene_cutoff * T`` over a degenerate lowest level of a
     group, e.g. about ``2^26 W_floor`` on a two-site chain at T = 0.1) the
-    solver's own mu search can fail outright; its error is not caught
-    here. With ``return_meta`` the result is
+    solver's own mu search can fail outright; that failure (a
+    ``RuntimeError`` of the T > 0 fill) is raised as :class:`MuSearchFailed`,
+    which :func:`seed_pattern` treats as reaching the cap. With
+    ``return_meta`` the result is
     ``(G, FillInfo, meta)``, ``meta = {"n_residual": float, "mu_refined":
     bool}`` (the largest group-count error of the returned G)."""
     p = facts.problem
@@ -330,9 +347,14 @@ def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta
     tol = SHELL_RTOL * max(1.0, float(W0), scale)
 
     def fill(hk):
-        return initial_facade.green_function(
-            hk, T_run, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb, fill="uniform",
-            shell_tol=tol, ene_cutoff=p.ene_cutoff, return_info=True)
+        try:
+            return initial_facade.green_function(
+                hk, T_run, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb, fill="uniform",
+                shell_tol=tol, ene_cutoff=p.ene_cutoff, return_info=True)
+        except RuntimeError as exc:     # MuNotConvergedError, scipy's newton
+            if T_run > 0:
+                raise MuSearchFailed(h, exc) from exc
+            raise
 
     G, info = fill(ham)
     residual = _count_residual(G, p)
@@ -496,10 +518,19 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
     h = w_floor(base)
     h_lo = 0.0
     found = None
+    last = None                       # the last successful doubling point
+    failed_at = None
     for j in range(CAP_DOUBLINGS + 1):
-        d, G, info = evaluate(h)
+        try:
+            d, G, info = evaluate(h)
+        except MuSearchFailed as exc:
+            if last is None:
+                raise
+            failed_at = exc.h
+            break
+        last = (h, d, G, info)
         if d >= target:
-            found = (h, d, G, info)
+            found = last
             break
         if j == CAP_DOUBLINGS:
             break
@@ -507,9 +538,10 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
         h *= 2.0
     cap_reason = None
     if found is None:                                       # the numerical guard
-        h_hi = h_used = h
-        d_used, G_used, info_used = d, G, info
-        cap_reason = CAP_REASON
+        h_hi, d_used, G_used, info_used = last
+        h_used = h_hi
+        cap_reason = (CAP_REASON if failed_at is None
+                      else "mu search failed at h={:.6g}".format(failed_at))
     else:
         h_hi = found[0]
         h_used, d_used, G_used, info_used = found
@@ -517,7 +549,12 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
             a, b = h_lo, h_hi
             for _ in range(BISECTION_STEPS):
                 mid = 0.5 * (a + b)
-                d, G, info = evaluate(mid)
+                try:
+                    d, G, info = evaluate(mid)
+                except MuSearchFailed as exc:
+                    failed_at = exc.h
+                    cap_reason = "mu search failed at h={:.6g}".format(failed_at)
+                    break
                 if abs(d - target) <= tol:
                     h_used, d_used, G_used, info_used = mid, d, G, info
                     break
@@ -526,9 +563,17 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
                     h_used, d_used, G_used, info_used = mid, d, G, info
                 else:
                     a = mid
+    meta = dict(info_used[1])
+    if failed_at is not None:
+        meta["mu_search_failed_at"] = failed_at
+        if d_used < target:
+            logger.warning(
+                "field seeding: the mu search failed at h = %.6g; the seed stops at h = "
+                "%.6g with amplitude %.6g of the requested %.6g", failed_at, h_used,
+                d_used / dm_sat, amplitude)
     return SeedResult(
         tried=True, G=_read_only(G_used), seed_base=seed_base,
         shell={"h0": shell0, "h_used": _shell(info_used[0])}, moments_h0=moments,
         m0=m0, m_inf=minf, m_target=m0 + target, m_used=m0 + d_used, h_hi=h_hi,
         h_used=h_used, amplitude_requested=amplitude, amplitude_used=d_used / dm_sat,
-        cap_reason=cap_reason, meta=info_used[1])
+        cap_reason=cap_reason, meta=meta)

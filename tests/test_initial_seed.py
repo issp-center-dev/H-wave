@@ -372,6 +372,34 @@ class TestSearch(_Tmp):
         res, _ = self.seed(f, _spec([_e(cz=1.0)], ("1/2", "0", "0"), (2, 1, 1)))
         self.assertEqual(sorted(res.meta), ["mu_refined", "n_residual"])
 
+    def test_mu_search_failure_is_the_cap(self):
+        """On the 2Sz = 2 chain the solver's own T > 0 mu search fails beyond
+        about 2^26 W_floor. A target that is never met (m scaled down by a
+        wrapper, so the doubling keeps going) stops at the last h that
+        succeeded, with the cap reason, the meta entry and a WARNING."""
+        from hwave.initial import seed
+        f = self.chain(4, (2, 1, 1), ncond=4, T=0.1, two_sz=2)
+        spec = _spec([_e(cz=1.0)], ("1/2", "0", "0"), (2, 1, 1))
+        real = seed.m_value
+        with mock.patch.object(seed, "m_value", lambda *a, **k: 1e-3 * real(*a, **k)), \
+                self.assertLogs("qlms.initial.seed", level="WARNING") as cm:
+            res, _ = self.seed(f, spec)
+        wf = seed.w_floor(f.problem.ham_trans_k)
+        self.assertTrue(res.tried)
+        self.assertTrue(res.cap_reason.startswith("mu search failed at h="))
+        failed = res.meta["mu_search_failed_at"]
+        self.assertEqual(res.h_used, res.h_hi)
+        self.assertEqual(failed, 2 * res.h_used)
+        self.assertGreater(failed, 2 ** 20 * wf)
+        self.assertLess(res.amplitude_used, 0.5)
+        self.assertTrue(any("mu search failed" in line for line in cm.output))
+        np.testing.assert_allclose(np.trace(res.G[0].reshape(4, 4)).real * 2, 4, atol=1e-9)
+        # the solver's error itself is still raised by density_at
+        from hwave.initial import patterns
+        Ok = patterns.realise(spec, f, (2, 1, 1))
+        with self.assertRaises(seed.MuSearchFailed):
+            seed.density_at(f, f.problem.ham_trans_k, Ok, failed, T_run=0.1, W0=4.0)
+
     def test_electron_count_warning(self):
         """A count still off after the refinement is logged with its size."""
         from hwave.initial import patterns, seed
