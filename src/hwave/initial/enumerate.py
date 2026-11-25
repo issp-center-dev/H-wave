@@ -35,7 +35,7 @@ round-robin over q by sign-pattern rank: for rank r = 0, 1, ... (the r-th
 representative eta of :func:`sign_patterns` in each (q, channel)), every
 commensurate q in q-order (by increasing order n, so Gamma first and the
 q = -q points next, then lexicographically), within one q the spin
-directions (x, y, z, or z alone), then charge; within one sign pattern
+directions (z, x, y, or z alone), then charge; within one sign pattern
 its phase rows, the -O row of each phase, and the spiral. Every q thus
 gets its low-rank patterns before any q gets a higher-rank one, so a
 quota is spent evenly over q (lattice-equivalent q such as (0, 1/2) and
@@ -283,10 +283,17 @@ def _site_summed(sites, eta, mu, *, traceless):
 
 
 def _spin_axes(su2, problem):
-    """x, y, z; z alone when the SU(2) check passed or 2Sz is fixed."""
+    """z, x, y; z alone when the SU(2) check passed or 2Sz is fixed.
+
+    z (the quantisation axis of the input's spinor basis) comes first, so a
+    quota keeps the z moment of an Ising-like model before x and y. The
+    per-axis residuals of the SU(2) check are not used to order the axes:
+    they measure which rotations the HF map commutes with, not which
+    moment direction it favours (an easy-plane exchange and an Ising term
+    both commute with rotations about z)."""
     if (su2 is not None and su2.status == "passed") or not problem.sz_free:
         return ("z",)
-    return ("x", "y", "z")
+    return ("z", "x", "y")
 
 
 def _named(family, spec, facts, subshape, *, eta, spiral, rank, phase_index, neg, taken,
@@ -407,7 +414,7 @@ def baseline_candidates(facts, subshape, *, su2, tr, limits=None, tier="large",
                         taken=None, patterns=None) -> List[Candidate]:
     """The baseline candidates of the cell ``subshape`` (design section
     5.3): for every q commensurate with it, the site-summed spin patterns
-    (x, y, z; z alone under a passed SU(2) check or with 2Sz fixed; plus
+    (z, x, y; z alone under a passed SU(2) check or with 2Sz fixed; plus
     one coplanar spiral per sign pattern at q not equal to -q under a
     passed SU(2) check) and the site-summed charge patterns (traceless
     over the cell), each in the order of the module docstring.
@@ -462,7 +469,7 @@ def reserved_candidates(facts, subshapes, *, su2, tr, n_random=4, base_seed=0,
       and q = 0, one :class:`Candidate` each, run on every ``SubShape``
       (:func:`expand_runs`). Ferro is the uniform ``sigma^mu`` on the
       interacting orbitals, one per direction (z alone under a passed SU(2)
-      check or with 2Sz fixed, else x, y, z), and its -O as a second
+      check or with 2Sz fixed, else z, x, y), and its -O as a second
       candidate unless a verified map (:func:`symmetry.find_map` of O to
       -O on the cell of ``facts``) merges them; the merge is recorded in
       the candidate's ``sources`` (``"-O merged (<map>)"``).
@@ -822,12 +829,15 @@ def apply_quotas(runs, rows, limits):
 
     A duplicate row (``"duplicate of <X> (<map>)"``) whose referent X is cut
     is promoted to X's place in the quota order and carries the note
-    ``"referent not run"``. A duplicate always follows its referent and
-    belongs to the same quota family (reserved, user and literature runs
-    are never cut, and generated runs are never referents of earlier
-    ones), so X's place lies past the quota and the promoted row is cut
-    with it: it reads ``"quota: <family> (duplicate of <X>; referent not
-    run)"``, so no row claims a basin that was not run.
+    ``"referent not run"``. A duplicate always follows its referent;
+    reserved, user and literature runs are never cut, so a cut referent is
+    generated, and the duplicate is generated too: of the same family, or
+    an instability row duplicating a baseline one (when a baseline row is
+    cut the baseline quota is full and instability gets nothing). X's place
+    therefore lies past the quota and the promoted row is cut with it. It
+    reads ``"quota: <its family> (duplicate of <X>, a <X's family> row cut
+    by its quota; referent not run)"``, so no row claims a basin that was
+    not run.
 
     Returns ``(runs, rows)``; ``rows`` is a new list, one entry per input
     row."""
@@ -843,6 +853,7 @@ def apply_quotas(runs, rows, limits):
         cut.update(base[n_base:])
         cut.update(inst[n_inst:])
     reasons = {runs[i].run_id: "quota: {}".format(runs[i].candidate.family) for i in cut}
+    families = {runs[i].run_id: runs[i].candidate.family for i in cut}
     out = []
     for r in rows:
         if r.get("run_id") in reasons:
@@ -852,8 +863,9 @@ def apply_quotas(runs, rows, limits):
         if why.startswith("duplicate of "):
             target = why[len("duplicate of "):].split(" ", 1)[0]
             if target in reasons:
-                out.append(_not_tried(r, "{} (duplicate of {}; referent not run)".format(
-                    reasons[target], target)))
+                out.append(_not_tried(r, "quota: {} (duplicate of {}, a {} row cut by "
+                                         "its quota; referent not run)".format(
+                                             r.get("family"), target, families[target])))
                 continue
         out.append(dict(r))
     return [r for i, r in enumerate(runs) if i not in cut], out

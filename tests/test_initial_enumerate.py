@@ -245,7 +245,11 @@ class TestReserved(_Tmp):
         ferro = [c for c in cset.candidates if c.family == "ferro"]
         self.assertEqual(len(ferro), 3)
         self.assertEqual({c.sign for c in ferro}, {1})
-        self.assertEqual([c.candidate_id.split("-")[3] for c in ferro], ["x", "y", "z"])
+        # z first (N2), then x, y
+        self.assertEqual([c.candidate_id.split("-")[3] for c in ferro], ["z", "x", "y"])
+        base = [r["channel"] for r in cset.rows if r["family"] == "baseline"
+                and r["q_string"] == "0,0,0" and r["channel"].startswith("spin")]
+        self.assertEqual(list(dict.fromkeys(base)), ["spin-z", "spin-x", "spin-y"])
         for c in ferro:
             self.assertIn("-O merged (time_reversal)", c.sources)
             row = self.rows_of(cset, candidate_id=c.candidate_id)[0]
@@ -612,7 +616,8 @@ class TestQuotasAndEdges(_Tmp):
                 self.assertFalse(r["tried"])
                 if not (r["not_tried_reason"] or "").startswith(("duplicate", "no response")):
                     self.assertRegex(r["not_tried_reason"],
-                                     r"^quota: baseline( \(duplicate of \S+; referent not run\))?$")
+                                     r"^quota: baseline( \(duplicate of \S+, a baseline row cut by "
+                                     r"its quota; referent not run\))?$")
         self.assertEqual([r.candidate.family for r in cset.runs if r.candidate.family == "baseline"],
                          [])
         # every candidate keeps its rows
@@ -700,7 +705,14 @@ class TestQuotasAndEdges(_Tmp):
         kept, out = apply_quotas(runs, rows, Limits(max_candidates=1))
         self.assertEqual([r.run_id for r in kept], ["baseline-0-b2x1x1"])
         self.assertEqual(out[2]["not_tried_reason"],
-                         "quota: baseline (duplicate of baseline-1-b2x1x1; referent not run)")
+                         "quota: baseline (duplicate of baseline-1-b2x1x1, a baseline row cut "
+                         "by its quota; referent not run)")
+        # an instability duplicate names its own family and the referent's
+        rows[2] = dict(rows[2], family="instability", run_id="instability-9-b2x1x1")
+        _, out = apply_quotas(runs, rows, Limits(max_candidates=1))
+        self.assertEqual(out[2]["not_tried_reason"],
+                         "quota: instability (duplicate of baseline-1-b2x1x1, a baseline row "
+                         "cut by its quota; referent not run)")
         self.assertEqual(out[3]["not_tried_reason"],
                          "duplicate of baseline-0-b2x1x1 (translation)")
 
