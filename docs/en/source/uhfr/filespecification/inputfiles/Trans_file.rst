@@ -108,6 +108,8 @@ Usage rules
 
 -  The program is terminated with error if there are duplicated entries.
 
+-  The program is terminated with error if a value is not a finite number (``nan``, ``inf``); the message names the file and the line. This holds for every definition file of UHFr. **Release note:** earlier releases read such a value and stopped later, in the diagonalization, with a message of the linear-algebra library.
+
 -  The program is terminated with error when the number of entries is different from ``[count]``.
 
 -  The program is terminated with error if
