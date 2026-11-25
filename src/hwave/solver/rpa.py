@@ -1711,6 +1711,12 @@ class RPA:
             self.lattice, param_ham, info_mode,
             offsite_pairhop_represented=self._offsite_pairhop_in_bond_vertex(),
             collapse_spin_free=self._COLLAPSE_SPIN_FREE_TRANSFER)
+        # Interaction may hold a private copy of the table container (a
+        # spin-independent 9-column Transfer read by FLEX as 7 columns); the
+        # sublattice fold rewrites that copy, so every later reader of the
+        # solver's tables (the reciprocal vectors of _init_wavevec, the
+        # scheme checks) must see the same container
+        self.param_ham = self.ham_info.param_ham
         if (self._SO_OFFSITE_INFO and self.ham_info.enable_spin_orbital
                 and self.ham_info.so_context_built_here):
             types = spin_orbital.offsite_types(self.ham_info.so_context.compiled)

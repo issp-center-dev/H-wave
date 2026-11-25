@@ -552,6 +552,59 @@ class TestFlexSpinFreeNineColumnTutorial(unittest.TestCase):
         self.assertTrue(r.ham_info.spin_resolved_transfer)
 
 
+def _assert_same_archive_dirs(test, a, b, names):
+    """Every member of each archive equal between two output directories
+    (bitwise with numpy >= 2, to round-off below; NaN never passes)."""
+    for name in names:
+        with np.load(os.path.join(a, name)) as za, np.load(os.path.join(b, name)) as zb:
+            test.assertEqual(set(za.files), set(zb.files), name)
+            for key in za.files:
+                if key == "producer_version":
+                    continue
+                x, y = za[key], zb[key]
+                test.assertEqual((x.dtype, x.shape), (y.dtype, y.shape), (name, key))
+                if _NUMPY_BELOW_2 and x.dtype.kind in "fc":
+                    test.assertTrue(np.all(np.isfinite(x)) and np.all(np.isfinite(y)),
+                                    (name, key))
+                    np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-14,
+                                               equal_nan=False, err_msg=str((name, key)))
+                else:
+                    test.assertTrue(np.array_equal(x, y), (name, key))
+
+
+class TestFlexSpinFreeNineColumnWithSublattice(_Fixture):
+    """A spin-independent 9-column Transfer read by FLEX as 7 columns, with
+    SubShape != [1, 1, 1]: the private table container is the one the
+    sublattice fold rewrites, so the reciprocal vectors (and the archives'
+    wavevector_unit) equal the 7-column run's."""
+
+    def _run(self, d, tag):
+        import hwave.qlms as qlms
+        out = os.path.join(d, "out_" + tag)
+        par = dict(_PARAM, CellShape=[4, 1, 1], SubShape=[2, 1, 1],
+                   IterationMax=3, Mix=0.5)
+        inp = {"log": {"print_level": 0},
+               "mode": {"mode": "FLEX", "param": par, "calc_type": "ring"},
+               "file": {"input": {"path_to_input": d,
+                                  "interaction": dict(_FILES, path_to_input=d)},
+                        "output": {"path_to_output": out, "chi0q": "chi0q.npz",
+                                   "chiq": "chiq.npz", "green": "green",
+                                   "sigma": "sigma"}}}
+        qlms.run(input_dict=inp)
+        return out
+
+    def test_wavevectors_and_archives_equal_the_seven_column_run(self):
+        d7 = self._dir(plain=_DIAG)
+        d9 = self._dir(_spin_independent(_DIAG))
+        o7, o9 = self._run(d7, "7"), self._run(d9, "9")
+        with np.load(os.path.join(o9, "chi0q.npz")) as z9, \
+                np.load(os.path.join(o7, "chi0q.npz")) as z7:
+            self.assertIn("wavevector_unit", z9.files)
+            np.testing.assert_array_equal(z9["wavevector_unit"], z7["wavevector_unit"])
+        _assert_same_archive_dirs(self, o9, o7, ("chi0q.npz", "chiq.npz",
+                                                 "sigma.npz", "green.npz"))
+
+
 class TestFlexAutoOnASpinDependentTransfer(_Fixture):
     def test_auto_resolves_to_general(self):
         # a spin flip: only the general scheme supports it, so auto goes
