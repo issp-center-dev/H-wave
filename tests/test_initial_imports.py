@@ -114,9 +114,6 @@ class TestImportBoundary(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 #: references to documents that are not part of the package (design
 #: sections, decision or ruling numbers, plan or task names): a reader of
@@ -176,3 +173,7 @@ class TestPackageNamespace(unittest.TestCase):
         import hwave.initial as pkg
         for name in pkg.__all__:
             self.assertIn(name, dir(pkg))
+
+
+if __name__ == "__main__":
+    unittest.main()

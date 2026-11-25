@@ -748,9 +748,12 @@ def check_initial_state(config_path, npz_path=None, *, require_provenance=False
         doc = _read_doc(config_path)
     except OSError as exc:
         raise InitialStateError(
-            "{}: the input TOML cannot be read ({}: {}); give the path of the "
-            "readable UHFk input the solver will run".format(
-                config_path, type(exc).__name__, exc.strerror or exc)) from None
+            "{}: {} cannot be read ({}: {}); give the path of the readable UHFk "
+            "input the solver will run, with its input files".format(
+                config_path,
+                "the input TOML" if exc.filename in (None, str(config_path))
+                else exc.filename,
+                type(exc).__name__, exc.strerror or exc)) from None
     except ValueError as exc:
         if isinstance(exc, InitialStateError):
             raise

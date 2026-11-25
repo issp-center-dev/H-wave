@@ -678,7 +678,12 @@ def _write_text(path, text):
         except FileExistsError:
             continue
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        try:
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with f:
             f.write(text)
         os.replace(str(tmp), str(path))
     except BaseException:
