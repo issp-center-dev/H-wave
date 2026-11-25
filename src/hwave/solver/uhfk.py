@@ -1575,18 +1575,10 @@ class UHFk(solver_base):
         all_ev = np.sort(np.concatenate([w.flatten() for w in ws_list]))
         occupied_number = ncond
 
-        def _fermi(t, mu, ev):
-            w_ = (ev - mu) / t
-            mask_ = w_ < self.ene_cutoff
-            w1_ = np.where( mask_, w_, 0.0 )
-            v1_ = 1.0 / (1.0 + np.exp(w1_))
-            v_ = np.where( mask_, v1_, 0.0 )
-            return v_
-
         def _calc_delta_n(mu):
             nn = 0.0
             for w, v in zip(ws_list, vs_list):
-                ff = _fermi(self.T, mu, w)
+                ff = hartree_fock.masked_fermi(self.T, mu, w, self.ene_cutoff)
                 nn += np.einsum('kal,kl,kal->', np.conjugate(v), ff, v).real
             return nn - occupied_number
 
@@ -1604,7 +1596,8 @@ class UHFk(solver_base):
             logger.error("find mu: not converged. abort")
             exit(1)
 
-        dists = [_fermi(self.T, mu, w) for w in ws_list]
+        dists = [hartree_fock.masked_fermi(self.T, mu, w, self.ene_cutoff)
+                 for w in ws_list]
         return dists, mu
 
     @do_profile
@@ -1710,14 +1703,6 @@ class UHFk(solver_base):
         else:
             T = self.T
 
-            def _fermi(t, mu, ev):
-                w_ = (ev - mu) / t
-                mask_ = w_ < self.ene_cutoff
-                w1 = np.where( mask_, w_, 0.0 )
-                v1 = 1.0 / (1.0 + np.exp(w1))
-                v_ = np.where( mask_, v1, 0.0 )
-                return v_
-
             # Internal band energy  E_band = sum_n eps_n f(eps_n)
             # Free   band energy    F_band = mu*N + Omega_0
             #                              = mu*N - T*sum_n ln(1+exp(-(eps_n-mu)/T))
@@ -1728,7 +1713,7 @@ class UHFk(solver_base):
                 v = vs_list[k]
                 mu = mus[block_to_group[k]]
 
-                fermi = _fermi(T, mu, w)
+                fermi = hartree_fock.masked_fermi(T, mu, w, self.ene_cutoff)
 
                 wt = -(w - mu) / T
                 mask_ = wt < self.ene_cutoff
