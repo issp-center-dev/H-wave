@@ -27,6 +27,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import backend as _bk
 from .kgrid import fold_rvec, reverse_fft_axes
 from ..qlmsio import wan90
 
@@ -246,13 +247,23 @@ def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
 # =============================================================================
 
 def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
-    """Fermi function with the overflow guard of ``RPA._find_mu`` /
-    ``FLEX._fermi_occupation`` (same arithmetic)."""
+    """Fermi function ``1 / (1 + exp((ev - mu) / t))`` with an overflow
+    guard: an entry with ``(ev - mu) / t >= ene_cutoff`` is exactly zero
+    and never reaches ``exp``.
+
+    ``ev`` is a NumPy or a CuPy array; the result is an array of the same
+    module. FLEX (the non-interacting reference of the dressed particle
+    number and of the orbital occupations) and the Heff-referenced
+    equal-time density below evaluate the distribution through this
+    function. ``rpa._masked_fermi_delta_n`` and the ``_fermi`` closure of
+    ``RPA._find_mu`` hold the same arithmetic.
+    """
+    xp = _bk.array_module_of(ev)
     w = (ev - mu) / t
     mask = w < ene_cutoff
-    w1 = np.where(mask, w, 0.0)
-    v1 = 1.0 / (1.0 + np.exp(w1))
-    return np.where(mask, v1, 0.0)
+    w1 = xp.where(mask, w, 0.0)
+    v1 = 1.0 / (1.0 + xp.exp(w1))
+    return xp.where(mask, v1, 0.0)
 
 
 @dataclass(frozen=True)

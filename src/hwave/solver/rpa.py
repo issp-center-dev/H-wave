@@ -543,8 +543,8 @@ def spinful_bubble_vertex(ham_inter_q, exchange):
 def _masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
     # Mask arithmetic must stay identical to _find_mu's internal _fermi
     # closure below (both implement the same overflow-guarded Fermi
-    # function) and to flex.py's FLEX._fermi_occupation (~flex.py:1239),
-    # which mirrors the same mask for the dressed-Green mu search.
+    # function) and to hartree_fock.masked_fermi, which FLEX uses for
+    # the dressed-Green mu search.
     """delta_n(mu) = sum over ALL (block, k, band) entries of the masked
     Fermi factor, minus ``target`` -- the exact counter ``_find_mu``
     root-finds (a PLAIN sum: no k normalization, no spin factor; the
@@ -4444,8 +4444,8 @@ class RPA:
 
         def _fermi(t, mu, ev_):
             # Must stay arithmetically identical to _masked_fermi_delta_n's
-            # mask above and to flex.py's FLEX._fermi_occupation
-            # (~flex.py:1239), which mirrors the same overflow guard.
+            # mask above and to hartree_fock.masked_fermi, which holds
+            # the same overflow guard.
             w_ = (ev_ - mu) / t
             mask_ = w_ < ene_cutoff
             w1_ = np.where(mask_, w_, 0.0)
