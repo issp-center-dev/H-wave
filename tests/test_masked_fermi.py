@@ -11,7 +11,13 @@ copied verbatim from ``rpa.py``), and ``_legacy_find_dist_group_nonzero_t``
 is the former body of the UHFk mu search with its closure (copied verbatim
 from ``uhfk.py``). Do not edit them. The shared functions must reproduce
 their arithmetic bit for bit, at every call site and with the cutoff that
-site passes.
+site passes, for every argument that is a number and not exactly at the
+cutoff.
+
+At the cutoff and for NaN the shared function follows the UHFr expression,
+``_legacy_uhfr_fermi`` (copied verbatim from ``UHFr._fermi``): an entry
+exactly at the cutoff is evaluated, where the former expression gave zero,
+and NaN gives NaN, where the former expression gave zero.
 """
 import logging
 import unittest
@@ -44,6 +50,20 @@ def _legacy_masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
     n = float(np.sum(f).real) - target
     dn = float(np.sum(f * (1.0 - f)).real / T)
     return n, dn
+
+
+def _legacy_uhfr_fermi(self, mu, eigenvalue):
+    x = (eigenvalue - mu) / self.T
+    fermi = np.where(x > self.ene_cutoff, 0.0, 1.0 / (np.exp(x) + 1.0))
+    return fermi
+
+
+class _UHFrHost:
+    """The two attributes the UHFr expression reads."""
+
+    def __init__(self, T, ene_cutoff=1.0e2):
+        self.T = T
+        self.ene_cutoff = ene_cutoff
 
 
 logger = logging.getLogger(__name__)
@@ -132,18 +152,84 @@ class TestMaskedFermiArithmetic(_BitsMixin, unittest.TestCase):
             f, 1.0 / (1.0 + np.exp(np.array([-2.0, 0.0, 2.0]))))
         self.assertEqual(f[1], 0.5)
 
-    def test_zero_at_and_above_the_cutoff(self):
+    def test_evaluated_at_the_cutoff_and_zero_beyond_it(self):
         # (ev - mu) / t = 99.5, 100, 100.5 with t = 1, mu = 0
         f = masked_fermi(1.0, 0.0, np.array([99.5, 100.0, 100.5]))
-        self.assertGreater(f[0], 0.0)
-        self.assertEqual(f[1], 0.0)
+        self.assertGreater(f[0], f[1])
+        self.assertEqual(f[1], 1.0 / (1.0 + np.exp(100.0)))
+        self.assertGreater(f[1], 0.0)
         self.assertEqual(f[2], 0.0)
+        # the former expression gave zero at the cutoff
+        self.assertEqual(
+            _legacy_masked_fermi(1.0, 0.0, np.array([100.0]))[0], 0.0)
 
     def test_no_overflow_beyond_the_cutoff(self):
         ev = np.array([-1.0e6, 0.0, 1.0e3, 1.0e6])
         with np.errstate(over="raise", invalid="raise"):
             f = masked_fermi(1.0e-3, 0.0, ev)
         np.testing.assert_array_equal(f, np.array([1.0, 0.5, 0.0, 0.0]))
+
+
+class TestCutoffAndNaNFollowUHFr(unittest.TestCase):
+    """The values of the UHFr expression for every argument: at the cutoff,
+    beyond it, at infinity and for NaN. Unlike that expression the shared
+    function masks before ``exp`` and raises no overflow warning."""
+
+    #: (ev - mu) / t with t = 1, mu = 0 and the cutoff 100
+    X = np.array([-np.inf, -800.0, -2.0, 0.0, 99.5, 100.0, 100.5, 800.0,
+                  np.inf, np.nan])
+
+    def test_same_values_as_the_uhfr_expression(self):
+        with np.errstate(over="ignore"):
+            ref = _legacy_uhfr_fermi(_UHFrHost(1.0), 0.0, self.X)
+        with np.errstate(over="raise"):
+            f = masked_fermi(1.0, 0.0, self.X)
+        np.testing.assert_array_equal(f, ref)        # NaN equals NaN here
+        self.assertEqual(f[:-1].tobytes(), ref[:-1].tobytes())
+        self.assertTrue(np.isnan(f[-1]))
+        self.assertEqual(int(np.isnan(f).sum()), 1)
+
+    def test_same_bits_as_the_uhfr_expression_on_a_scan(self):
+        rng = np.random.default_rng(5)
+        x = np.concatenate([rng.uniform(-745.0, 709.0, 20000),
+                            rng.uniform(80.0, 120.0, 20000),
+                            np.arange(90.0, 110.5, 0.5)])
+        for cutoff in (20.0, 1.0e2, 105.0):
+            with self.subTest(cutoff=cutoff):
+                ref = _legacy_uhfr_fermi(_UHFrHost(1.0, cutoff), 0.0, x)
+                self.assertEqual(masked_fermi(1.0, 0.0, x, cutoff).tobytes(),
+                                 ref.tobytes())
+
+    def test_nan_is_not_replaced_by_zero(self):
+        ev = np.array([-1.0, 0.0, 1.0])
+        self.assertTrue(np.isnan(masked_fermi(0.5, np.nan, ev)).all())
+        self.assertTrue(np.isnan(masked_fermi(np.nan, 0.0, ev)).all())
+        f = masked_fermi(0.5, 0.0, np.array([-1.0, np.nan, 1.0]))
+        self.assertEqual(np.isnan(f).tolist(), [False, True, False])
+        # the former expression counted a NaN level as empty
+        self.assertEqual(
+            _legacy_masked_fermi(0.5, 0.0, np.array([np.nan]))[0], 0.0)
+
+    def test_the_counter_of_a_band_with_a_nan_level_is_nan(self):
+        w = _levels()
+        w[1, 4, 2] = np.nan
+        n, dn = masked_fermi_delta_n(w, 0.1, 0.0, 37.5, 1.0e2)
+        self.assertTrue(np.isnan(n))
+        self.assertTrue(np.isnan(dn))
+
+    def test_the_mu_searches_do_not_return_a_root_for_a_nan_level(self):
+        """Before, RPA and UHFk returned the chemical potential of the
+        remaining levels."""
+        w = np.random.default_rng(1).uniform(-2.0, 2.0, size=(1, 30, 2))
+        w[0, 3, 1] = np.nan
+        with self.assertRaises(RuntimeError):
+            RPA._find_mu(_RPAHost(w, 1.0e2), 30.0, 0.1)
+
+        ws = [np.random.default_rng(1).uniform(-2.0, 2.0, size=(8, 2))]
+        ws[0][3, 1] = np.nan
+        vs = [np.tile(np.eye(2), (8, 1, 1)).astype(complex)]
+        with self.assertRaises(RuntimeError):
+            UHFk._find_dist_group_nonzero_t(_UHFrHost(0.1), ws, vs, 8)
 
 
 class TestMaskedFermiArrayModule(_BitsMixin, unittest.TestCase):

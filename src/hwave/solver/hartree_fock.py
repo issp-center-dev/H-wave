@@ -257,8 +257,15 @@ def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
 
 def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
     """Fermi function ``1 / (1 + exp((ev - mu) / t))`` with an overflow
-    guard: an entry with ``(ev - mu) / t >= ene_cutoff`` is exactly zero
+    guard: an entry with ``(ev - mu) / t > ene_cutoff`` is exactly zero
     and never reaches ``exp``.
+
+    An entry exactly at the cutoff is evaluated,
+    ``1 / (1 + exp(ene_cutoff))``, and a NaN argument gives NaN: NaN is
+    not beyond the cutoff, so it is not replaced by zero. Both are what
+    the UHFr expression ``where(x > ene_cutoff, 0, 1 / (exp(x) + 1))``
+    gives; unlike it, entries beyond the cutoff are masked before
+    ``exp``, so they raise no overflow warning.
 
     ``ev`` is a NumPy or a CuPy array; the result is an array of the same
     module. ``ene_cutoff`` is the caller's: UHFk and RPA pass the
@@ -266,10 +273,10 @@ def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
     """
     xp = _bk.array_module_of(ev)
     w = (ev - mu) / t
-    mask = w < ene_cutoff
-    w1 = xp.where(mask, w, 0.0)
+    beyond = w > ene_cutoff
+    w1 = xp.where(beyond, 0.0, w)
     v1 = 1.0 / (1.0 + xp.exp(w1))
-    return xp.where(mask, v1, 0.0)
+    return xp.where(beyond, 0.0, v1)
 
 
 def masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
