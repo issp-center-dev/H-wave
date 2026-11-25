@@ -256,13 +256,16 @@ def _column_count_error(name_in, lineno, found, spin_format,
     caller accepts the spin-resolved format (``allow_spin_columns``);
     everywhere else following it would only lead to the next refusal."""
     if spin_format:
-        expected = "{} (spin-resolved format {}/{} declared on line 1)".format(
-            _NCOL_SPIN, SPIN_COLUMN_FORMAT, SPIN_COLUMN_VERSION)
+        expected = ("{} (Rx Ry Rz a b s t Re Im; spin-resolved format {}/{} "
+                    "declared on line 1)".format(
+                        _NCOL_SPIN, SPIN_COLUMN_FORMAT, SPIN_COLUMN_VERSION))
     elif found == _NCOL_SPIN and allow_spin_columns:
         return ValueError(
-            "{}: line {} has {} columns but line 1 carries no '{}/{}' marker. "
-            "A spin-resolved Transfer file must declare its format on line 1; "
-            "an unmarked 9-column file is not guessed at."
+            "{}: line {} has {} columns, expected 7 (Rx Ry Rz a b Re Im); "
+            "line 1 carries no '{}/{}' marker. Remove any extra tokens from "
+            "a 7-column row, or, for a spin-resolved Transfer file, declare "
+            "the format on line 1; an unmarked 9-column file is not guessed "
+            "at."
             .format(name_in, lineno, found, SPIN_COLUMN_FORMAT,
                     SPIN_COLUMN_VERSION))
     else:
@@ -361,7 +364,7 @@ def read_w90(name_in, allow_spin_columns=False):
                 "format {}/{}, which is accepted only for the Transfer file "
                 "(file.input.interaction.Transfer) of the hwave k-space "
                 "input; it cannot be read here. Write this file in the "
-                "7-column form Rx Ry Rz a b Re Im"
+                "7-column form Rx Ry Rz a b Re Im."
                 .format(name_in, SPIN_COLUMN_FORMAT, version))
         if version != SPIN_COLUMN_VERSION:
             raise ValueError(
