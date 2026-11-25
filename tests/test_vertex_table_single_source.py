@@ -19,12 +19,12 @@ class TestAssembledConsistency(unittest.TestCase):
 
     def _sc_cross(self, itype, J=0.7):
         """S and C at the (01, 01) cross slot from the sc builders."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         k = np.array([0.0])
         entries = {((0, 0, 0), (0, 1)): J, ((0, 0, 0), (1, 0)): J}
-        ik = sc._build_interaction_k(k, k, k, {itype: entries}, 2)
-        S, C = sc._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
+        ik = sc_vertex._build_interaction_k(k, k, k, {itype: entries}, 2)
+        S, C = sc_vertex._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
         return S[0, 0, 0, 1, 1], C[0, 0, 0, 1, 1]
 
     def _rpa_fierz(self, itype, J=0.7):
@@ -217,7 +217,7 @@ class TestZeroCoefficientSuppression(unittest.TestCase):
         content."""
         import warnings
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         ctx = warnings.catch_warnings()
         ctx.__enter__()
@@ -225,17 +225,17 @@ class TestZeroCoefficientSuppression(unittest.TestCase):
         warnings.simplefilter("ignore", RuntimeWarning)
 
         k = np.array([0.0])
-        ik = sc._build_interaction_k(
+        ik = sc_vertex._build_interaction_k(
             k, k, k, {"CoulombInter": {((0, 0, 0), (0, 0)): np.inf,
                                        ((0, 0, 0), (1, 1)): np.inf}}, 2)
-        S, C = sc._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
+        S, C = sc_vertex._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
         self.assertTrue(np.all(S[0, 0, 0] == 0.0),
                         "diagonal CoulombInter must not touch S")
 
-        ik = sc._build_interaction_k(
+        ik = sc_vertex._build_interaction_k(
             k, k, k, {"Ising": {((0, 0, 0), (0, 1)): np.inf,
                                 ((0, 0, 0), (1, 0)): np.inf}}, 2)
-        S, C = sc._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
+        S, C = sc_vertex._build_sc_matrices_all_q(ik, 2, 1, 1, 1)
         # the density slots (aa, bb) of Ising carry S only
         self.assertEqual(complex(C[0, 0, 0, 0, 3]), 0.0,
                          "density-slot Ising must not touch C")
@@ -251,7 +251,7 @@ class TestIEEEParity(unittest.TestCase):
         forms)."""
         import warnings
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         ctx = warnings.catch_warnings()
         ctx.__enter__()
@@ -260,7 +260,7 @@ class TestIEEEParity(unittest.TestCase):
 
         m = np.zeros((2, 2, 1, 1, 1), dtype=complex)
         m[0, 1] = m[1, 0] = 0.7
-        S, C = sc._build_sc_matrices_all_q(
+        S, C = sc_vertex._build_sc_matrices_all_q(
             {"CoulombInter": m}, 2, 1, 1, 1, _presymmetrised=True)
         self.assertAlmostEqual(complex(C[0, 0, 0, 0, 3]), 1.4, places=13)
 
@@ -270,13 +270,13 @@ class TestIEEEParity(unittest.TestCase):
         # implementation (which would give Inf+0j)
         m = np.zeros((2, 2, 1, 1, 1), dtype=complex)
         m[0, 1] = m[1, 0] = complex(np.inf, 0.0)
-        S, C = sc._build_sc_matrices_all_q(
+        S, C = sc_vertex._build_sc_matrices_all_q(
             {"CoulombInter": m}, 2, 1, 1, 1, _presymmetrised=True)
         got = C[0, 0, 0, 0, 3]          # +2 slot
         self.assertEqual(got.real, np.inf)
         self.assertTrue(np.isnan(got.imag),
                         "the legacy multiply form yields Inf+NaNj here")
-        S, C = sc._build_sc_matrices_all_q(
+        S, C = sc_vertex._build_sc_matrices_all_q(
             {"Ising": m}, 2, 1, 1, 1, _presymmetrised=True)
         got = S[0, 0, 0, 0, 3]          # -2 slot
         self.assertEqual(got.real, -np.inf)
@@ -294,7 +294,7 @@ class TestIEEEParity(unittest.TestCase):
         semantics under test."""
         import warnings
 
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         ctx = warnings.catch_warnings()
         ctx.__enter__()
@@ -322,7 +322,7 @@ class TestIEEEParity(unittest.TestCase):
         for itype, entries, expected in cases:
             with self.subTest(interaction=itype):
                 ik = {itype: mat(entries)}
-                S, C = sc._build_sc_matrices_all_q(
+                S, C = sc_vertex._build_sc_matrices_all_q(
                     ik, 2, 1, 1, 1, _presymmetrised=True)
                 M = {"S": S[0, 0, 0], "C": C[0, 0, 0]}
                 for ch, (i, j), want in expected:
@@ -342,7 +342,7 @@ class TestMixedTypeGolden(unittest.TestCase):
         pre-refactor and refactored builders were verified bit-for-bit
         equal on this class of input during review; these values freeze
         that behavior)."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         norb = 3
 
@@ -361,7 +361,7 @@ class TestMixedTypeGolden(unittest.TestCase):
             "Exchange": mat({(0, 2): 0.25, (2, 0): 0.25}),
             "PairHop": mat({(0, 1): 0.15 + 0.05j, (1, 0): 0.15 - 0.05j}),
         }
-        S, C = sc._build_sc_matrices_all_q(
+        S, C = sc_vertex._build_sc_matrices_all_q(
             ik, norb, 1, 1, 1, _presymmetrised=True)
         S = S[0, 0, 0]
         C = C[0, 0, 0]

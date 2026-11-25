@@ -33,7 +33,8 @@ import unittest
 
 import numpy as np
 
-from hwave import sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import so_solve as sc_so
 from hwave.solver import so_bond
 from hwave.solver.so_bond import (PackedArrays, PackedBondPairKernel, SOBondCaps,
                                   estimate_packed_kernel_workspace_bytes,
@@ -207,7 +208,7 @@ class TestSectorSolverMemory(unittest.TestCase):
     def test_synthetic_sectors(self):
         for B in (1, 3, 5):
             shape = _gap(B)
-            full_dim = sc._SOAntisymmetricBasis(shape).dim
+            full_dim = sc_eigen._SOAntisymmetricBasis(shape).dim
             for dims, k, null in SOLVER_CASES:
                 if sum(dims) > full_dim:
                     continue
@@ -221,7 +222,7 @@ class TestSectorSolverMemory(unittest.TestCase):
                         [b.dim for b in bases], k, int(np.prod(shape)),
                         n_sector_vec=[b.n for b in bases])
                     with quiet():
-                        s, peak = _trace(lambda: sc._so_solve_sectors(
+                        s, peak = _trace(lambda: sc_so._so_solve_sectors(
                             ops, k, "arnoldi", gap_shape=shape))
                     self.assertTrue(s.converged)
                     want = ["null-operator" if i in null else
@@ -245,7 +246,7 @@ class TestSectorSolverMemory(unittest.TestCase):
         row = estimate_sector_solver_bytes(dims, k, n_full,
                                            n_sector_vec=[op.basis.n for op in ops])
         with quiet():
-            s, peak = _trace(lambda: sc._so_solve_sectors(
+            s, peak = _trace(lambda: sc_so._so_solve_sectors(
                 ops, k, "arnoldi", gap_shape=packed.gap_shape))
         self.assertTrue(s.converged)
         self.assertNotIn("dense-LR", s.selection)

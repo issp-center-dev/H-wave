@@ -416,8 +416,8 @@ class TestFLEXBenchmark1Orbital(unittest.TestCase):
         The vertex being peaked at Q=(pi,pi) is the prerequisite for
         d-wave superconductivity in multi-orbital systems.
         """
-        from hwave.sc import (_compute_vertices_flex, _read_interaction_files,
-                              _build_interaction_k)
+        from hwave.solver.eliashberg.vertex import _compute_vertices_flex, _build_interaction_k
+        from hwave.solver.eliashberg.io import _read_interaction_files
 
         Lx, Ly, Nz = self.Lx, self.Ly, 1
         norb = self.solver.norb

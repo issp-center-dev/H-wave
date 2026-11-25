@@ -5,7 +5,7 @@ chi from flex_bond._dress. Everything is reversal-closed by construction."""
 import numpy as np
 
 from hwave.solver import bond_channels, bubble, flex_bond, offsite
-from hwave.solver.eliashberg_bond import ArrayBlockSource
+from hwave.solver.eliashberg.bond_dynamic import ArrayBlockSource
 
 
 def _k_even_hopping(norb, shape, rng):

@@ -18,17 +18,17 @@ from tests.test_eliashberg_ir import (
 @pytest.mark.parametrize("pairing_type", ["singlet", "triplet"])
 def test_channel_decomposition_vertex_linear_offsite(flex_outdir_offsite, pairing_type):
     """Spin, charge, and retained bare vertex terms are linearly separable."""
-    import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import io as sc_io
+    from hwave.solver.eliashberg import vertex as sc_vertex
+    from hwave.solver.eliashberg import dynamic as ed
     inp = _offsite_input(flex_outdir_offsite)
     norb, nx, ny, nz = 1, LX, LY, 1
     chis_w, chic_w, _, convention = ed.load_flex_chi_dynamic(inp, norb, nx, ny, nz)
     kx = np.linspace(0, 2 * np.pi, nx, endpoint=False)
     ky = np.linspace(0, 2 * np.pi, ny, endpoint=False)
     kz = np.linspace(0, 2 * np.pi, nz, endpoint=False)
-    _, _, interaction = sc._read_interaction_files(inp)
-    inter_k = sc._build_interaction_k(kx, ky, kz, interaction, norb)
+    _, _, interaction = sc_io._read_interaction_files(inp)
+    inter_k = sc_vertex._build_interaction_k(kx, ky, kz, interaction, norb)
     zeros_s, zeros_c = np.zeros_like(chis_w), np.zeros_like(chic_w)
 
     def vertex(chis, chic):
@@ -67,8 +67,7 @@ def test_channel_decomposition_flags_route_through_solve_dynamic(
     flex_outdir, monkeypatch, pairing_type, extra, expected
 ):
     """The public uniform solver routes both pairing types without sparse-ir."""
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import dynamic as ed
     captured = {}
     real_compute = ed.compute_vertices_flex_dynamic
 
@@ -116,10 +115,10 @@ def test_static_channel_flags_warn_they_are_ignored(caplog, flags, ignored):
     static path they are silently inert, so calc_eliashberg must warn."""
     import logging
 
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import config as sc_config
 
     with caplog.at_level(logging.WARNING, logger="hwave_sc"):
-        sc._warn_if_static_ignores_channel_flags(flags)
+        sc_config._warn_if_static_ignores_channel_flags(flags)
     warnings = [
         rec.getMessage()
         for rec in caplog.records
@@ -143,6 +142,7 @@ def test_static_channel_flags_warn_through_calc_eliashberg(caplog, monkeypatch, 
     import logging
 
     import hwave.sc as sc
+    from hwave.solver.eliashberg import static as sc_static
 
     class _Stop(Exception):
         pass
@@ -150,7 +150,7 @@ def test_static_channel_flags_warn_through_calc_eliashberg(caplog, monkeypatch, 
     def stop(*args, **kwargs):
         raise _Stop()
 
-    monkeypatch.setattr(sc, "_read_interaction_files", stop)
+    monkeypatch.setattr(sc_static, "_read_interaction_files", stop)
 
     eli = {"zero_chi_s": True}
     if freq is not None:
@@ -180,14 +180,14 @@ def test_dynamic_path_does_not_warn_about_channel_flags(monkeypatch):
     zero_chi_s/zero_chi_c are honored (not warned about) in dynamic mode. Locks
     the invariant against a future reordering of the dispatch vs. the warning."""
     import hwave.sc as sc
-    from hwave.solver import eliashberg_dynamic as ed
-
+    from hwave.solver.eliashberg import static as sc_static
+    from hwave.solver.eliashberg import dynamic as ed
     called = {"warn": False}
 
     def flag_warn(eli_param):
         called["warn"] = True
 
-    monkeypatch.setattr(sc, "_warn_if_static_ignores_channel_flags", flag_warn)
+    monkeypatch.setattr(sc_static, "_warn_if_static_ignores_channel_flags", flag_warn)
     monkeypatch.setattr(ed, "solve_dynamic", lambda input_dict: "DYNAMIC_OK")
 
     inp = {

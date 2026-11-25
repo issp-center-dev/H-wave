@@ -516,15 +516,15 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
     at the enlarged bond-major index (spec S4.4).
 
     Batched linear solves (not explicit inverses), one system per q-point,
-    mirroring the exact orientation of the existing ``sc.py`` dressing
-    (``_compute_vertices_general``, ``sc.py:1098-1104``) generalized from the
+    mirroring the exact orientation of the existing hwave_sc dressing
+    (``eliashberg.vertex._compute_vertices_general``) generalized from the
     plain orbital-pair size ``nd`` to the enlarged bond-major size ``ND``::
 
         chi_s = solve(I_ND - chi_bar @ S_bond, chi_bar)
         chi_c = solve(I_ND + chi_bar @ C_bond, chi_bar)
 
     The non-bond static Eliashberg path calls this at ``ND = nd`` with
-    ``cond_tol = None`` (``sc._compute_vertices_general``). On the bond basis
+    ``cond_tol = None`` (``eliashberg.vertex._compute_vertices_general``). On the bond basis
     ``chi_bar`` is not block-diagonal in the bond index, so the solve mixes
     bond sectors -- ``chi_s``/``chi_c`` are full ``ND x ND`` matrices.
 
@@ -582,7 +582,7 @@ def dress_bond(chi_bar, S_bond, C_bond, cond_tol=_BOND_COND_FLOOR):
                 C_bond.shape, chi_bar.shape))
 
     # Batched RPA solve for all q-points simultaneously (same algebra/
-    # orientation as sc.py._compute_vertices_general, generalized nd -> ND).
+    # orientation as eliashberg.vertex._compute_vertices_general, generalized nd -> ND).
     # Kept as the legacy schedule -- BOTH denominators are formed and
     # conditioning-checked before either solve -- so the Eliashberg path
     # is unchanged in numbers, error text and order of diagnostics. The
@@ -973,7 +973,7 @@ def _g2_from_green(green, beta, tail=False):
     This is the bond-kernel implementation (roll+flip for ``G(-k, -w_n)``,
     per-site batched GEMM over the Matsubara axis). With ``tail=True`` it adds
     the same analytic ``1/wn**2`` window-complement correction as
-    :func:`hwave.sc._calc_g2`; the default remains the historical raw-window
+    :func:`hwave.solver.eliashberg.kernel._calc_g2`; the default remains the historical raw-window
     behavior for direct callers, while the top-level solver forwards its
     ``[eliashberg] g2_tail`` setting explicitly.
     """
@@ -1002,10 +1002,10 @@ def _g2_from_green(green, beta, tail=False):
 
 
 # ---------------------------------------------------------------------------
-# bond bubble memory contract  --  read together with sc._bond_memory_estimate
+# bond bubble memory contract  --  read together with eliashberg.bond._bond_memory_estimate
 # ---------------------------------------------------------------------------
 #
-# The resource preflight (``sc._bond_resource_preflight``) refuses a run whose
+# The resource preflight (``eliashberg.bond._bond_resource_preflight``) refuses a run whose
 # estimated peak exceeds ``bond_memory_cap_gb``. That guard is only worth
 # anything if the estimate is not an UNDERCOUNT, so the shared kernel's
 # ``bubble.bond_bubble_static`` (the PRODUCTION streaming assembly, the sole
@@ -1014,7 +1014,7 @@ def _g2_from_green(green, beta, tail=False):
 # released (``del`` / in-place rescaling) as soon as it is consumed, and the
 # two counts below are imported FROM ``hwave.solver.bubble`` -- which owns
 # the canonical definition -- so the value actually used by
-# ``sc._bond_memory_estimate`` always matches what the PRODUCTION path
+# ``eliashberg.bond._bond_memory_estimate`` always matches what the PRODUCTION path
 # allocates. ``tests/test_sc_bond.py`` measures the real
 # ``bubble.bond_bubble_static`` peak against the budget.
 #
@@ -1048,7 +1048,7 @@ def _g2_from_green(green, beta, tail=False):
 #   (``green_kt`` and ``green_rt`` are ``del``-ed as soon as they are consumed.)
 #
 # The output ``chi_bar`` is ``(N_q, ND, ND)`` and is already one of the
-# ``sc._BOND_N_Q_ARRAYS`` q-resolved arrays, so it is not counted twice here.
+# ``eliashberg.bond._BOND_N_Q_ARRAYS`` q-resolved arrays, so it is not counted twice here.
 BOND_BUBBLE_N4_BUFFERS = _bubble.BOND_BUBBLE_N4_BUFFERS
 BOND_BUBBLE_N2_BUFFERS = _bubble.BOND_BUBBLE_N2_BUFFERS
 
@@ -1057,7 +1057,7 @@ def _sc_to_canonical(green):
     """``(p, p, Nx, Ny, Nz, nmat) -> (1, nmat, Nx*Ny*Nz, p, p)``.
 
     A PRIVATE, local copy of the same transpose/reshape/block-axis-insert
-    ``sc._green_sc_to_canonical`` uses -- duplicated rather than imported
+    ``eliashberg.kernel._green_sc_to_canonical`` uses -- duplicated rather than imported
     because ``sc.py`` already imports this module (importing back would be
     circular); :func:`bond_bubble` (below) is the only caller.
     """
@@ -1083,7 +1083,7 @@ def bond_bubble(green, bond_set, beta):
     delegates to :func:`hwave.solver.bubble.bond_bubble_static`. TAIL-OFF
     ALWAYS -- this signature carries no tail argument, so it can only
     reproduce the original raw finite-``nmat`` sum; the production
-    tail-corrected bond path (``sc._build_bond_operator``) calls
+    tail-corrected bond path (``eliashberg.bond._build_bond_operator``) calls
     ``bubble.bond_bubble_static`` directly with the Green carrier's
     ``deflated_kw``/``green0_tail`` instead of going through this function.
     The ``np.asarray`` coercion below is a CPU-compatibility shim kept for
@@ -1095,8 +1095,8 @@ def bond_bubble(green, bond_set, beta):
     ----------
     green : ndarray, shape (norb, norb, Nx, Ny, Nz, nmat)
         k-space, Matsubara-frequency Green's function in the ``sc.py``
-        layout/normalization (see ``hwave.sc._build_bond_green`` /
-        ``hwave.sc._load_flex_green``): ``iomega_n = (2n+1-nmat)*pi/beta``.
+        layout/normalization (see ``hwave.solver.eliashberg.bond._build_bond_green`` /
+        ``hwave.solver.eliashberg.io._load_flex_green``): ``iomega_n = (2n+1-nmat)*pi/beta``.
     bond_set : BondSetView or compatible
         Bond-channel topology (``delta_r``, ``n_channels``), e.g. a
         :class:`BondSetView` of :func:`resolve_bond_topology`.
@@ -1172,7 +1172,7 @@ def pair_weight(green, beta, *, g2_tail=False):
 
     This is the SAME object the Eliashberg operator applies to the gap before
     the vertex convolution (``X = G2 phi`` in the static bond operator,
-    ``sc._build_bond_operator``, and in ``sc._make_kernel_operator``), written as a matrix in the orbital-pair
+    ``eliashberg.bond._build_bond_operator``, and in ``eliashberg.kernel._make_kernel_operator``), written as a matrix in the orbital-pair
     index so it can be used as an inner-product metric:
 
         ``W[k][(c,d),(e,f)] = G2_{c,e,d,f}(k)``,  ``G2 = T sum_n G(k,w_n)
@@ -1289,7 +1289,7 @@ def check_hermitian_preconditions(operator, weight, *, atol=1.0e-8,
 
         **Cost of the dense branch (review fix I-4).** The ``vec_size``
         matvecs above build the FULL kernel only; when ``parts`` is given
-        (the normal production call from ``sc._build_bond_operator``, which
+        (the normal production call from ``eliashberg.bond._build_bond_operator``, which
         always passes ``{"pp": ..., "fl": ...}``) the part-wise check below
         densely builds EACH part too, for a TOTAL of ``3 * vec_size`` bond
         kernel matvecs before the eigensolve even starts. With the default
@@ -1605,7 +1605,7 @@ def attribute_lambda(vec, weight, op_pp, op_fl, op_full=None,
         The pair weight metric (:func:`pair_weight`).
     op_pp, op_fl : LinearOperator
         The instantaneous and fluctuation parts of the static bond operator
-        (``sc._build_bond_operator``).
+        (``eliashberg.bond._build_bond_operator``).
     op_full : LinearOperator, optional
         The full kernel. When given, ``lambda`` is its own Rayleigh quotient
         and ``sum_residual`` reports ``|lambda - (lambda^pp + lambda^fl)|``
@@ -1802,7 +1802,7 @@ def track_subspace(points, *, seed=None, weight=None, deg_tol=1.0e-3,
     odd-harmonic decomposition of the leading state and the degeneracy
     clustering of its spectrum) are wired into the solver itself behind
     ``[eliashberg] bond_diagnostics = true`` and land in the eigenvalue file's
-    provenance block; see ``sc._bond_diagnostics_record``.
+    provenance block; see ``eliashberg.bond._bond_diagnostics_record``.
 
     At every point the eigenpairs are clustered into near-degenerate
     invariant subspaces (``deg_tol``); the tracked subspace is the cluster of

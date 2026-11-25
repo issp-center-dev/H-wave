@@ -10,7 +10,8 @@ from unittest import mock
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import so_solve as sc_so
 
 from tests import so_bond_entry_fixtures as F
 from tests import so_run_compare
@@ -75,9 +76,9 @@ _NAN = float("nan")
 #: the pair-S_z 0 sector of the Zeeman fixture (the leader's) is the only
 #: sector of this antisymmetric dimension; the +1 and -1 sectors have 6
 _DIM_PP0 = fast.ZEEMAN_DIM_PP0
-_REAL_DENSE_EIGEN = sc._so_dense_reduced_eigen
+_REAL_DENSE_EIGEN = sc_so._so_dense_reduced_eigen
 _eigen_fails = fast.eigen_fails
-_REAL_SOLVE_LEADING = sc._solve_leading
+_REAL_SOLVE_LEADING = sc_eigen._solve_leading
 
 
 def _last_iterate(dim):
@@ -95,7 +96,7 @@ def _residual_fails(dim):
             vals = vals.copy()
             vals[1] += 1e-6
         return vals, vecs, M
-    return mock.patch.object(sc, "_so_dense_reduced_eigen", fake)
+    return mock.patch.object(sc_so, "_so_dense_reduced_eigen", fake)
 
 
 def _leading_fails(dim, modes):
@@ -113,13 +114,13 @@ def _leading_fails(dim, modes):
                                        "selection": "not-converged"}
             return _NAN, _last_iterate(vec_size), {"converged": False, "n_iter": 7}
         return _REAL_SOLVE_LEADING(make_operator, vec_size, solver_mode, *a, **kw)
-    return mock.patch.object(sc, "_solve_leading", fake)
+    return mock.patch.object(sc_so, "_solve_leading", fake)
 
 
 def _dense_dim():
     """The antisymmetric dimension of the Zeeman fixture's full gap."""
     fx = F.ZEEMAN_EXTERN
-    return sc._SOAntisymmetricBasis((fx.nd, fx.nd) + tuple(fx.shape)).dim
+    return sc_eigen._SOAntisymmetricBasis((fx.nd, fx.nd) + tuple(fx.shape)).dim
 
 
 #: the eigen leg's selection of each forced row
@@ -246,7 +247,7 @@ class TestZeroFieldThroughEntry(unittest.TestCase):
         # the field through the two routes, one field, both layouts
         h = fast.ZF_H[3]
         on_transfer = fast.ZF_4X4._replace(name="ZF_4X4_TRANSFER", extern=())
-        dim = sc._SOAntisymmetricBasis((2, 2) + tuple(fast.ZF_4X4.shape)).dim
+        dim = sc_eigen._SOAntisymmetricBasis((2, 2) + tuple(fast.ZF_4X4.shape)).dim
         for layout in ("dense", "auto"):
             with self.subTest(route_layout=layout):
                 runs = [F.run_case(fast._at_field(route, h), layout=layout,

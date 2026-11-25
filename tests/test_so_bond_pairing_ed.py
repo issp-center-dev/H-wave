@@ -71,7 +71,7 @@ import numpy as np
 import tests.test_so_pairing_ed as E
 from hwave.solver import bond_channels as bc
 from hwave.solver import flex_bond
-from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+from hwave.solver.eliashberg.dynamic import calc_g2_dynamic
 from hwave.solver.so_bond import (SOBondCaps, gamma_p, plan_so_bond, slot_geometry,
                                   so_bond_bubble, so_bond_dress, so_bond_pairing_vertex_parts,
                                   so_bond_topology)
