@@ -70,6 +70,7 @@ __all__ = [
     "NO_PROVENANCE_WARNING", "SO_UHFR_REFUSAL", "HERMITE_TOL", "EIG_TOL",
     "TRACE_RTOL", "initial_state", "check_initial_state", "check_green",
     "solver_initial_path", "initial_key_value", "uhfr_green", "write_uhfr_initial",
+    "seed_and_write",
 ]
 
 #: the provenance schema this module writes and reads
@@ -367,7 +368,8 @@ def _run_of(candidate_or_run, subshape):
 
 
 def _seed(facts, run, para):
-    """The seed of ``run`` on the cell of ``facts`` (design section 7)."""
+    """The seed of ``run`` on the cell of ``facts`` (design section 7);
+    a :class:`SeedResult` whose ``tried`` may be false."""
     from hwave.initial.cells import representable, to_qfrac
     from hwave.initial.hints import t_hint_bare
     from hwave.initial.patterns import realise
@@ -386,11 +388,8 @@ def _seed(facts, run, para):
                 run.run_id, list(B), reason))
     p = facts.problem
     O = None if spec.modulation == "none" else realise(spec, facts, B)
-    res = seed_pattern(facts, p.ham_trans_k, O, T_run=p.T, W0=t_hint_bare(p).W0,
-                       amplitude=cand.amplitude_requested, seed_base="bare")
-    if not res.tried:
-        raise InitialStateError("{}: refused: {}".format(run.run_id, res.not_tried_reason))
-    return res
+    return seed_pattern(facts, p.ham_trans_k, O, T_run=p.T, W0=t_hint_bare(p).W0,
+                        amplitude=cand.amplitude_requested, seed_base="bare")
 
 
 def _provenance(facts, run, res):
@@ -462,20 +461,47 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
         raise ValueError("site_map and uhfr_toml go together (a UHFr target needs both)")
     toml = _toml_of(input_dir_or_model)
     run = _run_of(candidate_or_run, subshape)
+    if site_map is None:
+        path, res, _ = seed_and_write(toml, run, out=out, para=para)
+        if path is None:
+            raise InitialStateError("{}: refused: {}".format(run.run_id, res.not_tried_reason))
+        return path
     facts = model_facts(toml, subshape=tuple(run.subshape))
     p = facts.problem
-    if site_map is not None:
-        if p.enable_spin_orbital:
-            raise InitialStateError(SO_UHFR_REFUSAL)
-        cells = _check_site_map(site_map, facts)
-        _check_uhfr_input(uhfr_toml, facts, len(cells))
+    if p.enable_spin_orbital:
+        raise InitialStateError(SO_UHFR_REFUSAL)
+    cells = _check_site_map(site_map, facts)
+    _check_uhfr_input(uhfr_toml, facts, len(cells))
     res = _seed(facts, run, para)
+    if not res.tried:
+        raise InitialStateError("{}: refused: {}".format(run.run_id, res.not_tried_reason))
     G = np.array(res.G, dtype=np.complex128)
     check_green(G, p, what="the seed of {}".format(run.run_id))
     out = _abs(out)
-    if site_map is not None:
-        write_uhfr_initial(uhfr_green(G, p, cells), out)
-        return out
+    write_uhfr_initial(uhfr_green(G, p, cells), out)
+    return out
+
+
+def seed_and_write(toml, run, *, out, para=None):
+    """Seed the :class:`CandidateRun` ``run`` on the UHFk input ``toml``
+    and write its npz to ``out``, as :func:`initial_state` does, returning
+    what the coverage rows record as well.
+
+    Returns ``(path, seed, facts)``: ``path`` the written file, or ``None``
+    when the seed is not tried (no response, a refused block check; the
+    reason is ``seed.not_tried_reason`` and nothing is written); ``seed``
+    the :class:`~hwave.initial.seed.SeedResult`; ``facts`` the
+    :class:`~hwave.initial.facts.ModelFacts` on the run's ``SubShape``.
+    Raises :class:`InitialStateError` when the seed fails the checks of
+    design section 9.2."""
+    from hwave.initial.facts import model_facts
+    facts = model_facts(toml, subshape=tuple(run.subshape))
+    p = facts.problem
+    res = _seed(facts, run, para)
+    if not res.tried:
+        return None, res, facts
+    G = np.array(res.G, dtype=np.complex128)
+    check_green(G, p, what="the seed of {}".format(run.run_id))
     members = {k: _encode(v) for k, v in _provenance(facts, run, res).items()}
     for k, v in CONVENTION_MEMBERS.items():
         members[k] = np.array(v)
@@ -485,7 +511,7 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
             G, cellshape=p.cellshape, subshape=p.subshape, norb_orig=p.norb_orig, ns=p.ns)
     else:
         members["green"] = G
-    return _write_npz(out, members)
+    return _write_npz(_abs(out), members), res, facts
 
 
 # --------------------------------------------------------------------------

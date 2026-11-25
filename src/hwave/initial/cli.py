@@ -1,0 +1,1182 @@
+"""The ``python -m hwave.initial`` commands ``prepare``, ``check`` and
+``collect`` (preview).
+
+Workflow: ``prepare`` writes one run directory per candidate run under
+WORK, the user runs ``hwave`` in each (``bash WORK/commands.txt``), and
+``collect`` reads the results back into ``WORK/coverage.json`` and
+``WORK/summary.txt``.
+
+**Run directories.** :func:`stage_run_dir` writes every run directory (and
+nothing else writes an ``input.toml``): the input TOML is rewritten
+(``[file.input] initial = "initial.npz"``, ``[mode.param] SubShape``, the
+input files copied into ``inputs/``), written by a small serialiser for the
+TOML subset H-wave reads, re-parsed and checked with the solver's input
+reader. Comments of the original TOML are not kept.
+
+**Relocatable WORK.** WORK holds no symbolic link, and every path that
+running or collecting uses is relative to WORK or to its run directory, so
+WORK can be moved, or its sources deleted, and still be run and collected.
+The original TOML's absolute path is kept in ``manifest.json`` for
+``prepare`` re-entry and display only.
+
+**Exit codes** (:data:`EXIT_CODES`): 0 done (for ``check``: verified, or
+unverified without ``--require-provenance``); 1 an error or a refusal; 2 an
+argument error; 3 stage 0 pending (not used by the large tier); 4 ``check
+--require-provenance`` on an initial-state file without provenance.
+"""
+import argparse
+import copy
+import dataclasses
+import hashlib
+import json
+import math
+import numbers
+import os
+import pathlib
+import re
+import shutil
+import sys
+from dataclasses import dataclass
+from typing import Mapping, Optional, Tuple
+
+import numpy as np
+
+__all__ = ["main", "prepare", "check", "collect", "stage_run_dir", "StagedRun",
+           "StagedFile", "dumps_toml", "EXIT_CODES", "EXIT_OK", "EXIT_ERROR",
+           "EXIT_USAGE", "EXIT_STAGE0_PENDING", "EXIT_NO_PROVENANCE", "MANIFEST_VERSION"]
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_USAGE = 2
+EXIT_STAGE0_PENDING = 3
+EXIT_NO_PROVENANCE = 4
+
+#: the exit codes, as listed in ``--help``
+EXIT_CODES = (
+    (EXIT_OK, "done (check: verified, or unverified without --require-provenance)"),
+    (EXIT_ERROR, "error, or the check refused the file"),
+    (EXIT_USAGE, "argument error"),
+    (EXIT_STAGE0_PENDING, "stage 0 pending: run its commands, then the same prepare "
+                          "command again (not used by the large tier)"),
+    (EXIT_NO_PROVENANCE, "check --require-provenance: the initial-state file has no "
+                         "provenance"),
+)
+
+#: the version of ``manifest.json``
+MANIFEST_VERSION = 1
+
+#: the names inside WORK and each run directory
+MANIFEST = "manifest.json"
+COVERAGE = "coverage.json"
+CANDIDATES = "candidates.json"
+COMMANDS = "commands.txt"
+SUMMARY = "summary.txt"
+RUN_TOML = "input.toml"
+RUN_INITIAL = "initial.npz"
+RUN_INPUTS = "inputs"
+RUN_LOG = "hwave.log"
+
+#: ``[file.input]`` keys whose files are staged (output requests of UHFk)
+STAGED_INPUT_KEYS = ("geometry_uhf", "onebodyg_uhf")
+#: ``[file.input]`` keys removed from a run's input (an initial state)
+REMOVED_INPUT_KEYS = ("initial", "initial_uhf", "initial_mode")
+#: ``[file.output]`` keys that name a file under ``path_to_output``
+OUTPUT_FILE_KEYS = ("energy", "eigen", "green", "onebodyg", "initial", "rpa",
+                    "export_hamiltonian", "scf_status")
+#: written when ``[file.output] energy`` is absent: UHFk writes energy.dat
+#: only when the key is present, and collect ranks on it
+DEFAULT_ENERGY = "energy.dat"
+
+_HEADER = ("# Written by python -m hwave.initial prepare from {}.\n"
+           "# Comments of the original input are not kept.\n")
+
+_BARE_KEY = re.compile(r"[A-Za-z0-9_-]+")
+
+
+class _Usage(Exception):
+    """An argument error (exit code 2)."""
+
+
+# --------------------------------------------------------------------------
+# the TOML serialiser
+# --------------------------------------------------------------------------
+
+def _toml_string(s):
+    # JSON escapes are TOML basic-string escapes; DEL must be escaped too
+    return json.dumps(s, ensure_ascii=False).replace("\x7f", "\\u007f")
+
+
+def _toml_key(k):
+    return k if _BARE_KEY.fullmatch(k) else _toml_string(k)
+
+
+def _toml_scalar(v, where):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, numbers.Integral):
+        return str(int(v))
+    if isinstance(v, numbers.Real):
+        f = float(v)
+        if not math.isfinite(f):
+            raise ValueError("{}: {!r} is not a finite number; the input writer of "
+                             "hwave.initial does not write it".format(where, v))
+        return repr(f)
+    if isinstance(v, str):
+        return _toml_string(v)
+    raise ValueError("{}: a value of type {} is outside the TOML subset hwave.initial "
+                     "writes (tables, strings, numbers, booleans, flat arrays)".format(
+                         where, type(v).__name__))
+
+
+def _toml_value(v, where):
+    if isinstance(v, (list, tuple)):
+        items = []
+        for i, x in enumerate(v):
+            if isinstance(x, (list, tuple, dict)):
+                raise ValueError("{}[{}]: nested arrays and arrays of tables are outside "
+                                 "the TOML subset hwave.initial writes".format(where, i))
+            items.append(_toml_scalar(x, "{}[{}]".format(where, i)))
+        return "[" + ", ".join(items) + "]"
+    return _toml_scalar(v, where)
+
+
+def dumps_toml(doc) -> str:
+    """``doc`` as TOML text: tables (nested dicts), strings, numbers,
+    booleans and flat arrays of them, the subset of TOML H-wave inputs use.
+    Anything else raises ``ValueError`` naming the key."""
+    out = []
+
+    def table(path, tab):
+        scalars = [(k, v) for k, v in tab.items() if not isinstance(v, dict)]
+        subs = [(k, v) for k, v in tab.items() if isinstance(v, dict)]
+        name = ".".join(_toml_key(k) for k in path)
+        if path and (scalars or not subs):
+            if out:
+                out.append("")
+            out.append("[{}]".format(name))
+        for k, v in scalars:
+            where = "[{}] {}".format(name, k) if path else k
+            out.append("{} = {}".format(_toml_key(k), _toml_value(v, where)))
+        for k, v in subs:
+            table(path + (k,), v)
+
+    if not isinstance(doc, dict):
+        raise ValueError("the document must be a table")
+    for k in doc:
+        if not isinstance(k, str):
+            raise ValueError("key {!r} is not a string".format(k))
+    table((), doc)
+    return "\n".join(out) + "\n"
+
+
+# --------------------------------------------------------------------------
+# run directories
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class StagedFile:
+    """One input file copied into a run directory: ``table`` and ``key``
+    of the TOML entry, ``source`` the file as the solver would open it
+    from the original input's directory, ``name`` its path in the run
+    directory (``inputs/<file>``), ``sha256`` and ``nbytes`` of the copy."""
+    table: str
+    key: str
+    source: str
+    name: str
+    sha256: str
+    nbytes: int
+
+
+@dataclass(frozen=True)
+class StagedRun:
+    """A written run directory: its ``input.toml``, the ``initial.npz``
+    the solver will read (written afterwards by the caller) and the
+    staged input files."""
+    toml_path: pathlib.Path
+    initial_path: pathlib.Path
+    staged: Tuple[StagedFile, ...]
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _table(doc, key, where):
+    v = doc.get(key)
+    if v is None:
+        v = {}
+        doc[key] = v
+    if not isinstance(v, dict):
+        raise ValueError("{} must be a table".format(where))
+    return v
+
+
+def _ci_duplicates(tab, where):
+    seen = {}
+    for k in tab:
+        low = k.lower()
+        if low in seen:
+            raise ValueError("{}: {!r} and {!r} are the same key (the solver reads the keys "
+                             "of this table in any case); keep one".format(
+                                 where, seen[low], k))
+        seen[low] = k
+
+
+def _ci_key(tab, key):
+    for k in tab:
+        if k.lower() == key.lower():
+            return k
+    return None
+
+
+def _parts(path):
+    return pathlib.PurePath(path).parts
+
+
+def _check_relative(value, where):
+    if not isinstance(value, str):
+        raise ValueError("{} must be a string, got {!r}".format(where, value))
+    if os.path.isabs(value):
+        raise ValueError("{} = {!r} is an absolute path: the runs of one WORK would write "
+                         "to the same place; give a path relative to the run directory"
+                         .format(where, value))
+    if ".." in _parts(value):
+        raise ValueError("{} = {!r} contains '..': every run writes inside its own run "
+                         "directory; give a path below it".format(where, value))
+
+
+def _check_outputs(foutput, flog):
+    pto = foutput.get("path_to_output", "output")
+    _check_relative(pto, "[file.output] path_to_output")
+    for key in OUTPUT_FILE_KEYS:
+        if key in foutput:
+            _check_relative(foutput[key], "[file.output] {}".format(key))
+    for key in ("green", "energy"):
+        if foutput.get(key) == "":
+            raise ValueError("[file.output] {} = \"\" disables the {} output, which collect "
+                             "reads; remove the key or name a file".format(key, key))
+    if "print_check" in flog:
+        _check_relative(flog["print_check"], "[log] print_check")
+    return pto
+
+
+def _unique(name, taken):
+    stem, ext = os.path.splitext(name)
+    out, n = name, 1
+    while out.lower() in taken:
+        n += 1
+        out = "{}-{}{}".format(stem, n, ext)
+    taken.add(out.lower())
+    return out
+
+
+def _plan_run_doc(doc, *, source_dir, overrides):
+    """The rewritten document and the copies to make:
+    ``(new_doc, [(table, key, source, name)])``; nothing is written."""
+    new = copy.deepcopy(dict(doc))
+    mode = _table(new, "mode", "[mode]")
+    param = _table(mode, "param", "[mode.param]")
+    _ci_duplicates(param, "[mode.param]")
+    ovr = dict(overrides or {})
+    green = ovr.pop("green", None)
+    for key, value in ovr.items():
+        k = _ci_key(param, key)
+        param[k if k is not None else key] = value
+
+    ffile = _table(new, "file", "[file]")
+    finput = _table(ffile, "input", "[file.input]")
+    foutput = _table(ffile, "output", "[file.output]")
+    flog = new.get("log", {})
+    if not isinstance(flog, dict):
+        raise ValueError("[log] must be a table")
+    if green is not None:
+        foutput["green"] = green
+    _check_outputs(foutput, flog)
+    if "energy" not in foutput:
+        foutput["energy"] = DEFAULT_ENERGY
+
+    pti = finput.get("path_to_input", "")
+    if not isinstance(pti, str):
+        raise ValueError("[file.input] path_to_input must be a string, got {!r}".format(pti))
+    inter = finput.get("interaction", {})
+    if not isinstance(inter, dict):
+        raise ValueError("[file.input.interaction] must be a table")
+    _ci_duplicates(inter, "[file.input.interaction]")
+    ipti_key = _ci_key(inter, "path_to_input")
+    ipti = inter.get(ipti_key, "") if ipti_key is not None else ""
+    if not isinstance(ipti, str):
+        raise ValueError("[file.input.interaction] {} must be a string, got {!r}".format(
+            ipti_key, ipti))
+
+    copies, taken, by_source = [], set(), {}
+
+    def stage(table, key, value, base):
+        if not isinstance(value, str) or not value:
+            raise ValueError("{} {} must name a file, got {!r}".format(table, key, value))
+        # located as the solver locates it, from the directory hwave runs in
+        source = os.path.join(str(source_dir), os.path.join(base, value))
+        if not os.path.isfile(source):
+            raise ValueError("{} {} = {!r} names {}, which is not a file".format(
+                table, key, value, source))
+        real = os.path.realpath(source)
+        if real not in by_source:
+            by_source[real] = _unique(os.path.basename(value), taken)
+        copies.append((table, key, source, by_source[real]))
+        return by_source[real]
+
+    new_input = {}
+    for key, value in finput.items():
+        if key in REMOVED_INPUT_KEYS:
+            continue
+        if key == "path_to_input":
+            new_input[key] = ""
+        elif key in STAGED_INPUT_KEYS:
+            new_input[key] = RUN_INPUTS + "/" + stage("[file.input]", key, value, pti)
+        elif key == "interaction":
+            new_inter = {}
+            for ikey, ivalue in inter.items():
+                if ikey == ipti_key:
+                    new_inter[ikey] = RUN_INPUTS
+                else:
+                    new_inter[ikey] = stage("[file.input.interaction]", ikey, ivalue, ipti)
+            if ipti_key is None:
+                new_inter = dict([("path_to_input", RUN_INPUTS)] + list(new_inter.items()))
+            new_input[key] = new_inter
+        else:
+            new_input[key] = value
+    if "path_to_input" not in new_input:
+        new_input = dict([("path_to_input", "")] + list(new_input.items()))
+    new_input["initial"] = RUN_INITIAL
+    ffile["input"] = new_input
+    return new, copies
+
+
+def _inside(path, root):
+    path, root = os.path.realpath(path), os.path.realpath(root)
+    return os.path.commonpath([path, root]) == root
+
+
+def stage_run_dir(run_dir, doc, *, source_dir, overrides, source_name=None) -> StagedRun:
+    """Write the run directory ``run_dir`` (created; it must not exist or be
+    empty) for the parsed input TOML ``doc`` of the directory ``source_dir``.
+
+    ``overrides``: the per-directory values, ``[mode.param]`` keys (e.g.
+    ``SubShape``, and ``T`` for stage 0; an existing key is replaced in its
+    own spelling) and ``"green"`` for ``[file.output] green``.
+
+    The rules: ``[file.input] path_to_input = ""`` and ``initial =
+    "initial.npz"`` (the file in ``run_dir``); ``initial_uhf`` and
+    ``initial_mode`` removed; every file of ``[file.input]``
+    (``geometry_uhf``, ``onebodyg_uhf``) and of ``[file.input.interaction]``
+    located as the solver locates it from ``source_dir`` and copied (bytes,
+    never a link) to ``inputs/<name>``, names made unique with ``-2``,
+    ``-3`` in key order; ``[file.input] geometry_uhf``/``onebodyg_uhf`` =
+    ``"inputs/<name>"``, ``[file.input.interaction] path_to_input =
+    "inputs"`` and each entry ``<name>``. ``[file.output] path_to_output``
+    and the output names must be relative and below the run directory;
+    ``green = ""`` and ``energy = ""`` are refused; an absent ``energy`` is
+    set to ``"energy.dat"``. The written TOML is re-parsed and checked by
+    the solver's input reader. ``source_name`` (the original file name)
+    goes into the header comment.
+
+    Raises ``ValueError`` naming the key on any refusal; nothing is written
+    outside ``run_dir``."""
+    import tomli
+    from hwave.solver import initial_facade
+    from hwave.initial.writer import solver_initial_path
+    run_dir = pathlib.Path(os.path.abspath(os.fspath(run_dir)))
+    new, copies = _plan_run_doc(doc, source_dir=os.path.abspath(os.fspath(source_dir)),
+                                overrides=overrides)
+    text = dumps_toml(new)
+    if tomli.loads(text) != new:
+        raise ValueError("the rewritten input does not read back as written")
+    if run_dir.exists() and any(run_dir.iterdir()):
+        raise ValueError("{}: the run directory exists and is not empty".format(run_dir))
+    run_dir.mkdir(parents=True, exist_ok=True)
+    inputs = run_dir / RUN_INPUTS
+    staged, done = [], {}
+    if copies:
+        inputs.mkdir()
+    for table, key, source, name in copies:
+        dest = inputs / name
+        if name not in done:
+            shutil.copyfile(source, str(dest))
+            done[name] = (_sha256(dest), dest.stat().st_size)
+        sha, nbytes = done[name]
+        staged.append(StagedFile(table=table, key=key, source=source,
+                                 name=RUN_INPUTS + "/" + name, sha256=sha, nbytes=nbytes))
+    toml_path = run_dir / RUN_TOML
+    with open(toml_path, "w", encoding="utf-8") as f:
+        f.write(_HEADER.format(source_name or "the original input"))
+        f.write(text)
+    initial_facade.load_problem(toml_path)
+    initial = run_dir / RUN_INITIAL
+    target = solver_initial_path(toml_path)
+    if target is None or os.path.realpath(target) != os.path.realpath(initial):
+        raise AssertionError("{}: the solver would read the initial state from {}, not {}"
+                             .format(toml_path, target, initial))
+    for key, path in initial_facade.referenced_input_files(toml_path).items():
+        if not path.is_file() or not _inside(path, run_dir):
+            raise AssertionError("{}: {} resolves to {}, which is not a staged file in the "
+                                 "run directory".format(toml_path, key, path))
+    return StagedRun(toml_path=toml_path, initial_path=initial, staged=tuple(staged))
+
+
+# --------------------------------------------------------------------------
+# prepare
+# --------------------------------------------------------------------------
+
+def _plain(v):
+    """``v`` as a plain JSON value (numpy scalars and read-only mappings
+    included)."""
+    if v is None or isinstance(v, (bool, str)):
+        return v
+    if isinstance(v, numbers.Integral):
+        return int(v)
+    if isinstance(v, numbers.Real):
+        f = float(v)
+        return f if math.isfinite(f) else None
+    if isinstance(v, Mapping):
+        return {str(k): _plain(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple, np.ndarray)):
+        return [_plain(x) for x in v]
+    raise TypeError("cannot record {!r} as JSON".format(v))
+
+
+def _read_json(path, what):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError) as exc:
+        raise ValueError("{} {}: {}".format(what, path, exc)) from None
+
+
+def _extra_candidates(path):
+    from hwave.initial.candidates import Candidate
+    from hwave.initial.patterns import PatternSpec
+    data = _read_json(path, "--extra-candidates")
+    if not isinstance(data, list):
+        raise ValueError("--extra-candidates {}: a JSON list of objects {{family, pattern, "
+                         "label, citation}} expected".format(path))
+    taken, out = set(), []
+    allowed = ("family", "pattern", "label", "citation", "amplitude_requested")
+    for i, obj in enumerate(data):
+        where = "--extra-candidates {} [{}]".format(path, i)
+        if not isinstance(obj, dict):
+            raise ValueError("{}: an object expected".format(where))
+        unknown = sorted(set(obj) - set(allowed))
+        if unknown:
+            raise ValueError("{}: unknown key(s) {}; the keys are {}".format(
+                where, ", ".join(unknown), ", ".join(allowed)))
+        family = obj.get("family")
+        try:
+            pattern = PatternSpec.from_json(obj.get("pattern"))
+            kw = {"pattern": pattern, "label": obj.get("label"), "taken": taken}
+            if "amplitude_requested" in obj:
+                kw["amplitude_requested"] = obj["amplitude_requested"]
+            if family == "user":
+                if obj.get("citation") is not None:
+                    raise ValueError("citation: only literature candidates carry one")
+                out.append(Candidate.user(**kw))
+            elif family == "literature":
+                out.append(Candidate.literature(citation=obj.get("citation"), **kw))
+            else:
+                raise ValueError("family must be 'user' or 'literature', got {!r}".format(
+                    family))
+        except ValueError as exc:
+            raise ValueError("{}: {}".format(where, exc)) from None
+    return out
+
+
+def _orbital_site_file(path):
+    data = _read_json(path, "--orbital-site")
+    if not isinstance(data, list) or not all(
+            isinstance(x, numbers.Integral) and not isinstance(x, bool) for x in data):
+        raise ValueError("--orbital-site {}: a JSON list of integers (one site label per "
+                         "physical orbital) expected".format(path))
+    return [int(x) for x in data]
+
+
+def _realpath(p):
+    return None if p is None else os.path.realpath(os.fspath(p))
+
+
+def _input_record(toml, input_sha256, files):
+    return {"toml": str(toml), "toml_sha256": _sha256(toml),
+            "input_sha256": dict(input_sha256),
+            "files_sha256": {str(k): (_sha256(k) if os.path.isfile(k) else None)
+                             for k in files}}
+
+
+def _differences(old, new):
+    out = []
+    oc, nc = old.get("command", {}), new["command"]
+    for k in sorted(set(oc) | set(nc)):
+        if oc.get(k) != nc.get(k):
+            out.append("command {}: {} (WORK) vs {} (now)".format(
+                k, json.dumps(oc.get(k)), json.dumps(nc.get(k))))
+    oi, ni = old.get("input", {}), new["input"]
+    if oi.get("toml_sha256") != ni["toml_sha256"]:
+        out.append("the input TOML {} changed".format(ni["toml"]))
+    for group in ("input_sha256", "files_sha256"):
+        a, b = oi.get(group, {}) or {}, ni[group]
+        for k in sorted(set(a) | set(b)):
+            if a.get(k) != b.get(k):
+                out.append("input file {} changed".format(k))
+    return out
+
+
+def _seed_fields(res, cap_ok=True):
+    from hwave.initial.report import SEED_FIELDS
+    out = {}
+    for k in SEED_FIELDS:
+        if k == "amplitude_requested":
+            continue
+        out[k] = _plain(getattr(res, k))
+    if not cap_ok:
+        out["cap_reason"] = None
+    return out
+
+
+def _rho(G, problem):
+    g = np.asarray(G).reshape(problem.nvol, problem.nd, problem.nd)
+    return np.swapaxes(g, -1, -2)
+
+
+def _para_green(facts, cache):
+    """The bare-H0 paramagnet of the cell of ``facts`` (the reference of
+    the labels)."""
+    from hwave.initial.hints import t_hint_bare
+    from hwave.initial.seed import seed_pattern
+    key = tuple(facts.problem.subshape)
+    if key not in cache:
+        p = facts.problem
+        cache[key] = seed_pattern(facts, p.ham_trans_k, None, T_run=p.T,
+                                  W0=t_hint_bare(p).W0, seed_base="bare").G
+    return cache[key]
+
+
+def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False):
+    """The label of the state ``G`` from ``delta rho`` against the bare-H0
+    paramagnet of its cell (the rho = G^T convention)."""
+    from hwave.initial import labels
+    from hwave.initial.symmetry import hermitian_green
+    from hwave.initial.writer import HERMITE_TOL
+    p = facts.problem
+    g5 = np.asarray(G, dtype=np.complex128).reshape(p.nvol, p.ns, p.norb, p.ns, p.norb)
+    gh = hermitian_green(g5, p.shape)
+    off = float(np.max(np.abs(g5 - gh), initial=0.0))
+    if off > HERMITE_TOL:
+        raise ValueError("the Green function is not Hermitian (max |G(r)_ab - "
+                         "conj(G(-r)_ba)| / 2 = {:.3g})".format(off))
+    # Hermitian to round-off: the Hermitian parts, so that a delta rho of
+    # round-off size is not judged against its own norm
+    para = hermitian_green(np.asarray(_para_green(facts, cache)).reshape(g5.shape), p.shape)
+    d = _rho(gh, p) - _rho(para, p)
+    if float(np.max(np.abs(d), initial=0.0)) <= labels.PARA_TOL:
+        d = np.zeros_like(d)
+    return labels.label(d, facts, q=q, eta=None, phase=phase, sign=sign,
+                        spiral=spiral).name
+
+
+def _commands_text(run_ids):
+    lines = ['cd "$(dirname "$0")" || exit 1',
+             "# Candidate runs written by python -m hwave.initial prepare.",
+             "# bash commands.txt works from any directory. For GNU parallel and job",
+             "# arrays, which run single lines, run from WORK: cd WORK && parallel < "
+             "commands.txt",
+             "# Each line checks the initial state, then runs hwave; collect WORK reads "
+             "the results."]
+    for rid in run_ids:
+        lines.append('(cd "{}" && python -m hwave.initial check --require-provenance '
+                     '{} && hwave {} > {} 2>&1)'.format(rid, RUN_TOML, RUN_TOML, RUN_LOG))
+    return "\n".join(lines) + "\n"
+
+
+def _write_json(path, obj):
+    tmp = str(path) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=1, allow_nan=False)
+        f.write("\n")
+    os.replace(tmp, str(path))
+
+
+def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None,
+            t_hint=None, amplitude=None, max_candidates=None, orbital_site=None,
+            para_check=False, stdout=None, **limits) -> int:
+    """``python -m hwave.initial prepare`` (returns the exit code).
+
+    Enumerates the candidates of the UHFk input ``input_path`` (a TOML, or
+    a directory holding exactly one), and writes WORK = ``out``:
+    ``coverage.json`` (``pre_run``), ``manifest.json``, ``candidates.json``,
+    ``commands.txt`` and one run directory per run (:func:`stage_run_dir`,
+    then ``initial.npz``, checked with ``check_initial_state``).
+
+    ``extra_candidates`` and ``orbital_site`` are JSON file paths;
+    ``**limits`` are further :class:`~hwave.initial.enumerate.Limits`
+    fields. An existing non-empty WORK written by the same command for the
+    same inputs is left as it is; any other non-empty directory is refused,
+    naming the difference. Raises ``ValueError`` (exit code 1 in
+    :func:`main`) on a refusal."""
+    from hwave.initial.enumerate import candidate_states
+    from hwave.initial.facts import _resolve_toml, model_facts
+    from hwave.initial.report import coverage_document
+    from hwave.initial.writer import InitialStateError, check_initial_state, seed_and_write
+    from hwave.initial.candidates import _thaw_json
+    import hwave
+    import tomli
+
+    stdout = stdout or sys.stdout
+    if para_check:
+        raise NotImplementedError("--para-check checks the para Hartree-Fock step of the "
+                                  "small and medium tiers, which arrive in a later release")
+    toml = pathlib.Path(os.path.realpath(_resolve_toml(input_path)))
+    work = pathlib.Path(os.path.abspath(os.fspath(out)))
+    lim = dict(limits)
+    if amplitude is not None:
+        lim["amplitude"] = amplitude
+    if max_candidates is not None:
+        lim["max_candidates"] = max_candidates
+    extra_path = _realpath(extra_candidates)
+    site_path = _realpath(orbital_site)
+    command = {
+        "input": str(toml),
+        "subshape": None if subshapes is None else [list(map(int, b)) for b in subshapes],
+        "tier": tier, "extra_candidates": extra_path, "t_hint": t_hint,
+        "orbital_site": site_path, "para_check": bool(para_check),
+        "limits": {k: lim[k] for k in sorted(lim)},
+    }
+    with open(toml, "rb") as f:
+        doc = tomli.load(f)
+    site = _orbital_site_file(site_path) if site_path else None
+    # the input is read by the solver's rules first (case variants refused)
+    base = model_facts(toml, subshape=(1, 1, 1), orbital_site=site)
+    files = [p for p in (extra_path, site_path) if p is not None]
+    record = {"command": command, "input": _input_record(toml, base.input_sha256, files)}
+
+    if work.exists() and not work.is_dir():
+        raise ValueError("{}: --out names a file, not a directory".format(work))
+    if work.is_dir() and any(work.iterdir()):
+        mpath = work / MANIFEST
+        if not mpath.is_file():
+            raise ValueError("{}: not empty and holds no {} of hwave.initial; give an empty "
+                             "or new directory".format(work, MANIFEST))
+        old = _read_json(mpath, "manifest")
+        diff = _differences(old, record)
+        if diff:
+            raise ValueError("{}: written by another prepare command or for other inputs: "
+                             "{}. Give a new directory, or repeat the command that wrote "
+                             "it".format(work, "; ".join(diff)))
+        print("{}: already prepared by this command for these inputs; nothing to do. "
+              "Run bash {} and then python -m hwave.initial collect {}".format(
+                  work, work / COMMANDS, work), file=stdout)
+        return EXIT_OK
+
+    # the staging rules are checked before anything is enumerated or written
+    _plan_run_doc(doc, source_dir=str(toml.parent), overrides={"SubShape": [1, 1, 1]})
+    extras = _extra_candidates(extra_path) if extra_path else ()
+    cset = candidate_states(toml, subshapes=subshapes,
+                            tier="auto" if tier is None else tier, t_hint=t_hint,
+                            extra=extras, orbital_site=site, **lim)
+
+    created = not work.exists()
+    work.mkdir(parents=True, exist_ok=True)
+    made = []
+    try:
+        rows = [_thaw_json(r) for r in cset.rows]
+        index = {r["run_id"]: i for i, r in enumerate(rows)}
+        kept, entries, staged_bytes, cache = [], [], 0, {}
+        for run in cset.runs:
+            rd = work / run.run_id
+            made.append(rd)
+            staged = stage_run_dir(rd, doc, source_dir=toml.parent,
+                                   overrides={"SubShape": list(run.subshape)},
+                                   source_name=toml.name)
+            row = rows[index[run.run_id]]
+            try:
+                path, res, facts = seed_and_write(staged.toml_path, run,
+                                                  out=staged.initial_path)
+            except InitialStateError as exc:
+                # a writer refusal of a user or literature row becomes a
+                # "refused:" row; for a generated row it is an error
+                if run.candidate.family not in ("user", "literature"):
+                    raise
+                shutil.rmtree(rd)
+                made.pop()
+                row.update(tried=False, not_tried_reason="refused: {}".format(exc))
+                continue
+            if path is None:
+                shutil.rmtree(rd)
+                made.pop()
+                row.update(_seed_fields(res), tried=False,
+                           not_tried_reason=res.not_tried_reason)
+                continue
+            result = check_initial_state(staged.toml_path, require_provenance=True)
+            if not result.verified:
+                raise AssertionError("{}: the written seed is not verified".format(rd))
+            spec = run.candidate.pattern
+            row.update(_seed_fields(res))
+            row["label"] = _state_label(res.G, facts, cache, q=spec.q, phase=spec.phase,
+                                        sign=spec.sign, spiral=spec.modulation == "spiral")
+            kept.append(run)
+            staged_bytes += sum(s.nbytes for s in {s.name: s for s in staged.staged}.values())
+            entries.append({
+                "run_id": run.run_id, "run_dir": run.run_id, "subshape": list(run.subshape),
+                "input_toml": RUN_TOML, "input_toml_sha256": _sha256(staged.toml_path),
+                "initial": RUN_INITIAL, "initial_sha256": _sha256(staged.initial_path),
+                "input_sha256": {s.key: s.sha256 for s in staged.staged},
+                "staged": [{"table": s.table, "key": s.key, "name": s.name,
+                            "sha256": s.sha256, "bytes": s.nbytes} for s in staged.staged],
+            })
+        cset2 = dataclasses.replace(cset, runs=tuple(kept), rows=rows)
+        chosen = "auto (interim rule)" if tier in (None, "auto") else "user"
+        cov = coverage_document(cset2, phase_marker="pre_run", tier_chosen_by=chosen)
+        _write_json(work / CANDIDATES, dict(cset2.to_json(), tier_chosen_by=chosen))
+        made.append(work / CANDIDATES)
+        _write_json(work / COVERAGE, cov)
+        made.append(work / COVERAGE)
+        with open(work / COMMANDS, "w", encoding="utf-8") as f:
+            f.write(_commands_text([e["run_id"] for e in entries]))
+        made.append(work / COMMANDS)
+        manifest = dict(record, manifest_version=MANIFEST_VERSION,
+                        hwave_version=hwave.__version__, work_dir_at_prepare=str(work),
+                        staged_bytes=staged_bytes, runs=entries)
+        _write_json(work / MANIFEST, manifest)
+    except BaseException:
+        if created:
+            shutil.rmtree(work, ignore_errors=True)
+        else:
+            for p in made:
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                elif p.exists():
+                    p.unlink()
+        raise
+    n_not = sum(1 for r in rows if not r["tried"])
+    print("{}: {} runs written ({} rows not tried, see {}); {} bytes of staged input "
+          "copies.".format(work, len(entries), n_not, COVERAGE, staged_bytes), file=stdout)
+    print("Run them with: bash {} (or, from WORK, cd {} && parallel < {}); then: "
+          "python -m hwave.initial collect {}".format(work / COMMANDS, work, COMMANDS, work),
+          file=stdout)
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+# check
+# --------------------------------------------------------------------------
+
+def check(config, npz=None, *, require_provenance=False, stdout=None, stderr=None) -> int:
+    """``python -m hwave.initial check`` (returns the exit code)."""
+    from hwave.initial.writer import (InitialStateError, ProvenanceMissingError,
+                                      check_initial_state)
+    stdout, stderr = stdout or sys.stdout, stderr or sys.stderr
+    try:
+        res = check_initial_state(config, npz, require_provenance=require_provenance)
+    except ProvenanceMissingError as exc:
+        print("refused: {}".format(exc), file=stderr)
+        return EXIT_NO_PROVENANCE
+    except (InitialStateError, ValueError, OSError) as exc:
+        print("refused: {}".format(exc), file=stderr)
+        return EXIT_ERROR
+    for w in res.warnings:
+        print("warning: {}".format(w), file=stderr)
+    print("{}: {} (member {})".format(config, "verified" if res.verified else
+                                      "checked, not verified", res.key), file=stdout)
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+# collect
+# --------------------------------------------------------------------------
+
+_SUCCEEDED = re.compile(r"calculation succeeded: rest=(\S+), eps=")
+_FAILED = re.compile(r"calculation failed: rest=(\S+), eps=")
+_ERROR_LINE = re.compile(r"^\S+ \S+ (ERROR|CRITICAL) (.*)$")
+
+
+def _float(text):
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _log_verdict(log_path, eps_tol):
+    """``(status, residual, summary)`` of a run from its ``hwave.log``."""
+    with open(log_path, encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    errors = [m.group(2) for m in map(_ERROR_LINE.match, lines) if m]
+    tb = [i for i, ln in enumerate(lines) if ln.startswith("Traceback (most recent call")]
+    if tb:
+        tail = [ln for ln in lines[tb[-1]:] if ln.strip()]
+        return "failed", None, "traceback in {}: {}".format(RUN_LOG, tail[-1].strip())
+    if errors:
+        return "failed", None, "solver error in {}: {}".format(RUN_LOG, errors[-1])
+    for ln in reversed(lines):
+        m = _SUCCEEDED.search(ln)
+        if m:
+            r = _float(m.group(1).rstrip(","))
+            if r is None or (eps_tol is not None and not r <= eps_tol):
+                return "not_converged", r, "the final residual exceeds the tolerance"
+            return "converged", r, None
+        m = _FAILED.search(ln)
+        if m:
+            return "not_converged", _float(m.group(1).rstrip(",")), None
+    return "not_converged", None, "{} has no convergence message".format(RUN_LOG)
+
+
+def _seed_problem(entry, run_dir, run_toml):
+    """Why the run's seed or inputs are not the prepared ones (``None``
+    when they are)."""
+    from hwave.solver import initial_facade
+    from hwave.initial.writer import check_initial_state, solver_initial_path
+    try:
+        target = solver_initial_path(run_toml)
+    except Exception as exc:  # an unreadable input.toml
+        return "{} cannot be read: {}".format(RUN_TOML, exc)
+    initial = run_dir / entry["initial"]
+    if target is None or not initial.is_file() or not os.path.exists(target) \
+            or not os.path.samefile(target, initial):
+        return "{} no longer names {} as [file.input] initial".format(RUN_TOML, entry["initial"])
+    if _sha256(initial) != entry["initial_sha256"]:
+        return "{} differs from the file prepare wrote".format(entry["initial"])
+    try:
+        files = initial_facade.referenced_input_files(run_toml)
+    except ValueError as exc:
+        return "{}: {}".format(RUN_TOML, exc)
+    want = entry["input_sha256"]
+    for key in sorted(set(files) | set(want)):
+        path = files.get(key)
+        if path is None or key not in want:
+            return "the input file set changed ({})".format(key)
+        if not path.is_file() or not _inside(path, run_dir):
+            return "{} = {} is not a staged file of the run directory".format(key, path)
+        if _sha256(path) != want[key]:
+            return "the staged input {} ({}) changed after prepare".format(
+                os.path.relpath(path, run_dir), key)
+    try:
+        check_initial_state(run_toml, require_provenance=True)
+    except ValueError as exc:
+        return "the initial-state check refused it: {}".format(exc)
+    return None
+
+
+def _status_file(run):
+    path = run.outputs.get("scf_status")
+    return path if path is not None and path.is_file() else None
+
+
+def _any_output(run):
+    for key, path in run.outputs.items():
+        if key == "print_check":
+            continue
+        for p in (path, pathlib.Path(str(path) + ".npz")):
+            if p.exists():
+                return True
+    return False
+
+
+def _read_outputs(row, run, run_toml, model, facts_cache, para_cache):
+    """Fill the energies, order parameters and final label of a run whose
+    outputs must be readable (``ResultsError`` otherwise). ``run`` is the
+    :class:`hwave.results.Run`, opened with the run directory as its base."""
+    from hwave.results import UnsupportedLayoutError, read_energy, read_uhfk_green
+    from hwave.initial.facts import model_facts
+    from hwave.initial.report import energy_fields, order_parameter_records, orbital_centres
+    en = read_energy(run)
+    row["energy_total"] = _plain(en.total)
+    row["free_energy_total"] = _plain(en.free_total)
+    row["rest"] = _plain(en.values.get("Rest"))
+    e = energy_fields(row, facts=model)
+    for k in ("free_energy_per_cell", "free_energy_per_site", "free_energy_per_site_reason"):
+        row[k] = e[k]
+    key = str(run_toml)
+    if key not in facts_cache:
+        facts_cache[key] = model_facts(run_toml)
+    facts = facts_cache[key]
+    row["order_parameters"] = order_parameter_records(
+        run, site_groups=model["site_groups"], orbital_centres=orbital_centres(facts))
+    g = read_uhfk_green(run)
+    G = g.sublattice.green if g.sublattice is not None else g.green
+    if G is None:
+        raise UnsupportedLayoutError("{}: the output green cannot be read".format(run_toml))
+    row["final_label"] = _state_label(G, facts, para_cache)
+
+
+_OUTPUT_ROW_FIELDS = ("energy_total", "free_energy_total", "rest", "free_energy_per_cell",
+                      "free_energy_per_site", "free_energy_per_site_reason",
+                      "order_parameters", "final_label")
+
+
+def _collect_row(row, entry, work, model, warnings, facts_cache, para_cache):
+    from types import MappingProxyType
+    from hwave.results import ResultsError, UnsupportedLayoutError, open_run, read_scf_status
+    run_dir = work / entry["run_dir"]
+    run_toml = run_dir / entry["input_toml"]
+    row["run_dir"] = entry["run_dir"]
+    try:
+        # every reader gets this Run: base directory = the run directory, so
+        # no run record is consulted and a moved WORK reads the same
+        run = open_run(run_toml, base_dir=run_dir)
+        row["iteration_max"] = _plain(run.param("IterationMax"))
+        row["eps"] = _plain(run.param("EPS"))
+        row["mix"] = _plain(run.param("Mix"))
+    except ResultsError as exc:
+        row.update(status="seed_unverified", error_summary=str(exc))
+        return
+    problem = _seed_problem(entry, run_dir, run_toml)
+    if problem is not None:
+        row.update(status="seed_unverified", error_summary=problem)
+        return
+    eps = row["eps"]
+    eps_tol = (10.0 ** (-float(eps)) if isinstance(eps, numbers.Real)
+               and not isinstance(eps, bool) else None)
+    try:
+        status_path = _status_file(run)
+        st = None
+        if status_path is not None:
+            try:
+                st = read_scf_status(run)
+            except UnsupportedLayoutError as exc:
+                warnings.append("{}: the status file {} is ignored: {}".format(
+                    entry["run_id"], os.path.relpath(status_path, work), exc))
+                # read the outputs as if the file were absent
+                run = dataclasses.replace(run, outputs=MappingProxyType(
+                    {k: v for k, v in run.outputs.items() if k != "scf_status"}))
+                st = None
+        if st is not None:
+            row["iterations"] = st.iterations
+            row["scf_residual"] = _plain(st.residual)
+            row["scf_eps_tol"] = _plain(st.eps)
+            row["scf_note"] = st.note
+            if st.iterations == 0:
+                row.update(status="failed", failure_kind="zero_steps",
+                           error_summary=st.note or "no SCF step performed")
+                return
+            if st.converged:
+                row["status"] = "converged"
+                _read_outputs(row, run, run_toml, model, facts_cache, para_cache)
+            else:
+                row["status"] = "not_converged"
+            return
+        log = run_dir / RUN_LOG
+        has_out = _any_output(run) or status_path is not None
+        if not log.is_file() and not has_out:
+            row["status"] = "not_run"
+            return
+        if not log.is_file():
+            row["status"] = "convergence_unverified"
+            _read_outputs(row, run, run_toml, model, facts_cache, para_cache)
+            return
+        status, residual, summary = _log_verdict(log, eps_tol)
+        row["scf_residual"] = residual
+        row["scf_eps_tol"] = eps_tol
+        if status == "failed":
+            row.update(status="failed", failure_kind="crash", error_summary=summary)
+            return
+        row["status"] = status
+        if summary:
+            row["error_summary"] = summary
+        if status == "converged":
+            _read_outputs(row, run, run_toml, model, facts_cache, para_cache)
+    except (ResultsError, OSError, ValueError) as exc:
+        for k in _OUTPUT_ROW_FIELDS:
+            row[k] = None
+        row.update(status="failed", failure_kind="unreadable_output",
+                   error_summary="{}: {}".format(type(exc).__name__, exc))
+
+
+def collect(work, *, stdout=None, stderr=None) -> int:
+    """``python -m hwave.initial collect`` (returns the exit code).
+
+    Reads every run of WORK and writes ``coverage.json`` (``post_run``)
+    and ``summary.txt``. Status per run, in this order: ``seed_unverified``
+    when ``input.toml`` no longer names the prepared ``initial.npz``, a
+    staged file or the npz differs from the manifest SHA-256, or the
+    initial-state check refuses it; otherwise a valid status file decides
+    (``iterations = 0`` gives ``failed``); otherwise ``hwave.log``
+    (``not_run``, ``convergence_unverified``, ``failed``, ``not_converged``,
+    ``converged``). Outputs of a converged run must be readable, else
+    ``failed``. Every reader gets ``base_dir`` = the run directory.
+    Idempotent: the result depends only on WORK."""
+    from hwave.initial.candidates import CandidateSet, _thaw_json
+    from hwave.initial.report import coverage_document, rank, summary_text
+    stdout, stderr = stdout or sys.stdout, stderr or sys.stderr
+    work = pathlib.Path(os.path.abspath(os.fspath(work)))
+    manifest = _read_json(work / MANIFEST, "manifest")
+    if manifest.get("manifest_version") != MANIFEST_VERSION:
+        raise ValueError("{}: manifest_version {!r} is not {}".format(
+            work / MANIFEST, manifest.get("manifest_version"), MANIFEST_VERSION))
+    data = _read_json(work / CANDIDATES, "candidate set")
+    chosen = data.pop("tier_chosen_by", "auto (interim rule)")
+    cset = CandidateSet.from_json(data)
+    model = _thaw_json(cset.model)
+    entries = {e["run_id"]: e for e in manifest["runs"]}
+    rows, warnings, facts_cache, para_cache = [], [], {}, {}
+    for r in cset.rows:
+        row = _thaw_json(r)
+        if row.get("tried"):
+            entry = entries.get(row["run_id"])
+            if entry is None:
+                raise ValueError("{}: run {} is not in the manifest".format(
+                    work, row["run_id"]))
+            _collect_row(row, entry, work, model, warnings, facts_cache, para_cache)
+        rows.append(row)
+    ranking = rank(rows, facts=model)
+    cset2 = dataclasses.replace(cset, rows=rows)
+    doc = coverage_document(cset2, phase_marker="post_run", tier_chosen_by=chosen,
+                            ranking=ranking)
+    _write_json(work / COVERAGE, doc)
+    text = summary_text(doc, ranking)
+    if warnings:
+        text += "\nCollect warnings:\n" + "\n".join("  " + w for w in warnings) + "\n"
+    with open(work / SUMMARY, "w", encoding="utf-8") as f:
+        f.write(text)
+    for w in warnings:
+        print("warning: {}".format(w), file=stderr)
+    stdout.write(text)
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
+# the command line
+# --------------------------------------------------------------------------
+
+def _subshape_arg(text):
+    try:
+        vals = [int(x) for x in text.split(",")]
+    except ValueError:
+        vals = []
+    if len(vals) != 3 or any(v < 1 for v in vals):
+        raise argparse.ArgumentTypeError(
+            "{!r}: a SubShape is three positive integers, e.g. 2,2,1".format(text))
+    return tuple(vals)
+
+
+def _positive_float(text):
+    try:
+        v = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("{!r} is not a number".format(text)) from None
+    if not math.isfinite(v) or v <= 0:
+        raise argparse.ArgumentTypeError("{!r}: a finite number > 0 expected".format(text))
+    return v
+
+
+def _nonneg_int(text):
+    try:
+        v = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("{!r} is not an integer".format(text)) from None
+    if v < 0:
+        raise argparse.ArgumentTypeError("{!r}: an integer >= 0 expected".format(text))
+    return v
+
+
+def _epilog():
+    return "exit codes:\n" + "\n".join("  {}  {}".format(c, t) for c, t in EXIT_CODES)
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print("{}: error: {}".format(self.prog, message), file=sys.stderr)
+        raise _Usage(message)
+
+
+def build_parser():
+    """The argument parser of ``python -m hwave.initial``."""
+    p = _Parser(
+        prog="python -m hwave.initial",
+        description="Candidate initial states for UHFk (preview). prepare writes one run "
+                    "directory per candidate, you run hwave in each (bash "
+                    "WORK/commands.txt), collect reads the results back. The selected "
+                    "state is the lowest free energy among the candidates tried. It is not "
+                    "a proof of the ground state.",
+        epilog=_epilog(), formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="command", metavar="{prepare,check,collect}",
+                           parser_class=_Parser)
+    sub.required = True
+    pp = sub.add_parser(
+        "prepare", help="write the candidate runs into WORK", epilog=_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Enumerate the candidate initial states of a UHFk input and write "
+                    "WORK: coverage.json, manifest.json, commands.txt and one run "
+                    "directory per run (input.toml, initial.npz, inputs/ with copies of "
+                    "the input files). Comments of the input TOML are not kept.")
+    pp.add_argument("input", metavar="INPUT_DIR",
+                    help="a directory holding exactly one UHFk *.toml, or the TOML")
+    pp.add_argument("--out", required=True, metavar="WORK", help="the work directory")
+    pp.add_argument("--subshape", action="append", type=_subshape_arg, metavar="Bx,By,Bz",
+                    help="a SubShape to evaluate every candidate on (repeatable); "
+                         "default: the input's SubShape")
+    pp.add_argument("--tier", choices=("auto", "large", "medium", "small"),
+                    help="the enumeration tier (this release: large; auto resolves to it)")
+    pp.add_argument("--extra-candidates", metavar="FILE.json",
+                    help="a JSON list of {family: user|literature, pattern, label, "
+                         "citation}; the pattern follows patternspec.schema.json")
+    pp.add_argument("--t-hint", type=_positive_float, metavar="T",
+                    help="the hint temperature (overrides the input T for the hints only)")
+    pp.add_argument("--amplitude", type=float, metavar="A",
+                    help="the requested seed amplitude, in (0, 1) (default 0.5)")
+    pp.add_argument("--max-candidates", type=_nonneg_int, metavar="N",
+                    help="the generated rows per SubShape (default 32)")
+    pp.add_argument("--orbital-site", metavar="FILE",
+                    help="a JSON list: one site label per physical orbital")
+    pp.add_argument("--para-check", action="store_true",
+                    help="also check the para step (small and medium tiers; a later "
+                         "release)")
+    pc = sub.add_parser(
+        "check", help="check an initial-state file against the input that reads it",
+        epilog=_epilog(), formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Check the initial-state npz the input CONFIG.toml reads (or NPZ) "
+                    "before hwave runs: provenance, SubShape, shape, Hermiticity, "
+                    "eigenvalue bounds, electron number and blocks.")
+    pc.add_argument("config", metavar="CONFIG.toml")
+    pc.add_argument("npz", nargs="?", metavar="NPZ")
+    pc.add_argument("--require-provenance", action="store_true",
+                    help="refuse a file without provenance (exit code 4)")
+    pl = sub.add_parser(
+        "collect", help="read the results of WORK", epilog=_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Read every run of WORK and write WORK/coverage.json (post_run) and "
+                    "WORK/summary.txt; safe to repeat.")
+    pl.add_argument("work", metavar="WORK")
+    return p
+
+
+def main(argv=None) -> int:
+    """The entry point of ``python -m hwave.initial``; returns the exit
+    code (:data:`EXIT_CODES`)."""
+    from hwave.results import ResultsError
+    parser = build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except _Usage:
+        return EXIT_USAGE
+    except SystemExit as exc:          # --help
+        return int(exc.code or 0)
+    try:
+        if args.command == "prepare":
+            subs = args.subshape
+            if subs is not None and len(set(subs)) != len(subs):
+                dup = sorted({b for b in subs if subs.count(b) > 1})
+                try:
+                    parser.error("--subshape {} is given more than once".format(
+                        ",".join(map(str, dup[0]))))
+                except _Usage:
+                    return EXIT_USAGE
+            return prepare(args.input, args.out, subshapes=subs, tier=args.tier,
+                           extra_candidates=args.extra_candidates, t_hint=args.t_hint,
+                           amplitude=args.amplitude, max_candidates=args.max_candidates,
+                           orbital_site=args.orbital_site, para_check=args.para_check)
+        if args.command == "check":
+            return check(args.config, args.npz, require_provenance=args.require_provenance)
+        return collect(args.work)
+    except (ValueError, NotImplementedError, OSError, ResultsError) as exc:
+        print("error: {}".format(exc), file=sys.stderr)
+        return EXIT_ERROR
