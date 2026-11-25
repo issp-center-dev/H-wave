@@ -122,3 +122,30 @@ def spin_independent_entries(transfer):
         for s in range(2):
             out[(r, a, b, s, s)] = v
     return out
+
+
+#: the triangular Bravais vectors a1 = (1, 0, 0), a2 = (1/2, sqrt(3)/2, 0)
+TRIANGULAR_RVEC = ((1.0, 0.0, 0.0), (0.5, 3.0 ** 0.5 / 2.0, 0.0), (0.0, 0.0, 1.0))
+
+
+def triangular_transfer(t=1.0):
+    """Nearest-neighbour hopping ``t`` of one orbital on the triangular
+    lattice: the bonds a1, a2 and a2 - a1 (reduced (1,0), (0,1), (-1,1))
+    and their negatives."""
+    out = {}
+    for r in ((1, 0, 0), (0, 1, 0), (-1, 1, 0)):
+        out[(r, 0, 0)] = -t
+        out[(tuple(-x for x in r), 0, 0)] = -t
+    return out
+
+
+def triangular(dest, L, *, U=0.0, T=0.0, ncond=None, subshape=None, param=None):
+    """One-orbital triangular lattice ``L x L`` (:data:`TRIANGULAR_RVEC`),
+    hopping 1, on-site ``U``; half filling unless ``ncond`` is given."""
+    p = {"Ncond": L * L if ncond is None else ncond, "T": T}
+    if subshape is not None:
+        p["SubShape"] = list(subshape)
+    p.update(param or {})
+    inter = {"CoulombIntra": {((0, 0, 0), 0, 0): U}} if U else None
+    return write_input(dest, cellshape=(L, L, 1), transfer=triangular_transfer(),
+                       rvec=TRIANGULAR_RVEC, interactions=inter, param=p)

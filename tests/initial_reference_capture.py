@@ -24,6 +24,17 @@ initial-state file of :func:`writer_reference_case` as
 cross-numpy content reference of ``tests/test_initial_writer.py``)::
 
     PYTHONPATH=$PWD/src:$PWD python -B tests/initial_reference_capture.py --writer
+
+``--validation`` writes ``tests/initial_ref/v1a_i1.json`` and
+``tests/initial_ref/v1b.json``, the frozen references of the validation
+cases V1a and V1b of ``tests/test_initial_validation_i1.py`` (the V1 model
+and solver settings are :data:`V1_MODEL` and :data:`V1_SOLVER`; each file
+records them with the H-wave and numpy versions it was captured with)::
+
+    PYTHONPATH=$PWD/src:$PWD python -B tests/initial_reference_capture.py --validation
+
+They are captured once; a later run that contradicts them is a finding to
+report, not a reason to re-capture.
 """
 import argparse
 import json
@@ -351,22 +362,235 @@ def capture_writer(out_path):
     print("wrote {} with numpy {}".format(out_path, np.__version__))
 
 
+# ---------------------------------------------------------------------------
+# The validation cases V1a and V1b (tests/test_initial_validation_i1.py)
+# ---------------------------------------------------------------------------
+
+#: the committed references of ``--validation``
+V1A_REFERENCE = os.path.join(_REPO, "tests", "initial_ref", "v1a_i1.json")
+V1B_REFERENCE = os.path.join(_REPO, "tests", "initial_ref", "v1b.json")
+
+#: the V1 model: square lattice 16 x 16, hopping 1, U = 4, half filling,
+#: SubShape 2 x 2, Fock on; the solver settings of every run
+V1_MODEL = {"L": 16, "U": 4.0, "subshape": [2, 2, 1]}
+V1_SOLVER = {"IterationMax": 3000, "EPS": 10, "Mix": 0.5}
+#: V1a temperature; V1b is T = 0
+V1A_T = 0.02
+#: the T_N bisection: a Neel seed at T, ordered when max |m_i| > the
+#: threshold; ``steps`` halvings of [lo, hi]; IterationMax of those runs
+TN_BISECTION = {"lo": 0.02, "hi": 1.0, "steps": 12, "threshold": 1e-6,
+                "IterationMax": 400000, "EPS": 14}
+
+
+def v1_input(dest, T, *, solver=None, finput=None):
+    """The V1 input at temperature ``T`` under ``dest`` (``solver``
+    overrides :data:`V1_SOLVER`); the TOML path."""
+    from tests import initial_fixtures
+    param = dict(V1_SOLVER, **(solver or {}))
+    return initial_fixtures.write_input(
+        dest, cellshape=(V1_MODEL["L"], V1_MODEL["L"], 1),
+        transfer=initial_fixtures.square_transfer(),
+        interactions={"CoulombIntra": {((0, 0, 0), 0, 0): V1_MODEL["U"]}},
+        param=dict(param, Ncond=V1_MODEL["L"] ** 2, T=T,
+                   SubShape=list(V1_MODEL["subshape"])),
+        finput=finput)
+
+
+def run_solver(toml_path):
+    """Run ``hwave`` on ``toml_path`` in this process, in the TOML's
+    directory (as ``commands.txt`` does), its standard output into
+    ``hwave.log`` there."""
+    import contextlib
+    import hwave.qlms
+    run_dir = os.path.dirname(os.path.abspath(toml_path))
+    cwd = os.getcwd()
+    os.chdir(run_dir)
+    try:
+        with open("hwave.log", "w") as log, contextlib.redirect_stdout(log):
+            hwave.qlms.run(input_file=os.path.basename(toml_path))
+    finally:
+        os.chdir(cwd)
+
+
+def prepare_run_collect(toml_path, work, **prepare_kw):
+    """``prepare`` WORK for ``toml_path``, run every run directory of its
+    manifest with :func:`run_solver`, ``collect``; the post-run coverage
+    document."""
+    import io
+    from hwave.initial import cli
+    rc = cli.prepare(toml_path, work, stdout=io.StringIO(), **prepare_kw)
+    if rc != 0:
+        raise RuntimeError("prepare returned {}".format(rc))
+    with open(os.path.join(work, "manifest.json")) as f:
+        manifest = json.load(f)
+    for entry in manifest["runs"]:
+        run_solver(os.path.join(work, entry["run_dir"], entry["input_toml"]))
+    rc = cli.collect(work, stdout=io.StringIO(), stderr=io.StringIO())
+    if rc != 0:
+        raise RuntimeError("collect returned {}".format(rc))
+    with open(os.path.join(work, "coverage.json")) as f:
+        return json.load(f)
+
+
+def max_moment(row):
+    """The largest local spin moment |m_i| of a collected row."""
+    return max(row["order_parameters"]["per_site"]["moment"])
+
+
+def neel_candidate():
+    """The collinear Neel pattern at q = (1/2, 1/2) on 2 x 2, as a user row."""
+    from hwave.initial import Candidate
+    from hwave.initial.patterns import Entry, PatternSpec
+    spec = PatternSpec(q=("1/2", "1/2", "0"), subshape=(2, 2, 1), phase=0.0, sign=1,
+                       modulation="cos", entries=(Entry(0, 0, (0, 0, 0), cz=1.0),))
+    return Candidate.user(pattern=spec, label="Neel")
+
+
+def neel_run(dest, T, *, solver=None):
+    """Run the V1 model at ``T`` from the Neel seed; ``(max |m_i|,
+    converged)``."""
+    from hwave.initial.writer import initial_state
+    from hwave.results import read_scf_status, read_uhfk_order_parameters
+    toml = v1_input(dest, T, solver=solver, finput={"initial": "initial.npz"})
+    initial_state(toml, neel_candidate(), out=os.path.join(dest, "initial.npz"))
+    run_solver(toml)
+    op = read_uhfk_order_parameters(toml)
+    return float(np.max(op.moment)), bool(read_scf_status(toml).converged)
+
+
+def bisect_t_n(root, *, lo, hi, steps, threshold, IterationMax, EPS):
+    """T_N of the V1 model: bisection of [lo, hi] on max |m_i| > threshold
+    from the Neel seed. ``(lo, hi, record)``: ordered at lo, not at hi.
+
+    The runs use a tighter ``EPS`` than the candidate runs: near T_N the
+    moment decays by a factor close to 1 per iteration, so at EPS = 10 a run
+    stops with a remnant moment above 1e-6 well above T_N."""
+    record = []
+
+    def ordered(T):
+        m, conv = neel_run(os.path.join(root, "T{:d}".format(len(record))), T,
+                           solver={"IterationMax": IterationMax, "EPS": EPS})
+        record.append({"T": T, "moment": m, "converged": conv})
+        return m > threshold
+
+    if not ordered(lo) or ordered(hi):
+        raise RuntimeError("T_N is not bracketed by [{}, {}]: {}".format(lo, hi, record))
+    for _ in range(steps):
+        mid = 0.5 * (lo + hi)
+        if ordered(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo, hi, record
+
+
+def stoner_t_n():
+    """An independent T_N of the V1 model: the root of U chi0(Q, T) = 1 at
+    Q = (1/2, 1/2), chi0 the bare static Lindhard function per spin on the
+    L x L mesh (the para Hartree-Fock bands of one orbital at half filling
+    are the bare bands shifted by U/2, and E_F = 0)."""
+    from scipy.optimize import brentq
+    L, U = V1_MODEL["L"], V1_MODEL["U"]
+    k = 2.0 * np.pi * np.arange(L) / L
+    kx, ky = np.meshgrid(k, k, indexing="ij")
+    e = -2.0 * (np.cos(kx) + np.cos(ky))     # e(k + Q) = -e(k)
+
+    def chi0(T):
+        f = 0.5 * (1.0 - np.tanh(e / (2.0 * T)))
+        safe = np.where(np.abs(e) < 1e-12, 1.0, e)
+        # (f(e) - f(-e)) / (-2 e); the limit at e = 0 is f (1 - f) / T
+        v = np.where(np.abs(e) < 1e-12, f * (1.0 - f) / T, (2.0 * f - 1.0) / (-2.0 * safe))
+        return float(v.mean())
+
+    return brentq(lambda T: U * chi0(T) - 1.0, 0.05, 2.0, xtol=1e-12)
+
+
+def _rows_record(cov):
+    """``{run_id: {status, final_label, free_energy_per_site, moment}}`` of
+    the tried rows of a post-run coverage document."""
+    out = {}
+    for r in cov["rows"]:
+        if not r["tried"]:
+            continue
+        conv = r["status"] == "converged"
+        out[r["run_id"]] = {
+            "status": r["status"], "final_label": r["final_label"],
+            "free_energy_per_site": r["free_energy_per_site"],
+            "moment": max_moment(r) if conv else None}
+    return out
+
+
+def _provenance_record(description):
+    import hwave
+    return {"description": description, "hwave_version": hwave.__version__,
+            "numpy_version": np.__version__,
+            "captured_by": "tests/initial_reference_capture.py --validation",
+            "model": dict(V1_MODEL, hopping=1.0, filling="half", fock=True),
+            "solver": dict(V1_SOLVER)}
+
+
+def capture_validation(out_dir):
+    """Write ``v1a_i1.json`` and ``v1b.json`` under ``out_dir``."""
+    import tempfile
+    root = tempfile.mkdtemp(prefix="initial_capture_")
+    try:
+        cov = prepare_run_collect(v1_input(os.path.join(root, "a_src"), V1A_T),
+                                  os.path.join(root, "a_work"))
+        rows = _rows_record(cov)
+        neel = [rid for rid in rows if rid.startswith("baseline-q1_2_1_2_0-spin-z")
+                and "-neg-" not in rid]
+        if len(neel) != 1 or rows[neel[0]]["status"] != "converged":
+            raise RuntimeError("V1a: the Neel row did not converge: {}".format(neel))
+        lo, hi, record = bisect_t_n(os.path.join(root, "tn"), **TN_BISECTION)
+        v1a = _provenance_record(
+            "V1a: T = 0.02, the default large-tier candidate set; the Neel row's "
+            "moment max |m_i|; T_N = the upper end of a bisection on max |m_i| > "
+            "1e-6 from the Neel seed (ordered at T_N_lower, not at T_N); "
+            "T_N_stoner = the root of U chi0(Q, T) = 1 on the same mesh, an "
+            "independent check")
+        v1a.update(T=V1A_T, neel_run_id=neel[0], neel_moment=rows[neel[0]]["moment"],
+                   T_N=hi, T_N_lower=lo, T_N_bisection=dict(TN_BISECTION),
+                   T_N_stoner=stoner_t_n(),
+                   T_N_runs=record, rows=rows)
+        cov = prepare_run_collect(v1_input(os.path.join(root, "b_src"), 0.0),
+                                  os.path.join(root, "b_work"))
+        v1b = _provenance_record(
+            "V1b: T = 0 (open Fermi shell), the default large-tier candidate set; "
+            "status, final label, free energy per site and max |m_i| of every "
+            "tried row")
+        v1b.update(T=0.0, T_hint=cov["hint"]["T_hint"], rows=_rows_record(cov))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(out_dir, exist_ok=True)
+    for name, doc in (("v1a_i1.json", v1a), ("v1b.json", v1b)):
+        path = os.path.join(out_dir, name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=1, sort_keys=True, ensure_ascii=False)
+            f.write("\n")
+        print("wrote {} with numpy {}".format(path, np.__version__))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--facade", action="store_true",
                         help="capture the facade golden file")
     parser.add_argument("--writer", action="store_true",
                         help="write the initial-state writer reference")
-    parser.add_argument("--out", default=None, help="output .npz path")
+    parser.add_argument("--validation", action="store_true",
+                        help="write the V1a and V1b validation references")
+    parser.add_argument("--out", default=None,
+                        help="output .npz path (--validation: output directory)")
     args = parser.parse_args(argv)
-    if args.facade == args.writer:
-        parser.error("pass exactly one of --facade and --writer")
+    if args.facade + args.writer + args.validation != 1:
+        parser.error("pass exactly one of --facade, --writer and --validation")
     if _REPO not in sys.path:
         sys.path.insert(0, _REPO)
     if args.facade:
         capture_facade(args.out or FACADE_GOLDEN)
-    else:
+    elif args.writer:
         capture_writer(args.out or WRITER_REFERENCE)
+    else:
+        capture_validation(args.out or os.path.dirname(V1A_REFERENCE))
 
 
 if __name__ == "__main__":

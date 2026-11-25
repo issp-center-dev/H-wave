@@ -43,7 +43,8 @@ MEASUREMENT = (
     "first on the then-lightest shard, at a x2.7 projection of their "
     "registered tests' macOS times with numpy 1.26.4; test_initial_cli "
     "(shard 2, 21 s) placed by hand on the then-lightest shard at the same "
-    "x2.7 projection of its 7.4 s macOS time)")
+    "x2.7 projection of its 7.4 s macOS time; test_initial_validation_i1 "
+    "(shard 2, 62 s) likewise, x2.7 of its 23 s macOS time)")
 
 #: Files that must share a shard: they diagonalize identical Hamiltonians,
 #: which ``tests/ed_cache.py`` shares only within one process (the case-M
@@ -79,6 +80,7 @@ SHARDS = (
         "test_flex_bond_memory",                   # 2
         "test_sc_spin_orbital_bond_full",          # 10 (CI estimate; 6 s on Linux)
         "test_initial_cli",                        # 21 (x2.7 of 7.4 s, macOS)
+        "test_initial_validation_i1",              # 62 (x2.7 of 23 s, macOS)
     ),
     (
         "test_bond_longitudinal_ed",               # 109 } one item (TOGETHER)

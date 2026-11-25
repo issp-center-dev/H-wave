@@ -1,0 +1,183 @@
+{
+ "T": 0.02,
+ "T_N": 0.7399267578125001,
+ "T_N_bisection": {
+  "EPS": 14,
+  "IterationMax": 400000,
+  "hi": 1.0,
+  "lo": 0.02,
+  "steps": 12,
+  "threshold": 1e-06
+ },
+ "T_N_lower": 0.7396875,
+ "T_N_runs": [
+  {
+   "T": 0.02,
+   "converged": true,
+   "moment": 0.3453282000268243
+  },
+  {
+   "T": 1.0,
+   "converged": true,
+   "moment": 3.365413503431114e-11
+  },
+  {
+   "T": 0.51,
+   "converged": true,
+   "moment": 0.2908080697765803
+  },
+  {
+   "T": 0.755,
+   "converged": true,
+   "moment": 4.814169896061316e-10
+  },
+  {
+   "T": 0.6325000000000001,
+   "converged": true,
+   "moment": 0.21575331909401751
+  },
+  {
+   "T": 0.6937500000000001,
+   "converged": true,
+   "moment": 0.14668948738017973
+  },
+  {
+   "T": 0.724375,
+   "converged": true,
+   "moment": 0.08634391134474442
+  },
+  {
+   "T": 0.7396875,
+   "converged": true,
+   "moment": 0.005769273103324896
+  },
+  {
+   "T": 0.74734375,
+   "converged": true,
+   "moment": 9.529866062951697e-10
+  },
+  {
+   "T": 0.743515625,
+   "converged": true,
+   "moment": 1.9101092096907024e-09
+  },
+  {
+   "T": 0.7416015625000001,
+   "converged": true,
+   "moment": 3.764648037751783e-09
+  },
+  {
+   "T": 0.7406445312500001,
+   "converged": true,
+   "moment": 8.614118723881958e-09
+  },
+  {
+   "T": 0.7401660156250001,
+   "converged": true,
+   "moment": 1.8667562912133562e-08
+  },
+  {
+   "T": 0.7399267578125001,
+   "converged": true,
+   "moment": 4.522919888616528e-08
+  }
+ ],
+ "T_N_stoner": 0.7397549747465095,
+ "captured_by": "tests/initial_reference_capture.py --validation",
+ "description": "V1a: T = 0.02, the default large-tier candidate set; the Neel row's moment max |m_i|; T_N = the upper end of a bisection on max |m_i| > 1e-6 from the Neel seed (ordered at T_N_lower, not at T_N); T_N_stoner = the root of U chi0(Q, T) = 1 on the same mesh, an independent check",
+ "hwave_version": "2.0.0",
+ "model": {
+  "L": 16,
+  "U": 4.0,
+  "filling": "half",
+  "fock": true,
+  "hopping": 1.0,
+  "subshape": [
+   2,
+   2,
+   1
+  ]
+ },
+ "neel_moment": 0.34532816095851665,
+ "neel_run_id": "baseline-q1_2_1_2_0-spin-z-ferro-orbital-q-1-2-1-2-0-phi-0-r0-phi0-b2x2x1",
+ "numpy_version": "2.4.6",
+ "rows": {
+  "baseline-q0_1_2_0-charge-q-0-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.7970288098315074,
+   "moment": 0.3453281595895941,
+   "status": "converged"
+  },
+  "baseline-q0_1_2_0-spin-z-ferro-orbital-q-0-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.797028792250471,
+   "moment": 0.34532815282274887,
+   "status": "converged"
+  },
+  "baseline-q1_2_0_0-charge-q-1-2-0-0-phi-0-r0-phi0-b2x2x1": {
+   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.7970287908604967,
+   "moment": 0.3453281521846562,
+   "status": "converged"
+  },
+  "baseline-q1_2_0_0-spin-z-ferro-orbital-q-1-2-0-0-phi-0-r0-phi0-b2x2x1": {
+   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.797028785595908,
+   "moment": 0.3453281502310829,
+   "status": "converged"
+  },
+  "baseline-q1_2_1_2_0-charge-q-1-2-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "final_label": null,
+   "free_energy_per_site": null,
+   "moment": null,
+   "status": "not_converged"
+  },
+  "baseline-q1_2_1_2_0-spin-z-ferro-orbital-q-1-2-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.7970288133386025,
+   "moment": 0.34532816095851665,
+   "status": "converged"
+  },
+  "ferro-q0_0_0-spin-z-ferro-orbital-q-0-0-0-phi-0-r0-phi0-b2x2x1": {
+   "final_label": "spin-z ferro-orbital + bond-spin-z + bond-charge q=(0,0,0)",
+   "free_energy_per_site": -0.6281618696814233,
+   "moment": 0.07424125478434732,
+   "status": "converged"
+  },
+  "para-q0_0_0-para-r0-phi0-b2x2x1": {
+   "final_label": "para",
+   "free_energy_per_site": -0.614133643387915,
+   "moment": 0.0,
+   "status": "converged"
+  },
+  "random-s0-b2x2x1": {
+   "final_label": "spin-x ferro-orbital + spin-y ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.797028913436389,
+   "moment": 0.3453282000296107,
+   "status": "converged"
+  },
+  "random-s1-b2x2x1": {
+   "final_label": "spin-z ferro-orbital + spin-x ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.7970289134369635,
+   "moment": 0.3453282000298339,
+   "status": "converged"
+  },
+  "random-s2-b2x2x1": {
+   "final_label": "spin-y ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.7970289134363752,
+   "moment": 0.3453282000296078,
+   "status": "converged"
+  },
+  "random-s3-b2x2x1": {
+   "final_label": "spin-y ferro-orbital + spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "free_energy_per_site": -0.7970289134372414,
+   "moment": 0.34532820002994796,
+   "status": "converged"
+  }
+ },
+ "solver": {
+  "EPS": 10,
+  "IterationMax": 3000,
+  "Mix": 0.5
+ }
+}

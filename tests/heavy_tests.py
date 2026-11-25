@@ -331,6 +331,16 @@ HEAVY_TESTS = (
     ("test_initial_cli", "TestPrepare", "test_work_relocatable",
      "prepare, move WORK, bash commands.txt, collect twice; 1.7 s on macOS, "
      "about 5 s on the Linux CI runners"),
+    # --- tests/test_initial_validation_i1.py -- V1a, V1b, V3 (i) --------
+    ("test_initial_validation_i1", "TestPrepareValidation", "test_v3i_cli_proposed_cell",
+     "prepare on a 16 x 2 cell of a 64 x 32 lattice (enumeration and deduplication "
+     "on 32 sites); 14 s on macOS"),
+    ("test_initial_validation_i1", "TestV1", "test_v1a_i1",
+     "prepare, 12 + 12 UHFk solves on 16 x 16 (one runs to IterationMax = 3000) "
+     "and collect, at T = 0.02 and 1.5 T_N; 3.3 to 6.0 s on macOS"),
+    ("test_initial_validation_i1", "TestV1", "test_v1b",
+     "prepare, 12 UHFk solves on 16 x 16 (one runs to IterationMax = 3000) and "
+     "collect at T = 0; 1.1 to 2.9 s on macOS, about 8 s on the Linux CI runners"),
     # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
     ("test_offsite_exchange_ed_longitudinal",
      "TestOffsiteExchangeLongitudinalControls",

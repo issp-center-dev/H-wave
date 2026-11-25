@@ -53,6 +53,15 @@
     ヒントつきのエラーを送出します。関数と結果の型の説明は docstring
     （例: ``help(hr)``\ ）を参照してください。
 
+- 初期状態の候補（プレビュー）
+
+    ``python -m hwave.initial`` は UHFk の入力に対して初期状態の候補を用意して
+    候補ごとに実行ディレクトリを作り、 ``hwave`` の実行後に結果を集めて順位を
+    付けます（ ``prepare``, ``check``, ``collect``\ 。 ``python -m hwave.initial
+    --help`` を参照）。完全な説明ができるまではプレビュー版です。詳しくは
+    :doc:`initial_states` を参照してください。選ばれる状態は、試した候補の中で
+    自由エネルギーが最も低いものであり、基底状態であることの証明ではありません。
+
 - Official Page
 
     - `GitHubリポジトリ <https://github.com/issp-center-dev/H-wave>`_
@@ -165,3 +174,7 @@
      指定し、入力ファイルは使いません）は、FLEX の全自己エネルギーアーカイブを
      ``flex_hartree_fock = true``\ の計算が\ ``sigma_init``\ として受理する分割形式に変換します。
 
+.. toctree::
+   :hidden:
+
+   initial_states
