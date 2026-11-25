@@ -150,7 +150,7 @@ def to_k(tab_r, *, scale_after=False):
     ``(nx, ny, nz)`` with ``k_i = 2 pi m_i / n_i``. The transform is the
     unnormalised inverse FFT, the sign every solver copy uses since issue
     #133. Two expressions of it are kept, because they are equal
-    mathematically but not bitwise on a grid with a side that is not a
+    mathematically but can differ bitwise on a grid with a side that is not a
     power of two:
 
     * ``scale_after=False`` (default): ``ifftn(..., norm="forward")``, the
