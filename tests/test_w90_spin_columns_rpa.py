@@ -511,7 +511,10 @@ class TestFlexSpinFreeNineColumnTutorial(unittest.TestCase):
                         # numpy < 2: two runs of one input already differ
                         # at round-off on this platform, so only the
                         # round-off level is meaningful there
+                        self.assertTrue(np.all(np.isfinite(x)) and np.all(np.isfinite(y)),
+                                        (name, key))
                         np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-14,
+                                                   equal_nan=False,
                                                    err_msg=str((name, key)))
                     else:
                         self.assertTrue(np.array_equal(x, y), (name, key))
