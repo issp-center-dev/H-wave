@@ -14,6 +14,10 @@ module it imports; it does not import ``hwave.initial``.
   interaction tables of a problem.
 * :func:`accumulate_hf_projected`, :func:`hf_potential`: the Hartree-Fock
   potential UHFk adds to ``T(k)``, from the stored Green function.
+* :func:`green_function`: the stored Green function UHFk builds from a
+  Hamiltonian (its diagonalisation and occupation fill), or with a uniform
+  fill of an open T = 0 Fermi shell.
+* :func:`referenced_input_files`: the files an input TOML names, by key.
 
 Every function takes and returns the stored Green function of UHFk,
 ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>`` (the layout of the
@@ -30,10 +34,17 @@ import numpy as np
 
 from . import hamiltonian_k
 from .uhfk_blocks import HFTables, SolverBlocks, accumulate_hf_projected
+from .uhfk_fill import FillInfo, MuNotConvergedError, ShellRecord
 
-__all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "load_problem",
+__all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
+           "MuNotConvergedError", "TWO_BODY_TYPES", "load_problem",
            "solver_blocks", "hf_tables", "accumulate_hf_projected",
-           "hf_potential"]
+           "hf_potential", "green_function", "referenced_input_files"]
+
+#: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
+#: and the combined ``Coulomb`` table, uhfk.py ``_check_interaction``)
+TWO_BODY_TYPES = ("CoulombIntra", "CoulombInter", "Coulomb", "Hund", "Ising",
+                  "PairLift", "Exchange", "PairHop")
 
 #: the top-level tables ``hwave`` reads, by exact name (qlms.py:98-104)
 _TOP_TABLES = ("mode", "file", "log")
@@ -62,7 +73,9 @@ class UHFkProblem:
     (``ns * norb``).
 
     Modes: ``enable_spin_orbital``, ``iflag_fock``, ``sz_free``,
-    ``nconds`` (``(Ncond,)`` or ``(N_up, N_down)``), ``T``,
+    ``ncond`` (``Ncond`` as the solver resolves it, ``Filling`` included),
+    ``two_sz`` (``2Sz``, ``None`` when Sz is free), ``nconds`` (``(Ncond,)``
+    or ``(N_up, N_down)``), ``T``, ``ene_cutoff`` (the Fermi-function cut),
     ``spin_resolved_transfer`` (a 9-column Transfer, normal mode).
 
     Every field is read-only: arrays have ``writeable = False`` and
@@ -96,8 +109,11 @@ class UHFkProblem:
     enable_spin_orbital: bool
     iflag_fock: bool
     sz_free: bool
+    ncond: int
+    two_sz: Optional[int]
     nconds: Tuple[int, ...]
     T: float
+    ene_cutoff: float
     spin_resolved_transfer: bool
     ham_trans_k: np.ndarray
     ham_trans_r: np.ndarray
@@ -349,7 +365,8 @@ def load_problem(toml_path, *, subshape=None):
         norb_orig=solver.norb_orig, norb_phys=solver.norb_phys, ns=solver.ns,
         nd=solver.nd, enable_spin_orbital=solver.enable_spin_orbital,
         iflag_fock=solver.iflag_fock, sz_free=solver.sz_free,
-        nconds=tuple(solver.Nconds), T=solver.T,
+        ncond=solver.param_mod["Ncond"], two_sz=solver.param_mod["2Sz"],
+        nconds=tuple(solver.Nconds), T=solver.T, ene_cutoff=solver.ene_cutoff,
         spin_resolved_transfer=solver.spin_resolved_transfer,
         ham_trans_k=_read_only(solver.ham_trans), ham_trans_r=_read_only(_ham_trans_r(solver)),
         tables=tables, param_ham_orig=param_ham_orig,
@@ -389,4 +406,87 @@ def hf_potential(green, tables, *, include_fock, blocks):
     out = np.zeros((nvol, nd, nd), dtype=np.complex128)
     # accumulate_hf_projected checks green and the tables against out
     accumulate_hf_projected(out, green, tables, include_fock=include_fock, blocks=blocks)
+    return out
+
+
+def green_function(ham_k, T, blocks, *, shape, ns, norb, fill="solver",
+                   shell_tol=None, ene_cutoff=1.0e2, return_info=False):
+    """The stored Green function UHFk builds from the Hamiltonian ``ham_k``.
+
+    ``ham_k`` ``(nvol, nd, nd)`` is a Hamiltonian in the solver's index
+    order (for example ``T(k)`` plus :func:`hf_potential`), ``blocks`` the
+    :class:`SolverBlocks` it is block-diagonal in, ``shape`` the k-grid,
+    ``ns`` and ``norb`` the stored layout.
+
+    Returns ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>`` ``(nvol, ns,
+    norb, ns, norb)``, the array UHFk stores and writes as ``green``. Its
+    k-space form is ``G_ab(k) = <c^dag_a c_b>``, the orbital transpose of
+    the density matrix ``rho(k) = sum_l f_l |v_l><v_l|``: the expectation
+    of ``sum O_ab c^dag_a c_b`` is ``sum_ab O_ab G_ab``.
+
+    * ``fill="solver"``: bit for bit UHFk's ``_diag`` and ``_green``, one
+      ``mu`` per mu-group; at T = 0 the ``ncond`` lowest levels of a group,
+      ties ordered by ``|k|^2`` and then by block and band order.
+    * ``fill="uniform"`` (T = 0; needs ``shell_tol``): the levels within
+      ``shell_tol`` of the group's Fermi level (its ``ncond``-th lowest
+      level) form the shell; the levels below are filled and each shell
+      level by ``(n_group - n_below) / g_shell``. The result does not
+      depend on the eigenbasis inside the shell. At T > 0 it is the
+      solver's fill.
+
+    ``ene_cutoff`` is the solver's Fermi-function cut (``[mode.param]
+    ene_cutoff``, :attr:`UHFkProblem.ene_cutoff`). With ``return_info`` the
+    result is ``(G, FillInfo)``: ``mu`` per group (at T = 0 the midpoint of
+    the HOMO-LUMO gap, as the solver) and one :class:`ShellRecord` per
+    group (at T = 0 the shell of ``shell_tol``, exact ties when it is
+    ``None``; closed at T > 0).
+
+    Raises :class:`MuNotConvergedError` when the T > 0 ``mu`` search fails.
+    """
+    from .uhfk_fill import diag_blocks, fill_green
+    ham_k = np.asarray(ham_k)
+    nvol = int(np.prod(shape))
+    nd = ns * norb
+    if ham_k.shape != (nvol, nd, nd):
+        raise ValueError("green_function: ham_k must be (nvol, nd, nd) = {}, got {}"
+                         .format((nvol, nd, nd), ham_k.shape))
+    ws, vs = diag_blocks(ham_k, blocks.block_info)
+    out = fill_green(ws, vs, blocks.block_info, blocks.block_to_group,
+                     blocks.group_nconds, shape=tuple(shape), ns=ns, norb=norb, T=T,
+                     ene_cutoff=ene_cutoff, fill=fill, shell_tol=shell_tol,
+                     return_info=return_info)
+    if return_info:
+        return out[0], out[2]
+    return out[0]
+
+
+#: the ``[file.input]`` keys that name an initial state, not a model input
+_INITIAL_KEYS = ("initial", "initial_uhf")
+
+
+def referenced_input_files(toml_path):
+    """The files the input ``toml_path`` names, as ``{TOML key: absolute
+    path}``: every ``[file.input.interaction]`` file (Geometry, Transfer and
+    each interaction, keyed as written) and the ``[file.input]`` files
+    ``geometry_uhf`` and ``onebodyg_uhf``; not ``initial`` or
+    ``initial_uhf`` (an initial state). Paths are resolved as
+    :func:`load_problem` resolves them (from the TOML's directory). The
+    TOML is read by the rules of :func:`load_problem`."""
+    toml_path = pathlib.Path(os.path.abspath(os.fspath(toml_path)))
+    doc = _read_config(toml_path)
+    from requests.structures import CaseInsensitiveDict
+    base_dir = str(toml_path.parent)
+    finput = dict(doc.get("file", {}).get("input", {}))
+    interaction = CaseInsensitiveDict(finput.get("interaction", {}))
+    inter_dir = os.path.join(base_dir, interaction.get("path_to_input", ""))
+    input_dir = os.path.join(base_dir, finput.get("path_to_input", ""))
+    out = {}
+    for key, name in interaction.items():
+        if key.lower() != "path_to_input":
+            out[key] = pathlib.Path(os.path.abspath(os.path.join(inter_dir, name)))
+    for key in _INPUT_KEYS:
+        if key in ("path_to_input", "interaction", "initial_mode") or key in _INITIAL_KEYS:
+            continue
+        if key in finput:
+            out[key] = pathlib.Path(os.path.abspath(os.path.join(input_dir, finput[key])))
     return out

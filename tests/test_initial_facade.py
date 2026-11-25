@@ -1,8 +1,10 @@
-"""The solver facade of ``hwave.initial``: problem loading, block detection
-and the Hartree-Fock potential (``hwave.solver.initial_facade``).
+"""The solver facade of ``hwave.initial``: problem loading, block detection,
+the Hartree-Fock potential and the Green function
+(``hwave.solver.initial_facade``).
 
-The block detection and the interaction part of ``UHFk._make_ham`` were
-lifted into side-effect-free functions that UHFk now calls. Each lifted
+The block detection, the interaction part of ``UHFk._make_ham`` and the
+diagonalisation and occupation fill (``_diag``, ``_green``) were lifted
+into side-effect-free functions that UHFk now calls. Each lifted
 result is compared, in the same process and bit for bit, with the frozen
 d72f35f6 method bodies of ``tests/uhfk_legacy_d72f35f6.py`` (never with the
 delegated UHFk method, which would be circular), and with the golden file
@@ -508,6 +510,232 @@ class TestConfigLayers(_Cases):
 
         with self.assertRaisesRegex(ValueError, "UHFk refused"):
             fac.load_problem(self._variant(bad_subshape))
+
+
+#: golden cases whose first G depends on the eigenbasis numpy picks inside a
+#: degenerate subspace that the T = 0 fill only partly occupies (T = 0, zero
+#: initial G, multi-dimensional blocks): compared by basis-independent
+#: quantities only (the band energy and the electron number)
+_BASIS_DEPENDENT_G = ("tutorial_hubbard_uhfk",)
+
+
+def _gk(green, shape):
+    """``G(k)`` ``(nvol, nd, nd)`` of a stored ``G(r)``."""
+    nx, ny, nz = shape
+    nvol = green.shape[0]
+    nd = green.shape[1] * green.shape[2]
+    g = np.fft.ifftn(green.reshape(nx, ny, nz, nd, nd), axes=(0, 1, 2), norm="forward")
+    return g.reshape(nvol, nd, nd)
+
+
+class TestGreenFunction(_Cases):
+    """``green_function`` against the frozen d72f35f6 ``_diag`` + ``_green``
+    (same process, bit for bit) and the golden G (1e-12)."""
+
+    def _first_iteration(self, name):
+        from hwave.solver import initial_facade as fac
+        solver, green_info, _ = fac._build_solver(self.cases[name], with_green=True)
+        solver.Green = solver._initial_green(green_info)
+        solver._make_ham()
+        return solver
+
+    def test_green_function_solver_fill_bitwise(self):
+        from hwave.solver import initial_facade as fac
+        for name, toml in self.cases.items():
+            with self.subTest(case=name):
+                solver = self._first_iteration(name)
+                ham = solver.ham.copy()
+                view = legacy.LegacyView(solver)
+                view._diag()
+                view._green()
+                # the delegated UHFk step
+                solver._diag()
+                solver._green()
+                _assert_bitwise(self, solver.Green, view.Green, name)
+                _assert_bitwise(self, solver._green_list["mu"], view._green_list["mu"], name)
+                for key in ("eigenvalue", "eigenvector"):
+                    _blocks_equal(self, solver._green_list[key], view._green_list[key], name)
+                self.assertIsInstance(solver._green_list[key], list)
+                # the facade on the same Hamiltonian
+                p = fac.load_problem(toml)
+                g, info = fac.green_function(
+                    ham, p.T, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb,
+                    ene_cutoff=p.ene_cutoff, return_info=True)
+                _assert_bitwise(self, g, view.Green, name)
+                self.assertEqual(info.mu, tuple(float(m) for m in view._green_list["mu"]))
+                self.assertEqual(len(info.shell), len(p.blocks.group_nconds))
+                g_only = fac.green_function(ham, p.T, p.blocks, shape=p.shape, ns=p.ns,
+                                            norb=p.norb, ene_cutoff=p.ene_cutoff)
+                _assert_bitwise(self, g_only, g, name)
+                # the golden G of d72f35f6
+                gold = self.golden["{}__green".format(name)]
+                gold_ham = self.golden["{}__ham".format(name)]
+                self.assertEqual(g.shape, gold.shape)
+                if name in _BASIS_DEPENDENT_G:
+                    gk, gk_gold = _gk(g, p.shape), _gk(gold, p.shape)
+                    e = np.einsum("kab,kab->", ham, gk)
+                    e_gold = np.einsum("kab,kab->", gold_ham, gk_gold)
+                    self.assertLessEqual(abs(e - e_gold), 1e-10 * max(1.0, abs(e_gold)))
+                    n = np.einsum("kaa->", gk)
+                    self.assertLessEqual(abs(n - np.einsum("kaa->", gk_gold)), 1e-10)
+                else:
+                    self.assertLessEqual(float(np.abs(g - gold).max()), 1e-12, name)
+
+    def test_uhfk_calls_the_lifted_fill(self):
+        from unittest import mock
+        from hwave.solver import uhfk_fill
+        solver = self._first_iteration("uhfk_2sz1")
+        boom = RuntimeError("sentinel")
+        for fn, step in (("diag_blocks", solver._diag), ("fill_green", solver._green)):
+            with self.subTest(fn=fn):
+                if fn == "fill_green":
+                    solver._diag()
+                with mock.patch.object(uhfk_fill, fn, side_effect=boom):
+                    with self.assertRaisesRegex(RuntimeError, "sentinel"):
+                        step()
+
+    def test_uniform_fill_open_shell_16x16(self):
+        """Half filling, T = 0, h = 0: the Fermi shell |n_x| + |n_y| = 8
+        holds 30 k (60 states) for 30 electrons (spec section 13, V1b)."""
+        from hwave.solver import initial_facade as fac
+        from tests import initial_fixtures
+        toml = initial_fixtures.square(os.path.join(self.root, "sq16"), 16, U=4.0, T=0.0,
+                                      subshape=(1, 1, 1))
+        p = fac.load_problem(toml)
+        self.assertEqual(p.T, 0.0)
+        w0 = 8.0
+        g, info = fac.green_function(p.ham_trans_k, p.T, p.blocks, shape=p.shape,
+                                     ns=p.ns, norb=p.norb, fill="uniform",
+                                     shell_tol=1e-10 * w0, return_info=True)
+        self.assertEqual(info.shell, (fac.ShellRecord(group="all", open_shell=True,
+                                                      shell_degeneracy=60,
+                                                      shell_fill=0.5),))
+        self.assertEqual(len(info.mu), 1)
+        self.assertLessEqual(abs(info.mu[0]), 1e-12)
+        # electron number exact, no spin density, C4 symmetric (to 1e-12)
+        onsite = g[0, :, 0, :, 0]
+        self.assertLessEqual(abs(np.trace(onsite) * p.nvol - 256), 1e-10)
+        self.assertLessEqual(abs(onsite[0, 0] - onsite[1, 1]), 1e-12)
+        self.assertLessEqual(abs(onsite[0, 1]), 1e-12)
+        self.assertLessEqual(abs(onsite[1, 0]), 1e-12)
+        gr = g.reshape(16, 16, *g.shape[1:])
+        x, y = np.meshgrid(np.arange(16), np.arange(16), indexing="ij")
+        rot = gr[(-y) % 16, x]
+        self.assertLessEqual(float(np.abs(gr - rot).max()), 1e-12)
+        # 0 <= eig G(k) <= 1
+        ev = np.linalg.eigvalsh(_gk(g, p.shape))
+        self.assertGreaterEqual(ev.min(), -1e-12)
+        self.assertLessEqual(ev.max(), 1 + 1e-12)
+        # the solver's tie rule breaks the C4 symmetry on the same shell
+        gs, sinfo = fac.green_function(p.ham_trans_k, p.T, p.blocks, shape=p.shape,
+                                       ns=p.ns, norb=p.norb, shell_tol=1e-10 * w0,
+                                       return_info=True)
+        gsr = gs.reshape(gr.shape)
+        self.assertGreater(float(np.abs(gsr - gsr[(-y) % 16, x]).max()), 1e-3)
+        self.assertEqual(sinfo.shell, info.shell)     # the same shell, reported
+
+    def test_uniform_needs_shell_tol_at_zero_t(self):
+        from hwave.solver import initial_facade as fac
+        p = fac.load_problem(self.cases["degenerate_shell_t0"])
+        with self.assertRaisesRegex(ValueError, "shell_tol"):
+            fac.green_function(p.ham_trans_k, 0.0, p.blocks, shape=p.shape, ns=p.ns,
+                               norb=p.norb, fill="uniform")
+        with self.assertRaisesRegex(ValueError, "fill"):
+            fac.green_function(p.ham_trans_k, 0.0, p.blocks, shape=p.shape, ns=p.ns,
+                               norb=p.norb, fill="other")
+
+    def test_uniform_closed_shell_equals_solver(self):
+        """A closed shell (2Sz = 1, 4x4, initial G): no level within the
+        tolerance above the Fermi level, so both fills agree bit for bit."""
+        from hwave.solver import initial_facade as fac
+        for name in ("uhfk_2sz1", "uhfk_coulombintra"):
+            with self.subTest(case=name):
+                solver = self._first_iteration(name)
+                p = fac.load_problem(self.cases[name])
+                kw = dict(shape=p.shape, ns=p.ns, norb=p.norb, shell_tol=1e-10,
+                          return_info=True)
+                gu, iu = fac.green_function(solver.ham, 0.0, p.blocks, fill="uniform", **kw)
+                gs, is_ = fac.green_function(solver.ham, 0.0, p.blocks, **kw)
+                self.assertTrue(all(not r.open_shell for r in iu.shell), iu.shell)
+                _assert_bitwise(self, gu, gs, name)
+                self.assertEqual(iu, is_)
+        groups = [r.group for r in fac.green_function(
+            solver.ham, 0.0, fac.load_problem(self.cases["uhfk_2sz1"]).blocks,
+            shape=p.shape, ns=p.ns, norb=p.norb, shell_tol=1e-10,
+            return_info=True)[1].shell]
+        self.assertEqual(groups, ["up", "down"])
+
+    def test_degenerate_shell_reported(self):
+        """The I1.2 degenerate case: 12 states at the Fermi level for 6
+        electrons (4x4, half filling, zero G)."""
+        from hwave.solver import initial_facade as fac
+        solver = self._first_iteration("degenerate_shell_t0")
+        p = fac.load_problem(self.cases["degenerate_shell_t0"])
+        g, info = fac.green_function(solver.ham, 0.0, p.blocks, shape=p.shape, ns=p.ns,
+                                     norb=p.norb, fill="uniform", shell_tol=1e-9,
+                                     return_info=True)
+        self.assertEqual(info.shell, (fac.ShellRecord("all", True, 12, 0.5),))
+        self.assertLessEqual(abs(np.trace(g[0, :, 0, :, 0]) * p.nvol - 16), 1e-10)
+
+    def test_uniform_equals_solver_at_T_positive(self):
+        from hwave.solver import initial_facade as fac
+        from tests import initial_fixtures
+        tomls = {"so_all_types": self.cases["so_all_types"],
+                 "w90spin_flip": self.cases["w90spin_flip"],
+                 "square_T": initial_fixtures.square(os.path.join(self.root, "sqT"), 4,
+                                                     U=2.0, T=0.3, two_sz=0)}
+        for name, toml in tomls.items():
+            with self.subTest(case=name):
+                p = fac.load_problem(toml)
+                self.assertGreater(p.T, 0.0)
+                kw = dict(shape=p.shape, ns=p.ns, norb=p.norb, ene_cutoff=p.ene_cutoff,
+                          return_info=True)
+                gs, si = fac.green_function(p.ham_trans_k, p.T, p.blocks, **kw)
+                gu, ui = fac.green_function(p.ham_trans_k, p.T, p.blocks, fill="uniform", **kw)
+                gt, ti = fac.green_function(p.ham_trans_k, p.T, p.blocks, fill="uniform",
+                                            shell_tol=1e-3, **kw)
+                _assert_bitwise(self, gu, gs, name)
+                _assert_bitwise(self, gt, gs, name)
+                self.assertEqual(si, ui)
+                self.assertEqual(si, ti)
+                for rec in si.shell:
+                    self.assertEqual((rec.open_shell, rec.shell_degeneracy, rec.shell_fill),
+                                     (False, None, None))
+
+    def test_returns_G_not_rho(self):
+        """A complex-hopping 2x1 fixture (two orbitals, an imaginary
+        inter-orbital term): ``green_function`` is UHFk's stored G bit for
+        bit, not its transpose; the band energy is ``sum H_ab G_ab``."""
+        from hwave.solver import initial_facade as fac
+        from tests import initial_fixtures
+        # on two cells the bonds +x and -x coincide: each is written once
+        transfer = {((1, 0, 0), 0, 0): -1.0, ((1, 0, 0), 1, 1): -0.5,
+                    ((0, 0, 0), 0, 1): -0.4j, ((0, 0, 0), 1, 0): 0.4j,
+                    ((0, 0, 0), 0, 0): 0.1, ((0, 0, 0), 1, 1): -0.1}
+        toml = initial_fixtures.write_input(
+            os.path.join(self.root, "complex2x1"), cellshape=(2, 1, 1), norb=2,
+            transfer=transfer, param={"Ncond": 3, "T": 0.1})
+        solver, _, _ = fac._build_solver(toml)
+        solver.Green = np.zeros((solver.nvol, solver.ns, solver.norb, solver.ns,
+                                 solver.norb), dtype=np.complex128)
+        solver._make_ham()
+        ham = solver.ham.copy()
+        solver._diag()
+        solver._green()
+        p = fac.load_problem(toml)
+        g = fac.green_function(ham, p.T, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb,
+                               ene_cutoff=p.ene_cutoff)
+        _assert_bitwise(self, g, solver.Green)
+        gt = g.transpose(0, 3, 4, 1, 2)
+        self.assertGreater(float(np.abs(g - gt).max()), 1e-2)
+        # <H> = sum_ab H_ab G_ab = sum_l f_l eps_l; the transposed form differs
+        gk = _gk(g, p.shape)
+        w, v = np.linalg.eigh(ham)
+        mu = solver._green_list["mu"][0]
+        f = 1.0 / (1.0 + np.exp((w - mu) / p.T))
+        e_band = float(np.sum(f * w))
+        self.assertLessEqual(abs(np.einsum("kab,kab->", ham, gk) - e_band), 1e-12)
+        self.assertGreater(abs(np.einsum("kab,kba->", ham, gk) - e_band), 1e-2)
 
 
 if __name__ == "__main__":

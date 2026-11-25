@@ -9,6 +9,7 @@ from . import hartree_fock
 from . import spin_orbital
 from . import hamiltonian_k
 from . import uhfk_blocks
+from . import uhfk_fill
 from ..qlmsio import wan90
 
 logger = logging.getLogger("qlms").getChild("uhfk")
@@ -1107,21 +1108,9 @@ class UHFk(solver_base):
     def _diag(self):
         logger.debug(">>> _diag")
 
-        nvol = self.nvol
-        blocks = self.block_info
-
-        # Diagonalize each block independently
-        eigenvalues = []
-        eigenvectors = []
-        for blk in blocks:
-            idx = np.array(blk)
-            ix = np.ix_(idx, idx)
-            mat_blk = self.ham[:, ix[0], ix[1]]  # (nvol, blk_size, blk_size)
-            w, v = np.linalg.eigh(mat_blk)
-            eigenvalues.append(w)
-            eigenvectors.append(v)
-
-        # Store as list of per-block arrays
+        # Diagonalize each block independently (uhfk_fill.diag_blocks);
+        # stored as lists of per-block arrays
+        eigenvalues, eigenvectors = uhfk_fill.diag_blocks(self.ham, self.block_info)
         self._green_list["eigenvalue"] = eigenvalues
         self._green_list["eigenvector"] = eigenvectors
 
@@ -1129,69 +1118,20 @@ class UHFk(solver_base):
     def _green(self):
         logger.debug(">>> _green")
 
-        nx,ny,nz = self.shape
-        nvol     = self.nvol
-        nd       = self.nd
-        norb     = self.norb
-        ns       = self.ns
-
-        ws_list = self._green_list["eigenvalue"]
-        vs_list = self._green_list["eigenvector"]
-        blocks = self.block_info
-        nblock = len(blocks)
-        block_to_group = self.block_to_group
-        group_nconds = self.group_nconds
-        ngroup = len(group_nconds)
-
-        # Find a single global mu per group (shared across all blocks in the group)
-        self._green_list["mu"] = np.zeros(ngroup, dtype=float)
-
-        # Group blocks by mu-group
-        group_blocks = [[] for _ in range(ngroup)]
-        for b in range(nblock):
-            group_blocks[block_to_group[b]].append(b)
-
-        # Find mu for each group using all eigenvalues in that group
-        group_dists = [None] * nblock
-        for g in range(ngroup):
-            blist = group_blocks[g]
-            ws_group = [ws_list[b] for b in blist]
-            vs_group = [vs_list[b] for b in blist]
-            ncond = group_nconds[g]
-
-            dists, mu = self._find_dist_group(ws_group, vs_group, ncond)
-
-            self._green_list["mu"][g] = mu
-            logger.debug("mu[group {}] = {}".format(g, mu))
-            for i, b in enumerate(blist):
-                group_dists[b] = dists[i]
-
-        # Build full Green's function in k-space by assembling blocks
-        gab_k = np.zeros((nvol, nd, nd), dtype=np.complex128)
-
-        for k in range(nblock):
-            v = vs_list[k]
-            dist = group_dists[k]
-
-            # G_ab(k) for this block
-            #   G_ab(k) = sum_l conj(V_kal) dist_kl V_kbl
-            #   = Vconj @ diag(dist) @ V^T, batched over k. Explicit matmul lowers
-            #   to batched GEMM (numpy einsum does not); numerically equivalent to
-            #   the 'kal,kl,kbl->kab' einsum to ~1e-14 (reduction order).
-            gg_blk = np.matmul(np.conjugate(v) * dist[:, None, :], v.transpose(0, 2, 1))
-
-            # Place into full matrix
-            idx = np.array(blocks[k])
-            ix = np.ix_(idx, idx)
-            gab_k[:, ix[0], ix[1]] = gg_blk
-
-        # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
-        gab_r = np.fft.fftn(gab_k.reshape(nx, ny, nz, nd, nd),
-                            axes=(0, 1, 2), norm='forward')
+        # one mu per mu-group, the occupations and G(r) (uhfk_fill.fill_green)
+        try:
+            green, mus = uhfk_fill.fill_green(
+                self._green_list["eigenvalue"], self._green_list["eigenvector"],
+                self.block_info, self.block_to_group, self.group_nconds,
+                shape=self.shape, ns=self.ns, norb=self.norb, T=self.T,
+                ene_cutoff=self.ene_cutoff)
+        except uhfk_fill.MuNotConvergedError:
+            exit(1)
+        self._green_list["mu"] = mus
 
         # store
         self.Green_prev = self.Green
-        self.Green = gab_r.reshape(nvol, ns, norb, ns, norb)
+        self.Green = green
 
     def _find_dist_group(self, ws_list, vs_list, ncond):
         """Find occupation distribution using a single mu across multiple blocks.
@@ -1218,102 +1158,17 @@ class UHFk(solver_base):
             return self._find_dist_group_nonzero_t(ws_list, vs_list, ncond)
 
     def _find_dist_group_zero_t(self, ws_list, vs_list, ncond):
-        def _ksq_table(width):
-            nx,ny,nz = self.shape
-            nvol = self.nvol
-
-            kx = np.roll( (np.arange(nx) - nx//2), -nx//2) ** 2
-            ky = np.roll( (np.arange(ny) - ny//2), -ny//2) ** 2
-            kz = np.roll( (np.arange(nz) - nz//2), -nz//2) ** 2
-
-            rr = np.zeros((nx,ny,nz))
-            rr += np.broadcast_to(kx.reshape(nx,1,1),(nx,ny,nz))
-            rr += np.broadcast_to(ky.reshape(1,ny,1),(nx,ny,nz))
-            rr += np.broadcast_to(kz.reshape(1,1,nz),(nx,ny,nz))
-
-            return np.broadcast_to(rr.reshape(nvol,1), (nvol,width))
-
-        # Collect all eigenvalues across blocks (concatenated in block order)
-        all_ww = []
-        all_ksq = []
-        for b, w in enumerate(ws_list):
-            k_sq = _ksq_table(w.shape[1]).flatten()
-            ww = w.flatten()
-            all_ww.append(ww)
-            all_ksq.append(k_sq)
-
-        all_ww = np.concatenate(all_ww)
-        all_ksq = np.concatenate(all_ksq)
-
-        # Sort globally and pick lowest ncond states
-        ev_idx = np.lexsort((all_ksq, all_ww))[0:ncond]
-
-        # Distribute back to per-block arrays.
-        # The concatenated index space maps to (block b, local li) by the block
-        # offsets used during concatenation: a global index in [off_b, off_b+size_b)
-        # belongs to block b at local index (idx - off_b). Occupied states are
-        # distinct, so a single fancy-index assignment + split is exactly the
-        # per-element scatter loop, vectorized.
-        occ = np.zeros(all_ww.size)
-        occ[ev_idx] = 1.0
-        block_sizes = [w.size for w in ws_list]
-        split_points = np.cumsum(block_sizes)[:-1]
-        dists = [
-            d.reshape(w.shape)
-            for d, w in zip(np.split(occ, split_points), ws_list)
-        ]
-
-        # Chemical potential (Fermi level) at T=0: midpoint of the HOMO-LUMO
-        # gap. This is the T -> 0+ limit of the finite-temperature mu equation.
-        sorted_ww = np.sort(all_ww)
-        ntot = sorted_ww.size
-        if ncond <= 0:
-            mu = sorted_ww[0]
-        elif ncond >= ntot:
-            mu = sorted_ww[-1]
-        else:
-            mu = 0.5 * (sorted_ww[ncond - 1] + sorted_ww[ncond])
-
-        return dists, mu
+        """``uhfk_fill.find_dist_group_zero_t`` on this solver's k-grid."""
+        return uhfk_fill.find_dist_group_zero_t(ws_list, vs_list, ncond,
+                                                shape=self.shape)
 
     def _find_dist_group_nonzero_t(self, ws_list, vs_list, ncond):
-        from scipy import optimize
-
-        # Collect all eigenvalues for bracket search
-        all_ev = np.sort(np.concatenate([w.flatten() for w in ws_list]))
-        occupied_number = ncond
-
-        def _fermi(t, mu, ev):
-            w_ = (ev - mu) / t
-            mask_ = w_ < self.ene_cutoff
-            w1_ = np.where( mask_, w_, 0.0 )
-            v1_ = 1.0 / (1.0 + np.exp(w1_))
-            v_ = np.where( mask_, v1_, 0.0 )
-            return v_
-
-        def _calc_delta_n(mu):
-            nn = 0.0
-            for w, v in zip(ws_list, vs_list):
-                ff = _fermi(self.T, mu, w)
-                nn += np.einsum('kal,kl,kal->', np.conjugate(v), ff, v).real
-            return nn - occupied_number
-
-        # find mu s.t. <n>(mu) = N0
-        is_converged = False
-        if (_calc_delta_n(all_ev[0]) * _calc_delta_n(all_ev[-1])) < 0.0:
-            logger.debug("+++ find mu: try bisection")
-            mu, r = optimize.bisect(_calc_delta_n, all_ev[0], all_ev[-1], full_output=True, disp=False)
-            is_converged = r.converged
-        if not is_converged:
-            logger.debug("+++ find mu: try newton")
-            mu, r = optimize.newton(_calc_delta_n, all_ev[0], full_output=True)
-            is_converged = r.converged
-        if not is_converged:
-            logger.error("find mu: not converged. abort")
+        """``uhfk_fill.find_dist_group_nonzero_t`` at this solver's T."""
+        try:
+            return uhfk_fill.find_dist_group_nonzero_t(
+                ws_list, vs_list, ncond, T=self.T, ene_cutoff=self.ene_cutoff)
+        except uhfk_fill.MuNotConvergedError:
             exit(1)
-
-        dists = [_fermi(self.T, mu, w) for w in ws_list]
-        return dists, mu
 
     @do_profile
     def _calc_phys(self):
