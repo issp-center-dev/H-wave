@@ -357,8 +357,10 @@ class TestRPAAutoResolution(_Case):
 
         A 1-orbital model whose transfer.dat is written in the
         spin-extended layout (num_wann = 2) carries rows on indices >= norb
-        that the normal branch of ``_make_ham_trans`` silently skips. They
-        are not part of H0(k), so they must not promote the scheme.
+        that the normal mode drops at the boundary (``Interaction.__init__``,
+        one warning; plan 2.4) -- before that, ``_make_ham_trans`` skipped
+        them silently. Either way they are not part of H0(k), so they must
+        not promote the scheme.
         """
         import hwave.qlmsio.read_input_k as read_input_k
         import hwave.solver.rpa as rpa_mod
@@ -379,12 +381,16 @@ class TestRPAAutoResolution(_Case):
                                "Nmat": 16, "coeff_extern": 0.0},
                      "enable_spin_orbital": False,
                      "calc_scheme": "auto", "calc_type": "ring"}
-        solver = rpa_mod.RPA(reader.get_param("ham"), {}, info_mode)
+        ham = reader.get_param("ham")
         # the fixture is only meaningful while the file really declares rows
-        # outside the consumed range
-        self.assertEqual(solver.ham_info.norb_orig, 1)
+        # outside the consumed range (checked on the table as read: the
+        # solver's boundary normalisation drops them from the container)
         self.assertTrue(any(max(orbvec) >= 1 for _, orbvec
-                            in solver.ham_info.param_ham["Transfer"].keys()))
+                            in ham["Transfer"].keys()))
+        solver = rpa_mod.RPA(ham, {}, info_mode)
+        self.assertEqual(solver.ham_info.norb_orig, 1)
+        self.assertFalse(any(max(orbvec) >= 1 for _, orbvec
+                             in solver.ham_info.param_ham["Transfer"].keys()))
         self.assertEqual(solver.preview_scheme(),
                          ("reduced", "auto:exact:diagonal_transfer"))
 

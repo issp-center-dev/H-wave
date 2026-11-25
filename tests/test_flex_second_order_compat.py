@@ -516,6 +516,38 @@ class TestCompatibility(unittest.TestCase):
             # anti-vacuity: the kernel really ran on a non-trivial sigma
             self.assertGreater(np.abs(np.asarray(ma["sigma.npz"]["sigma"])).max(), 1e-6)
 
+    def test_non_power_of_two_grid_equals_develop(self):
+        """The same on-site general FLEX run on a 6 x 5 grid: every archive
+        member equals the reference revision's (exactly with numpy >= 2).
+
+        The one-body H(k) of RPA / FLEX is built by
+        ``hamiltonian_k.to_k(..., scale_after=True)``, i.e. ``ifftn * nvol``
+        as before the shared builder. ``ifftn(norm="forward")`` is the same
+        transform mathematically but rounds differently on a grid side that
+        is not a power of two (measured: chi0q 6e-17, sigma 4e-16 on 6 x 5),
+        so this case is what pins the expression; the 4 x 4 runs above
+        cannot tell the two apart."""
+        dev = self._develop()
+        here = os.getcwd()
+        inter = {"CoulombInter": "onsite_inter.dat", "CoulombIntra": "coulombintra.dat"}
+        extra = {"CellShape": [6, 5, 1]}
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            _run(dev, os.path.abspath(_IN2), inter, a, "local", extra)
+            _run(here, os.path.abspath(_IN2), inter, b, "local", extra)
+            ma, mb = _members(a), _members(b)
+            compared = 0
+            for f in ma:
+                for k, v in ma[f].items():
+                    self.assertIn(k, mb[f], (f, k))
+                    if moved_stamp(k, v, mb[f][k]):
+                        continue
+                    if np.asarray(v).dtype.kind in "fciub":
+                        _assert_same_to_roundoff(self, mb[f][k], v, (f, k))
+                        compared += 1
+            self.assertGreater(compared, 10)
+            # the run really is on the 30-point grid
+            self.assertIn(30, np.asarray(ma["green.npz"]["green"]).shape)
+
     def test_local_equals_the_retired_takimoto_on_hubbard_only(self):
         """On a one-band Hubbard model the exact local second order IS the
         Takimoto-Hotta-Ueda one, so this tree's ``"local"`` run reproduces

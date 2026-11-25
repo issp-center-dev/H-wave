@@ -111,6 +111,18 @@ class TestToKAndEmbed(unittest.TestCase):
         np.testing.assert_allclose(got, _explicit_k(tbl, shape, norb),
                                    atol=1e-12)
 
+    def test_both_fft_expressions_are_kept_bitwise(self):
+        # 6 x 5: a grid on which ifftn * nvol and ifftn(norm="forward")
+        # round differently; each to_k variant must be its expression bit
+        # for bit (UHFk uses the default, RPA / FLEX scale_after=True)
+        tab_r = (self.rng.normal(size=(6, 5, 1, 2, 2))
+                 + 1j * self.rng.normal(size=(6, 5, 1, 2, 2)))
+        fwd = np.fft.ifftn(tab_r, axes=(0, 1, 2), norm="forward").reshape(30, 2, 2)
+        aft = (np.fft.ifftn(tab_r, axes=(0, 1, 2)) * 30).reshape(30, 2, 2)
+        self.assertEqual(hk.to_k(tab_r).tobytes(), fwd.tobytes())
+        self.assertEqual(hk.to_k(tab_r, scale_after=True).tobytes(), aft.tobytes())
+        np.testing.assert_allclose(fwd, aft, atol=1e-12)
+
     def test_embed_spin_is_kron_identity(self):
         m = self.rng.normal(size=(3, 2, 2)) + 1j * self.rng.normal(size=(3, 2, 2))
         got = hk.embed_spin(m)
