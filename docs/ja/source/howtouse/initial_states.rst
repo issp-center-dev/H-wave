@@ -12,9 +12,11 @@ UHF 計算が収束する状態は初期グリーン関数に依存します。
 .. note::
 
    これはプレビュー版です。コマンド、オプション、ファイル形式は今後変わる
-   可能性があります。このリリースが提供するのは large tier のみで、候補は
-   スピン・電荷のパターンと予約された行（para, ferro, random）から作られ、
-   常磁性状態の不安定性解析は行いません。
+   可能性があります。このリリースが提供するのは large tier のみです。large
+   tier は既定の候補の集合で、セルで表せるすべての q でのスピン・電荷の
+   パターンと、上限で削られない予約行 ``para``\ 、 ``ferro``\ 、 ``random``
+   からなります。常磁性状態の不安定性解析から選んだより小さな候補の集合は、
+   今後のリリースで加わります。
 
 The selected state is the lowest free energy among the candidates tried. It is
 not a proof of the ground state.
@@ -44,21 +46,32 @@ not a proof of the ground state.
   ``SubShape`` で評価します。省略時は入力の ``SubShape`` です。
 - ``--extra-candidates FILE.json``: 追加の候補。
   ``{"family": "user" | "literature", "pattern": ..., "label": ...,
-  "citation": ...}`` の JSON リストです。 ``pattern`` はスキーマ
-  ``src/hwave/initial/patternspec.schema.json`` に従います。軌道の番号は
-  物理軌道の番号です（spin-orbital モードでも同じです）。
-- ``--t-hint T``, ``--amplitude A``\ （初期状態の振幅の要求値、(0, 1) の範囲、
-  既定値 0.5）, ``--max-candidates N``\ （ ``SubShape`` ごとの生成行数、既定値
-  32）, ``--orbital-site FILE``\ （物理軌道ごとにサイトのラベルを一つ並べた
-  JSON リスト）, ``--tier``\ （このリリースでは ``auto`` は ``large`` に
+  "citation": ...}`` の JSON リストです。 ``pattern`` はパッケージと一緒に
+  インストールされる JSON スキーマ ``hwave/initial/patternspec.schema.json``
+  （Python では
+  ``importlib.resources.files("hwave.initial") / "patternspec.schema.json"``\ ）
+  に従います。軌道の番号は物理軌道の番号です（spin-orbital モードでも同じ
+  です）。
+- ``--t-hint T``: ヒント温度。単位は入力のエネルギーの単位です。レポートに
+  記録されるだけで、候補の集合や初期状態を変えることはありません。省略時は、
+  ``T > 0`` なら入力の ``T``\ 、 ``T = 0`` ならバンドと k メッシュから決まる
+  ``max(W/(2 L), 1e-4 W)`` です。 ``W`` はフェルミ準位付近のバンドの
+  エネルギー幅（1e-3 以上）、 ``L`` は ``CellShape`` の 2 より長い軸のうち
+  最も短いものです。使った規則は要約に表示されます。
+- ``--amplitude A``\ （初期状態の振幅の要求値、(0, 1) の範囲、既定値 0.5）、
+  ``--max-candidates N``\ （ ``SubShape`` ごとの生成行数、既定値 32）、
+  ``--orbital-site FILE``\ （物理軌道ごとにサイトのラベルを一つ並べた JSON
+  リスト）、 ``--tier``\ （このリリースでは ``auto`` は ``large`` に
   なります）。
 
 ``prepare`` は WORK に次を書きます。
 
 - ``coverage.json``: 実行前の網羅性レポート（後述）。
-- ``manifest.json``, ``candidates.json``: 用意した内容。書いたファイルと
-  コピーしたファイルすべての SHA-256 を含みます。
-- ``commands.txt``: 実行ごとに一行、WORK からの相対パスで書かれます。
+- ``manifest.json``, ``candidates.json``: 用意した内容。各実行の
+  ``input.toml``\ 、 ``initial.npz`` とコピーした入力の SHA-256 を含みます。
+- ``commands.txt``: WORK に移動する最初の一行と ``#`` で始まる数行の
+  コメントの後に、実行ごとに一行、WORK からの相対パスで書かれます（行番号で
+  行を選ぶジョブ配列では最初の数行を飛ばしてください）。
 - 実行ごとのディレクトリ。 ``input.toml``, ``initial.npz``, ``inputs/`` を
   含みます。
 
@@ -94,7 +107,7 @@ not a proof of the ground state.
 
 ``bash WORK/commands.txt`` はどのディレクトリからでも実行できます。各行は
 実行ディレクトリに入り、初期状態ファイルを確認してから
-``hwave input.toml > hwave.log`` を実行します。GNU parallel やジョブ
+``hwave input.toml > hwave.log 2>&1`` を実行します。GNU parallel やジョブ
 配列では、WORK から各行を実行してください。
 
 ``check``
@@ -128,9 +141,19 @@ not a proof of the ground state.
   ``convergence_unverified``\ （ ``hwave.log`` がなく出力がある。別の
   リストに印付きで並べます）、 ``failed``\ （トレースバックやソルバーの
   エラー）、 ``hwave.log`` から判定した ``not_converged`` または
-  ``converged``\ 。
+  ``converged``\ 。途中で止められた実行（状態ファイルもトレースバックも
+  ない）は ``not_converged`` となり、理由は
+  ``hwave.log has no convergence message`` です。
 
 収束した実行の出力は読めなければならず、読めない場合は ``failed`` です。
+失敗した実行や収束しなかった実行があっても ``collect`` の終了コードは 0
+です。各実行の状態はレポートで確認してください。
+
+``summary.txt`` には、モデル（軌道、電子数、 ``T``\ 、 ``2Sz``\ 、
+``CellShape``\ ）、tier とヒント温度とその規則、ラベルの閾値、行の数と
+試さなかった行の理由、順位の表（id、ラベル、セルあたりの自由エネルギー、
+最も低い行とのサイトあたりの差、状態、最終ラベル）、印の付いた行と警告、
+後述の制限、このページの冒頭に引用した文が書かれます。
 
 終了コード
 ==========
@@ -142,7 +165,8 @@ not a proof of the ground state.
         未検証）
 1       エラー、または確認でファイルが拒否された
 2       引数のエラー
-3       stage 0 の実行待ち（このリリースの large tier では使いません）
+3       今後のリリースのために予約（事前の常磁性計算の実行待ち）。現在は
+        返しません
 4       ``check --require-provenance``: ファイルに来歴情報がない
 ======  ====================================================================
 
@@ -161,13 +185,17 @@ not a proof of the ground state.
   ません）です。
 - 候補は初期状態のパターンで名付けられます（例: ``spin-z ferro-orbital
   q=(1/2,1/2,0) φ=0``\ ）。実行後の状態には ``final_label`` が付き、重みの
-  10% 以上を持つ成分を名指しします。逆のパリティの重みが 10% 未満なら TR
-  even または odd、そうでなければ mixed と呼びます。閾値はレポートに記録
-  されます。
+  10% 以上を持つ成分を名指しします。逆のパリティの重みが 10% 未満なら時間
+  反転（TR）について even または odd、そうでなければ mixed と呼びます。
+  秩序ベクトルはそれが表すサイト上の成分の直後に置かれ、ボンドの成分は
+  その後に続きます（例: ホッピングの一様な変化を伴うネール状態は
+  ``spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge``\ ）。閾値はレポートに
+  記録されます。
 - ``collect`` は収束した実行を、 ``T``\ 、セルあたりの ``Ncond``\ 、
   ``CellShape``\ 、 ``2Sz`` が等しい比較グループの中で、サイトあたり（サイト
   数が定まらない場合はセルあたり）の自由エネルギーの順に並べます。互いに
-  サイトあたり 1e-4 以内の行には ``near-degenerate`` の印が付きます。収束
+  サイトあたり 1e-4（入力のエネルギーの単位）以内の行には
+  ``near-degenerate`` の印が付きます。収束
   しなかった行や失敗した行は理由とともに並べ、順位は付けません。
 
 制限

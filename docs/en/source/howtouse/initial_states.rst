@@ -12,9 +12,11 @@ directory, and the tool collects the results and ranks them by free energy.
 .. note::
 
    This is a preview. The commands, options and file formats may still
-   change, and this release provides the large tier only: candidates are
-   built from spin and charge patterns and from reserved rows, without an
-   instability analysis of the paramagnet.
+   change, and this release provides the large tier only. The large tier is
+   the default candidate set: spin and charge patterns at every q the cell
+   can represent, plus the reserved rows ``para``, ``ferro`` and ``random``,
+   which no quota cuts. Later releases add smaller candidate sets chosen
+   from an instability analysis of the paramagnet.
 
 The selected state is the lowest free energy among the candidates tried. It is
 not a proof of the ground state.
@@ -42,21 +44,30 @@ TOML file itself. Options:
   these ``SubShape`` cells. Default: the input's ``SubShape``.
 - ``--extra-candidates FILE.json``: further candidates, a JSON list of
   ``{"family": "user" | "literature", "pattern": ..., "label": ...,
-  "citation": ...}``. ``pattern`` follows the schema
-  ``src/hwave/initial/patternspec.schema.json``; its orbital indices are
-  physical orbital indices (also in spin-orbital mode).
-- ``--t-hint T``, ``--amplitude A`` (the requested seed amplitude, in (0, 1),
-  default 0.5), ``--max-candidates N`` (generated rows per ``SubShape``,
-  default 32), ``--orbital-site FILE`` (a JSON list with one site label per
-  physical orbital), ``--tier`` (``auto`` resolves to ``large`` in this
-  release).
+  "citation": ...}``. ``pattern`` follows the JSON schema installed with the
+  package, ``hwave/initial/patternspec.schema.json`` (in Python:
+  ``importlib.resources.files("hwave.initial") / "patternspec.schema.json"``);
+  its orbital indices are physical orbital indices (also in spin-orbital
+  mode).
+- ``--t-hint T``: the hint temperature, in the energy units of the input.
+  It is recorded in the report only and never changes the candidate set or
+  the seeds. Default: the input ``T`` when ``T > 0``; at ``T = 0`` a rule
+  from the bands and the k mesh, ``max(W/(2 L), 1e-4 W)``, with ``W`` the
+  energy span of the bands around the Fermi level (at least 1e-3) and ``L``
+  the shortest ``CellShape`` axis longer than 2. The rule used is shown in the summary.
+- ``--amplitude A`` (the requested seed amplitude, in (0, 1), default 0.5),
+  ``--max-candidates N`` (generated rows per ``SubShape``, default 32),
+  ``--orbital-site FILE`` (a JSON list with one site label per physical
+  orbital), ``--tier`` (``auto`` resolves to ``large`` in this release).
 
 ``prepare`` writes into WORK:
 
 - ``coverage.json``: the coverage report before the runs (see below);
 - ``manifest.json``, ``candidates.json``: what was prepared, with the
-  SHA-256 of every written and copied file;
-- ``commands.txt``: one line per run, relative to WORK;
+  SHA-256 of each run's ``input.toml``, ``initial.npz`` and copied inputs;
+- ``commands.txt``: a first line that changes to WORK, a few comment lines
+  starting with ``#``, then one line per run, relative to WORK (a job array
+  that picks lines by number must skip the first lines);
 - one directory per run, holding ``input.toml``, ``initial.npz`` and
   ``inputs/``.
 
@@ -94,7 +105,7 @@ Running the candidates
 
 ``bash WORK/commands.txt`` works from any directory. Each line enters one
 run directory, checks its initial-state file and runs ``hwave input.toml >
-hwave.log``. For GNU parallel or job arrays, run the lines from WORK.
+hwave.log 2>&1``. For GNU parallel or job arrays, run the lines from WORK.
 
 ``check``
 ---------
@@ -125,10 +136,20 @@ runs) and ``WORK/summary.txt``; it can be repeated. Each run gets a status:
 - without a status file: ``not_run`` (no ``hwave.log`` and no output),
   ``convergence_unverified`` (outputs without ``hwave.log``, ranked in a
   separate flagged list), ``failed`` (a traceback or a solver error),
-  ``not_converged`` or ``converged`` from ``hwave.log``.
+  ``not_converged`` or ``converged`` from ``hwave.log``. A run that was
+  killed (no status file, no traceback) is ``not_converged`` with the
+  reason ``hwave.log has no convergence message``.
 
 The outputs of a converged run must be readable, otherwise it is
-``failed``.
+``failed``. ``collect`` exits with 0 also when some runs failed or did not
+converge; read their status in the report.
+
+``summary.txt`` holds the model (orbitals, filling, ``T``, ``2Sz``,
+``CellShape``), the tier and the hint temperature with its rule, the label
+thresholds, the number of rows and why the others were not tried, the
+ranked table (id, label, free energy per cell, difference per site from the
+lowest row, status, final label), the flagged rows and warnings, the limits
+below, and the sentence quoted at the top of this page.
 
 Exit codes
 ==========
@@ -140,7 +161,8 @@ code  meaning
       ``--require-provenance``)
 1     an error, or the check refused the file
 2     an argument error
-3     stage 0 pending (not used by the large tier of this release)
+3     reserved for a later release (a preliminary paramagnetic run);
+      never returned now
 4     ``check --require-provenance``: the file has no provenance
 ====  ======================================================================
 
@@ -161,12 +183,17 @@ proposal).
 - A candidate is named by its seeding pattern, e.g. ``spin-z ferro-orbital
   q=(1/2,1/2,0) φ=0``. The state a run ends in has a ``final_label``,
   naming the components that hold at least 10% of the weight; a part is
-  called TR even or odd when the other parity holds less than 10% of the
-  weight, otherwise mixed. The thresholds are recorded in the report.
+  called time-reversal (TR) even or odd when the other parity holds less
+  than 10% of the weight, otherwise mixed. The ordering vector follows the
+  on-site components it describes; bond components come after it, e.g.
+  ``spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge`` for the Néel state
+  with its uniform change of the hopping. The thresholds are recorded in the
+  report.
 - ``collect`` ranks the converged runs by free energy per site (per cell
   when the number of sites is not defined) within a comparison group of
   equal ``T``, ``Ncond`` per cell, ``CellShape`` and ``2Sz``. Rows within
-  1e-4 per site of each other are flagged ``near-degenerate``. Unconverged
+  1e-4 per site of each other (in the energy units of the input) are
+  flagged ``near-degenerate``. Unconverged
   and failed rows are listed with their reason, not ranked.
 
 Limits
