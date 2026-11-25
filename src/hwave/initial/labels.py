@@ -18,14 +18,28 @@ twice the spin moment.
 * :func:`tr_parity`: time reversal in a real orbital gauge maps ``c^0 ->
   conj(c^0)`` and ``c^i -> -conj(c^i)``. TR-even is real (on a Hermitian
   block: real-symmetric) ``c^0`` and imaginary (imaginary-antisymmetric)
-  ``c^i``; TR-odd the converse; otherwise ``"mixed"``.
+  ``c^i``; TR-odd the converse. The parity is ``"even"`` or ``"odd"``
+  when the other parity carries less than :data:`TR_MINOR_WEIGHT` of the
+  weight, ``"mixed"`` otherwise (owner decision O8).
 * :func:`gauge_dependent`: whether the spin-independent part of the
   Transfer table is complex anywhere (then the TR parities, read in the
   orbital gauge of the input, depend on that gauge).
-* :func:`label`: the readable name of an induced ``delta rho`` and the
-  weights it is read from.
+* :func:`pattern_label`: the name of a candidate, read from its seeding
+  pattern ``O`` itself (owner decision O8 (a); this name gives the id
+  slug). :func:`label`: the name of an induced or converged state, read
+  from its ``delta rho`` (O8 (b)). Both name a state by its dominant
+  components only (weight at least :data:`DOMINANT_WEIGHT`), on-site
+  channels before bond channels.
 
-**Convention.** :func:`label` takes ``delta rho`` in the rho convention,
+**Names.** ``Label.name`` is display text and may hold ``φ``, ``π``,
+``η`` and a caller's ``eta`` name verbatim (``"Néel"``).
+``Label.ascii_name`` is the same name in ASCII (``phi``, ``pi``, ``eta``,
+accents folded, other non-ASCII characters dropped); id slugs are built
+from it.
+
+**Convention.** :func:`pattern_label` takes the Hamiltonian-convention
+``O(k)`` of the folded cell that ``realise`` returns (as
+:mod:`hwave.initial.symmetry` does). :func:`label` takes ``delta rho`` in the rho convention,
 ``rho = G^T`` per displacement (``rho(r)_{ij} = <c^dag_j(r) c_i(0)>`` with
 ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>`` the stored slot); the
 callers transpose a stored Green function before calling it. Orbital
@@ -35,18 +49,21 @@ and the spin here, internally.
 """
 import math
 import numbers
+import unicodedata
+import weakref
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Dict, Literal
+from typing import Dict, Literal, Mapping
 
 import numpy as np
 
 from hwave.initial.patterns import q_fractions
-from hwave.initial.symmetry import hermitian_green
+from hwave.initial.symmetry import hermitian_green, _to_r
 
 __all__ = [
-    "CHANNELS", "TR_KEYS", "DOMINANT_WEIGHT", "GAUGE_TOL", "TR_TOL", "HERMITIAN_TOL",
-    "LAYOUTS", "Label", "decompose", "compose", "tr_parity", "gauge_dependent", "label",
+    "CHANNELS", "TR_KEYS", "DOMINANT_WEIGHT", "TR_MINOR_WEIGHT", "PARA_TOL", "GAUGE_TOL",
+    "HERMITIAN_TOL", "THRESHOLDS", "LAYOUTS", "Label", "decompose", "compose", "tr_parity",
+    "gauge_dependent", "label", "pattern_label", "ascii_name",
 ]
 
 #: the channels a label is read from, in their fixed (tie-break) order.
@@ -75,15 +92,26 @@ _EVEN = frozenset(("charge", "orbital-polarization", "orbital-hybridization",
 #: the two time-reversal weights listed with the channel weights
 TR_KEYS = ("TR-even", "TR-odd")
 
-#: a channel names the label when its weight is at least this
+#: a channel names the label when its weight is at least this (O8)
 DOMINANT_WEIGHT = 0.1
 
+#: the parity is even (odd) when the TR-odd (TR-even) weight is below this;
+#: otherwise it is mixed (O8)
+TR_MINOR_WEIGHT = 0.1
+
+#: a ``delta rho`` (or pattern) whose largest entry is at most this is
+#: ``para`` (a converged para run leaves rounding noise, ~1e-12)
+PARA_TOL = 1e-8
+
 #: the gauge warning fires when the spin-independent part of a Transfer
-#: entry has ``|Im| >`` this (input energy units)
+#: entry, per spin, has ``|Im| >`` this (input energy units); see
+#: :func:`gauge_dependent` for the normalisation
 GAUGE_TOL = 1e-8
 
-#: a TR part below this fraction of the norm counts as absent
-TR_TOL = 1e-8
+#: the thresholds a label was read with (recorded in every :class:`Label`
+#: so that the report can show them)
+THRESHOLDS = {"dominant_weight": DOMINANT_WEIGHT, "tr_minor_weight": TR_MINOR_WEIGHT,
+              "para_tol": PARA_TOL, "gauge_tol": GAUGE_TOL}
 
 #: ``delta rho`` must be Hermitian to this fraction of its norm
 HERMITIAN_TOL = 1e-8
@@ -106,17 +134,24 @@ _SIGMA = np.array([np.eye(2),
 class Label:
     """A label (design section 6.5).
 
-    ``name``: the readable name. ``weights``: every channel of
-    :data:`CHANNELS` (they sum to 1; 0 for a zero ``delta rho``) and the
-    two :data:`TR_KEYS` (which sum to 1 as well). ``tr``: ``"even"``,
-    ``"odd"`` or ``"mixed"``. ``gauge_dependent``: the Transfer table has a
-    complex spin-independent part (:func:`gauge_dependent`), so ``tr`` and
-    the current/hybridization split depend on the orbital gauge.
+    ``name``: the readable display name (may contain non-ASCII text).
+    ``weights``: every channel of :data:`CHANNELS` (they sum to 1; all 0
+    for ``para``) and the two :data:`TR_KEYS` (which sum to 1 as well).
+    ``tr``: ``"even"``, ``"odd"`` or ``"mixed"`` (the :data:`TR_MINOR_WEIGHT`
+    rule). ``gauge_dependent``: the Transfer table has a complex
+    spin-independent part (:func:`gauge_dependent`), so ``tr`` and the
+    current/hybridization split depend on the orbital gauge.
+    ``ascii_name``: :func:`ascii_name` of ``name`` (for id slugs).
+    ``source``: ``"pattern"`` (:func:`pattern_label`) or ``"state"``
+    (:func:`label`). ``thresholds``: :data:`THRESHOLDS`, as used.
     """
     name: str
     weights: Dict[str, float]
     tr: str
     gauge_dependent: bool
+    ascii_name: str = ""
+    source: str = "state"
+    thresholds: Mapping[str, float] = None
 
 
 # --------------------------------------------------------------------------
@@ -197,10 +232,11 @@ def _tr_parts(c):
 
 
 def _parity(even, odd):
+    """The O8 rule on the squared norms of the two parities."""
     total = even + odd
-    if total == 0.0 or math.sqrt(odd) <= TR_TOL * math.sqrt(total):
+    if total == 0.0 or odd < TR_MINOR_WEIGHT * total:
         return "even"
-    if math.sqrt(even) <= TR_TOL * math.sqrt(total):
+    if even < TR_MINOR_WEIGHT * total:
         return "odd"
     return "mixed"
 
@@ -211,9 +247,11 @@ def tr_parity(c) -> Literal["even", "odd", "mixed"]:
 
     ``Theta = i sigma^y K`` maps ``c^0 -> conj(c^0)`` and ``c^i ->
     -conj(c^i)``. ``"even"``: the TR-odd part (imaginary ``c^0``, real
-    ``c^i``) is below ``TR_TOL`` of the norm, i.e. real-symmetric ``c^0``
-    and imaginary-antisymmetric ``c^i`` on a Hermitian block; ``"odd"``:
-    the converse; ``"mixed"`` otherwise. Zero coefficients are ``"even"``.
+    ``c^i``; real-symmetric ``c^0`` and imaginary-antisymmetric ``c^i`` are
+    TR-even on a Hermitian block) carries less than
+    :data:`TR_MINOR_WEIGHT` of the squared norm; ``"odd"``: the converse;
+    ``"mixed"`` otherwise (owner decision O8). Zero coefficients are
+    ``"even"``.
     """
     return _parity(*_tr_parts(c))
 
@@ -237,37 +275,56 @@ def gauge_dependent(problem) -> bool:
 
     The table is ``problem.ham_trans_r`` (the folded Transfer, dense, in
     the solver's index order), decomposed per entry by :func:`decompose`
-    (ruling R5, for 9-column and spin-orbital tables); the spin-independent
-    part is ``c^0 / 2 = (T_upup + T_dndn) / 2``. Spin parts (e.g. the SOC
-    ``i lambda sigma^z``, an imaginary ``c^z``) are exempt.
+    (ruling R5, for 9-column and spin-orbital tables). **Normalisation.**
+    With ``O = 1/2 sum c^mu sigma^mu`` the coefficient is ``c^0 = T_upup +
+    T_dndn``, twice the spin-independent hopping. The threshold applies to
+    the hopping per spin, ``c^0 / 2 = (T_upup + T_dndn) / 2`` (R5), so a
+    spin-independent ``t`` warns when ``|Im t| > GAUGE_TOL``; in terms of
+    ``c^0`` the test is ``|Im c^0| > 2 GAUGE_TOL``. Spin parts (e.g. the
+    SOC ``i lambda sigma^z``, an imaginary ``c^z``) are exempt.
 
     ``problem``: a :class:`~hwave.solver.initial_facade.UHFkProblem` or a
-    :class:`~hwave.initial.facts.ModelFacts`.
+    :class:`~hwave.initial.facts.ModelFacts`. The result is cached per
+    problem (its arrays are read-only).
     """
     p = _problem(problem)
+    try:
+        return _GAUGE_CACHE[p]
+    except (KeyError, TypeError):
+        pass
     c0 = decompose(p.ham_trans_r, layout=_layout(p))["c0"]
-    return bool(c0.size and float(np.max(np.abs(c0.imag))) / 2 > GAUGE_TOL)
+    out = bool(c0.size and float(np.max(np.abs(c0.imag))) / 2 > GAUGE_TOL)
+    try:
+        _GAUGE_CACHE[p] = out
+    except TypeError:   # not weak-referenceable: no cache
+        pass
+    return out
+
+
+#: :func:`gauge_dependent` per problem (weak keys: a problem is never kept)
+_GAUGE_CACHE = weakref.WeakKeyDictionary()
 
 
 # --------------------------------------------------------------------------
 # the label
 # --------------------------------------------------------------------------
 
-def _delta_rho(rho, problem):
+def _delta_rho(rho, problem, what="delta rho"):
     """``rho`` as ``(nvol, nd, nd)``, checked to be Hermitian."""
     r = np.asarray(rho, dtype=np.complex128)
     nvol, nd = problem.nvol, problem.nd
     shapes = ((nvol, nd, nd), (nvol, problem.ns, problem.norb, problem.ns, problem.norb))
     if r.shape not in shapes:
-        raise ValueError("delta rho of this problem has shape {} or {}, got {}".format(
-            shapes[0], shapes[1], r.shape))
+        raise ValueError("{} of this problem has shape {} or {}, got {}".format(
+            what, shapes[0], shapes[1], r.shape))
     m = r.reshape(nvol, nd, nd)
     # m - (m + partner)/2 = (m - partner)/2
     g5 = m.reshape(shapes[1])
     residual = 2 * float(np.linalg.norm(g5 - hermitian_green(g5, problem.shape)))
     if residual > HERMITIAN_TOL * float(np.linalg.norm(m)):
-        raise ValueError("delta rho is not Hermitian (rho(r)_ij != conj(rho(-r)_ji)); "
-                         "pass a density matrix in the rho = G^T convention")
+        raise ValueError("{} is not Hermitian (X(r)_ij != conj(X(-r)_ji)); pass a "
+                         "density matrix in the rho = G^T convention, or a Hermitian "
+                         "pattern".format(what))
     return m
 
 
@@ -367,67 +424,20 @@ def _phase_text(phase):
     return "φ={:.6g}".format(phase)
 
 
-def label(rho_delta_cell, facts, *, q, eta, phase, sign, spiral: bool) -> Label:
-    """The label of an induced ``delta rho`` (design section 6.5).
+_ASCII = {"φ": "phi", "π": "pi", "η": "eta"}
 
-    Parameters
-    ----------
-    rho_delta_cell : array
-        ``delta rho`` of the folded cell of ``facts.problem`` in the rho
-        convention (``rho = G^T`` per displacement; the callers transpose
-        a stored Green function), ``(nvol, nd, nd)`` or ``(nvol, ns, norb,
-        ns, norb)`` in the solver's index order. It must be Hermitian
-        (``rho(r)_ij = conj(rho(-r)_ji)``).
-    facts : :class:`~hwave.initial.facts.ModelFacts`
-        Of the cell ``delta rho`` lives on (its sites decide what is
-        on-site and what is a bond).
-    q : three rationals or None
-        Written ``q=(1/2,1/2,0)``; omitted when None.
-    eta : str, sequence of +1/-1, or None
-        The site sign pattern: a name (``"Néel"``) is written as given, a
-        sequence as ``η=(+,-)`` (a single ``+1`` is omitted).
-    phase : float or None
-        Written ``φ=0``, ``φ=π/4`` (a multiple of pi with a denominator up
-        to 48) or ``φ=0.123457``; omitted when None.
-    sign : +1, -1 or None
-        ``-1`` is written ``sign=-1``; ``+1`` and None are omitted.
-    spiral : bool
-        ``True`` appends ``spiral``; a collinear pattern is the unmarked
-        default.
 
-    The name lists the channels with a weight of at least
-    :data:`DOMINANT_WEIGHT` (the heaviest one if none is), heaviest first,
-    joined by ``" + "``; a ``spin-<axis>`` channel is followed by
-    ``ferro-orbital`` or ``antiferro-orbital``. A zero ``delta rho`` is
-    named ``para``.
-    """
-    problem = facts.problem
-    m = _delta_rho(rho_delta_cell, problem)
-    c = decompose(m, layout=_layout(problem))
-    sites = _folded_sites(facts, c["c0"].shape[-1])
-    norms = _channel_norms(c, sites)
-    total = sum(norms.values())
-    even = sum(v for k, v in norms.items() if k in _EVEN)
-    odd = total - even
-    if total > 0.0:
-        weights = {k: v / total for k, v in norms.items()}
-        weights["TR-even"], weights["TR-odd"] = even / total, odd / total
-    else:
-        weights = dict.fromkeys(CHANNELS + TR_KEYS, 0.0)
+def ascii_name(name: str) -> str:
+    """``name`` in ASCII: ``φ``, ``π``, ``η`` spelled ``phi``, ``pi``,
+    ``eta``; accents folded (``Néel`` -> ``Neel``); any other non-ASCII
+    character dropped. Id slugs are built from this form."""
+    text = "".join(_ASCII.get(ch, ch) for ch in name)
+    text = unicodedata.normalize("NFKD", text)
+    return text.encode("ascii", "ignore").decode("ascii")
 
+
+def _name_suffix(q, eta, phase, sign, spiral):
     parts = []
-    if total > 0.0:
-        order = sorted(range(len(CHANNELS)),
-                       key=lambda i: (-round(weights[CHANNELS[i]], 12), i))
-        dominant = [CHANNELS[i] for i in order if weights[CHANNELS[i]] >= DOMINANT_WEIGHT]
-        tokens = []
-        for ch in dominant or [CHANNELS[order[0]]]:
-            if ch in ("spin-x", "spin-y", "spin-z"):
-                ch = "{} {}".format(ch, _orbital_qualifier(c["c" + ch[-1]], sites))
-            tokens.append(ch)
-        parts.append(" + ".join(tokens))
-    else:
-        parts.append("para")
     if q is not None:
         parts.append(_q_text(q))
     if eta is not None:
@@ -443,5 +453,114 @@ def label(rho_delta_cell, facts, *, q, eta, phase, sign, spiral: bool) -> Label:
             parts.append("sign=-1")
     if spiral:
         parts.append("spiral")
-    return Label(name=" ".join(parts), weights=weights, tr=_parity(even, odd),
-                 gauge_dependent=gauge_dependent(problem))
+    return parts
+
+
+def _dominant_tokens(weights, c, sites):
+    """The dominant channels (weight >= DOMINANT_WEIGHT): on-site channels
+    first, then bond channels, each heaviest first (ties in CHANNELS
+    order); the heaviest channel alone when none is dominant."""
+    order = sorted(range(len(CHANNELS)), key=lambda i: (-round(weights[CHANNELS[i]], 12), i))
+    dominant = [CHANNELS[i] for i in order if weights[CHANNELS[i]] >= DOMINANT_WEIGHT]
+    dominant = ([ch for ch in dominant if not ch.startswith("bond-")]
+                + [ch for ch in dominant if ch.startswith("bond-")])
+    tokens = []
+    for ch in dominant or [CHANNELS[order[0]]]:
+        if ch in ("spin-x", "spin-y", "spin-z"):
+            ch = "{} {}".format(ch, _orbital_qualifier(c["c" + ch[-1]], sites))
+        tokens.append(ch)
+    return " + ".join(tokens)
+
+
+def _label(m, facts, source, q, eta, phase, sign, spiral):
+    problem = facts.problem
+    suffix = _name_suffix(q, eta, phase, sign, spiral)
+    if float(np.max(np.abs(m), initial=0.0)) <= PARA_TOL:
+        weights = dict.fromkeys(CHANNELS + TR_KEYS, 0.0)
+        head, tr = "para", "even"
+    else:
+        c = decompose(m, layout=_layout(problem))
+        sites = _folded_sites(facts, c["c0"].shape[-1])
+        norms = _channel_norms(c, sites)
+        total = sum(norms.values())
+        even = sum(v for k, v in norms.items() if k in _EVEN)
+        odd = total - even
+        weights = {k: v / total for k, v in norms.items()}
+        weights["TR-even"], weights["TR-odd"] = even / total, odd / total
+        head, tr = _dominant_tokens(weights, c, sites), _parity(even, odd)
+    name = " ".join([head] + suffix)
+    return Label(name=name, weights=weights, tr=tr, gauge_dependent=gauge_dependent(problem),
+                 ascii_name=ascii_name(name), source=source, thresholds=dict(THRESHOLDS))
+
+
+_NAME_DOC = """
+    q : three rationals or None
+        Written ``q=(1/2,1/2,0)``; omitted when None.
+    eta : str, sequence of +1/-1, or None
+        The site sign pattern: a name (``"Néel"``) is written as given, a
+        sequence as ``η=(+,-)`` (a single ``+1`` is omitted).
+    phase : float or None
+        Written ``φ=0``, ``φ=π/4`` (a multiple of pi with a denominator up
+        to 48) or ``φ=0.123457``; omitted when None.
+    sign : +1, -1 or None
+        ``-1`` is written ``sign=-1``; ``+1`` and None are omitted.
+    spiral : bool
+        ``True`` appends ``spiral``; a collinear pattern is the unmarked
+        default.
+
+    The name lists the dominant channels, those with a weight of at least
+    :data:`DOMINANT_WEIGHT` (the heaviest one if none is): on-site channels
+    first, then bond channels, each group heaviest first, joined by
+    ``" + "``. A ``spin-<axis>`` channel is followed by ``ferro-orbital``
+    or ``antiferro-orbital``. ``tr`` follows the :data:`TR_MINOR_WEIGHT`
+    rule. An input whose largest entry is at most :data:`PARA_TOL` is
+    named ``para``. The thresholds are recorded in ``Label.thresholds``.
+"""
+
+
+def pattern_label(pattern_k, facts, *, q, eta, phase, sign, spiral: bool) -> Label:
+    """The label of a seeding pattern ``O`` (owner decision O8 (a): a
+    candidate and its id slug are named by its pattern, not by the induced
+    ``delta rho``).
+
+    Parameters
+    ----------
+    pattern_k : array ``(nvol, nd, nd)``
+        The Hamiltonian-convention ``O(k)`` of the folded cell of
+        ``facts.problem`` (as ``realise`` returns it), in the solver's
+        index order; it is read in real space, ``O(k) = sum_R e^{ikR}
+        O(R)``. ``O(R)`` must be Hermitian (``O(R)_ab = conj(O(-R)_ba)``).
+    facts : :class:`~hwave.initial.facts.ModelFacts`
+        Of the cell the pattern lives on.
+    """
+    problem = facts.problem
+    m = _delta_rho(_to_r(pattern_k, problem).reshape(problem.nvol, problem.nd, problem.nd),
+                   problem, what="the pattern")
+    return _label(m, facts, "pattern", q, eta, phase, sign, spiral)
+
+
+def label(rho_delta_cell, facts, *, q, eta, phase, sign, spiral: bool) -> Label:
+    """The label of an induced or converged state, from its ``delta rho``
+    (design section 6.5; owner decision O8 (b): named by its dominant
+    components only).
+
+    Parameters
+    ----------
+    rho_delta_cell : array
+        ``delta rho`` of the folded cell of ``facts.problem`` in the rho
+        convention (``rho = G^T`` per displacement; the callers transpose
+        a stored Green function), ``(nvol, nd, nd)`` or ``(nvol, ns, norb,
+        ns, norb)`` in the solver's index order. It must be Hermitian
+        (``rho(r)_ij = conj(rho(-r)_ji)``).
+    facts : :class:`~hwave.initial.facts.ModelFacts`
+        Of the cell ``delta rho`` lives on (its sites decide what is
+        on-site and what is a bond).
+    """
+    problem = facts.problem
+    return _label(_delta_rho(rho_delta_cell, problem), facts, "state", q, eta, phase, sign,
+                  spiral)
+
+
+if pattern_label.__doc__ and label.__doc__:   # absent under python -OO
+    pattern_label.__doc__ += _NAME_DOC
+    label.__doc__ += _NAME_DOC

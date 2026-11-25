@@ -171,6 +171,18 @@ class TestTrParity(unittest.TestCase):
         self.assertEqual(labels.tr_parity({"c0": np.array([[0.0, 1 + 1j], [1 - 1j, 0.0]])}),
                          "mixed")
 
+    def test_tr_minor_weight_rule(self):
+        """O8: even (odd) when the other parity carries less than
+        TR_MINOR_WEIGHT = 0.1 of the squared norm, mixed otherwise."""
+        from hwave.initial import labels
+        self.assertEqual(labels.TR_MINOR_WEIGHT, 0.1)
+        one = np.ones((1, 1))
+        for w_odd, want in ((0.0, "even"), (0.09, "even"), (0.11, "mixed"), (0.89, "mixed"),
+                            (0.91, "odd"), (1.0, "odd")):
+            c = {"c0": math.sqrt(1 - w_odd) * one, "cz": math.sqrt(w_odd) * one}
+            with self.subTest(w_odd=w_odd):
+                self.assertEqual(labels.tr_parity(c), want)
+
     def test_tr_parity_is_time_reversal(self):
         """The parity is that of the operator under ``Theta = i sigma^y K``:
         ``Y conj(O) Y^T = +O`` (even) or ``-O`` (odd)."""
@@ -191,6 +203,24 @@ class TestTrParity(unittest.TestCase):
 # --------------------------------------------------------------------------
 
 class TestGauge(_Tmp):
+    def test_gauge_is_cached_per_problem(self):
+        """The Transfer table is decomposed once per problem, not once per
+        label."""
+        from unittest import mock
+        from hwave.initial import labels
+        f = self.two_orbital()
+        calls = []
+        real = labels.decompose
+
+        def counting(*a, **kw):
+            calls.append(np.shape(a[0]))
+            return real(*a, **kw)
+        with mock.patch.object(labels, "decompose", counting):
+            for _ in range(3):
+                self.assertFalse(labels.gauge_dependent(f.problem))
+                self.assertFalse(labels.gauge_dependent(f))
+        self.assertEqual(calls.count(f.problem.ham_trans_r.shape), 1)
+
     def test_real_hopping_no_gauge_warning(self):
         from hwave.initial import labels
         f = self.two_orbital()
@@ -446,13 +476,21 @@ class TestLabel(_Tmp):
                 self.assertAlmostEqual(a.weights[k], b.weights[k], places=14)
 
     def test_zero_delta_rho(self):
+        """A zero or tolerance-small delta rho (the rounding noise of a
+        converged para run) is ``para``; above PARA_TOL it is named."""
         from hwave.initial import labels
         f = self.two_orbital()
-        lab = labels.label(_rho(f.problem, {}), f, q=None, eta=None, phase=None, sign=None,
-                           spiral=False)
-        self.assertEqual(lab.name, "para")
-        self.assertEqual(lab.tr, "even")
-        self.assertTrue(all(v == 0.0 for v in lab.weights.values()))
+        noise = {(0, 0, 0): {"cz": 3e-12, "c0": 1e-12}, (0, 1, 1): {"cx": -2e-12}}
+        for entries in ({}, noise):
+            lab = labels.label(_rho(f.problem, entries), f, q=None, eta=None, phase=None,
+                               sign=None, spiral=False)
+            self.assertEqual(lab.name, "para")
+            self.assertEqual(lab.tr, "even")
+            self.assertTrue(all(v == 0.0 for v in lab.weights.values()))
+        self.assertEqual(labels.PARA_TOL, 1e-8)
+        lab = labels.label(_rho(f.problem, {(0, 0, 0): {"cz": 1e-6}}), f, q=None, eta=None,
+                           phase=None, sign=None, spiral=False)
+        self.assertEqual(lab.name, "spin-z ferro-orbital")
 
     def test_wrong_shape_refused(self):
         from hwave.initial import labels
@@ -473,6 +511,109 @@ class TestLabel(_Tmp):
         with self.assertRaises(ValueError):
             labels.label(_rho(f.problem, {(1, 0, 1): {"c0": 0.3}}), f, q=None, eta=None,
                          phase=None, sign=None, spiral=False)
+
+
+class TestPatternAndInducedNames(_Tmp):
+    """Owner decision O8: a candidate is named by its seeding pattern O; an
+    induced or converged state by its dominant components (>= 10 %), on-site
+    first, with TR even/odd unless the other parity holds >= 10 %."""
+
+    def setUp(self):
+        super().setUp()
+        toml = initial_fixtures.square(self.dest(), 4, T=0.1, subshape=(2, 2, 1))
+        from hwave.initial import facts
+        self.f = facts.model_facts(toml)
+        p = self.f.problem
+        eta = np.array([(-1) ** (ix + iy) for iy in range(2) for ix in range(2)])
+        o = np.kron(np.diag([1.0, -1.0]), np.diag(eta)).astype(complex)  # spin-block
+        self.o_k = np.broadcast_to(o, (p.nvol, p.nd, p.nd)).copy()
+
+    def induced(self, h):
+        """delta rho = rho(T - h O) - rho(T) by the solver's own fill
+        (rho = G^T per displacement)."""
+        from hwave.solver import initial_facade as fac
+        p = self.f.problem
+
+        def rho(hh):
+            g = fac.green_function(p.ham_trans_k - hh * self.o_k, p.T, p.blocks,
+                                   shape=p.shape, ns=p.ns, norb=p.norb,
+                                   ene_cutoff=p.ene_cutoff)
+            return np.swapaxes(g.reshape(p.nvol, p.nd, p.nd), -1, -2)
+        return rho(h) - rho(0.0)
+
+    def kw(self):
+        return dict(q=("1/2", "1/2", "0"), eta="Néel", phase=0.0, sign=1, spiral=False)
+
+    def test_pattern_gives_the_example_name(self):
+        from hwave.initial import labels
+        lab = labels.pattern_label(self.o_k, self.f, **self.kw())
+        self.assertEqual(lab.name, "spin-z ferro-orbital q=(1/2,1/2,0) Néel φ=0")
+        self.assertEqual(lab.ascii_name, "spin-z ferro-orbital q=(1/2,1/2,0) Neel phi=0")
+        self.assertEqual(lab.source, "pattern")
+        self.assertEqual(lab.tr, "odd")
+        self.assertAlmostEqual(lab.weights["spin-z"], 1.0, places=14)
+        self.assertEqual(lab.thresholds, labels.THRESHOLDS)
+        self.assertEqual(lab.thresholds["dominant_weight"], 0.1)
+        self.assertEqual(lab.thresholds["tr_minor_weight"], 0.1)
+        # a non-Hermitian pattern is refused
+        bad = self.o_k.copy()
+        bad[:, 0, 1] = 0.3
+        with self.assertRaises(ValueError):
+            labels.pattern_label(bad, self.f, **self.kw())
+
+    def test_induced_neel_probe(self):
+        """The review's probe: the induced Neel delta rho has a bond tail of
+        about half the weight. The name leads with the on-site channel;
+        bond channels follow only at >= 10 %; at small and at finite h the
+        parity is odd, not mixed."""
+        from hwave.initial import labels
+        for h in (1e-6, 1.0):
+            with self.subTest(h=h):
+                lab = labels.label(self.induced(h), self.f, **self.kw())
+                self.assertEqual(lab.source, "state")
+                self.assertTrue(lab.name.startswith("spin-z ferro-orbital"), lab.name)
+                self.assertTrue(lab.name.endswith(" q=(1/2,1/2,0) Néel φ=0"), lab.name)
+                head = lab.name[:-len(" q=(1/2,1/2,0) Néel φ=0")]
+                listed = head.split(" + ")[1:]
+                want = [ch for ch in labels.CHANNELS
+                        if ch.startswith("bond-") and lab.weights[ch] >= 0.1]
+                self.assertEqual(sorted(listed), sorted(want))
+                for ch in labels.CHANNELS:
+                    if ch.startswith("bond-") and ch not in want:
+                        self.assertLess(lab.weights[ch], 0.1)
+                self.assertGreater(lab.weights["spin-z"], 0.4)
+                self.assertGreater(lab.weights["bond-spin-z"], 0.1)
+                self.assertEqual(lab.tr, "odd")
+                self.assertLess(lab.weights["TR-even"], labels.TR_MINOR_WEIGHT)
+        # h = 1: the TR-even bond-charge part (about 1 %) is below the
+        # threshold, so it is neither listed nor makes the parity mixed
+        lab = labels.label(self.induced(1.0), self.f, **self.kw())
+        self.assertGreater(lab.weights["bond-charge"], 1e-3)
+        self.assertNotIn("bond-charge", lab.name)
+        # h = 4 (of order the band width): the even part reaches 10 %
+        lab = labels.label(self.induced(4.0), self.f, **self.kw())
+        self.assertGreaterEqual(lab.weights["TR-even"], labels.TR_MINOR_WEIGHT)
+        self.assertEqual(lab.tr, "mixed")
+        self.assertTrue(lab.name.startswith("spin-z ferro-orbital + bond-charge"), lab.name)
+
+    def test_bond_only_state_is_a_bond_label(self):
+        """With no on-site channel at 10 % the name is the bond channels."""
+        from hwave.initial import labels
+        rho = _rho(self.f.problem, {(0, 0, 1): {"c0": 0.3}, (0, 1, 0): {"c0": 0.3},
+                                    (0, 0, 0): {"cz": 0.02}})
+        lab = labels.label(rho, self.f, q=None, eta=None, phase=None, sign=None,
+                           spiral=False)
+        self.assertEqual(lab.name, "bond-charge")
+
+    def test_ascii_name(self):
+        from hwave.initial import labels
+        self.assertEqual(labels.ascii_name("spin-z q=(1/2,0,0) η=(+,-) φ=-π/2 Néel"),
+                         "spin-z q=(1/2,0,0) eta=(+,-) phi=-pi/2 Neel")
+        self.assertEqual(labels.ascii_name("a☃b"), "ab")
+        lab = labels.label(self.induced(1e-3), self.f, q=None, eta=(1, -1),
+                           phase=math.pi / 3, sign=None, spiral=False)
+        self.assertTrue(lab.ascii_name.isascii())
+        self.assertIn("eta=(+,-) phi=pi/3", lab.ascii_name)
 
 
 if __name__ == "__main__":
