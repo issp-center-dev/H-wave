@@ -299,5 +299,62 @@ class TestTHint(_Tmp):
         self.assertRel(self.hint(p2).T_hint, 0.5)
 
 
+class TestPrimitiveH0(_Tmp):
+    """``initial_facade.primitive_h0_k`` against the solver's own ``T(k)``:
+    equal on ``SubShape = [1, 1, 1]``, the same spectrum on a folded cell."""
+
+    def check(self, **kw):
+        import numpy as np
+        from hwave.solver import initial_facade as fac
+        param = dict(kw.pop("param"))
+        p1 = self.load(param=dict(param, SubShape=[1, 1, 1]), **kw)
+        h1 = fac.primitive_h0_k(p1)
+        self.assertEqual(h1.shape, p1.ham_trans_k.shape)
+        np.testing.assert_array_equal(h1, np.asarray(p1.ham_trans_k))
+        p2 = self.load(param=dict(param, SubShape=[2, 1, 1]), **kw)
+        h2 = fac.primitive_h0_k(p2)
+        np.testing.assert_array_equal(h2, h1)
+        e_prim = np.sort(np.linalg.eigvalsh(h2).ravel())
+        e_fold = np.sort(np.linalg.eigvalsh(np.asarray(p2.ham_trans_k)).ravel())
+        np.testing.assert_allclose(e_prim, e_fold, rtol=0, atol=1e-12)
+        return p1, h1
+
+    def test_off_diagonal_complex_hopping(self):
+        import numpy as np
+        transfer = dict(_chain(1.0, 0)); transfer.update(_chain(0.5, 1))
+        transfer[((1, 0, 0), 0, 1)] = 0.3 + 0.4j
+        transfer[((-1, 0, 0), 1, 0)] = 0.3 - 0.4j
+        transfer[((0, 0, 0), 0, 1)] = 0.1j
+        transfer[((0, 0, 0), 1, 0)] = -0.1j
+        p, h = self.check(cellshape=(4, 1, 1), norb=2, transfer=transfer,
+                          param={"Ncond": 8, "T": 0.0})
+        self.assertFalse(p.spin_resolved_transfer)
+        # the complex bond is not real-symmetric: its phase reaches T(k)
+        self.assertGreater(np.abs(h.imag).max(), 0.1)
+
+    def test_spin_mixing_nine_column(self):
+        import numpy as np
+        entries = {((1, 0, 0), 0, 0, 0, 0): -1.0, ((1, 0, 0), 0, 0, 1, 1): -1.0,
+                   ((1, 0, 0), 1, 1, 0, 0): -0.5, ((1, 0, 0), 1, 1, 1, 1): -0.5,
+                   ((1, 0, 0), 0, 1, 0, 1): 0.2 + 0.1j,
+                   ((0, 0, 0), 0, 1, 0, 1): 0.15j,
+                   ((0, 0, 0), 0, 0, 0, 0): 0.3, ((0, 0, 0), 0, 0, 1, 1): -0.3}
+        p, h = self.check(cellshape=(4, 1, 1), norb=2, transfer=_chain(1.0),
+                          param={"Ncond": 8, "T": 0.0},
+                          extra_files={"transfer.dat": _spin_transfer_text(2, entries)})
+        self.assertTrue(p.spin_resolved_transfer)
+        # the up-down block is non-zero
+        self.assertGreater(np.abs(h[:, :2, 2:]).max(), 0.1)
+
+    def test_spin_orbital_complex(self):
+        transfer = {(r, s, s): v for (r, a, b), v in _chain(1.0).items() for s in (0, 1)}
+        transfer[((1, 0, 0), 0, 1)] = 0.2 + 0.3j
+        transfer[((-1, 0, 0), 1, 0)] = 0.2 - 0.3j
+        p, _ = self.check(cellshape=(4, 1, 1), norb=2, transfer=transfer,
+                          param={"Ncond": 4, "T": 0.0},
+                          mode={"enable_spin_orbital": True})
+        self.assertTrue(p.enable_spin_orbital)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,17 @@ An empty or full group has no window (its entries are ``None``);
 every group is empty or full. Every quantity is shift-invariant: ``H0 ->
 H0 + C`` moves each ``E_F,g`` by C and nothing else.
 
+The band-range and window membership tests are inclusive with a
+tolerance of ``1e-12 * max(W_all, 1)`` (shift-invariant), so a tie at an
+edge does not depend on the rounding of the absolute energy origin. The
+bands come from :func:`hwave.solver.initial_facade.primitive_h0_k`, the
+solver's own ``H(k)`` builder.
+
+Warnings: the wide-window warning (``W_all > 3*W_act``) is recorded for
+every ``t_hint_source``, ``input`` and ``user`` included, because ``W0``
+is also the scale of the field seeding; the no-mesh-axis warning only when
+the ``W0/8`` cap is the ``T_hint`` used.
+
 ``T_hint`` affects the hint eigenvalues and eigenvectors, hence which hint
 rows fill the instability quota; never the q set, the cells, or the
 reserved, baseline, user and literature rows. The UHFk candidate runs stay
@@ -44,6 +55,8 @@ from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
 
 import numpy as np
+
+from hwave.solver import initial_facade
 
 __all__ = ["THint", "t_hint_bare", "W_FLOOR_ACT", "T_HINT_REL_FLOOR",
            "STRUCTURAL_AXIS_MAX", "WIDE_WINDOW_FACTOR", "group_bands"]
@@ -114,31 +127,6 @@ class THint:
     warnings: Tuple[str, ...]
 
 
-def _primitive_h0(problem):
-    """The bare ``H0(k)`` of the original (primitive) cell on the
-    ``CellShape`` mesh, ``(nvol_prim, nd_orig, nd_orig)``, in the reader's
-    index order: spin-block ``s*norb_orig + a`` in normal mode (a 7-column
-    Transfer embedded over spin, a 9-column one as read), interleaved
-    ``2*orb + spin`` in spin-orbital mode.
-
-    The table ``param_ham_orig["Transfer"]`` is scattered with ``R`` taken
-    modulo ``CellShape`` (entries on the same slot add, as in the solver's
-    builder) and Fourier transformed. Only the spectrum over the mesh is
-    used, which does not depend on the sign of the transform.
-    """
-    table = problem.param_ham_orig["Transfer"]
-    norb = problem.norb_orig
-    dim = 2 * norb if problem.spin_resolved_transfer else norb
-    shape = tuple(int(n) for n in problem.cellshape)
-    tab = np.zeros(shape + (dim, dim), dtype=np.complex128)
-    for (r, (a, b)), v in table.items():
-        tab[r[0] % shape[0], r[1] % shape[1], r[2] % shape[2], a, b] += v
-    h0 = np.fft.ifftn(tab, axes=(0, 1, 2), norm="forward").reshape(-1, dim, dim)
-    if problem.enable_spin_orbital or problem.spin_resolved_transfer:
-        return h0
-    return np.einsum("kab,st->ksatb", h0, np.eye(2)).reshape(-1, 2 * dim, 2 * dim)
-
-
 def _primitive_groups(problem, nd_orig):
     """The mu-group of each primitive index: the group of its image in the
     first primitive cell of the folded cell (folded orbital ``a +
@@ -175,7 +163,7 @@ def group_bands(problem):
     No two groups are coupled by ``H0`` (they are unions of the solver's
     blocks).
     """
-    h0 = _primitive_h0(problem)
+    h0 = initial_facade.primitive_h0_k(problem)
     groups = _primitive_groups(problem, h0.shape[1])
     out = []
     for g in range(len(problem.blocks.group_nconds)):

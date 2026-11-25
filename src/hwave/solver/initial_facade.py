@@ -18,6 +18,9 @@ module it imports; it does not import ``hwave.initial``.
   Hamiltonian (its diagonalisation and occupation fill), or with a uniform
   fill of an open T = 0 Fermi shell.
 * :func:`referenced_input_files`: the files an input TOML names, by key.
+* :func:`primitive_h0_k`: the bare ``T(k)`` of the original (primitive)
+  cell on the ``CellShape`` mesh, built by the solver's
+  :mod:`hamiltonian_k` (one Fourier convention).
 
 Every function takes and returns the stored Green function of UHFk,
 ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>`` (the layout of the
@@ -39,7 +42,8 @@ from .uhfk_fill import FillInfo, MuNotConvergedError, ShellRecord
 __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "MuNotConvergedError", "TWO_BODY_TYPES", "load_problem",
            "solver_blocks", "hf_tables", "accumulate_hf_projected",
-           "hf_potential", "green_function", "referenced_input_files"]
+           "hf_potential", "green_function", "referenced_input_files",
+           "primitive_h0_k"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
 #: and the combined ``Coulomb`` table, uhfk.py ``_check_interaction``)
@@ -381,6 +385,29 @@ def load_problem(toml_path, *, subshape=None):
         tables=tables, param_ham_orig=param_ham_orig,
         geometry=param_ham_orig["Geometry"], orbital_site=_orbital_site(solver),
         blocks=blocks, input_files=input_files)
+
+
+def primitive_h0_k(problem):
+    """The bare one-body ``T(k)`` of the original (primitive) cell of
+    ``problem`` on the ``CellShape`` mesh, ``(prod(CellShape), nd_orig,
+    nd_orig)``.
+
+    It is :func:`hamiltonian_k.one_body_k` (the builder UHFk uses) on
+    ``param_ham_orig["Transfer"]`` with ``shape = CellShape``, in the index
+    order UHFk would use for that cell: spin-block ``s*norb_orig + a`` in
+    normal mode (a 7-column Transfer embedded over spin, a 9-column one as
+    read), interleaved ``2*orb + spin`` in spin-orbital mode. With
+    ``SubShape = [1, 1, 1]`` it equals ``problem.ham_trans_k``; with a
+    larger ``SubShape`` it has the same spectrum over the mesh.
+    """
+    table = problem.param_ham_orig["Transfer"]
+    norb = problem.norb_orig
+    shape = tuple(int(n) for n in problem.cellshape)
+    if problem.enable_spin_orbital:
+        return hamiltonian_k.one_body_k(table, shape, norb)
+    if problem.spin_resolved_transfer:
+        return hamiltonian_k.one_body_k(table, shape, 2 * norb)
+    return hamiltonian_k.one_body_k(table, shape, norb, spin_embed=True)
 
 
 def solver_blocks(problem):
