@@ -218,29 +218,29 @@ def _warnings(caplog):
 
 
 def test_sc_load_chi0q_warns_on_coeff_tail_mismatch(caplog):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     d = tempfile.mkdtemp()
     _write_chi0q_file(d, coeff_tail=1.0)
     with caplog.at_level(logging.WARNING, logger='hwave_sc'):
-        sc._load_chi0q(_sc_input(d))          # config default 0.0 != file 1.0
+        sc_io._load_chi0q(_sc_input(d))          # config default 0.0 != file 1.0
     assert any('coeff_tail' in m for m in _warnings(caplog))
 
 
 def test_sc_load_chi0q_silent_on_matching_coeff_tail(caplog):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     d = tempfile.mkdtemp()
     _write_chi0q_file(d, coeff_tail=1.0)
     with caplog.at_level(logging.WARNING, logger='hwave_sc'):
-        sc._load_chi0q(_sc_input(d, coeff_tail=1.0))
+        sc_io._load_chi0q(_sc_input(d, coeff_tail=1.0))
     assert not any('coeff_tail' in m for m in _warnings(caplog))
 
 
 def test_sc_load_chi0q_silent_on_legacy_file(caplog):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     d = tempfile.mkdtemp()
     _write_chi0q_file(d)                       # no coeff_tail key
     with caplog.at_level(logging.WARNING, logger='hwave_sc'):
-        sc._load_chi0q(_sc_input(d, coeff_tail=1.0))
+        sc_io._load_chi0q(_sc_input(d, coeff_tail=1.0))
     assert not any('coeff_tail' in m for m in _warnings(caplog))
 
 
@@ -363,25 +363,25 @@ def test_rpa_resave_does_not_fabricate_marker_for_zero_tail_legacy():
 
 
 def test_sc_load_rejects_premarker_nonzero_tail_file():
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     d = tempfile.mkdtemp()
     _write_chi0q_file(d, coeff_tail=1.0, marker=False)
     with pytest.raises(ValueError, match="tail_endpoint"):
-        sc._load_chi0q(_sc_input(d, coeff_tail=1.0))
+        sc_io._load_chi0q(_sc_input(d, coeff_tail=1.0))
 
 
 def test_sc_load_accepts_marked_nonzero_tail_file():
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     d = tempfile.mkdtemp()
     _write_chi0q_file(d, coeff_tail=1.0)
-    sc._load_chi0q(_sc_input(d, coeff_tail=1.0))
+    sc_io._load_chi0q(_sc_input(d, coeff_tail=1.0))
 
 
 def test_sc_load_accepts_zero_tail_file_without_marker():
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     d = tempfile.mkdtemp()
     _write_chi0q_file(d, coeff_tail=0.0)
-    sc._load_chi0q(_sc_input(d, coeff_tail=0.0))
+    sc_io._load_chi0q(_sc_input(d, coeff_tail=0.0))
 
 
 def test_flex_save_stamps_endpoint_marker():
@@ -550,7 +550,7 @@ def test_rpa_read_rejects_malformed_tail_provenance(bad):
 
 @pytest.mark.parametrize("bad", [True, "1.0", float('nan'), float('inf')])
 def test_sc_load_rejects_malformed_tail_provenance(bad):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     d = tempfile.mkdtemp()
     np.savez(os.path.join(d, 'chi0q.npz'),
              chi0q=np.zeros((8, 16, 1, 1), dtype=complex),
@@ -558,4 +558,4 @@ def test_sc_load_rejects_malformed_tail_provenance(bad):
              tail_endpoint="branch_mean_v1",
              momentum_convention="e_plus_ikR")
     with pytest.raises(ValueError, match="coeff_tail"):
-        sc._load_chi0q(_sc_input(d, coeff_tail=1.0))
+        sc_io._load_chi0q(_sc_input(d, coeff_tail=1.0))

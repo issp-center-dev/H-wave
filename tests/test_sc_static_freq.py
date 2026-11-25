@@ -13,11 +13,8 @@ import unittest
 
 import numpy as np
 
-from hwave.sc import (
-    _static_freq_position,
-    _load_chi0q,
-    _compute_vertices_simple,
-)
+from hwave.solver.eliashberg.io import _static_freq_position, _load_chi0q
+from hwave.solver.eliashberg.vertex import _compute_vertices_simple
 
 
 class TestStaticFreqPosition(unittest.TestCase):
@@ -385,7 +382,7 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
         # RPA chiq.npz with matsubara_frequency=[400,600] of Nmat=1024:
         # the zero bosonic frequency (original index 512) sits at stored
         # position 112, NOT at the axis center (100)
-        from hwave.sc import _load_flex_susceptibilities
+        from hwave.solver.eliashberg.io import _load_flex_susceptibilities
 
         with tempfile.TemporaryDirectory() as tmp:
             # norb=1 "kuroki" (reduced/spin-orbital) data is physically
@@ -422,7 +419,7 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
             self.assertEqual(chic.flat[0].real, 112.0)
 
     def test_legacy_chiq_without_metadata_uses_data_axis_center(self):
-        from hwave.sc import _load_flex_susceptibilities
+        from hwave.solver.eliashberg.io import _load_flex_susceptibilities
 
         with tempfile.TemporaryDirectory() as tmp:
             # norb=1 "kuroki" (reduced/spin-orbital) data is physically
@@ -457,7 +454,7 @@ class TestLoadFlexSusceptibilitiesStaticSlice(unittest.TestCase):
     def test_legacy_chiq_without_metadata_mismatched_config_raises(self):
         # #186: metadata-less FLEX chiq whose axis length (8) does not match
         # config Nmat (1024) can no longer be centered by guessing
-        from hwave.sc import _load_flex_susceptibilities
+        from hwave.solver.eliashberg.io import _load_flex_susceptibilities
 
         with tempfile.TemporaryDirectory() as tmp:
             nfreq, nvol, nd = 8, 2, 2

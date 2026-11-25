@@ -91,6 +91,10 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import vertex as sc_vertex
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver import bond_channels as bc
 from tests.approx_util import ApproxTestCase, assert_approx
 
@@ -398,7 +402,7 @@ def _bond_point(L, V, declare_inter=True):
         return _POINT_CACHE[key]
     kx, ky, kz = _kgrid(L)
     it = _interactions(V, declare_inter)
-    topo, bond_set, split = sc._resolve_bond_topology(
+    topo, bond_set, split = sc_bond._resolve_bond_topology(
         it, {"rvec": np.eye(3)}, 1, None)
     green = _load_green(L, V)
 
@@ -409,12 +413,12 @@ def _bond_point(L, V, declare_inter=True):
     # high-frequency asymptote is not known here), so this is numerically
     # identical to what the pre-carrier direct array argument produced --
     # a structural (signature) update only, no re-baseline.
-    green_carrier = sc._BondGreen(
-        full_sc=green, deflated_kw=sc._green_sc_to_canonical(green),
+    green_carrier = sc_kernel._BondGreen(
+        full_sc=green, deflated_kw=sc_kernel._green_sc_to_canonical(green),
         green0_tail=None, coeff_tail_requested=0.0, coeff_tail_applied=0.0,
         source="external_npz")
 
-    (A, vec_size), provenance, attribution = sc._build_bond_operator(
+    (A, vec_size), provenance, attribution = sc_bond._build_bond_operator(
         topo, split, green_carrier, 1, kx, ky, kz, BETA, "triplet",
         bond_max_shells=None, bond_memory_cap_gb=0.0, g2_tail=False)
 
@@ -422,7 +426,7 @@ def _bond_point(L, V, declare_inter=True):
     # same chain the operator used
     chi_bar = bc.bond_bubble(green, bond_set, BETA)
     S_bond, C_bond = (W.reshape(chi_bar.shape)
-                      for W in sc._build_bond_vertices(topo, split, 1, (L, L, 1)))
+                      for W in sc_bond._build_bond_vertices(topo, split, 1, (L, L, 1)))
 
     evals, vecs = _odd_spectrum(A, vec_size, attribution["weight"], L)
     out = {"evals": evals, "vecs": vecs, "weight": attribution["weight"],
@@ -446,21 +450,21 @@ def _baseline_point(L, V):
         return _POINT_CACHE[key]
     kx, ky, kz = _kgrid(L)
     it = _interactions(V)
-    inter_k = sc._build_interaction_k(kx, ky, kz, it, 1)
-    _, bond_set, _ = sc._resolve_bond_topology(it, {"rvec": np.eye(3)}, 1, None)
+    inter_k = sc_vertex._build_interaction_k(kx, ky, kz, it, 1)
+    _, bond_set, _ = sc_bond._resolve_bond_topology(it, {"rvec": np.eye(3)}, 1, None)
     green = _load_green(L, V)
     chi_bar = bc.bond_bubble(green, bond_set, BETA)
     chi0q = chi_bar[:, :, :, 0, 0].reshape(1, 1, L, L, 1, 1).copy()
 
-    vertex = sc._compute_vertices(chi0q, inter_k, 1, L, L, 1, 1,
+    vertex = sc_vertex._compute_vertices(chi0q, inter_k, 1, L, L, 1, 1,
                                   pairing_type="triplet", static_index=0)
     assert isinstance(vertex, tuple), (
         "the baseline must be the 2-index simple path (Pc, Ps); a 4-index "
         "vertex means _compute_vertices took the general branch, which drops "
         "V entirely at norb=1")
     Pc_q, Ps_q = vertex
-    G2 = sc._calc_g2(green, BETA, tail=False)
-    A, vec_size = sc._make_kernel_operator(Pc_q + Ps_q, G2, 1, L, L, 1)
+    G2 = sc_kernel._calc_g2(green, BETA, tail=False)
+    A, vec_size = sc_kernel._make_kernel_operator(Pc_q + Ps_q, G2, 1, L, L, 1)
     W = bc.pair_weight(green, BETA)
     evals, vecs = _odd_spectrum(A, vec_size, W, L)
     out = {"evals": evals, "vecs": vecs, "weight": W, "A": A}
@@ -477,8 +481,8 @@ def _sweep(L, v_grid, arm):
     if key in _SWEEP_CACHE:
         return _SWEEP_CACHE[key]
     kx, ky, kz = _kgrid(L)
-    seed = sc._initialize_gap("f_x", 1, kx, ky, kz).ravel()
-    basis = sc._odd_harmonic_basis(1, kx, ky, kz)
+    seed = sc_eigen._initialize_gap("f_x", 1, kx, ky, kz).ravel()
+    basis = sc_eigen._odd_harmonic_basis(1, kx, ky, kz)
     point = _bond_point if arm == "bond" else _baseline_point
     points = [point(L, V) for V in v_grid]
     # capture_tol: _odd_spectrum returns the COMPLETE odd spectrum, so the
@@ -622,17 +626,17 @@ class TestBondOnariMilestone(ApproxTestCase):
         spin_part, charge_part = [], []
         for V, rec in zip(V_GRID, records):
             it = _interactions(V)
-            topo, bond_set, split = sc._resolve_bond_topology(
+            topo, bond_set, split = sc_bond._resolve_bond_topology(
                 it, {"rvec": np.eye(3)}, 1, None)
             green = _load_green(16, V)
             chi_bar = bc.bond_bubble(green, bond_set, BETA)
             S_b, C_b = (W.reshape(chi_bar.shape)
-                        for W in sc._build_bond_vertices(topo, split, 1, (16, 16, 1)))
+                        for W in sc_bond._build_bond_vertices(topo, split, 1, (16, 16, 1)))
             chi_s, chi_c = bc.dress_bond(chi_bar, S_b, C_b)
             zero = np.zeros_like(chi_s)
 
             def fl(cs, cc):
-                return sc._bond_kernel_parts(
+                return sc_bond._bond_kernel_parts(
                     S_b, C_b, [("spin", cs), ("charge", cc)], green, bond_set, 1,
                     (16, 16, 1), BETA, "triplet", topo=None)[1]
 
@@ -690,7 +694,7 @@ class TestBondOnariMilestone(ApproxTestCase):
         """The V=0 anchor (spec S7.7 (v)) is unambiguous: among ALL near-degenerate
         clusters the tracked one has by far the largest f-seed overlap."""
         kx, ky, kz = _kgrid(16)
-        seed = sc._initialize_gap("f_x", 1, kx, ky, kz).ravel()[np.newaxis, :]
+        seed = sc_eigen._initialize_gap("f_x", 1, kx, ky, kz).ravel()[np.newaxis, :]
         point = _bond_point(16, 0.0)
         clusters = bc.cluster_eigenvalues(point["evals"], deg_tol=DEG_TOL)
         scores = [bc.subspace_similarity(point["vecs"][c], seed,
@@ -805,8 +809,8 @@ class TestBondOnariMilestone(ApproxTestCase):
         assert p_b1["provenance"].get("collapsed_to_pure_hubbard") is True
 
         kx, ky, kz = _kgrid(16)
-        seed = sc._initialize_gap("f_x", 1, kx, ky, kz).ravel()
-        basis = sc._odd_harmonic_basis(1, kx, ky, kz)
+        seed = sc_eigen._initialize_gap("f_x", 1, kx, ky, kz).ravel()
+        basis = sc_eigen._odd_harmonic_basis(1, kx, ky, kz)
         records = bc.track_subspace(
             [(p["evals"], p["vecs"]) for p in (p_b1, p_b5, p_005)],
             seed=seed, weight=p_b1["weight"], basis=basis, deg_tol=DEG_TOL,

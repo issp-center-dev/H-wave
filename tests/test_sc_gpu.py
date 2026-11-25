@@ -12,6 +12,8 @@ import numpy as np
 import pytest
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver import backend
 
 
@@ -51,7 +53,7 @@ def test_kernel_operator_cpu_returns_host_complex128():
     """On the plain CPU path matvec/matmat return real numpy complex128 arrays
     of the documented shapes (guards against silent CuPy leakage)."""
     Vs_q, G2, norb, Nx, Ny, Nz = _small_simple_operator_inputs()
-    A, n = sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    A, n = sc_kernel._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
     out = A.matvec(np.ones(n, dtype=complex))
     assert isinstance(out, np.ndarray) and out.shape == (n,)
     assert out.dtype == np.complex128
@@ -73,13 +75,13 @@ def test_kernel_operator_routes_input_and_output_through_backend(monkeypatch):
     # true numpy reference computed BEFORE any monkeypatch, so the allclose
     # below can actually detect a numerical change introduced by the routing
     # (an unpatched-vs-patched compare, not spy-vs-spy).
-    A_ref, _ = sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    A_ref, _ = sc_kernel._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
     ref = A_ref.matvec(v)
 
     record = {}
     spy = _spy_backend(record)
     monkeypatch.setattr(backend, "array_module_of", lambda a: spy)
-    A, _ = sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+    A, _ = sc_kernel._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
     out = A.matvec(v)
 
     # (a) the input vector (shape (n,)) was passed through xp.asarray
@@ -103,7 +105,7 @@ def test_kernel_operator_asserts_matched_backends(monkeypatch):
 
     monkeypatch.setattr(backend, "array_module_of", alternating)
     with pytest.raises(ValueError, match="same backend"):
-        sc._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
+        sc_kernel._make_kernel_operator(Vs_q, G2, norb, Nx, Ny, Nz)
 
 
 # --- calc_eliashberg static-path GPU orchestration ------------------------
@@ -214,8 +216,8 @@ def test_static_kernel_gpu_matches_cpu_eigenvalue(method):
 
     kw = dict(num_eigenvalues=4, method=method, sigma_shift=None,
               spectral_shift=None)
-    vals_cpu, vecs_cpu = sc._solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, **kw)
-    vals_gpu, vecs_gpu = sc._solve_eigenvalue(
+    vals_cpu, vecs_cpu = sc_eigen._solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, **kw)
+    vals_gpu, vecs_gpu = sc_eigen._solve_eigenvalue(
         cupy.asarray(Vs_q), cupy.asarray(G2), norb, Nx, Ny, Nz, **kw)
 
     lam_cpu, lam_gpu = vals_cpu[0], vals_gpu[0]
@@ -246,8 +248,8 @@ def test_static_kernel_gpu_matches_cpu_general_multiorbital(method):
     G2 = cplx((norb, norb, norb, norb, Nx, Ny, Nz))
     kw = dict(num_eigenvalues=4, method=method, sigma_shift=None,
               spectral_shift=None)
-    vals_cpu, _ = sc._solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, **kw)
-    vals_gpu, vecs_gpu = sc._solve_eigenvalue(
+    vals_cpu, _ = sc_eigen._solve_eigenvalue(Vs_q, G2, norb, Nx, Ny, Nz, **kw)
+    vals_gpu, vecs_gpu = sc_eigen._solve_eigenvalue(
         cupy.asarray(Vs_q), cupy.asarray(G2), norb, Nx, Ny, Nz, **kw)
     assert abs(vals_gpu[0] - vals_cpu[0]) <= 1e-8 * max(1.0, abs(vals_cpu[0]))
     assert isinstance(vals_gpu, np.ndarray) and isinstance(vecs_gpu, np.ndarray)
@@ -281,9 +283,9 @@ def test_static_kernel_gpu_iteration_matches_cpu(pairing_type):
     sigma_init = cplx((norb, norb, Nx, Ny, Nz))
     kw = dict(max_iter=300, alpha=0.5, tol=1e-10, pairing_type=pairing_type)
 
-    sig_cpu, lam_cpu, conv_cpu, _ = sc._solve_iteration(
+    sig_cpu, lam_cpu, conv_cpu, _ = sc_eigen._solve_iteration(
         None, Vs_q, G2, sigma_init.copy(), norb, **kw)
-    sig_gpu, lam_gpu, conv_gpu, _ = sc._solve_iteration(
+    sig_gpu, lam_gpu, conv_gpu, _ = sc_eigen._solve_iteration(
         None, cupy.asarray(Vs_q), cupy.asarray(G2), sigma_init.copy(), norb, **kw)
 
     assert conv_cpu and conv_gpu and np.isfinite(lam_cpu)
@@ -304,7 +306,7 @@ def test_static_kernel_gpu_matmat_is_host():
             + 1j * rng.standard_normal((norb, norb, Nx, Ny, Nz)))
     G2 = (rng.standard_normal((norb, norb, norb, norb, Nx, Ny, Nz))
           + 1j * rng.standard_normal((norb, norb, norb, norb, Nx, Ny, Nz)))
-    A, _ = sc._make_kernel_operator(cupy.asarray(Vs_q), cupy.asarray(G2),
+    A, _ = sc_kernel._make_kernel_operator(cupy.asarray(Vs_q), cupy.asarray(G2),
                                     norb, Nx, Ny, Nz)
     out = A.matmat(np.ones((n, 3), dtype=complex))
     assert isinstance(out, np.ndarray) and out.shape == (n, 3)

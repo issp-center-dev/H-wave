@@ -15,7 +15,7 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import io as sc_io
 from hwave.solver.rpa import (MOMENTUM_CONVENTION,
                               validate_momentum_convention)
 
@@ -156,7 +156,7 @@ class TestValidatorHardening(unittest.TestCase):
                         "output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._load_chi0q(inp)
+            sc_io._load_chi0q(inp)
         self.assertIn("#133", str(cm.exception))
 
     def test_ambiguous_unmarked_6d_layout_fails_closed(self):
@@ -176,7 +176,7 @@ class TestValidatorHardening(unittest.TestCase):
                         "output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._load_chi0q(inp)
+            sc_io._load_chi0q(inp)
         self.assertIn("BOTH", str(cm.exception))
         # The tag resolves the momentum axes; freq_index/nmat provenance
         # resolves the (2-point) frequency axis so #186 does not have to guess
@@ -184,7 +184,7 @@ class TestValidatorHardening(unittest.TestCase):
         np.savez(os.path.join(d, "chi0q.npz"), chi0q=payload,
                  momentum_convention=MOMENTUM_CONVENTION,
                  freq_index=np.array([3, 4]), nmat=8)
-        sc._load_chi0q(inp)   # tag decides; must not raise here
+        sc_io._load_chi0q(inp)   # tag decides; must not raise here
 
     def test_non_cubic_permuted_and_negative_axes(self):
         """The 3-axis path must respect axis identity on a non-cubic grid
@@ -236,7 +236,7 @@ class TestValidatorHardening(unittest.TestCase):
                         "output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._load_chi0q(inp)
+            sc_io._load_chi0q(inp)
         self.assertIn("#133", str(cm.exception))
 
 
@@ -253,7 +253,7 @@ class TestRound4Hardening(unittest.TestCase):
                "file": {"input": {"path_to_flex_output": d},
                         "output": {"path_to_output": d}},
                "eliashberg": {}}
-        return sc._load_chi0q(inp)
+        return sc_io._load_chi0q(inp)
 
     def test_mismatched_grid_6d_layout_fails_closed(self):
         """Neither the raw nor the ref pattern matches: the removed
@@ -337,7 +337,7 @@ class TestRound4Hardening(unittest.TestCase):
                                     "output": {"path_to_output": d}},
                            "eliashberg": {}}
                     with self.assertRaises(ValueError) as cm:
-                        sc._load_chi0q(inp, norb=2)
+                        sc_io._load_chi0q(inp, norb=2)
                     self.assertIn("no supported layout",
                                   str(cm.exception))
 
@@ -361,7 +361,7 @@ class TestRound4Hardening(unittest.TestCase):
                                     "output": {"path_to_output": d}},
                            "eliashberg": {}}
                     with self.assertRaises(ValueError) as cm:
-                        sc._load_chi0q(inp, norb=2)
+                        sc_io._load_chi0q(inp, norb=2)
                     self.assertIn("no supported layout",
                                   str(cm.exception))
 
@@ -387,7 +387,7 @@ class TestRound4Hardening(unittest.TestCase):
                        "file": {"input": {"path_to_flex_output": d},
                                 "output": {"path_to_output": d}},
                        "eliashberg": {}}
-                sc._load_chi0q(inp, norb=no)   # must not raise
+                sc_io._load_chi0q(inp, norb=no)   # must not raise
 
     def test_norb_routing_selects_the_right_axes_on_a_3cubed_grid(self):
         """Axis-selection regression on a 3x3x3 grid (on a 2-point grid
@@ -420,11 +420,11 @@ class TestRound4Hardening(unittest.TestCase):
         # ref interpretation (norb = 27): gate probes axes (2,3,4),
         # payload is q-odd there -> reject
         with self.assertRaises(ValueError) as cm:
-            sc._load_chi0q(inp, norb=nvol)
+            sc_io._load_chi0q(inp, norb=nvol)
         self.assertIn("#133", str(cm.exception))
         # raw interpretation (norb = 3): gate probes axis 1, payload is
         # constant there -> accept
-        sc._load_chi0q(inp, norb=n)
+        sc_io._load_chi0q(inp, norb=n)
 
     def test_huge_complex_odd_payload_is_rejected(self):
         """Finite complex values whose MAGNITUDE overflows: |x+iy| = inf
@@ -469,7 +469,7 @@ class TestRound4Hardening(unittest.TestCase):
                "file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._read_flex_chi_raw(inp, allow_ir=True)
+            sc_io._read_flex_chi_raw(inp, allow_ir=True)
         self.assertIn("#133", str(cm.exception))
 
     def test_ir_native_q_odd_green_is_rejected(self):
@@ -486,14 +486,14 @@ class TestRound4Hardening(unittest.TestCase):
                "file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, 1, nx, 1, 1, allow_ir=True)
+            sc_io._load_flex_green(inp, 1, nx, 1, 1, allow_ir=True)
         self.assertIn("#133", str(cm.exception))
 
 
 class TestDynamicGapSeedGate(unittest.TestCase):
 
     def test_unmarked_k_odd_seed_is_rejected(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         nx, nmat = 4, 4
@@ -525,7 +525,7 @@ class TestLoaderGates(unittest.TestCase):
                "file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._load_flex_green(inp, 1, nx, 1, 1)
+            sc_io._load_flex_green(inp, 1, nx, 1, 1)
         self.assertIn("#133", str(cm.exception))
 
     def test_flex_green_loader_accepts_marked_file(self):
@@ -542,7 +542,7 @@ class TestLoaderGates(unittest.TestCase):
         inp = {"mode": {"param": {"T": 2.0}},
                "file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
-        green_loaded = sc._load_flex_green(inp, 1, nx, 1, 1)
+        green_loaded = sc_io._load_flex_green(inp, 1, nx, 1, 1)
         self.assertIsNotNone(green_loaded)
 
     def test_sc_chi0q_loader_rejects_unmarked_q_odd_file(self):
@@ -558,7 +558,7 @@ class TestLoaderGates(unittest.TestCase):
                         "output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._load_chi0q(inp)
+            sc_io._load_chi0q(inp)
         self.assertIn("#133", str(cm.exception))
 
 
@@ -652,7 +652,7 @@ class TestRound9Hardening(unittest.TestCase):
                "file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._read_flex_chi_raw(inp)
+            sc_io._read_flex_chi_raw(inp)
         self.assertIn("chiq_c", str(cm.exception))
 
     def test_valid_8d_ref_layout_with_q_odd_content_is_rejected(self):
@@ -671,7 +671,7 @@ class TestRound9Hardening(unittest.TestCase):
                         "output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._load_chi0q(inp, norb=2)
+            sc_io._load_chi0q(inp, norb=2)
         self.assertIn("#133", str(cm.exception))
 
     def test_rpa_writer_emits_the_exact_marker_value(self):
@@ -732,7 +732,7 @@ class TestRound9Hardening(unittest.TestCase):
                "file": {"output": {"path_to_output": d}},
                "eliashberg": {}}
         with self.assertRaises(ValueError) as cm:
-            sc._read_flex_chi_raw(inp)
+            sc_io._read_flex_chi_raw(inp)
         self.assertIn("e_minus_ikR", str(cm.exception))
 
     def test_int64_min_payload_is_rejected_not_overflowed(self):

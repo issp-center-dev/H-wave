@@ -20,7 +20,7 @@ import unittest
 
 import numpy as np
 
-from hwave.sc import _determine_mu
+from hwave.solver.eliashberg.band import _determine_mu
 from hwave.solver.rpa import RPA, _masked_fermi_delta_n
 
 

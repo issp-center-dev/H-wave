@@ -15,7 +15,7 @@ import unittest
 
 import numpy as np
 
-from hwave.sc import check_placement_stamp, placement_sensitive_types
+from hwave.solver.eliashberg.vertex import check_placement_stamp, placement_sensitive_types
 
 _ASYM = {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4}
 _SYM = {((1, 0, 0), (0, 1)): 0.4, ((-1, 0, 0), (1, 0)): 0.4,
@@ -139,10 +139,10 @@ class TestGreenLoaderGate(unittest.TestCase):
 
     @staticmethod
     def _load(directory, interactions, cell=(4, 4, 1)):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         inp = {"mode": {"param": {"CellShape": list(cell)}},
                "file": {"output": {"path_to_output": directory}}, "eliashberg": {}}
-        return sc._load_flex_green(inp, 2, 4, 4, 1, interactions=interactions)
+        return sc_io._load_flex_green(inp, 2, 4, 4, 1, interactions=interactions)
 
     def test_stamped_green_is_accepted(self):
         self.assertIsNotNone(self._load(self.out, {"CoulombInter": _ASYM}))

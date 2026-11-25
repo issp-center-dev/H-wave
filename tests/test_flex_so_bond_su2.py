@@ -235,13 +235,13 @@ def nonso_side(tables, norb):
     ``sc._build_bond_vertices``), the bond bubble, the dressing loop
     ``flex_bond.dress_and_build_w`` (its ring and the ``bond_w2`` second
     order) and ``calc_self_energy_bond``."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import bond as sc_bond
     from hwave.solver import bond_channels as bc
     from hwave.solver import flex_bond
     from hwave.solver.second_order import build_bond_w2_factors
-    topo, view, split = sc._resolve_bond_topology(tables, {"rvec": np.eye(3)}, norb, None)
+    topo, view, split = sc_bond._resolve_bond_topology(tables, {"rvec": np.eye(3)}, norb, None)
     assert bc.non_su2_bonds(topo) == []
-    S, C = sc._build_bond_vertices(topo, split, norb, SHAPE)
+    S, C = sc_bond._build_bond_vertices(topo, split, norb, SHAPE)
     ND = S.shape[-1]
     w2 = build_bond_w2_factors(split, norb, topo.delta_r, SHAPE)
     g = chain_green(norb)[0][None].copy()
@@ -261,9 +261,9 @@ def nonso_side(tables, norb):
 
 def nonso_bubble(tables, norb):
     """The non-spin-orbital bond bubble ``(nmat, nx, ND, ND)`` of the chain."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import bond as sc_bond
     from hwave.solver import flex_bond
-    _, view, _ = sc._resolve_bond_topology(tables, {"rvec": np.eye(3)}, norb, None)
+    _, view, _ = sc_bond._resolve_bond_topology(tables, {"rvec": np.eye(3)}, norb, None)
     ND = int(view.n_channels) * norb * norb
     g = chain_green(norb)[0][None].copy()
     with flex_bond.BondBlockStore(NMAT, NX, ND, norb * norb, ("chibar",)) as st:

@@ -21,8 +21,12 @@ from unittest import mock
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import vertex as sc_vertex
 from hwave import qlms
-from hwave.solver import eliashberg_dynamic
+from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
 from tests.test_sc_spin_orbital import (_input, _quiet, _run_flex,
                                         _write_one_orbital, _wfile, _resave)
 
@@ -85,15 +89,15 @@ class TestMarkerIsReal(_Base):
 
 class TestLoadMode(_Base):
     def _boom(self):
-        return (mock.patch.object(sc, "_convert_chi0q_to_ref_format",
+        return (mock.patch.object(sc_static, "_convert_chi0q_to_ref_format",
                                   side_effect=AssertionError("heavy work")),
-                mock.patch.object(sc, "_compute_vertices",
+                mock.patch.object(sc_static, "_compute_vertices",
                                   side_effect=AssertionError("heavy work")))
 
     def test_loader_refuses_and_names_file(self):
         inp = self._inp({"chi0q_mode": "load"})
         with self.assertRaises(ValueError) as cm:
-            sc._load_chi0q(inp, norb=2)
+            sc_io._load_chi0q(inp, norb=2)
         msg = str(cm.exception)
         self.assertIn(os.path.join(self.rpa, "chi0q.npz"), msg)
         self.assertIn("enable_spin_orbital", msg)
@@ -111,9 +115,9 @@ class TestLoadMode(_Base):
         inp = self._inp({"chi0q_mode": "load", "solver_mode": "eigenvalue",
                          "num_eigenvalues": 4})
         with _quiet(), \
-                mock.patch.object(sc, "_calc_eigenvalues",
+                mock.patch.object(sc_static, "_calc_eigenvalues",
                                   side_effect=AssertionError("heavy work")), \
-                mock.patch.object(sc, "_build_bond_green",
+                mock.patch.object(sc_static, "_build_bond_green",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
@@ -123,7 +127,7 @@ class TestLoadMode(_Base):
         os.makedirs(d)
         _resave(os.path.join(self.rpa, "chi0q.npz"),
                 os.path.join(d, "chi0q.npz"), drop=("spin_orbital",))
-        chi0q, _ = sc._load_chi0q(self._inp({"chi0q_mode": "load"}, d), norb=2)
+        chi0q, _ = sc_io._load_chi0q(self._inp({"chi0q_mode": "load"}, d), norb=2)
         self.assertEqual(chi0q.shape[-4:], (2, 2, 2, 2))
 
     def test_false_marker_loads(self):
@@ -131,7 +135,7 @@ class TestLoadMode(_Base):
         os.makedirs(d)
         _resave(os.path.join(self.rpa, "chi0q.npz"),
                 os.path.join(d, "chi0q.npz"), spin_orbital=np.array(False))
-        sc._load_chi0q(self._inp({"chi0q_mode": "load"}, d), norb=2)
+        sc_io._load_chi0q(self._inp({"chi0q_mode": "load"}, d), norb=2)
 
     def test_malformed_marker_refused(self):
         for label, val in (("int", np.array(1)), ("vec", np.array([True])),
@@ -142,13 +146,13 @@ class TestLoadMode(_Base):
                 _resave(os.path.join(self.rpa, "chi0q.npz"),
                         os.path.join(d, "chi0q.npz"), spin_orbital=val)
                 with self.assertRaisesRegex(ValueError, "malformed"):
-                    sc._load_chi0q(self._inp({"chi0q_mode": "load"}, d),
+                    sc_io._load_chi0q(self._inp({"chi0q_mode": "load"}, d),
                                    norb=2)
 
     def test_so_mode_still_loads_the_marked_archive(self):
         inp = _input(self.d, _write_one_orbital(self.d), True,
                      {"chi0q_mode": "load"}, nmat=32, out="so_rpa")
-        chi0q, _ = sc._load_chi0q(inp, norb=2)
+        chi0q, _ = sc_io._load_chi0q(inp, norb=2)
         self.assertEqual(chi0q.shape[-4:], (2, 2, 2, 2))
 
 
@@ -166,16 +170,16 @@ class TestFlexMode(_Base):
     def test_raw_reader_refuses(self):
         inp = self._flex_inp()
         with self.assertRaises(ValueError) as cm:
-            sc._read_flex_chi_raw(inp)
+            sc_io._read_flex_chi_raw(inp)
         self.assertIn("chiq.npz", str(cm.exception))
         self.assertIn("enable_spin_orbital", str(cm.exception))
 
     def test_static_flex_refuses_before_heavy_work(self):
         inp = self._flex_inp()
         with _quiet(), \
-                mock.patch.object(sc, "_compute_vertices_flex",
+                mock.patch.object(sc_static, "_compute_vertices_flex",
                                   side_effect=AssertionError("heavy work")), \
-                mock.patch.object(sc, "_load_flex_green",
+                mock.patch.object(sc_io, "_load_flex_green",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
@@ -183,15 +187,16 @@ class TestFlexMode(_Base):
     def test_static_flex_refusal_precedes_diagonalization(self):
         inp = self._flex_inp()
         with _quiet(), \
-                mock.patch.object(sc, "_calc_eigenvalues",
+                mock.patch.object(sc_static, "_calc_eigenvalues",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
 
     def test_dynamic_refusal_precedes_interaction_build(self):
         inp = self._flex_inp(dynamic=True)
+        # the dynamic solver reads the builder from vertex (step 6a)
         with _quiet(), \
-                mock.patch.object(sc, "_build_interaction_k_for_sites",
+                mock.patch.object(sc_vertex, "_build_interaction_k_for_sites",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 eliashberg_dynamic.solve_dynamic(inp)
@@ -199,7 +204,7 @@ class TestFlexMode(_Base):
     def test_dynamic_refuses_before_heavy_work(self):
         inp = self._flex_inp(dynamic=True)
         with _quiet(), \
-                mock.patch.object(sc, "_load_flex_green",
+                mock.patch.object(sc_io, "_load_flex_green",
                                   side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 eliashberg_dynamic.solve_dynamic(inp)
@@ -212,9 +217,9 @@ class TestFlexMode(_Base):
             self.assertNotIn("chi_convention", z.files)
         inp = self._flex_inp(chi=p)
         with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
-            sc._read_flex_chi_raw(inp)
+            sc_io._read_flex_chi_raw(inp)
         with _quiet(), mock.patch.object(
-                sc, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
+                sc_static, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
 
@@ -233,11 +238,11 @@ class TestFlexMode(_Base):
         inp["eliashberg"]["flex_chi_s"] = s
         inp["eliashberg"]["flex_chi_c"] = c
         with self.assertRaises(ValueError) as cm:
-            sc._read_flex_chi_raw(inp)
+            sc_io._read_flex_chi_raw(inp)
         self.assertIn(c, str(cm.exception))
         self.assertIn("spin_orbital = True", str(cm.exception))
         with _quiet(), mock.patch.object(
-                sc, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
+                sc_static, "_calc_eigenvalues", side_effect=AssertionError("heavy")):
             with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
                 sc.calc_eliashberg(inp)
 
@@ -250,7 +255,7 @@ class TestFlexMode(_Base):
                 frequency_grid=np.array("sparse_ir_nodes"),
                 ir_freq_n=np.arange(4))
         with self.assertRaisesRegex(ValueError, r"spin_orbital = True"):
-            sc._read_flex_chi_raw(self._flex_inp(chi=p), allow_ir=True)
+            sc_io._read_flex_chi_raw(self._flex_inp(chi=p), allow_ir=True)
 
     def test_preflight_leaves_unreadable_files_to_the_loader(self):
         d = os.path.join(self.d, "unreadable")
@@ -260,9 +265,9 @@ class TestFlexMode(_Base):
         with open(os.path.join(d, "bad.npz"), "wb") as f:
             f.write(b"PK\x03\x04 not really a zip")
         inp = self._inp({"chi0q_mode": "load"}, d)
-        sc._preflight_refuse_so_archives(inp, "load")      # bare .npy
+        sc_io._preflight_refuse_so_archives(inp, "load")      # bare .npy
         os.replace(os.path.join(d, "bad.npz"), os.path.join(d, "chi0q.npz"))
-        sc._preflight_refuse_so_archives(inp, "load")      # broken zip
+        sc_io._preflight_refuse_so_archives(inp, "load")      # broken zip
 
     def test_convention_tag_alone_is_refused(self):
         d = os.path.join(self.d, "tagonly")
@@ -271,7 +276,7 @@ class TestFlexMode(_Base):
         _resave(os.path.join(self.flex, "chiq.npz"), p,
                 drop=("spin_orbital",))
         with self.assertRaisesRegex(ValueError, "chi_convention"):
-            sc._read_flex_chi_raw(self._flex_inp(chi=p))
+            sc_io._read_flex_chi_raw(self._flex_inp(chi=p))
 
     def test_malformed_marker_refused(self):
         d = os.path.join(self.d, "flexbad")
@@ -280,7 +285,7 @@ class TestFlexMode(_Base):
         _resave(os.path.join(self.flex, "chiq.npz"), p,
                 spin_orbital=np.array([True]))
         with self.assertRaisesRegex(ValueError, "malformed"):
-            sc._read_flex_chi_raw(self._flex_inp(chi=p))
+            sc_io._read_flex_chi_raw(self._flex_inp(chi=p))
 
     def test_non_so_flex_archive_still_reads(self):
         d = os.path.join(self.d, "nso_flex")
@@ -293,7 +298,7 @@ class TestFlexMode(_Base):
                      {"chi0q_mode": "flex", "flex_chi_s": "chiq_s.npz",
                       "flex_chi_c": "chiq_c.npz"}, nmat=32, out="flex")
         inp["file"]["input"]["path_to_flex_output"] = out
-        s, c, conv, _ = sc._read_flex_chi_raw(inp)
+        s, c, conv, _ = sc_io._read_flex_chi_raw(inp)
         self.assertEqual(conv, "myo")
 
 
@@ -320,7 +325,7 @@ class TestBondGreen(_Base):
     def test_non_so_bond_path_refuses_so_green(self):
         inp = self._bond_inp(os.path.join(self.flex, "green.npz"))
         with _quiet(), mock.patch.object(
-                sc, "_build_bond_vertices",
+                sc_bond, "_build_bond_vertices",
                 side_effect=AssertionError("heavy work")):
             with self.assertRaisesRegex(
                     ValueError, r"spin_orbital = True.*enable_spin_orbital"):
@@ -343,10 +348,10 @@ class TestBondGreen(_Base):
             with self.subTest(fixture=name):
                 p = self._green_with(name, drop=drop)
                 with mock.patch.object(
-                        sc, "_load_green_npz",
+                        sc_bond, "_load_green_npz",
                         side_effect=AssertionError("array read")):
                     with self.assertRaisesRegex(ValueError, pattern):
-                        sc._build_bond_green(
+                        sc_bond._build_bond_green(
                             np.zeros((4, 4, 1, 2)), None, 0.0, 4.0, 32, 0.0, p)
 
     def test_marker_message_noun(self):
@@ -362,7 +367,7 @@ class TestBondGreen(_Base):
             with self.subTest(payload=payload):
                 data = {payload: np.zeros(1), "spin_orbital": np.bool_(True)}
                 with self.assertRaises(ValueError) as cm:
-                    sc._refuse_so_archive_in_non_so_mode(data, "x.npz")
+                    sc_io._refuse_so_archive_in_non_so_mode(data, "x.npz")
                 self.assertEqual(str(cm.exception), (
                     "{} 'x.npz' was written by a spin-orbital run (spin_orbital = True) "
                     "and cannot be used without [mode] enable_spin_orbital = true: its "
@@ -370,7 +375,7 @@ class TestBondGreen(_Base):
                     "many orbitals. {}".format(noun, hint)))
                 data["spin_orbital"] = np.int64(1)
                 with self.assertRaises(ValueError) as cm:
-                    sc._refuse_so_archive_in_non_so_mode(
+                    sc_io._refuse_so_archive_in_non_so_mode(
                         data, "x.npz", check_index_convention=payload == "green")
                 self.assertEqual(str(cm.exception), (
                     "{} 'x.npz': malformed spin_orbital marker ({!r}); expected a "
@@ -379,10 +384,10 @@ class TestBondGreen(_Base):
     def test_so_mode_flag_skips_the_check(self):
         p = os.path.join(self.flex, "green.npz")
         with mock.patch.object(
-                sc, "_load_green_npz",
+                sc_bond, "_load_green_npz",
                 side_effect=RuntimeError("reached loader")):
             with self.assertRaisesRegex(RuntimeError, "reached loader"):
-                sc._build_bond_green(
+                sc_bond._build_bond_green(
                     np.zeros((4, 4, 1, 2)), None, 0.0, 4.0, 32, 0.0, p,
                     spin_orbital_mode=True)
 
@@ -391,7 +396,7 @@ class TestBondGreen(_Base):
         p = self._green_with("plain", drop=("index_convention", "spin_orbital"))
         with np.load(p) as z:
             g = z["green"]
-        carrier = sc._build_bond_green(
+        carrier = sc_bond._build_bond_green(
             np.zeros((4, 4, 1, 2)), None, 0.0, float(np.load(p)["beta"]),
             32, 0.0, p)
         self.assertEqual(carrier.full_sc.shape[-1], g.shape[1])

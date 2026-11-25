@@ -512,7 +512,7 @@ def _bare_channel0(pairing_type, S_bond, C_bond, nd):
 class TestStaticBondKernel(unittest.TestCase):
 
     def _check_oracle(self, rng, green, bset, norb, shape, beta, n_vec):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import bond as sc_bond
         Nx, Ny, Nz = shape
         nd = norb * norb
         ND = nd * bset.n_channels
@@ -528,7 +528,7 @@ class TestStaticBondKernel(unittest.TestCase):
 
         for pairing_type in ("singlet", "triplet"):
             with self.subTest(pairing_type=pairing_type):
-                A, A_fl, A_pp, vec_size = sc._bond_kernel_parts(
+                A, A_fl, A_pp, vec_size = sc_bond._bond_kernel_parts(
                     S_bond, C_bond, [("spin", chi_s), ("charge", chi_c)],
                     green, bset, norb, shape, beta, pairing_type, topo=None)
                 assert vec_size == norb * norb * Nx * Ny * Nz
@@ -584,7 +584,7 @@ class TestStaticBondKernel(unittest.TestCase):
         (= sin k) is an eigenvector with lambda_t = -1; the fluctuation piece is
         zero, so lambda_t^pp = -1 and lambda_t^fl = 0. The vertices come from
         the production chain (topology, locality split, bond vertices)."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import bond as sc_bond
 
         norb = 1
         Nx, Ny, Nz = 4, 1, 1
@@ -596,12 +596,12 @@ class TestStaticBondKernel(unittest.TestCase):
 
         it = {"CoulombIntra": {((0, 0, 0), (0, 0)): 4.0},
               "CoulombInter": {((1, 0, 0), (0, 0)): 1.0, ((-1, 0, 0), (0, 0)): 1.0}}
-        topo, view, split = sc._resolve_bond_topology(it, {"rvec": np.eye(3)}, norb, None)
+        topo, view, split = sc_bond._resolve_bond_topology(it, {"rvec": np.eye(3)}, norb, None)
         assert view.n_channels == 3
-        S_bond, C_bond = sc._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
+        S_bond, C_bond = sc_bond._build_bond_vertices(topo, split, norb, (Nx, Ny, Nz))
         chi_zero = np.zeros_like(S_bond)
 
-        A, A_fl, A_pp, vec_size = sc._bond_kernel_parts(
+        A, A_fl, A_pp, vec_size = sc_bond._bond_kernel_parts(
             S_bond, C_bond, [("spin", chi_zero), ("charge", chi_zero)],
             green, view, norb, (Nx, Ny, Nz), beta, "triplet", topo=None)
 
@@ -623,7 +623,7 @@ class TestStaticBondKernel(unittest.TestCase):
         np.testing.assert_allclose(lam_pp, -1.0, rtol=0, atol=1e-12)
 
     def test_bond_kernel_rejects_unknown_pairing_type(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import bond as sc_bond
         norb = 1
         beta = 2.0
         green, T, N = _toy_green_4x4(Nx=4, Ny=4, Nz=1, Nmat=4, beta=beta)
@@ -631,7 +631,7 @@ class TestStaticBondKernel(unittest.TestCase):
         ND = bset.n_channels
         z = np.zeros((4, 4, 1, ND, ND), dtype=complex)
         with self.assertRaises(ValueError):
-            sc._bond_kernel_parts(z, z, [("spin", z), ("charge", z)], green, bset,
+            sc_bond._bond_kernel_parts(z, z, [("spin", z), ("charge", z)], green, bset,
                                   norb, (4, 4, 1), beta, "nonsense", topo=None)
 
 
@@ -951,8 +951,8 @@ class TestEmptyDeclaredCoulombInter(unittest.TestCase):
                               np.zeros((1, 2, 2)))
 
     def test_validate_bond_prereqs_accepts_a_declared_empty_coulomb_inter(self):
-        import hwave.sc as sc
-        sc._validate_bond_prereqs("calc", 1, {"CoulombInter": {}})
+        from hwave.solver.eliashberg import config as sc_config
+        sc_config._validate_bond_prereqs("calc", 1, {"CoulombInter": {}})
 
 
 # --- FIX 3 (review round 3): non-finite CoulombInter values ----------------
@@ -965,42 +965,42 @@ class TestEmptyDeclaredCoulombInter(unittest.TestCase):
 class TestNonFiniteCoulombInterRejected(unittest.TestCase):
 
     def test_validate_bond_prereqs_rejects_nan_coulomb_inter(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         ci = {((1, 0, 0), (0, 0)): float("nan")}
         with self.assertRaisesRegex(ValueError, "(?i)finite"):
-            sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+            sc_config._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
 
     def test_validate_bond_prereqs_rejects_positive_infinity_coulomb_inter(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         ci = {((1, 0, 0), (0, 0)): float("inf")}
         with self.assertRaisesRegex(ValueError, "(?i)finite"):
-            sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+            sc_config._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
 
     def test_validate_bond_prereqs_rejects_negative_infinity_coulomb_inter(self):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         ci = {((1, 0, 0), (0, 0)): float("-inf")}
         with self.assertRaisesRegex(ValueError, "(?i)finite"):
-            sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+            sc_config._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
 
     def test_validate_bond_prereqs_rejects_nonfinite_imaginary_part(self):
         """A NaN/inf imaginary part alone (real part finite) must also be caught,
         not just a NaN/inf real part."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         ci = {((1, 0, 0), (0, 0)): complex(0.3, float("nan"))}
         with self.assertRaisesRegex(ValueError, "(?i)finite"):
-            sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+            sc_config._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
 
         ci2 = {((1, 0, 0), (0, 0)): complex(0.3, float("inf"))}
         with self.assertRaisesRegex(ValueError, "(?i)finite"):
-            sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci2})
+            sc_config._validate_bond_prereqs("calc", 1, {"CoulombInter": ci2})
 
     def test_validate_bond_prereqs_error_names_offending_bond_and_value(self):
         """The error must name the offending (irvec, orbvec) and value, matching
         the style of the existing complex-value guard message."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import config as sc_config
         ci = {((2, 0, 0), (0, 0)): float("nan")}
         with self.assertRaisesRegex(ValueError, r"\(2, 0, 0\)") as cm:
-            sc._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
+            sc_config._validate_bond_prereqs("calc", 1, {"CoulombInter": ci})
         assert "nan" in str(cm.exception).lower()
 
 

@@ -27,7 +27,11 @@ from unittest import mock
 import numpy as np
 from requests.structures import CaseInsensitiveDict
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
+from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import so_solve as sc_so
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import config as sc_config
 from hwave.solver import fingerprint, so_bond, so_bond_archive
 from tests import so_bond_archive_fixtures as AF
 from tests import so_bond_entry_fixtures as F
@@ -161,7 +165,7 @@ def _base(name):
 
 
 def _borrow(p, path):
-    return sc._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys, filling=p.filling,
+    return sc_bond._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys, filling=p.filling,
                              beta=p.beta, nmat=p.nmat, coeff_tail=p.cfg.coeff_tail,
                              bond_green=path, coeff_tail_source=p.cfg.coeff_tail_source)
 
@@ -176,7 +180,7 @@ def _records():
         def emit(self, record):
             seen.append(record)
     h = H(logging.INFO)
-    loggers = [sc.logger, so_bond.logger]
+    loggers = [sc_static.logger, so_bond.logger]
     levels = [lg.level for lg in loggers]
     for lg in loggers:
         lg.addHandler(h)
@@ -206,14 +210,14 @@ class TestBorrowedConfig(unittest.TestCase):
     order."""
 
     def _parse(self, eli):
-        return sc._read_so_bond_config(CaseInsensitiveDict(eli))
+        return sc_config._read_so_bond_config(CaseInsensitiveDict(eli))
 
     def test_path_read(self):
         cfg = self._parse({"bond_channels": True, "Bond_Green": "g.npz"})
         self.assertEqual(cfg.green, "g.npz")
         self.assertIsNone(self._parse({"bond_channels": True}).green)
         # the band-only constructor of seven fields stays valid
-        self.assertIsNone(sc._SOBondConfig(True, "auto", None, None, 1.0, "default", True).green)
+        self.assertIsNone(sc_config._SOBondConfig(True, "auto", None, None, 1.0, "default", True).green)
 
     def test_empty_string(self):
         with self.assertRaises(ValueError) as cm:
@@ -224,14 +228,14 @@ class TestBorrowedConfig(unittest.TestCase):
                          "function from the transfer Hamiltonian.")
         # the non-spin-orbital reader keeps the same text
         with self.assertRaises(ValueError) as cm2:
-            sc._read_bond_config({"bond_channels": True, "bond_green": ""})
+            sc_config._read_bond_config({"bond_channels": True, "bond_green": ""})
         self.assertEqual(str(cm2.exception), str(cm.exception))
 
     def test_refusal_order(self):
         on = {"bond_channels": True}
         with self.assertRaises(ValueError) as cm:
             self._parse(dict(on, bond_green="g.npz", bond_diagnostics=True))
-        self.assertEqual(str(cm.exception), sc._SO_BOND_DIAGNOSTICS_REFUSAL)
+        self.assertEqual(str(cm.exception), sc_config._SO_BOND_DIAGNOSTICS_REFUSAL)
 
 
 # ------------------------------------------------------------ accepted files
@@ -244,12 +248,12 @@ class TestBorrowedGreen(unittest.TestCase):
     def _run(self, name):
         path = _copy(self, name)
         got = []
-        real = sc._so_borrowed_green
+        real = sc_io._so_borrowed_green
 
         def spy(*a, **kw):
             got.append(real(*a, **kw))
             return got[-1]
-        with _records() as rec, mock.patch.object(sc, "_so_borrowed_green", side_effect=spy):
+        with _records() as rec, mock.patch.object(sc_bond, "_so_borrowed_green", side_effect=spy):
             so_green = _borrow(_base(name), path)
         self.assertEqual(len(got), 1)
         return path, so_green, got[0], rec
@@ -278,8 +282,8 @@ class TestBorrowedGreen(unittest.TestCase):
         self.assertIs(c.deflated_kw, borrowed.used)
         self.assertFalse(borrowed.projected)
         self.assertEqual(_warnings(rec), [])
-        self.assertEqual(_count(rec, sc._SO_BOND_TAIL_DEFAULT_INFO), 1)
-        self.assertEqual(_count(rec, sc._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
+        self.assertEqual(_count(rec, sc_bond._SO_BOND_TAIL_DEFAULT_INFO), 1)
+        self.assertEqual(_count(rec, sc_bond._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
                                 "0.000e+00", "no"), 1)
 
     def test_clean_non_conserving(self):
@@ -290,7 +294,7 @@ class TestBorrowedGreen(unittest.TestCase):
         self.assertEqual(g.fp_green, str(_members(path)["fp_green"]))
         self.assertIs(g.carrier.deflated_kw, borrowed.used)
         self.assertEqual(_warnings(rec), [])
-        self.assertEqual(_count(rec, sc._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
+        self.assertEqual(_count(rec, sc_bond._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
                                 "not checked (the input does not conserve S_z)", "no"), 1)
 
 
@@ -305,17 +309,17 @@ class TestBorrowedRecord(unittest.TestCase):
             state = fingerprint._file_state(z)
             fp_file = str(z["fp_green"])
         fp_used = "0" * 64
-        plain = sc._so_writer_members("sc_so_bond_static", "test", p.so_run, fp_file, state)
+        plain = sc_so._so_writer_members("sc_so_bond_static", "test", p.so_run, fp_file, state)
         self.assertNotIn("fp_green_source", plain)
-        members = sc._so_writer_members("sc_so_bond_static", "test", p.so_run, fp_used, state,
+        members = sc_so._so_writer_members("sc_so_bond_static", "test", p.so_run, fp_used, state,
                                         fp_green_source=fp_file)
         self.assertEqual(str(members["fp_green_source"]), fp_file)
         self.assertEqual(str(members["fp_green"]), fp_used)
         self.assertEqual(set(members) - set(plain), {"fp_green_source"})
         for listed in (False, True):
-            base = sc._so_bond_gap_members(listed)
+            base = sc_so._so_bond_gap_members(listed)
             self.assertNotIn("fp_green_source", base)
-            self.assertEqual(sc._so_bond_gap_members(listed, projected=True),
+            self.assertEqual(sc_so._so_bond_gap_members(listed, projected=True),
                              base | {"fp_green_source"})
 
 
@@ -338,52 +342,52 @@ class TestBorrowedRefusals(unittest.TestCase):
         e, reads, rec = self._refuse(p, path, cls)
         self.assertEqual(str(e), text)
         self.assertEqual(reads, [(os.path.basename(path), "green")] if read else [])
-        self.assertEqual(_count(rec, sc._SO_BOND_GREEN_UNCONVERGED, path), 0)
+        self.assertEqual(_count(rec, sc_bond._SO_BOND_GREEN_UNCONVERGED, path), 0)
         return e
 
     def test_texts(self):
-        self.assertEqual(sc.T_BG_MISSING, "[eliashberg] bond_green file not found: {path}")
-        self.assertEqual(sc.T_BG_SHAPE,
+        self.assertEqual(sc_io.T_BG_MISSING, "[eliashberg] bond_green file not found: {path}")
+        self.assertEqual(sc_io.T_BG_SHAPE,
                          "'{path}' is malformed or truncated: green shape differs from this "
                          "run ({stored} vs {expected}). Regenerate it with {label}.")
-        self.assertEqual(sc.T_BG_NONFINITE,
+        self.assertEqual(sc_io.T_BG_NONFINITE,
                          "'{path}' is malformed or truncated: green has non-finite values at "
                          "frequency index {n}. Regenerate it with {label}.")
-        self.assertEqual(sc.T_BG_MARKER,
+        self.assertEqual(sc_io.T_BG_MARKER,
                          "'{path}' is malformed or truncated: {member} is missing or older "
                          "than this build requires. Regenerate it with {label}.")
-        self.assertEqual(sc.T_BG_KGRID,
+        self.assertEqual(sc_io.T_BG_KGRID,
                          "'{path}' is malformed or truncated: wavevector_index is not the k "
                          "grid {shape} of this run (CellShape / SubShape). Regenerate it with "
                          "{label}.")
-        self.assertEqual(sc.T_BG_SCF,
+        self.assertEqual(sc_io.T_BG_SCF,
                          "'{path}' is malformed or truncated: scf_converged is not a 0-d "
                          "boolean. Regenerate it with {label}.")
-        self.assertEqual(sc._SO_BOND_GREEN_IS_FLEX_OUTPUT,
+        self.assertEqual(sc_io._SO_BOND_GREEN_IS_FLEX_OUTPUT,
                          _W + ": [eliashberg] bond_green = '{path}' is the {kind} file of a "
                          "FLEX run, not a Green function; set bond_green to the green.npz "
                          "written by that run ([file.output] green).")
-        self.assertEqual(sc._SO_BOND_GREEN_ONSITE_REMEDY,
+        self.assertEqual(sc_io._SO_BOND_GREEN_ONSITE_REMEDY,
                          "[eliashberg] bond_green needs the green.npz of a spin-orbital FLEX "
                          "run with [mode.param] longitudinal_bond_channels = true (the "
                          "bond-resolved run); re-run FLEX with it.")
-        self.assertEqual(sc._SO_BOND_GREEN_IS_ARCHIVE,
+        self.assertEqual(sc_io._SO_BOND_GREEN_IS_ARCHIVE,
                          _W + ": [eliashberg] bond_green = '{path}' is the bond archive of a "
                          "spin-orbital FLEX run, not a Green function; set bond_green to its "
                          "companion green file '{green}'.")
-        self.assertEqual(sc._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN,
+        self.assertEqual(sc_io._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN,
                          _W + ": [eliashberg] bond_green = '{path}' is the bond archive of a "
                          "spin-orbital FLEX run, not a Green function, and it records no "
                          "readable companion green file; set bond_green to the green.npz "
                          "written by that FLEX run ([file.output] green).")
-        self.assertEqual(sc._SO_BOND_GREEN_NONSO_ARCHIVE,
+        self.assertEqual(sc_io._SO_BOND_GREEN_NONSO_ARCHIVE,
                          _W + ": [eliashberg] bond_green = '{path}' is a bond archive, not a "
                          "Green function; set bond_green to the green.npz of a spin-orbital "
                          "FLEX run with [mode.param] longitudinal_bond_channels = true.")
-        self.assertEqual(sc._SO_BOND_GREEN_UNCONVERGED,
+        self.assertEqual(sc_bond._SO_BOND_GREEN_UNCONVERGED,
                          "[eliashberg] bond_green '%s' records scf_converged = false: the FLEX "
                          "run did not converge; its Green function is used as stored.")
-        self.assertEqual(sc._SO_BOND_GREEN_ACCEPTED_INFO,
+        self.assertEqual(sc_bond._SO_BOND_GREEN_ACCEPTED_INFO,
                          "[eliashberg] bond_green: '%s' (written by %s) passed the archive "
                          "checks; S_z leak %s; projected: %s.")
 
@@ -412,25 +416,25 @@ class TestBorrowedRefusals(unittest.TestCase):
                                               **inputs.kwargs)
         companion = os.path.join(d, "sub", "green.npz")
         # the companion is named only when it is a readable regular file
-        self._row(p, index, sc._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=index),
+        self._row(p, index, sc_io._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=index),
                   cls=ValueError)
         os.makedirs(companion)
-        self._row(p, index, sc._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=index),
+        self._row(p, index, sc_io._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=index),
                   cls=ValueError)
         os.rmdir(companion)
         shutil.copyfile(_GREENS["ZEEMAN_SZ_ALL"], companion)
-        self._row(p, index, sc._SO_BOND_GREEN_IS_ARCHIVE.format(path=index, green=companion),
+        self._row(p, index, sc_io._SO_BOND_GREEN_IS_ARCHIVE.format(path=index, green=companion),
                   cls=ValueError)
         self.assertIn("/sub/green.npz'.", str(self._refuse(p, index, ValueError)[0]))
         no_file = _edited(self, index, green_file=_DROP)
         empty = _edited(self, index, green_file=np.str_(""))
         for path in (no_file, empty):
             with self.subTest(path=os.path.basename(path)):
-                self._row(p, path, sc._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=path),
+                self._row(p, path, sc_io._SO_BOND_GREEN_IS_ARCHIVE_NO_GREEN.format(path=path),
                           cls=ValueError)
         nonso = os.path.join(d, "bond_archive.npz")
         np.savez(nonso, bond_archive_schema=np.int64(3))
-        self._row(p, nonso, sc._SO_BOND_GREEN_NONSO_ARCHIVE.format(path=nonso), cls=ValueError)
+        self._row(p, nonso, sc_io._SO_BOND_GREEN_NONSO_ARCHIVE.format(path=nonso), cls=ValueError)
 
     def test_flex_output_file(self):
         """sigma.npz, chi0q.npz or chiq*.npz named as bond_green: the hint
@@ -439,14 +443,14 @@ class TestBorrowedRefusals(unittest.TestCase):
         p = _base("ZEEMAN_SZ_ALL")
         sigma = os.path.join(os.path.dirname(_GREENS["ZEEMAN_SZ_ALL"]), "sigma.npz")
         self.assertTrue(os.path.isfile(sigma))
-        self._row(p, sigma, sc._SO_BOND_GREEN_IS_FLEX_OUTPUT.format(path=sigma, kind="sigma"),
+        self._row(p, sigma, sc_io._SO_BOND_GREEN_IS_FLEX_OUTPUT.format(path=sigma, kind="sigma"),
                   cls=ValueError)
         d = _scratch(self)
         for kind in ("chi0q", "chiq", "chiq_s", "chiq_c"):
             with self.subTest(kind=kind):
                 path = os.path.join(d, kind + ".npz")
                 np.savez(path, **{kind: np.zeros(2)}, spin_orbital=True)
-                self._row(p, path, sc._SO_BOND_GREEN_IS_FLEX_OUTPUT.format(path=path,
+                self._row(p, path, sc_io._SO_BOND_GREEN_IS_FLEX_OUTPUT.format(path=path,
                                                                             kind=kind),
                           cls=ValueError)
         # a green member present: no hint (the green archive goes on to its checks)
@@ -455,16 +459,16 @@ class TestBorrowedRefusals(unittest.TestCase):
 
     def test_onsite_green(self):
         ctx = T._context()
-        run = T._run(ctx, bond=sc._so_bond_run(ctx, CELL, None))
+        run = T._run(ctx, bond=sc_so._so_bond_run(ctx, CELL, None))
         path = T._onsite_green_archive(self, run)
         with _PayloadReads() as spy:
             with self.assertRaises(fingerprint.SOArchiveError) as cm:
-                sc._so_borrowed_green(path, run, norb_phys=1, nmat=T._RUN_NMAT,
+                sc_io._so_borrowed_green(path, run, norb_phys=1, nmat=T._RUN_NMAT,
                                       shape=(2, 2, 1), conserving_input=True)
         e = cm.exception
         self.assertEqual(str(e), "{} was produced by test FLEX producer (so_onsite), but this "
                          "run needs a so_bond artifact. ".format(path)
-                         + sc._SO_BOND_GREEN_ONSITE_REMEDY)
+                         + sc_io._SO_BOND_GREEN_ONSITE_REMEDY)
         self.assertEqual(e.check, "capability")
         self.assertIsInstance(e.__cause__, fingerprint.SOArchiveError)
         self.assertEqual(spy.reads, [])
@@ -530,7 +534,7 @@ class TestBorrowedRefusals(unittest.TestCase):
                               ("sc_vertex_version", np.int64(2)), ("wavevector_index", _DROP)):
             with self.subTest(member=member, value=value):
                 path = _edited(self, src, **{member: value})
-                e = self._row(p, path, sc.T_BG_MARKER.format(path=path, member=member,
+                e = self._row(p, path, sc_io.T_BG_MARKER.format(path=path, member=member,
                                                              label=_LABEL))
                 self.assertIsNone(e.check)
         index = _members(src)["wavevector_index"]
@@ -550,7 +554,7 @@ class TestBorrowedRefusals(unittest.TestCase):
         for label, value in bad:
             with self.subTest(value=label):
                 path = _edited(self, src, scf_converged=value)
-                e = self._row(p, path, sc.T_BG_SCF.format(path=path, label=_LABEL))
+                e = self._row(p, path, sc_io.T_BG_SCF.format(path=path, label=_LABEL))
                 self.assertIsNone(e.check)
         path = _edited(self, src, scf_converged=_DROP)
         with _records() as rec:
@@ -565,7 +569,7 @@ class TestBorrowedRefusals(unittest.TestCase):
         with _records() as rec:
             g = _borrow(p, path)
         self.assertIs(g.scf_converged, False)
-        self.assertEqual(_warnings(rec), [sc._SO_BOND_GREEN_UNCONVERGED % path])
+        self.assertEqual(_warnings(rec), [sc_bond._SO_BOND_GREEN_UNCONVERGED % path])
         # an edited green on top: the digest refuses it, no unconverged WARNING
         edited = _edited(self, _perturbed(self, src, 1e-6, restamp=False),
                          scf_converged=np.bool_(False))
@@ -577,7 +581,7 @@ class TestBorrowedRefusals(unittest.TestCase):
         G = _members(src)["green"]
         short = G[:, :30].copy()
         path = _edited(self, src, green=short, fp_green=_restamped(short))
-        self._row(p, path, sc.T_BG_SHAPE.format(path=path, stored=(1, 30, 16, 2, 2),
+        self._row(p, path, sc_io.T_BG_SHAPE.format(path=path, stored=(1, 30, 16, 2, 2),
                                                 expected=(1, 32, 16, 2, 2), label=_LABEL))
         nan = G.copy()
         nan[:, 3, 0, 0, 0] = np.nan
@@ -601,13 +605,13 @@ class TestTailPolicy(unittest.TestCase):
     a WARNING."""
 
     def test_tail_policy(self):
-        self.assertEqual(sc._SO_BOND_TAIL_NOT_APPLIED,
+        self.assertEqual(sc_bond._SO_BOND_TAIL_NOT_APPLIED,
                          "[eliashberg] bond_coeff_tail = %r is not applied with bond_green = "
                          "'%s': the tail correction is implemented for the band Green function "
                          "only (bond_coeff_tail_applied = 0), so the bond bubble carries the "
                          "Matsubara truncation error, which decreases only about as 1/Nmat; "
                          "check the eigenvalue against Nmat.")
-        self.assertEqual(sc._SO_BOND_TAIL_DEFAULT_INFO,
+        self.assertEqual(sc_bond._SO_BOND_TAIL_DEFAULT_INFO,
                          "[eliashberg] bond_coeff_tail: the default 1.0 applies to the band "
                          "Green function only; the Green function read from bond_green is "
                          "used without a tail correction.")
@@ -620,7 +624,7 @@ class TestTailPolicy(unittest.TestCase):
                 with _records() as rec:
                     g = _borrow(p, path)
                 self.assertEqual(g.carrier.coeff_tail_applied, 0.0)
-                self.assertEqual(_count(rec, sc._SO_BOND_TAIL_DEFAULT_INFO), default_info)
+                self.assertEqual(_count(rec, sc_bond._SO_BOND_TAIL_DEFAULT_INFO), default_info)
                 tail = [w for w in _warnings(rec) if "bond_coeff_tail" in w]
                 if shown is None:
                     self.assertEqual(tail, [])
@@ -723,7 +727,7 @@ def _projected_gate(p, path, *, layout, ref, seen):
         warns = _warning_records(rec)
         check("one projection WARNING",
               warns == [("hwave.solver.so_bond", _PROJECTED_WARNING % (path, leak))], repr(warns))
-        check("accepted INFO", _count(rec, sc._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
+        check("accepted INFO", _count(rec, sc_bond._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
                                       "%.3e" % leak, "yes") == 1)
         check("fp_green == clean digest", g.fp_green == fp_clean, str(g.fp_green))
         check("fp_green_source == re-stamped digest", g.fp_green_source == fp_file,
@@ -800,8 +804,8 @@ def _conserving_rule_gate(p, path):
         check("no fp_green_source", g.fp_green_source is None, repr(g.fp_green_source))
         check("G used as stored", np.array_equal(g.carrier.deflated_kw, m["green"]))
         check("no WARNING", _warning_records(rec) == [], repr(_warning_records(rec)))
-        check("accepted INFO", _count(rec, sc._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
-                                      sc._SO_BOND_GREEN_LEAK_UNCHECKED, "no") == 1)
+        check("accepted INFO", _count(rec, sc_bond._SO_BOND_GREEN_ACCEPTED_INFO, path, _LABEL,
+                                      sc_bond._SO_BOND_GREEN_LEAK_UNCHECKED, "no") == 1)
     return _gate_failures(gate)
 
 
@@ -886,7 +890,7 @@ class TestBorrowedLeak(unittest.TestCase):
         p = _base("ZPL")
         # non-vacuity: a conserving rule would refuse this file
         self.assertGreater(_leak(_members(path)["green"]), so_bond._LEAK_NUMERICAL)
-        self.assertIs(sc._so_conserving_input(p.so_run, p.norb_phys), False)
+        self.assertIs(sc_bond._so_conserving_input(p.so_run, p.norb_phys), False)
         self.assertEqual(_conserving_rule_gate(p, path), [])
 
 
@@ -935,7 +939,7 @@ class TestBorrowedLeakBreaks(unittest.TestCase):
     def test_b3_conserving_rule_forced(self):
         path = _perturbed(self, _GREENS["ZPL"], 1e-6, restamp=True)
         p = _base("ZPL")
-        with mock.patch.object(sc, "_so_conserving_input", return_value=True) as brk:
+        with mock.patch.object(sc_bond, "_so_conserving_input", return_value=True) as brk:
             failures = _conserving_rule_gate(p, path)
         self.assertEqual(brk.call_count, 1)
         self.assertTrue(_has(failures, "raised ValueError: " + _LEAK_REFUSAL % (
@@ -1071,7 +1075,7 @@ class TestBorrowedContent(unittest.TestCase):
         self._break(so_bond, "so_bond_bubble", _scaled_bubble)
 
     def test_break_pair_propagator(self):
-        self._break(sc, "_green_canonical_to_sc", _scaled_to_sc)
+        self._break(sc_bond, "_green_canonical_to_sc", _scaled_to_sc)
 
     def test_axis_oracle(self):
         for name in _SIGMA:
@@ -1138,7 +1142,7 @@ def _gc_held():
 def _borrowed_green_fn(p):
     """The Green function record of the run ``p`` from its own
     ``[eliashberg] bond_green``."""
-    return sc._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys, filling=p.filling,
+    return sc_bond._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys, filling=p.filling,
                              beta=p.beta, nmat=p.nmat, coeff_tail=p.cfg.coeff_tail,
                              bond_green=p.cfg.green,
                              coeff_tail_source=p.cfg.coeff_tail_source)
@@ -1266,16 +1270,16 @@ class TestBorrowedAdmission(unittest.TestCase):
         path = _inflated(self, _GREENS["ZEEMAN_SZ_ALL"], 100)
         with mock.patch.object(np, "load", side_effect=AssertionError("np.load")) as load, \
                 _PayloadReads() as spy:
-            got = sc._so_bond_green_member_bytes(path)
+            got = sc_io._so_bond_green_member_bytes(path)
         self.assertEqual(load.call_count, 0)
         self.assertEqual(spy.reads, [])
         self.assertEqual(got, _member_bytes(path))
         self.assertGreater(got, 1_000_000)
         d = _scratch(self)
-        self.assertEqual(sc._so_bond_green_member_bytes(os.path.join(d, "absent.npz")), 0)
+        self.assertEqual(sc_io._so_bond_green_member_bytes(os.path.join(d, "absent.npz")), 0)
         npy = os.path.join(d, "green.npy")
         np.save(npy, np.zeros(3))
-        self.assertEqual(sc._so_bond_green_member_bytes(npy), 0)
+        self.assertEqual(sc_io._so_bond_green_member_bytes(npy), 0)
 
     def test_large_provenance(self):
         """A file whose provenance table is about 1 MB: its read stays
@@ -1302,8 +1306,8 @@ class TestBorrowedAdmission(unittest.TestCase):
         small = _memory_consumer(_GREENS["ZEEMAN_SZ_ALL"], 32, {"bond_memory_cap_gb": cap_gb})
         self.assertLess(T._admit(small).plan.peak_host, sized - extra / 2)
         capped = _memory_consumer(path, 32, {"bond_memory_cap_gb": cap_gb})
-        real = sc._so_borrowed_green
-        with mock.patch.object(sc, "_so_borrowed_green", side_effect=real) as read, \
+        real = sc_io._so_borrowed_green
+        with mock.patch.object(sc_bond, "_so_borrowed_green", side_effect=real) as read, \
                 mock.patch.object(np, "load", side_effect=AssertionError("np.load")) as load:
             with self.assertRaises(ValueError) as cm:
                 T._admit(capped)
@@ -1385,10 +1389,10 @@ class TestBorrowedEntry(unittest.TestCase):
     eigenvalue.dat lines."""
 
     def test_texts(self):
-        self.assertEqual(sc._SO_BOND_FLEX_REFUSAL, _FLEX_REFUSAL)
-        self.assertEqual(sc._SO_BOND_FLEX_KEYS_UNUSED, _FLEX_KEYS_UNUSED)
-        self.assertEqual(sc._SO_BOND_RPA_LADDER_BORROWED, _LADDER_BORROWED)
-        self.assertEqual(sc._SO_BOND_GREEN_ACCEPTED_INFO, _ACCEPTED_INFO)
+        self.assertEqual(sc_config._SO_BOND_FLEX_REFUSAL, _FLEX_REFUSAL)
+        self.assertEqual(sc_config._SO_BOND_FLEX_KEYS_UNUSED, _FLEX_KEYS_UNUSED)
+        self.assertEqual(sc_static._SO_BOND_RPA_LADDER_BORROWED, _LADDER_BORROWED)
+        self.assertEqual(sc_bond._SO_BOND_GREEN_ACCEPTED_INFO, _ACCEPTED_INFO)
 
     def test_entry_outputs(self):
         path = _copy(self, "ZEEMAN_SZ_ALL")
@@ -1417,7 +1421,7 @@ class TestBorrowedEntry(unittest.TestCase):
         warns = [x.getMessage() for x in r.records if x.levelno == logging.WARNING]
         infos = [x.getMessage() for x in r.records]
         self.assertEqual(warns.count(_LADDER_BORROWED % path), 1)
-        self.assertEqual(warns.count(sc._SO_BOND_RPA_LADDER), 0)
+        self.assertEqual(warns.count(sc_static._SO_BOND_RPA_LADDER), 0)
         accepted = _ACCEPTED_INFO % (path, _LABEL, "0.000e+00", "no")
         self.assertEqual(infos.count(accepted), 1)
         self.assertLess(infos.index(accepted), infos.index(_LADDER_BORROWED % path))
@@ -1441,7 +1445,7 @@ class TestBorrowedEntry(unittest.TestCase):
             self.assertNotIn(k, keys)
         self.assertEqual(keys["approximation"], "static RPA-ladder bond dressing")
         warns = [x.getMessage() for x in r.records if x.levelno == logging.WARNING]
-        self.assertEqual(warns.count(sc._SO_BOND_RPA_LADDER), 1)
+        self.assertEqual(warns.count(sc_static._SO_BOND_RPA_LADDER), 1)
 
     def test_refused_entry_logs_no_ladder(self):
         path = _copy(self, "ZEEMAN_SZ_ALL")
@@ -1467,7 +1471,7 @@ class TestBorrowedEntry(unittest.TestCase):
         # the handler received the run's records, so the absences below hold
         self.assertIn("Calculating Green's function G(k, iwn) (spin-orbital bond)...", msgs)
         self.assertNotIn(_LADDER_BORROWED % path, msgs)
-        self.assertNotIn(sc._SO_BOND_RPA_LADDER, msgs)
+        self.assertNotIn(sc_static._SO_BOND_RPA_LADDER, msgs)
 
 
 if __name__ == "__main__":

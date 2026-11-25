@@ -82,10 +82,11 @@ class TestResolveFlag(unittest.TestCase):
 
     def test_hwave_sc_rejects_floats(self):
         from hwave import sc
+        from hwave.solver.eliashberg import config as sc_config
         for v in (0.0, 1.0):
             with self.subTest(v=v):
                 with self.assertRaises(ValueError):
-                    sc._resolve_spin_orbital_flag({"mode": {"enable_spin_orbital": v}})
+                    sc_config._resolve_spin_orbital_flag({"mode": {"enable_spin_orbital": v}})
                 with self.assertRaises(ValueError):
                     sc.reject_spin_orbital_mode({"mode": {"enable_spin_orbital": v}})
 

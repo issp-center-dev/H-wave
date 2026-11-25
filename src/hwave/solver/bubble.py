@@ -442,7 +442,7 @@ def _prepare_dense(green_kw, green0_tail, beta, spatial_shape, workers):
         axes=(2, 3, 4), workers=workers)
     # Never needed again (fully consumed by the ifftn above); released here
     # rather than left bound for the rest of the function -- the bond
-    # path's memory budget (BOND_BUBBLE_N2_BUFFERS, sc._bond_memory_estimate)
+    # path's memory budget (BOND_BUBBLE_N2_BUFFERS, eliashberg.bond._bond_memory_estimate)
     # assumes this buffer does not coexist with green_rev below.
     del green_kt
 

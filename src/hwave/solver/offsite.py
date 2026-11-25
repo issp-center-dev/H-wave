@@ -144,7 +144,7 @@ def sc_matrices_onsite_from_split(split, norb, nx, ny, nz):
     with the on-site table as the whole table and no off-site part. The
     bond-resolved FLEX uses them for the second-order double-counting
     subtraction of the on-site content (spec 2026-09-06 rev 19, 3.3)."""
-    from hwave.sc import _build_interaction_k
+    from hwave.solver.eliashberg.vertex import _build_interaction_k
     from hwave.solver._sc_matrices_myo import build_sc_matrices_locality_split
     kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
     ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
@@ -166,7 +166,7 @@ def sc_matrices_from_split(split, offsite_types, norb, nx, ny, nz):
     FFT axis, verified by the element-complete equivalence with the RPA
     ring for off-site (q-dependent) entries.
     """
-    from hwave.sc import _build_interaction_k
+    from hwave.solver.eliashberg.vertex import _build_interaction_k
     from hwave.solver._sc_matrices_myo import build_sc_matrices_locality_split
     kx = np.linspace(0, 2.0 * np.pi, nx, endpoint=False)
     ky = np.linspace(0, 2.0 * np.pi, ny, endpoint=False)
