@@ -184,6 +184,74 @@ def spin_resolved_transfer_format(param_ham):
     return formats.get("transfer")
 
 
+def _spin_resolved_name_tag(param_ham, fmt):
+    files = getattr(param_ham, "source_files", None) or {}
+    return files.get("transfer", "Transfer"), "{}/{}".format(*fmt)
+
+
+def check_spin_resolved_clash(param_ham, enable_spin_orbital):
+    """Refuse a spin-resolved (9-column) Transfer together with spin-orbital
+    mode: the format carries its own spin columns and physical orbital
+    indices (Geometry ``norb`` = physical count), while spin-orbital mode
+    folds the spin into interleaved indices and reads the Geometry ``norb``
+    as the spin-orbital count. A solver that consumes the spin-resolved
+    table (UHFk, issue #323) calls this alone; one that does not yet calls
+    :func:`reject_spin_resolved_transfer`, which includes it."""
+    fmt = spin_resolved_transfer_format(param_ham)
+    if fmt is None or not enable_spin_orbital:
+        return
+    name, tag = _spin_resolved_name_tag(param_ham, fmt)
+    raise ValueError(
+        "{}: the spin-resolved Transfer format ({}) carries its own spin "
+        "columns and physical orbital indices, which contradicts "
+        "[mode] enable_spin_orbital = true (interleaved spin-orbital "
+        "indices, Geometry norb = 2 * physical). Use one or the other."
+        .format(name, tag))
+
+
+def check_spin_resolved_norb(param_ham, norb_geom, solver):
+    """Refuse a spin-resolved (9-column) Transfer whose line-2 orbital count
+    differs from the Geometry ``norb``.
+
+    The reader folds every row to ``s * N + a`` with ``N`` from line 2 of
+    the Transfer file, and the solver decodes that key with the Geometry
+    ``norb``. When the two differ the spin and orbital indices are mixed up
+    without any error (line 2 = 1, Geometry ``norb`` = 2 puts the down spin
+    of orbital 1 on the up spin of orbital 2), so the two must agree. The
+    7-column format is not affected: its line 2 is not used for indexing.
+
+    Parameters
+    ----------
+    param_ham : Mapping
+        The k-space reader's table container (``source_formats`` /
+        ``source_dimensions`` / ``source_files``).
+    norb_geom : int
+        The Geometry ``norb`` (physical orbitals per unit cell, before any
+        sublattice fold).
+    solver : str
+        Named in the error.
+
+    Raises
+    ------
+    ValueError
+    """
+    fmt = spin_resolved_transfer_format(param_ham)
+    if fmt is None:
+        return
+    dims = getattr(param_ham, "source_dimensions", None) or {}
+    n_file = dims.get("transfer")
+    if n_file is not None and int(n_file) == int(norb_geom):
+        return
+    name, tag = _spin_resolved_name_tag(param_ham, fmt)
+    raise ValueError(
+        "{}: line 2 of this spin-resolved Transfer file ({}) gives norb = "
+        "{}, but the Geometry norb is {} ({}). In this format line 2 "
+        "is the number of PHYSICAL orbitals and must equal the Geometry "
+        "norb (the spin is a separate column); the rows are indexed with "
+        "it, so a different value would mix up spin and orbital."
+        .format(name, tag, n_file, norb_geom, solver))
+
+
 def reject_spin_resolved_transfer(param_ham, solver, enable_spin_orbital):
     """Refuse a spin-resolved (9-column) Transfer table a solver does not
     consume yet, and -- always -- its combination with spin-orbital mode.
@@ -214,16 +282,8 @@ def reject_spin_resolved_transfer(param_ham, solver, enable_spin_orbital):
     fmt = spin_resolved_transfer_format(param_ham)
     if fmt is None:
         return
-    files = getattr(param_ham, "source_files", None) or {}
-    name = files.get("transfer", "Transfer")
-    tag = "{}/{}".format(*fmt)
-    if enable_spin_orbital:
-        raise ValueError(
-            "{}: the spin-resolved Transfer format ({}) carries its own spin "
-            "columns and physical orbital indices, which contradicts "
-            "[mode] enable_spin_orbital = true (interleaved spin-orbital "
-            "indices, Geometry norb = 2 * physical). Use one or the other."
-            .format(name, tag))
+    check_spin_resolved_clash(param_ham, enable_spin_orbital)
+    name, tag = _spin_resolved_name_tag(param_ham, fmt)
     raise ValueError(
         "{}: the spin-resolved Transfer format ({}) is not yet consumed by "
         "the {} solver. Write the Transfer in the 7-column "
