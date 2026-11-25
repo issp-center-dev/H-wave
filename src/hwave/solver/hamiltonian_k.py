@@ -104,8 +104,8 @@ def to_k(tab_r):
     ``(nx, ny, nz)`` with ``k_i = 2 pi m_i / n_i``. The transform is the
     unnormalised inverse FFT, the sign every solver copy uses since issue
     #133. It is computed as ``ifftn(..., norm="forward")`` (UHFk's
-    expression); this equals ``ifftn(...) * nvol`` mathematically but not
-    bitwise on a grid with a side that is not a power of two.
+    expression); this equals ``ifftn(...) * nvol`` mathematically but can
+    differ bitwise on a grid with a side that is not a power of two.
     """
     tab_r = np.asarray(tab_r)
     nx, ny, nz, p, q = tab_r.shape

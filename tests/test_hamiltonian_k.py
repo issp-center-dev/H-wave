@@ -286,7 +286,7 @@ class TestEquivalenceRPA(unittest.TestCase):
 
 class TestEquivalenceSC(unittest.TestCase):
     def test_build_hamiltonian_k_matches(self):
-        from hwave import sc
+        from hwave.solver.eliashberg import band as sc
         rng = np.random.default_rng(5)
         shape, norb = (4, 3, 2), 3
         tbl = _hermitian_table(rng, norb, [(0, 0, 0), (1, 0, 0), (0, -1, 1),
@@ -301,7 +301,7 @@ class TestEquivalenceSC(unittest.TestCase):
         # sc._build_hamiltonian_k takes arbitrary k arrays; to_k is
         # FFT-grid only, so moving sc onto the shared builder has to keep the
         # explicit sum for these. Pin the general-k behaviour here.
-        from hwave import sc
+        from hwave.solver.eliashberg import band as sc
         rng = np.random.default_rng(9)
         norb = 2
         tbl = _hermitian_table(rng, norb, [(0, 0, 0), (1, 0, 0), (1, -1, 2)])
