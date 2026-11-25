@@ -298,13 +298,13 @@ class TestLineTwoNorbMustMatchGeometry(_Fixture):
                                  ((1, 0, 0), 1, 1, 1, 1): -1.0})
         for scheme in ("general", "auto"):
             with self.subTest(scheme=scheme), self.assertRaisesRegex(
-                    ValueError, r"gives 1 orbitals, but the Geometry norb is 2 "
+                    ValueError, r"gives norb = 1, but the Geometry norb is 2 "
                                 r"\(RPA/FLEX\)"):
                 _rpa(d, scheme=scheme)
 
     def test_line_two_larger_than_geometry_refused(self):
         d = self._dir_header(4, _spin_independent(_DIAG))
-        with self.assertRaisesRegex(ValueError, "gives 4 orbitals, but the "
+        with self.assertRaisesRegex(ValueError, "gives norb = 4, but the "
                                     "Geometry norb is 2"):
             _rpa(d, scheme="general")
 
@@ -315,7 +315,7 @@ class TestLineTwoNorbMustMatchGeometry(_Fixture):
         ham, _ = _ham(d)
         par = dict(_PARAM, SubShape=[1, 1, 1], IterationMax=1, Mix=1.0,
                    flex_hartree_fock=True)
-        with self.assertRaisesRegex(ValueError, "gives 1 orbitals"):
+        with self.assertRaisesRegex(ValueError, "gives norb = 1"):
             flex_module.FLEX(ham, {}, {"mode": "FLEX", "param": par,
                                        "calc_scheme": "general",
                                        "calc_type": "ring",
@@ -351,6 +351,32 @@ class TestSpinResolvedChecks(_Fixture):
         with self.assertRaisesRegex(ValueError, "produced by a spin-orbital run"):
             s.read_init({"path_to_input": os.path.join(dso, "output"),
                          "chi0q_init": "chi0q.npz"})
+
+    def test_malformed_spin_orbital_marker_refused(self):
+        d = self._dir(_soc_entries(_DIAG))
+        _run_chi0q(d, scheme="general")
+        with np.load(os.path.join(d, "output", "chi0q.npz")) as z:
+            members = {k: z[k] for k in z.files}
+        members["spin_orbital"] = np.int64(0)
+        np.savez(os.path.join(d, "output", "bad_mark.npz"), **members)
+        s, _ = _rpa(d, scheme="general")
+        with self.assertRaisesRegex(ValueError, "malformed spin_orbital marker"):
+            s.read_init({"path_to_input": os.path.join(d, "output"),
+                         "chi0q_init": "bad_mark.npz"})
+
+    def test_mismatched_or_non_finite_entries_refused(self):
+        d = self._dir(_spin_independent(_DIAG))
+        with open(os.path.join(d, "transfer.dat"), "a") as f:
+            f.write("0 0 0 1 2 0 1 0.150000000000 0.100000000000\n")
+            f.write("0 0 0 2 1 1 0 0.300000000000 -0.100000000000\n")
+        with self.assertRaisesRegex(ValueError, r"not Hermitian-closed.*expected its "
+                                    r"conjugate, \(0\.15-0\.1j\)"):
+            _rpa(d, scheme="general")
+        d = self._dir(_spin_independent(_DIAG))
+        with open(os.path.join(d, "transfer.dat"), "a") as f:
+            f.write("0 0 0 1 2 0 1 nan 0.0\n0 0 0 2 1 1 0 nan 0.0\n")
+        with self.assertRaisesRegex(ValueError, "non-finite coefficient"):
+            _rpa(d, scheme="general")
 
     def test_missing_spin_flip_partner_refused(self):
         d = self._dir(_spin_independent(_DIAG))

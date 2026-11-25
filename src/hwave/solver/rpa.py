@@ -3785,6 +3785,13 @@ class RPA:
         # spin-orbital file (its norb is the spin-orbital count) -- checked
         # first, so that file gets this specific message -- and requires
         # the marker; any other run refuses it
+        if spin_orbital.spin_resolved_one_body(self.ham_info) and "spin_orbital" in data:
+            _so_mark = np.asarray(data["spin_orbital"])
+            if _so_mark.ndim != 0 or _so_mark.dtype != np.bool_:
+                raise ValueError(
+                    "chi0q from file '{}' has a malformed spin_orbital marker "
+                    "(dtype {}, shape {}); expected a boolean scalar".format(
+                        file_name, _so_mark.dtype, _so_mark.shape))
         if (spin_orbital.spin_resolved_one_body(self.ham_info) and "spin_orbital" in data
                 and bool(np.asarray(data["spin_orbital"])[()])):
             raise ValueError(

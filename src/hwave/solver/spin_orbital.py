@@ -304,6 +304,10 @@ def validate_spin_resolved_closure(table, norb_phys, source="Transfer"):
             tuple(irvec), a + 1, s, b + 1, t)
 
     for (irvec, (i, j)), v in table.items():
+        if not np.isfinite(complex(v)):
+            raise ValueError(
+                "{}: the spin-resolved Transfer declares a non-finite "
+                "coefficient at {}: {}".format(source, fmt(irvec, i, j), v))
         neg = tuple(-x for x in irvec)
         partner = table.get((neg, (j, i)))
         if partner is None:
@@ -315,9 +319,9 @@ def validate_spin_resolved_closure(table, norb_phys, source="Transfer"):
         if abs(v - np.conj(partner)) > REVERSE_ATOL + REVERSE_RTOL * abs(v):
             raise ValueError(
                 "{}: the spin-resolved Transfer is not Hermitian-closed: "
-                "{} = {} but {} = {} (expected conj = {})".format(
+                "{} = {} but {} = {} (expected its conjugate, {})".format(
                     source, fmt(irvec, i, j), v, fmt(neg, j, i), partner,
-                    np.conj(partner)))
+                    np.conj(v)))
 
 
 def private_table_container(param_ham):
