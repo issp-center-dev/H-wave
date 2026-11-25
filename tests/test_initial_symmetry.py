@@ -618,6 +618,19 @@ class TestMaps(_Tmp):
             self.assertIsNone(symmetry.find_map(o, -o, problem=p, su2=s2, tr=t2))
             self.assertFalse(symmetry.sign_map_verified(o, problem=p, su2=s2, tr=t2))
 
+    def test_translation_alone_is_not_a_sign_map(self):
+        """2x2 Neel: a translation takes O to -O, but without a verified
+        time reversal or spin rotation the sign map is NOT verified."""
+        from hwave.initial import symmetry
+        p = self.square()
+        neel = _spin_pattern(p, [[0, 0, 0, e] for e in (1, -1, -1, 1)])
+        off = symmetry.Su2Result(status="failed", max_residual=1.0, method="generator",
+                                 sz_residual=None)
+        no_tr = symmetry.TrResult(invariant=False, h0_residual=1.0, hf_residual=0.0)
+        self.assertEqual(symmetry.find_map(neel, -neel, problem=p, su2=off, tr=no_tr),
+                         "translation")
+        self.assertFalse(symmetry.sign_map_verified(neel, problem=p, su2=off, tr=no_tr))
+
     def test_sign_map_agrees_with_find_map(self):
         """``sign_map_verified(O)`` is true exactly when ``find_map(O, -O)``
         gives a map other than a translation alone."""
