@@ -54,24 +54,24 @@ def _write_run(outdir, native):
 
 
 def test_static_chi0q_loader_rejects_ir_native(tmp_path):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     out = str(tmp_path)
     _write_run(out, native=True)
     input_dict = {"file": {"output": {"path_to_output": out,
                                       "chi0q": "chi0q"}},
                   "mode": {}}
     with pytest.raises(ValueError, match="write_densified"):
-        sc._load_chi0q(input_dict)
+        sc_io._load_chi0q(input_dict)
 
 
 def test_static_flex_chi_loader_rejects_ir_native(tmp_path):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     out = str(tmp_path)
     _write_run(out, native=True)
     input_dict = {"file": {"input": {"path_to_flex_output": out}},
                   "eliashberg": {}}
     with pytest.raises(ValueError, match="write_densified"):
-        sc._read_flex_chi_raw(input_dict)
+        sc_io._read_flex_chi_raw(input_dict)
 
 
 def test_rpa_read_chi0q_rejects_ir_native(tmp_path):
@@ -93,17 +93,17 @@ def test_ir_native_sigma_init_into_uniform_run_rejected(tmp_path):
 def test_densified_files_still_load_everywhere(tmp_path):
     """Migration pin: densified IR files (and thus pre-Stage-3 files, which
     share the schema) pass every guard unchanged."""
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     out = str(tmp_path)
     _write_run(out, native=False)
     input_dict = {"file": {"output": {"path_to_output": out,
                                       "chi0q": "chi0q"}},
                   "mode": {}}
-    chi0q, static_index = sc._load_chi0q(input_dict)
+    chi0q, static_index = sc_io._load_chi0q(input_dict)
     assert static_index == 64 // 2
     input_dict2 = {"file": {"input": {"path_to_flex_output": out}},
                    "eliashberg": {}}
-    chi_s, chi_c, conv, _tags = sc._read_flex_chi_raw(input_dict2)
+    chi_s, chi_c, conv, _tags = sc_io._read_flex_chi_raw(input_dict2)
     assert conv == "kuroki"
     assert chi_s.shape[0] == 64
 
@@ -149,7 +149,7 @@ def _write_converged_run(outdir, native, extra_param=None):
 
 
 def test_dynamic_uniform_mode_rejects_ir_native(tmp_path):
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     out = str(tmp_path)
     _write_converged_run(out, native=True)
     inp = _dyn_input(out, extra={"matsubara_basis": "uniform"})
@@ -159,7 +159,7 @@ def test_dynamic_uniform_mode_rejects_ir_native(tmp_path):
 
 def test_dynamic_mixed_encoding_rejected(tmp_path):
     import shutil
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     a = tmp_path / "native"
     b = tmp_path / "dens"
     a.mkdir(); b.mkdir()
@@ -174,7 +174,7 @@ def test_dynamic_ir_native_chain_matches_densified_chain(tmp_path):
     """FLEX(ir) -> dynamic(ir) lambda: the IR-native file chain must agree
     with the densified chain built from THE SAME converged run (offline
     densify), at eps scale (the refit replaces the full-grid compress)."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     nat = tmp_path / "nat"
     den = tmp_path / "den"
     nat.mkdir(); den.mkdir()
@@ -210,7 +210,7 @@ def test_refit_nodes_pass_through_and_beta_guard():
     """Unit contract of the ingestion helper: exact node-set equality is a
     pass-through (values untouched); a beta mismatch on chi/green input is
     a hard error printing both values."""
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     from hwave.solver.ir_axis import IRAxis
     beta = 2.0
     ax = IRAxis(beta=beta, wmax=12.0, eps=1e-8, statistics="B")
@@ -263,7 +263,7 @@ def test_refit_nodes_rejects_wrong_sector_and_node_count():
     """Even the exact-node pass-through validates the file's statistics and
     stored array length before accepting native values.
     """
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     from hwave.solver.ir_axis import IRAxis
     beta = 2.0
     ax = IRAxis(beta=beta, wmax=12.0, eps=1e-8, statistics="B")
@@ -279,7 +279,7 @@ def test_refit_nodes_rejects_wrong_sector_and_node_count():
 
 
 def test_dynamic_native_memory_guard_uses_node_count(tmp_path, monkeypatch):
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     out = str(tmp_path)
     # Shared basis for the native FLEX file and the dynamic read (see the chain
     # test above): pin the SAME ir_wmax on both sides.
@@ -353,7 +353,7 @@ def test_pure_hubbard_singlet_ir_reproduces_the_uniform_leading_eigenvalue(tmp_p
         import sparse_ir  # noqa: F401
     except ImportError:
         pytest.skip("sparse_ir not installed")
-    from hwave.solver import eliashberg_dynamic as ed
+    from hwave.solver.eliashberg import dynamic as ed
     out = str(tmp_path)
     # a converged UNIFORM (densified) pure-Hubbard FLEX run
     solver, gi = _make_solver(iteration_max=60)          # CoulombIntra = 2.5, uniform

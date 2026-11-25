@@ -32,7 +32,7 @@ c_{Y,j+d}``, row slot ``(m; x, y)`` is ``O_{m,xy}(q) = rho^{(sr dr_m)}_{xy}(q)``
 and column slot ``(m'; z, w)`` is ``rho^{(sc dr_m')}_{zw}(q)``, with the slot
 signs ``(sr, sc) = (-1, -1)``: slot ``(a, b)`` of channel ``m`` has ``a`` in
 the origin cell and ``b`` at ``-dr_m``, the geometry of
-:class:`hwave.solver.eliashberg_bond.BondPairKernel`. Then
+:class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel`. Then
 
 * ``H_int = (1/4N) sum_q sum_rc Gamma_B(q)_rc O_r(q) O_c(q)^dagger`` up to
   one-body terms, for the antisymmetrized ``Gamma_B`` (direct plus crossed
@@ -616,7 +616,7 @@ def canonical_band_eigen(epsilon_k, norb_phys, *, conserving):
 
     ``epsilon_k`` is the band ``(nd, nd, Nx, Ny, Nz)`` in the SPIN-BLOCK
     index (``X = s norb_phys + a``, ``nd = 2 norb_phys``), as
-    ``sc._so_epsilon_k`` returns it. ``conserving`` must be the bool
+    ``eliashberg.so_solve._so_epsilon_k`` returns it. ``conserving`` must be the bool
     ``band_conserves_sz(...).conserving`` of the run's Transfer table; it
     alone decides the construction (the ``so_bond_layout`` is never read).
 
@@ -626,12 +626,12 @@ def canonical_band_eigen(epsilon_k, norb_phys, *, conserving):
       S_z-off-sector entries. Per k the ``nd`` eigenvalues are put in
       ascending order by a stable sort (ties keep spin up before spin down)
       with the matching column permutation of the eigenvectors, the order
-      of ``sc._calc_eigenvalues``. A band with a nonzero S_z-off-sector
+      of ``eliashberg.band._calc_eigenvalues``. A band with a nonzero S_z-off-sector
       entry is refused: the table conserves S_z, so the array is not in the
       spin-block order (an interleaved ``2 orb + spin`` array, for example);
       a non-finite band is refused as such first.
     * ``conserving = False``: the full diagonalization of
-      ``sc._calc_eigenvalues`` (the same arithmetic).
+      ``eliashberg.band._calc_eigenvalues`` (the same arithmetic).
 
     Returns ``(eigenvalues (Nx, Ny, Nz, nd), eigenvectors (Nx, Ny, Nz, nd,
     nd))``; ``eigenvectors[..., :, i]`` belongs to ``eigenvalues[..., i]``."""
@@ -2258,7 +2258,7 @@ _EINSUM_BUFFER = 8192
 
 
 #: the largest operator dimension the failure-only dense fallback of the
-#: ARPACK solve diagonalizes (``hwave.sc._DENSE_FALLBACK_MAX``, pinned equal
+#: ARPACK solve diagonalizes (``hwave.solver.eliashberg.eigen._DENSE_FALLBACK_MAX``, pinned equal
 #: by a test)
 DENSE_FALLBACK_MAX = 2000
 
@@ -2273,7 +2273,7 @@ _ZGEEV_WORK_FLOOR = 4352
 
 
 #: the eigenpairs of the which='LM' solve that sizes ``spectral_shift = "auto"``
-#: (``hwave.sc._solve_leading``: ``min(6, dim - 2)``)
+#: (``hwave.solver.eliashberg.eigen._solve_leading``: ``min(6, dim - 2)``)
 _SHIFT_ESTIMATE_PAIRS = 6
 
 
@@ -2835,7 +2835,7 @@ def static_so_bond_resident_rows(*, green_source="band", member_bytes=None):
     file's members other than ``green``, which the checks materialise (the
     provenance tables among them, whose size scales with the input). The
     caller takes it from the members' npy headers and zip records without
-    reading any member (``sc._so_bond_green_member_bytes``). The factor 4
+    reading any member (``eliashberg.io._so_bond_green_member_bytes``). The factor 4
     bounds the member read plus the temporaries a check forms from it,
     measured at most 2.3 times the member bytes. The row is resident, alive
     in every phase from ``green_static`` on: part of that overhead (numpy's
@@ -4132,7 +4132,7 @@ def so_bond_pairing_vertex_parts(gamma_b, chi_b, geom, *, plan):
 
     each ``(nvol, ND, ND)`` complex128 in the code slots of
     :data:`SLOT_CONVENTION`, which are the block layout of
-    :class:`hwave.solver.eliashberg_bond.BondPairKernel` with ``norb = nd``
+    :class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel` with ``norb = nd``
     spin-orbital modes (no instantaneous vertex: the bare part lives on all
     channel blocks). ``Gamma_B^P`` is the exchange image (:func:`gamma_p`).
 
@@ -4429,7 +4429,7 @@ class PackedBondPairKernel:
     r"""The bond-resolved pairing kernel of an S_z-packed vertex, applied one
     pair-S_z sector at a time.
 
-    The operator is that of :class:`hwave.solver.eliashberg_bond.BondPairKernel`
+    The operator is that of :class:`hwave.solver.eliashberg.bond_dynamic.BondPairKernel`
     on the uniform grid (no instantaneous vertex):
 
     .. code-block:: text
@@ -4646,7 +4646,7 @@ class PackedBondPairKernel:
         return (n_p,) + self.shape + ((self.nfreq,) if self.nfreq > 1 else ())
 
     def sector_op(self, p):
-        """The :class:`hwave.sc.SectorOp` of pp sector ``p``: the kernel on
+        """The :class:`hwave.solver.eliashberg.so_solve.SectorOp` of pp sector ``p``: the kernel on
         the sector vector (``g[pp_index(p)]``) with ``matvec`` and
         ``rmatvec``, and the fermion-antisymmetric basis of the sector
         (``_SOAntisymmetricBasis.from_subset`` on :attr:`gap_shape`, with
@@ -4657,20 +4657,22 @@ class PackedBondPairKernel:
         op = self._ops.get(s)
         if op is not None:
             return op
-        from hwave import sc
+        from hwave.solver.eliashberg.so_solve import SectorOp
+        from hwave.solver.eliashberg.eigen import (
+            _SOAntisymmetricBasis, _reverse_k_and_orbital)
         if self.nfreq == 1:
-            reverse = sc._reverse_k_and_orbital
+            reverse = _reverse_k_and_orbital
         else:
-            from . import eliashberg_dynamic
+            from hwave.solver.eliashberg import dynamic as eliashberg_dynamic
             reverse = eliashberg_dynamic._reverse_kw_and_orbital
-        basis = sc._SOAntisymmetricBasis.from_subset(self.gap_shape, self.pp_index(p),
-                                                      reverse=reverse)
+        basis = _SOAntisymmetricBasis.from_subset(self.gap_shape, self.pp_index(p),
+                                                   reverse=reverse)
         from scipy.sparse.linalg import LinearOperator
         n = basis.n
         operator = LinearOperator((n, n), matvec=lambda x: self._apply(s, x),
                                   rmatvec=lambda y: self._apply(s, y, adjoint=True),
                                   dtype=complex)
-        op = sc.SectorOp(self.pp_sectors[s], operator, basis, True)
+        op = SectorOp(self.pp_sectors[s], operator, basis, True)
         self._ops[s] = op
         return op
 

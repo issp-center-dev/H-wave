@@ -278,33 +278,37 @@ def prepare(fixture, tmpdir, *, param=None, eliashberg=None, mode=None):
     (``ValueError`` when ``mode`` turns ``enable_spin_orbital`` off). The
     files may be removed once it returns."""
     import hwave.sc as sc
+    from hwave.solver.eliashberg import static as sc_static
+    from hwave.solver.eliashberg import io as sc_io
+    from hwave.solver.eliashberg import so_solve as sc_so
+    from hwave.solver.eliashberg import config as sc_config
     from requests.structures import CaseInsensitiveDict
     from hwave.solver import spin_orbital
     input_dict = write_case(tmpdir, fixture, param=param, eliashberg=eliashberg, mode=mode)
-    if sc._resolve_spin_orbital_flag(input_dict) is not True:
+    if sc_config._resolve_spin_orbital_flag(input_dict) is not True:
         raise ValueError("prepare: spin-orbital runs only ([mode] enable_spin_orbital = true)")
     eli_param = CaseInsensitiveDict(input_dict["eliashberg"])
-    cfg = sc._read_so_bond_config(eli_param)
+    cfg = sc_config._read_so_bond_config(eli_param)
     if not cfg.use_bond:
         raise ValueError("prepare: the run must set [eliashberg] bond_channels = true")
     par = CaseInsensitiveDict(input_dict["mode"]["param"])
-    beta = sc._coerce_run_beta(par["T"])
-    nmat = par.get("Nmat", sc._DEFAULT_NMAT)
+    beta = sc_config._coerce_run_beta(par["T"])
+    nmat = par.get("Nmat", sc_io._DEFAULT_NMAT)
     filling = par["filling"]
-    geom_info, hr, interactions = sc._read_interaction_files(input_dict)
+    geom_info, hr, interactions = sc_io._read_interaction_files(input_dict)
     norb_phys = spin_orbital.physical_norb(
         geom_info["norb"], True, source="the Geometry file ({})".format(
             input_dict["file"]["input"]["interaction"].get("Geometry", "")))
     so_context = spin_orbital.build_so_entry_context(
-        input_dict["mode"].get("param"), interactions, norb_phys, sc.logger)
-    extern_table, _ = sc._read_so_extern(input_dict, norb_phys)
+        input_dict["mode"].get("param"), interactions, norb_phys, sc_static.logger)
+    extern_table, _ = sc_io._read_so_extern(input_dict, norb_phys)
     cell = geom_info["rvec"]
-    bond = sc._so_bond_run(so_context, cell, cfg.max_shells)
-    so_run = sc._so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat, filling,
+    bond = sc_so._so_bond_run(so_context, cell, cfg.max_shells)
+    so_run = sc_so._so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat, filling,
                                context=so_context, bond=bond)
     shape = tuple(int(n) for n in par["CellShape"])
     kx, ky, kz = (np.linspace(0, 2.0 * np.pi, n, endpoint=False) for n in shape)
-    epsilon_k = sc._so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table, norb_phys)
+    epsilon_k = sc_so._so_epsilon_k(input_dict, kx, ky, kz, hr, extern_table, norb_phys)
     return Prepared(
         fixture=fixture, input_dict=input_dict, eli_param=eli_param, so_run=so_run, cfg=cfg,
         epsilon_k=epsilon_k, cell=cell, shape=shape, beta=beta, nmat=nmat, filling=filling,
@@ -375,10 +379,10 @@ class _Records(logging.Handler):
 
 
 def _read_outputs(input_dict):
-    import hwave.sc as sc
+    from hwave.solver.eliashberg import so_solve as sc_so
     out = input_dict["file"]["output"]["path_to_output"]
     eli = {k.lower(): v for k, v in input_dict["eliashberg"].items()}
-    gap = os.path.join(out, sc._so_gap_npz_name(eli.get("output_gap", "gap.dat")))
+    gap = os.path.join(out, sc_so._so_gap_npz_name(eli.get("output_gap", "gap.dat")))
     members = None
     if os.path.exists(gap):
         with np.load(gap, allow_pickle=False) as z:

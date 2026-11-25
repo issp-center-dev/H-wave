@@ -395,7 +395,7 @@ class TestInversePerSector(unittest.TestCase):
 class TestPoleIndicator(unittest.TestCase):
 
     def test_matches_sc(self):
-        from hwave import sc
+        from hwave.solver.eliashberg import bond as sc_bond
         fx = FIXTURE_LZSZ
         g = bubble_green(fx)
         shape = tuple(fx.spatial_shape)
@@ -406,7 +406,7 @@ class TestPoleIndicator(unittest.TestCase):
                 gamma = chain_gamma(fx, layout)
                 with self.assertNoLogs(level=logging.DEBUG):
                     entry, per, worst = so_bond.static_pole_indicator(X, gamma, shape)
-                report = sc._so_bond_static_pole(X, gamma, shape)
+                report = sc_bond._so_bond_static_pole(X, gamma, shape)
                 self.assertEqual(entry, report.indicators["spinful"])
                 self.assertTrue(np.isfinite(entry[0]))
                 if layout == "dense":

@@ -125,7 +125,8 @@ def _preimport():
     from hwave.solver import flex_so_bond, so_bond  # noqa: F401
     # the spin-orbital bond archive and its writer's imports (the archive
     # phases are traced; their first use is not archive memory)
-    from hwave.solver import so_bond_archive, eliashberg_bond_io, fingerprint  # noqa: F401
+    from hwave.solver import so_bond_archive, fingerprint  # noqa: F401
+    from hwave.solver.eliashberg import bond_io as eliashberg_bond_io  # noqa: F401
     import secrets, zipfile  # noqa: F401
     import hwave.sc  # noqa: F401
 

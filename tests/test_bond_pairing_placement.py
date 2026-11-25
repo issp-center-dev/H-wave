@@ -32,7 +32,7 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver import bond_channels as bc
 from tests.eliashberg_bond_fixtures import _channel0_from_gate, _tables_from_pairs
 
@@ -241,9 +241,9 @@ class TestStaticBondKernelPlacement(_PlacementCase, unittest.TestCase):
         super().setUpClass()
         interactions = {"CoulombInter": {((r, 0, 0), (a, b)): complex(v)
                                          for (r, a, b), v in ROWS.items()}}
-        topo, cls.view, split = sc._resolve_bond_topology(
+        topo, cls.view, split = sc_bond._resolve_bond_topology(
             interactions, {"rvec": np.eye(3)}, NORB, None)
-        cls.S_b, cls.C_b = sc._build_bond_vertices(topo, split, NORB, (NX, 1, 1))
+        cls.S_b, cls.C_b = sc_bond._build_bond_vertices(topo, split, NORB, (NX, 1, 1))
         # the static path's vertices are the FLEX gate's own
         np.testing.assert_allclose(cls.S_b, bc.build_sc_bond_channel(cls.topo, cls.S0, "S"),
                                    rtol=0, atol=1e-13)
@@ -252,7 +252,7 @@ class TestStaticBondKernelPlacement(_PlacementCase, unittest.TestCase):
         cls.chib = bc.bond_bubble(cls.g, cls.view, BETA).reshape(cls.S_b.shape)
 
     def _parts(self, eta):
-        _, A_fl, A_pp, _ = sc._bond_kernel_parts(
+        _, A_fl, A_pp, _ = sc_bond._bond_kernel_parts(
             self.S_b, self.C_b, [("spin", self.chib), ("charge", self.chib)], self.g,
             self.view, NORB, (NX, 1, 1), BETA, eta, topo=None)
         return A_fl, A_pp
@@ -287,9 +287,9 @@ class TestDynamicBondKernelPlacement(_PlacementCase, unittest.TestCase):
             NX, cls.S.shape[-1], cls.S.shape[-1])
 
     def _kernel(self, gam, V_inst):
-        from hwave.solver.eliashberg_bond import (ArrayBlockSource, BondPairKernel,
+        from hwave.solver.eliashberg.bond_dynamic import (ArrayBlockSource, BondPairKernel,
                                                   PairVertexUniform)
-        from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+        from hwave.solver.eliashberg.dynamic import calc_g2_dynamic
         B = int(self.topo.delta_r.shape[0])
         flat = np.ascontiguousarray(np.broadcast_to(gam[None], (NMAT,) + gam.shape))
         vert = PairVertexUniform(source=ArrayBlockSource({"G": flat}, ND), slot="G",
@@ -307,7 +307,7 @@ class TestDynamicBondKernelPlacement(_PlacementCase, unittest.TestCase):
         return out[..., 0]
 
     def test_fluctuation_term(self):
-        from hwave.solver.eliashberg_bond import COEFF
+        from hwave.solver.eliashberg.bond_dynamic import COEFF
         for i, eta in enumerate(("singlet", "triplet")):
             cs, cc = COEFF[eta]
             gam = cs * self.S @ self.chib @ self.S + cc * self.C @ self.chib @ self.C
@@ -316,7 +316,7 @@ class TestDynamicBondKernelPlacement(_PlacementCase, unittest.TestCase):
             self._assert_two_sided(got, _dynamic_x(self.g, phi_w), 2, "Gamma " + eta)
 
     def test_bare_term(self):
-        from hwave.solver.eliashberg_bond import instantaneous_vertex
+        from hwave.solver.eliashberg.bond_dynamic import instantaneous_vertex
         zero = np.zeros((NX,) + self.S.shape[1:], complex)
         for i, eta in enumerate(("singlet", "triplet")):
             V_inst = instantaneous_vertex(self.S, self.C, ND, eta, (NX, 1, 1), topo=None)
@@ -329,7 +329,7 @@ class TestGapBondProjection(_PlacementCase, unittest.TestCase):
     def test_psi_is_the_pair_at_plus_delta_r(self):
         """``gap_bond_projection``'s ``psi_m[a, b]`` is the real-space gap of
         the pair with ``a`` in the origin cell and ``b`` at ``+delta_r[m]``."""
-        from hwave.solver.eliashberg_bond import gap_bond_projection
+        from hwave.solver.eliashberg.bond_dynamic import gap_bond_projection
         X = _static_x(self.g, _pair_field(np.random.default_rng(50), "singlet"))
         Dr = _reference_gap_real_space(self.ref[+1][1], X)          # (a, b, d)
         view = bc.BondSetView(self.topo)

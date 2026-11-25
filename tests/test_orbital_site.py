@@ -215,7 +215,7 @@ class TestHwaveScVertex(unittest.TestCase):
     slots -- and every other element is unchanged."""
 
     def _sc(self, site):
-        from hwave import sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         d = tempfile.mkdtemp()
         try:
             inter = _write_chain(d, 2)
@@ -228,15 +228,15 @@ class TestHwaveScVertex(unittest.TestCase):
         n = NSITE // 2
         k = np.linspace(0, 2 * np.pi, n, endpoint=False)
         param = {} if site is None else {"orbital_site": site}
-        inter_k = sc._build_interaction_k_for_sites(
+        inter_k = sc_vertex._build_interaction_k_for_sites(
             k, np.zeros(1), np.zeros(1), interactions, 2, {"mode": {"param": param}})
-        return inter_k, sc._build_sc_matrices_all_q(inter_k, 2, n, 1, 1)
+        return inter_k, sc_vertex._build_sc_matrices_all_q(inter_k, 2, n, 1, 1)
 
     def test_only_the_in_cell_exchange_is_removed(self):
         k_none, (S0, C0) = self._sc(None)
         k_same, (S1, C1) = self._sc([0, 0])
         k_two, (S2, C2) = self._sc([0, 1])
-        from hwave.sc import SiteSplitInteractionK
+        from hwave.solver.eliashberg.vertex import SiteSplitInteractionK
         # every table is split: the chain's inter-cell rows are off-site
         # (issue #239); orbital_site adds the in-cell row between the sites
         for k in (k_none, k_same, k_two):
@@ -264,15 +264,15 @@ class TestHwaveScVertex(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
     def test_single_q_builder_honours_the_split(self):
-        from hwave import sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         n = NSITE // 2
         k = np.linspace(0, 2 * np.pi, n, endpoint=False)
-        inter_k = sc._build_interaction_k_for_sites(
+        inter_k = sc_vertex._build_interaction_k_for_sites(
             k, np.zeros(1), np.zeros(1), self._tables(), 2,
             {"mode": {"param": {"orbital_site": [0, 1]}}})
-        S_all, C_all = sc._build_sc_matrices_all_q(inter_k, 2, n, 1, 1)
+        S_all, C_all = sc_vertex._build_sc_matrices_all_q(inter_k, 2, n, 1, 1)
         for iq in range(n):
-            S1, C1 = sc._build_sc_matrices(inter_k, 2, iq, 0, 0)
+            S1, C1 = sc_vertex._build_sc_matrices(inter_k, 2, iq, 0, 0)
             np.testing.assert_allclose(S1, S_all[iq, 0, 0], atol=1e-14)
             np.testing.assert_allclose(C1, C_all[iq, 0, 0], atol=1e-14)
 
@@ -281,16 +281,16 @@ class TestHwaveScVertex(unittest.TestCase):
         # sites declared it has no exchange crossing left; nor has
         # CoulombInter, whose inter-cell rows keep their Hartree part only
         # since issue #239 -- nothing is left for the warning to name
-        from hwave import sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         tables = self._tables()
         tables["Hund"] = {((0, 0, 0), (0, 1)): 0.2, ((0, 0, 0), (1, 0)): 0.2}
         n = NSITE // 2
         k = np.linspace(0, 2 * np.pi, n, endpoint=False)
-        inter_k = sc._build_interaction_k_for_sites(
+        inter_k = sc_vertex._build_interaction_k_for_sites(
             k, np.zeros(1), np.zeros(1), tables, 2,
             {"mode": {"param": {"orbital_site": [0, 1]}}})
         with self.assertNoLogs("hwave_sc", level="WARNING"):
-            sc._warn_reduced_flex_missing_components(inter_k, 2, n, 1, 1)
+            sc_vertex._warn_reduced_flex_missing_components(inter_k, 2, n, 1, 1)
 
 
 class TestKeyHandling(unittest.TestCase):

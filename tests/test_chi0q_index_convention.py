@@ -21,7 +21,7 @@ import unittest
 import numpy as np
 
 from hwave.solver.rpa import validate_chi0q_index_convention
-from hwave.sc import _load_chi0q
+from hwave.solver.eliashberg.io import _load_chi0q
 
 
 def _write_npz(path, with_convention, convention="spin_block",
