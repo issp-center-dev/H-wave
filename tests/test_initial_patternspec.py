@@ -232,6 +232,73 @@ class TestPatternSpec(unittest.TestCase):
         for e in out:
             self.assertEqual(e["c0"], [0.5, 0.0])
 
+    def test_signed_zero_serialises_equal(self):
+        a = PatternSpec(q=("1/2", "0", "0"), subshape=(2, 1, 1), phase=-0.0,
+                        sign=1, modulation="cos",
+                        entries=(Entry(0, 0, (0, 0, 0),
+                                       cz=complex(1.0, -0.0),
+                                       c0=complex(-0.0, 0.5)),))
+        b = PatternSpec(q=("1/2", "0", "0"), subshape=(2, 1, 1), phase=0.0,
+                        sign=1, modulation="cos",
+                        entries=(Entry(0, 0, (0, 0, 0), cz=1.0, c0=0.5j),))
+        self.assertEqual(a, b)
+        self.assertEqual(canonical_json(a.to_json()),
+                         canonical_json(b.to_json()))
+        self.assertNotIn("-0.0", canonical_json(a.to_json()))
+        c = Candidate.user(pattern=a)
+        kw = dict(tier="large", cells=[], rows=[], candidates=[c], runs=[])
+        s1 = CandidateSet(model={"x": -0.0}, limits={"y": [-0.0]}, **kw)
+        s2 = CandidateSet(model={"x": 0.0}, limits={"y": [0.0]}, **kw)
+        self.assertEqual(canonical_json(s1.to_json()),
+                         canonical_json(s2.to_json()))
+
+    def test_q_stored_reduced(self):
+        a = PatternSpec.from_json(doc(STRIPE, q=["2/4", "-0", "6/3"]))
+        b = PatternSpec.from_json(doc(STRIPE, q=["1/2", "0", "2"]))
+        self.assertEqual(a, b)
+        self.assertEqual(a.q, ("1/2", "0", "2"))
+        self.assertEqual(a.to_json()["q"], ["1/2", "0", "2"])
+        self.assertEqual(Candidate.user(pattern=a).candidate_id,
+                         Candidate.user(pattern=b).candidate_id)
+        self.assertEqual(
+            PatternSpec(q=("-2/6", "0", "0"), subshape=(3, 1, 1), phase=0,
+                        sign=1, modulation="cos",
+                        entries=(Entry(0, 0, (0, 0, 0), cz=1),)).q,
+            ("-1/3", "0", "0"))
+        for bad in ("1/0", "2/0", "1/00"):
+            with self.subTest(bad):
+                with self.assertRaisesRegex(ValueError, r"\$\.q\[0\]"):
+                    validate_patternspec(doc(STRIPE, q=[bad, "0", "0"]))
+
+    def test_zero_amplitude_refused(self):
+        zero = {"orb_a": 0, "orb_b": 0, "r": [0, 0, 0]}
+        for entries in ([zero], [dict(zero, cz=[0.0, 0.0])],
+                        [dict(zero, c0=[0.0, -0.0]),
+                         dict(zero, orb_b=1, cx=[0.0, 0.0])]):
+            with self.subTest(entries=entries):
+                with self.assertRaisesRegex(ValueError,
+                                            r"\$\.entries.*zero"):
+                    validate_patternspec(doc(STRIPE, entries=entries))
+        with self.assertRaisesRegex(ValueError, r"\$\.entries.*zero"):
+            validate_patternspec(doc(SPIRAL_120, entries=[
+                dict(zero, s=[0.0, 0.0])]))
+        with self.assertRaises(ValueError):
+            PatternSpec(q=("1/2", "0", "0"), subshape=(2, 1, 1), phase=0.0,
+                        sign=1, modulation="cos",
+                        entries=(Entry(0, 0, (0, 0, 0)),))
+        # one zero entry next to a nonzero one is allowed
+        validate_patternspec(doc(STRIPE, entries=[
+            zero, dict(zero, orb_b=1, cz=[1.0, 0.0])]))
+
+    def test_schema_names_validator_only_rules(self):
+        with open(SCHEMA_PATH, encoding="utf-8") as f:
+            text = json.load(f)["description"]
+        for phrase in ("authority", "same (orb_a, orb_b, r)", "all zero",
+                       "integer-valued floats", "non-finite", "newline",
+                       "norb_phys", "reduced"):
+            with self.subTest(phrase):
+                self.assertIn(phrase, text)
+
     def test_entries_canonical_order(self):
         """Entry order does not matter: the PatternSpec sorts by
         (orb_a, orb_b, r), so equal patterns are equal objects and give
@@ -462,6 +529,13 @@ class TestCandidates(unittest.TestCase):
         with self.assertRaises(ValueError):
             CandidateRun(c, (0, 1, 1))
 
+    def test_make_candidate_id_refuses_decimal_q(self):
+        for q in (("0.5", "0", "0"), ("1/0", "0", "0"), (" 1/2", "0", "0"),
+                  ("1e-3", "0", "0"), (0.5, 0, 0)):
+            with self.subTest(q=q):
+                with self.assertRaisesRegex(ValueError, r"q\[0\]"):
+                    make_candidate_id("baseline", q, "x", 0, 0, False, set())
+
     def test_make_candidate_id(self):
         taken = set()
         q = ("1/2", "1/2", "0")
@@ -520,8 +594,10 @@ class TestCandidates(unittest.TestCase):
             {"para", "ferro", "random", "instability", "baseline",
              "orbital", "user", "literature"})
         self.assertEqual(len({c.candidate_id for c in cands}), len(cands))
+        # a random pattern runs only on its own SubShape
         runs = [CandidateRun(c, b) for c in cands
-                for b in ((2, 2, 1), (4, 4, 1))]
+                for b in ((2, 2, 1), (4, 4, 1))
+                if c.family != "random" or b == c.subshape]
         cset = CandidateSet(
             model={"norb": 2, "spin_orbital": False, "input_sha256":
                    {"input.toml": "0" * 64}},
@@ -548,6 +624,30 @@ class TestCandidates(unittest.TestCase):
         bad["runs"][0]["candidate_id"] = "nobody"
         with self.assertRaises(ValueError):
             CandidateSet.from_json(bad)
+
+    def test_random_run_only_on_own_subshape(self):
+        r = candidate_of("random", PatternSpec.from_json(RANDOM), None)
+        self.assertEqual(CandidateRun(r, (2, 2, 1)).run_id, "random-s3-b2x2x1")
+        with self.assertRaisesRegex(ValueError, "random"):
+            CandidateRun(r, (4, 4, 1))
+        obj = CandidateRun(r, (2, 2, 1)).to_json()
+        with self.assertRaises(ValueError):
+            CandidateRun.from_json(dict(obj, subshape=[4, 4, 1],
+                                        run_id="random-s3-b4x4x1"))
+        # other families run on any B
+        c = Candidate.user(pattern=PatternSpec.from_json(NEEL))
+        self.assertEqual(CandidateRun(c, (4, 4, 1)).subshape, (4, 4, 1))
+
+    def test_candidate_set_hashable(self):
+        c = Candidate.user(pattern=PatternSpec.from_json(NEEL))
+        kw = dict(model={"a": [1, 2]}, tier="large", cells=[], rows=[],
+                  limits={}, candidates=[c], runs=[CandidateRun(c, (2, 2, 1))])
+        a, b = CandidateSet(**kw), CandidateSet(**kw)
+        self.assertEqual(a, b)
+        self.assertEqual(hash(a), hash(b))
+        self.assertEqual(hash(CandidateSet.from_json(a.to_json())), hash(a))
+        self.assertEqual(len({a, b}), 1)
+        self.assertNotEqual(a, CandidateSet(**dict(kw, runs=[])))
 
     def test_candidate_set_consistency(self):
         spec = PatternSpec.from_json(NEEL)

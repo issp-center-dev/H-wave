@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "H-wave PatternSpec v1",
-  "description": "A seed pattern for hwave.initial: bond-slot entries in the sigma x orbital-pair basis, with q, phase, sign and modulation. O(R) = (e^{i(q.R+phase)} A + e^{-i(q.R+phase)} A^dag)/2 with A the entries.",
+  "description": "A seed pattern for hwave.initial: bond-slot entries in the sigma x orbital-pair basis, with q, phase, sign and modulation. O(R) = (e^{i(q.R+phase)} A + e^{-i(q.R+phase)} A^dag)/2 with A the entries. The checks of hwave.initial (validate_patternspec) are the authority; they also refuse what this schema cannot express: two entries with the same (orb_a, orb_b, r); a cos pattern whose coefficients are all zero, or a spiral whose s are all zero; integer-valued floats such as 1.0 where an integer is required (orb_a, orb_b, r, subshape, sign, seed, patternspec_version); non-finite numbers (for example 1e400); a q string with surrounding whitespace or a trailing newline; and, when the caller gives the number of physical orbitals, an orbital index outside 0..norb_phys-1. q strings may be unreduced (\"2/4\"); hwave.initial stores the reduced form (\"1/2\").",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -358,7 +358,7 @@
     "qstring": {
       "type": "string",
       "pattern": "^-?(0|[1-9][0-9]*)(/[1-9][0-9]*)?$",
-      "description": "An integer or a rational p/q."
+      "description": "An integer or a rational p/q with a nonzero denominator; stored reduced by hwave.initial."
     }
   }
 }

@@ -139,7 +139,8 @@ def _complex_pair(v, path):
 
 
 def _complex_json(z):
-    return [float(z.real), float(z.imag)]
+    # ``+ 0.0`` maps -0.0 to 0.0: equal values give equal JSON bytes
+    return [float(z.real) + 0.0, float(z.imag) + 0.0]
 
 
 def _q_string(v, path):
@@ -148,6 +149,12 @@ def _q_string(v, path):
                          f"'p/q' string, got {v!r}")
     Fraction(v)
     return v
+
+
+def _reduced_q(v, path):
+    """A checked q string in its reduced form (``"2/4"`` -> ``"1/2"``,
+    ``"-0"`` -> ``"0"``)."""
+    return str(Fraction(_q_string(v, path)))
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +251,11 @@ def validate_patternspec(obj, *, norb_phys: Optional[int] = None) -> None:
             if "s" in e:
                 raise ValueError(f"$.entries[{i}].s: a 'cos' entry carries "
                                  f"c0, cx, cy, cz only")
+        if not any(_complex_pair(e[c], "$") != 0
+                   for e in entries for c in _COEFFS if c in e):
+            raise ValueError("$.entries: every coefficient is zero, so the "
+                             "pattern has no amplitude (the para pattern "
+                             "is modulation 'none')")
     elif modulation == "spiral":
         if axes is None:
             raise ValueError("$.axes: required for modulation 'spiral'")
@@ -255,6 +267,9 @@ def validate_patternspec(obj, *, norb_phys: Optional[int] = None) -> None:
                 if c in e:
                     raise ValueError(f"$.entries[{i}].{c}: a 'spiral' entry "
                                      f"carries s only")
+        if not any(_complex_pair(e["s"], "$") != 0 for e in entries):
+            raise ValueError("$.entries: every s is zero, so the pattern "
+                             "has no amplitude")
     elif modulation == "none":
         if len(entries) != 0:
             raise ValueError("$.entries: must be empty for modulation "
@@ -398,12 +413,12 @@ class PatternSpec:
             if not isinstance(self.q, (list, tuple)) or len(self.q) != 3:
                 raise ValueError(f"$.q: must be three rational strings or "
                                  f"None, got {self.q!r}")
-            set_(self, "q", tuple(_q_string(x, f"$.q[{i}]")
+            set_(self, "q", tuple(_reduced_q(x, f"$.q[{i}]")
                                   for i, x in enumerate(self.q)))
         set_(self, "subshape",
              _int_triple(self.subshape, "$.subshape", positive=True))
         if self.phase is not None:
-            set_(self, "phase", _as_float(self.phase, "$.phase"))
+            set_(self, "phase", _as_float(self.phase, "$.phase") + 0.0)
         if self.sign is not None:
             set_(self, "sign", _as_int(self.sign, "$.sign"))
         if not isinstance(self.modulation, str):

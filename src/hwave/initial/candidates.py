@@ -26,7 +26,7 @@ from types import MappingProxyType
 from typing import Mapping, Optional, Tuple
 
 from hwave.initial.patterns import (
-    PatternSpec, _int_triple, _is_int, q_fractions)
+    PatternSpec, _int_triple, _is_int, _q_string, q_fractions)
 
 __all__ = [
     "FAMILIES", "TIERS", "DEFAULT_AMPLITUDE", "CANDIDATE_SET_VERSION",
@@ -100,9 +100,11 @@ def make_candidate_id(family, q, label, rank, phase_index, neg, taken,
                              f"non-negative integer seed, got {seed!r}")
         base = f"random-s{int(seed)}"
     else:
-        if q is None or len(q) != 3:
+        if not isinstance(q, (list, tuple)) or len(q) != 3:
             raise ValueError(f"q: three rational strings required, "
                              f"got {q!r}")
+        for i, x in enumerate(q):
+            _q_string(x, f"q[{i}]")
         for name, v in (("rank", rank), ("phase_index", phase_index)):
             if not _is_int(v) or v < 0:
                 raise ValueError(f"{name}: must be a non-negative integer, "
@@ -135,7 +137,7 @@ def _frozen_json(v, path):
     if _is_int(v):
         return int(operator.index(v))
     if isinstance(v, numbers.Real):
-        out = float(v)
+        out = float(v) + 0.0          # -0.0 -> 0.0
         if not math.isfinite(out):
             raise ValueError(f"{path}: not a JSON value (non-finite "
                              f"number {v!r})")
@@ -323,6 +325,13 @@ class CandidateRun:
                              f"{type(self.candidate).__name__}")
         object.__setattr__(self, "subshape", _int_triple(
             self.subshape, "subshape", positive=True))
+        pattern = self.candidate.pattern
+        if (pattern.modulation == "random"
+                and self.subshape != pattern.subshape):
+            raise ValueError(
+                f"subshape: a random pattern is cell-resolved and runs only "
+                f"on its own SubShape {list(pattern.subshape)}, got "
+                f"{list(self.subshape)}")
 
     @property
     def run_id(self) -> str:
@@ -382,7 +391,12 @@ class CandidateSet:
     JSON objects, ``cells`` and ``rows`` sequences of JSON values; they are
     stored as deep read-only copies (objects as read-only mappings, arrays
     as tuples), so the JSON round trip is exact. Every run refers to a
-    candidate of the set; candidate and run ids are unique."""
+    candidate of the set; candidate and run ids are unique.
+
+    The hash covers the tier, the candidates and the runs only (the JSON
+    fields are read-only mappings, which are not hashable). Equal sets have
+    equal hashes; sets that differ only in model, cells, rows or limits
+    collide, which is allowed."""
     model: Mapping
     tier: str
     cells: tuple
@@ -433,6 +447,9 @@ class CandidateSet:
             run_ids.add(r.run_id)
         set_(self, "candidates", cands)
         set_(self, "runs", runs)
+
+    def __hash__(self):
+        return hash((self.tier, self.candidates, self.runs))
 
     def to_json(self) -> dict:
         return {
