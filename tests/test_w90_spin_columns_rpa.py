@@ -436,6 +436,8 @@ class TestFlexGates(_Fixture):
             s.solve(read_io.get_param("green"), d)
 
 
+_NUMPY_BELOW_2 = int(np.__version__.split(".")[0]) < 2
+
 _TUTORIAL_1ORB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                               "docs", "tutorial", "Hubbard", "FLEX", "1orb")
 
@@ -463,7 +465,8 @@ class TestFlexSpinFreeNineColumnTutorial(unittest.TestCase):
     The spin structure is judged from the matrix: a spin-independent file
     takes the 7-column path, so the DEFAULT calc_scheme = "auto" runs (it
     resolves as for the 7-column file) and every archive equals the
-    7-column run's; so does calc_scheme = "general" with flex_hartree_fock."""
+    7-column run's (bitwise with numpy >= 2, to round-off below); so does
+    calc_scheme = "general" with flex_hartree_fock."""
 
     def setUp(self):
         self.d = tempfile.mkdtemp(prefix="w90spin_flex_tut_")
@@ -504,7 +507,14 @@ class TestFlexSpinFreeNineColumnTutorial(unittest.TestCase):
                         continue
                     x, y = za[key], zb[key]
                     self.assertEqual((x.dtype, x.shape), (y.dtype, y.shape), (name, key))
-                    self.assertTrue(np.array_equal(x, y), (name, key))
+                    if _NUMPY_BELOW_2 and x.dtype.kind in "fc":
+                        # numpy < 2: two runs of one input already differ
+                        # at round-off on this platform, so only the
+                        # round-off level is meaningful there
+                        np.testing.assert_allclose(x, y, rtol=1e-12, atol=1e-14,
+                                                   err_msg=str((name, key)))
+                    else:
+                        self.assertTrue(np.array_equal(x, y), (name, key))
                 self.assertNotIn("spin_resolved", za.files, name)
 
     def test_default_auto_runs_and_equals_the_seven_column_run(self):
