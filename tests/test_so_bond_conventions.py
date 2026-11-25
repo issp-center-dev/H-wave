@@ -21,7 +21,7 @@ import numpy as np
 
 from hwave.solver import bubble
 from hwave.solver.bond_channels import BondSetView, BondTopology
-from hwave.solver.eliashberg_bond import ArrayBlockSource, BondPairKernel, PairVertexUniform
+from hwave.solver.eliashberg.bond_dynamic import ArrayBlockSource, BondPairKernel, PairVertexUniform
 from hwave.solver.so_bond import SLOT_CONVENTION, BondSlotGeometry, SlotConvention, slot_geometry
 from tests.heavy_tests import heavy
 from tests.so_bond_fixtures import production_first_order

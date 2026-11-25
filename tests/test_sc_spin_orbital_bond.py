@@ -19,20 +19,30 @@ import numpy as np
 from requests.structures import CaseInsensitiveDict
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import static as sc_static
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import io as sc_io
+from hwave.solver.eliashberg import so_solve as sc_so
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import config as sc_config
+from hwave.solver.eliashberg import band as sc_band
+from hwave.solver.eliashberg import output as sc_output
 # eliashberg_bond is imported here (not first inside a traced phase): the
 # phase functions import it lazily, and a first import under tracemalloc
 # would count the module's code objects in the phase that triggers it
-from hwave.solver import (backend, bond_channels, eliashberg_bond, fingerprint, host_memory,
+from hwave.solver import (backend, bond_channels, fingerprint, host_memory,
                           so_bond, so_pairing, spin_orbital)
-from hwave.sc import (_SO_BOND_CHI0Q_UNUSED, _SO_BOND_DIAGNOSTICS_REFUSAL,
-                      _SO_BOND_FLEX_KEYS_UNUSED, _SO_BOND_FLEX_REFUSAL,
-                      _SO_BOND_GPU_IGNORED, _SO_BOND_GPU_REQUIRED_REFUSAL,
-                      _SO_BOND_LAYOUT_IGNORED,
-                      _SO_BOND_PRECONDITION_REFUSAL)
+from hwave.solver.eliashberg import bond_dynamic as eliashberg_bond
+from hwave.solver.eliashberg.config import _SO_BOND_CHI0Q_UNUSED, _SO_BOND_DIAGNOSTICS_REFUSAL, _SO_BOND_FLEX_KEYS_UNUSED, _SO_BOND_FLEX_REFUSAL, _SO_BOND_GPU_IGNORED, _SO_BOND_GPU_REQUIRED_REFUSAL, _SO_BOND_LAYOUT_IGNORED, _SO_BOND_PRECONDITION_REFUSAL
+from hwave.solver.eliashberg import kernel as sc_kernel
 from tests import so_bond_entry_fixtures as F
 from tests import so_bond_flex_fixtures as _flex_fixtures
 from tests import so_zero_field as Z
 from tests.so_bond_oracles import CELL, closed_row, rel
+
+#: the modules of the static entry; a function of the package is called from
+#: the namespace of the module that makes the call
+_SC_MODULES = (sc_static, sc_bond, sc_so, sc_eigen, sc_io, sc_kernel, sc_band, sc_config)
 
 
 class TestDynamicRefusal(unittest.TestCase):
@@ -81,7 +91,7 @@ class TestConfigParsing(unittest.TestCase):
     merely unused get one WARNING each."""
 
     def _parse(self, eli):
-        return sc._read_so_bond_config(CaseInsensitiveDict(eli))
+        return sc_config._read_so_bond_config(CaseInsensitiveDict(eli))
 
     def _refusal(self, eli):
         with self.assertRaises(ValueError) as cm:
@@ -188,13 +198,13 @@ class TestConfigParsing(unittest.TestCase):
         cfg = self._parse({"Bond_Channels": True, "Bond_Max_Shells": 2,
                            "Bond_Coeff_Tail": 0.5, "G2_Tail": False,
                            "Bond_Memory_Cap_GB": 3})
-        self.assertEqual(cfg, sc._SOBondConfig(True, "auto", 3.0, 2, 0.5, "config", False))
+        self.assertEqual(cfg, sc_config._SOBondConfig(True, "auto", 3.0, 2, 0.5, "config", False))
 
     def test_defaults(self):
         self.assertEqual(self._parse({"bond_channels": True}),
-                         sc._SOBondConfig(True, "auto", None, None, 1.0, "default", True))
+                         sc_config._SOBondConfig(True, "auto", None, None, 1.0, "default", True))
         self.assertEqual(self._parse({}),
-                         sc._SOBondConfig(False, None, None, None, None, None, None))
+                         sc_config._SOBondConfig(False, None, None, None, None, None, None))
 
     def test_bond_off_warnings(self):
         h = _Warnings()
@@ -204,7 +214,7 @@ class TestConfigParsing(unittest.TestCase):
         # bond-off: refused keys are never parsed, only named as ignored
         cfg = self._parse({"Bond_Channels": False, "Bond_Green": "g.npz",
                            "bond_diagnostics": "ture", "SO_Bond_Layout": "nonsense"})
-        self.assertEqual(cfg, sc._SOBondConfig(False, None, None, None, None, None, None))
+        self.assertEqual(cfg, sc_config._SOBondConfig(False, None, None, None, None, None, None))
         self.assertEqual(h.seen, [
             "[eliashberg] bond_diagnostics, bond_green set but bond_channels=false; the "
             "bond-channel options only apply to bond_channels=true and are ignored here.",
@@ -215,11 +225,11 @@ class TestConfigParsing(unittest.TestCase):
 
     def test_non_so_cap_unchanged(self):
         with self.assertRaises(ValueError) as cm:
-            sc._read_bond_config({"bond_channels": True, "bond_memory_cap_gb": 0})
+            sc_config._read_bond_config({"bond_channels": True, "bond_memory_cap_gb": 0})
         self.assertEqual(str(cm.exception),
                          "[eliashberg] bond_memory_cap_gb must be a positive finite "
                          "number, got 0")
-        self.assertEqual(sc._read_bond_config({"bond_channels": True})[3], 8.0)
+        self.assertEqual(sc_config._read_bond_config({"bond_channels": True})[3], 8.0)
 
     def test_entry_warnings_once(self):
         log = logging.getLogger("test_sc_spin_orbital_bond.entry")
@@ -227,7 +237,7 @@ class TestConfigParsing(unittest.TestCase):
         h = _Warnings()
         log.addHandler(h)
         self.addCleanup(log.removeHandler, h)
-        sc._so_bond_entry_warnings(CaseInsensitiveDict(
+        sc_config._so_bond_entry_warnings(CaseInsensitiveDict(
             {"Chi0q_Mode": "calc", "GPU": "true", "Flex_Chi_S": "a.npz",
              "flex_chi_c": "b.npz"}), log)
         self.assertEqual(h.seen, [
@@ -235,13 +245,13 @@ class TestConfigParsing(unittest.TestCase):
             _SO_BOND_GPU_IGNORED,
             _SO_BOND_FLEX_KEYS_UNUSED % ("flex_chi_c, Flex_Chi_S",)])
         h.seen.clear()
-        sc._so_bond_entry_warnings(CaseInsensitiveDict(
+        sc_config._so_bond_entry_warnings(CaseInsensitiveDict(
             {"chi0q_tensor": "general", "flex_chi_c": "b.npz"}), log)
         self.assertEqual(h.seen, [_SO_BOND_CHI0Q_UNUSED % ("unset", "general"),
                                   _SO_BOND_FLEX_KEYS_UNUSED % ("flex_chi_c",)])
         h.seen.clear()
-        sc._so_bond_entry_warnings(CaseInsensitiveDict({"gpu": False}), log)
-        sc._so_bond_entry_warnings(CaseInsensitiveDict(), log)
+        sc_config._so_bond_entry_warnings(CaseInsensitiveDict({"gpu": False}), log)
+        sc_config._so_bond_entry_warnings(CaseInsensitiveDict(), log)
         self.assertEqual(h.seen, [])
 
     def test_onsite_run_parses_first(self):
@@ -256,7 +266,7 @@ class TestConfigParsing(unittest.TestCase):
                                          "num_eigenvalues": 2, "SO_Bond_Layout": "dense"},
                        nmat=8, CellShape=[2, 2, 1])
         calls = []
-        real_reader, real_backend = sc._read_so_bond_config, backend.get_backend
+        real_reader, real_backend = sc_config._read_so_bond_config, backend.get_backend
 
         def reader(*a, **kw):
             calls.append("read_so_bond_config")
@@ -267,7 +277,7 @@ class TestConfigParsing(unittest.TestCase):
             return real_backend(*a, **kw)
 
         with S._count_warnings() as warned, \
-                mock.patch.object(sc, "_read_so_bond_config", side_effect=reader), \
+                mock.patch.object(sc_static, "_read_so_bond_config", side_effect=reader), \
                 mock.patch.object(backend, "get_backend", side_effect=get_backend):
             sc.calc_eliashberg(inp)
         self.assertEqual(calls, ["read_so_bond_config", "get_backend"])
@@ -297,7 +307,7 @@ def _context():
 def _run(context=None, bond=None):
     """The run record of the 2x2 model (beta 10, Nmat 4, filling 0.5)."""
     context = _context() if context is None else context
-    return sc._so_run_inputs(_RUN_INPUT, _RUN_TRANSFER, None, 1, 10.0, _RUN_NMAT, 0.5,
+    return sc_so._so_run_inputs(_RUN_INPUT, _RUN_TRANSFER, None, 1, 10.0, _RUN_NMAT, 0.5,
                              context=context, bond=bond)
 
 
@@ -309,12 +319,12 @@ class TestRunRecord(unittest.TestCase):
 
     def test_context_required(self):
         with self.assertRaises(TypeError):
-            sc._so_run_inputs(_RUN_INPUT, _RUN_TRANSFER, None, 1, 10.0, _RUN_NMAT, 0.5)
+            sc_so._so_run_inputs(_RUN_INPUT, _RUN_TRANSFER, None, 1, 10.0, _RUN_NMAT, 0.5)
         with self.assertRaises(TypeError):
-            sc._SORun(_run().band, _run().state)
+            sc_so._SORun(_run().band, _run().state)
         for bad, name in ((None, "NoneType"), ("context", "str")):
             with self.assertRaises(ValueError) as cm:
-                sc._so_run_inputs(_RUN_INPUT, _RUN_TRANSFER, None, 1, 10.0, _RUN_NMAT,
+                sc_so._so_run_inputs(_RUN_INPUT, _RUN_TRANSFER, None, 1, 10.0, _RUN_NMAT,
                                   0.5, context=bad)
             self.assertEqual(
                 str(cm.exception),
@@ -328,13 +338,13 @@ class TestRunRecord(unittest.TestCase):
         ctx = _context()
         with mock.patch.object(so_bond, "so_bond_topology",
                                wraps=so_bond.so_bond_topology) as spy:
-            b = sc._so_bond_run(ctx, CELL, None)
+            b = sc_so._so_bond_run(ctx, CELL, None)
         self.assertEqual(spy.call_count, 1)
         self.assertIs(spy.call_args.args[0], ctx.compiled)
         self.assertEqual(spy.call_args.kwargs, {"max_shells": None})
         self.assertIs(_run(ctx, bond=b).bond, b)
         self.assertEqual(b.inputs.max_shells, -1)
-        self.assertEqual(sc._so_bond_run(ctx, CELL, 2).inputs.max_shells, 2)
+        self.assertEqual(sc_so._so_bond_run(ctx, CELL, 2).inputs.max_shells, 2)
         self.assertIs(b.inputs.slot_convention, so_bond.SLOT_CONVENTION)
         self.assertTrue(np.array_equal(b.inputs.delta_r, b.topo.delta_r))
         self.assertTrue(np.array_equal(b.inputs.reverse, b.topo.reverse))
@@ -344,38 +354,38 @@ class TestRunRecord(unittest.TestCase):
             b.topo.delta_r, b.topo.reverse, so_bond.SLOT_CONVENTION))
         # the cutoff refusal of the topology propagates
         with self.assertRaisesRegex(ValueError, r"max_shells=0 would drop"):
-            sc._so_bond_run(ctx, CELL, 0)
+            sc_so._so_bond_run(ctx, CELL, 0)
 
     def test_writer_bond_members(self):
         ctx = _context()
-        b = sc._so_bond_run(ctx, CELL, None)
+        b = sc_so._so_bond_run(ctx, CELL, None)
         run = _run(ctx, bond=b)
         run = run._replace(state=_finite_state(run))
         fp_green = "0" * 64
-        m = sc._so_writer_members("sc_so_bond_static", "test", run, fp_green, run.state)
+        m = sc_so._so_writer_members("sc_so_bond_static", "test", run, fp_green, run.state)
         self.assertEqual(set(m), fingerprint.required_members("gap", "sc_so_bond_static"))
         self.assertEqual(str(m["fp_resolved_topology"]), b.fp_resolved_topology)
         self.assertEqual(int(m["max_shells"]), -1)
         self.assertTrue(np.array_equal(m["delta_r"], b.inputs.delta_r))
         # an explicit bond overrides the run's
-        b2 = sc._so_bond_run(ctx, CELL, 1)
-        m2 = sc._so_writer_members("sc_so_bond_static", "test", run, fp_green, run.state,
+        b2 = sc_so._so_bond_run(ctx, CELL, 1)
+        m2 = sc_so._so_writer_members("sc_so_bond_static", "test", run, fp_green, run.state,
                                    bond=b2.inputs)
         self.assertEqual(int(m2["max_shells"]), 1)
         # the on-site stage takes no bond inputs, and records the sentinel
         with self.assertRaises(ValueError) as cm:
-            sc._so_writer_members("sc_so_static", "test", run, fp_green, run.state,
+            sc_so._so_writer_members("sc_so_static", "test", run, fp_green, run.state,
                                   bond=b.inputs)
         self.assertEqual(str(cm.exception), "_so_writer_members: stage sc_so_static is "
                                             "so_onsite and takes no bond inputs")
-        m0 = sc._so_writer_members("sc_so_static", "test", run, fp_green, run.state)
+        m0 = sc_so._so_writer_members("sc_so_static", "test", run, fp_green, run.state)
         self.assertEqual(set(m0), fingerprint.required_members("gap", "sc_so_static"))
         self.assertEqual(str(m0["fp_resolved_topology"]),
                          fingerprint.ONSITE_RESOLVED_SENTINEL)
 
     def test_check_archive_precedence(self):
         ctx = _context()
-        b = sc._so_bond_run(ctx, CELL, None)
+        b = sc_so._so_bond_run(ctx, CELL, None)
         cases = (
             (_run(ctx, bond=b), dict(need="so_onsite", run_bond=b.inputs),
              "_so_check_archive: run_bond applies to a so_bond consumer only"),
@@ -383,7 +393,7 @@ class TestRunRecord(unittest.TestCase):
              "_so_check_archive: a so_bond consumer needs the run's bond topology "
              "(so_run.bond)"),
             (_run(ctx, bond=b), dict(need="so_bond",
-                                     run_bond=sc._so_bond_run(ctx, CELL, 1).inputs),
+                                     run_bond=sc_so._so_bond_run(ctx, CELL, 1).inputs),
              "_so_check_archive: run_bond differs from the run's bond topology "
              "(so_run.bond.inputs)"),
         )
@@ -408,8 +418,8 @@ class TestRunRecord(unittest.TestCase):
             with self.subTest(text=text, field=field):
                 with mock.patch.object(fingerprint, "check_so_archive") as check:
                     with self.assertRaises(ValueError) as cm:
-                        sc._so_check_archive({}, "x.npz", run, "exact", "green",
-                                             sc._SO_FLEX_PRODUCER, **kw)
+                        sc_io._so_check_archive({}, "x.npz", run, "exact", "green",
+                                             sc_io._SO_FLEX_PRODUCER, **kw)
                 self.assertEqual(str(cm.exception), text)
                 check.assert_not_called()
         # the bond inputs reaching the archive check: the run's by default,
@@ -418,14 +428,14 @@ class TestRunRecord(unittest.TestCase):
                                       so_bond.SLOT_CONVENTION, -1)
         for kw in (dict(need="so_bond"), dict(need="so_bond", run_bond=same)):
             with mock.patch.object(fingerprint, "check_so_archive") as check:
-                sc._so_check_archive({}, "x.npz", _run(ctx, bond=b), "exact", "green",
-                                     sc._SO_FLEX_PRODUCER, **kw)
+                sc_io._so_check_archive({}, "x.npz", _run(ctx, bond=b), "exact", "green",
+                                     sc_io._SO_FLEX_PRODUCER, **kw)
             self.assertEqual(check.call_args.kwargs["need"], "so_bond")
             self.assertIs(check.call_args.kwargs["run_bond"],
                           kw.get("run_bond", b.inputs))
         with mock.patch.object(fingerprint, "check_so_archive") as check:
-            sc._so_check_archive({}, "x.npz", _run(ctx, bond=b), "exact", "green",
-                                 sc._SO_FLEX_PRODUCER)
+            sc_io._so_check_archive({}, "x.npz", _run(ctx, bond=b), "exact", "green",
+                                 sc_io._SO_FLEX_PRODUCER)
         self.assertEqual(check.call_args.kwargs["need"], "so_onsite")
         self.assertIsNone(check.call_args.kwargs["run_bond"])
 
@@ -468,11 +478,11 @@ class TestBondCapability(unittest.TestCase):
     def test_onsite_green_refused_for_bond_consumer(self):
         from tests.test_so_entry_rules import _PayloadReads
         ctx = _context()
-        run = _run(ctx, bond=sc._so_bond_run(ctx, CELL, None))
+        run = _run(ctx, bond=sc_so._so_bond_run(ctx, CELL, None))
         path = _onsite_green_archive(self, run)
         with _PayloadReads() as spy, np.load(path) as z:
             with self.assertRaises(fingerprint.SOArchiveError) as cm:
-                sc._so_check_archive(z, path, run, "exact", "green", sc._SO_FLEX_PRODUCER,
+                sc_io._so_check_archive(z, path, run, "exact", "green", sc_io._SO_FLEX_PRODUCER,
                                      need="so_bond")
         self.assertEqual(str(cm.exception),
                          "{} was produced by test FLEX producer (so_onsite), but this run "
@@ -482,11 +492,11 @@ class TestBondCapability(unittest.TestCase):
     def test_onsite_consumers_unchanged(self):
         from tests.test_so_entry_rules import _PayloadReads
         ctx = _context()
-        for run in (_run(ctx), _run(ctx, bond=sc._so_bond_run(ctx, CELL, None))):
+        for run in (_run(ctx), _run(ctx, bond=sc_so._so_bond_run(ctx, CELL, None))):
             path = _onsite_green_archive(self, run)
             with _PayloadReads() as spy, np.load(path) as z:
-                info = sc._so_check_archive(z, path, run, "exact", "green",
-                                            sc._SO_FLEX_PRODUCER)
+                info = sc_io._so_check_archive(z, path, run, "exact", "green",
+                                            sc_io._SO_FLEX_PRODUCER)
             self.assertEqual(info.producer_label, "test FLEX producer")
             self.assertEqual(spy.reads, [])
 
@@ -513,7 +523,7 @@ def _green_case(fixture, layout="auto"):
         p = F.prepare(fixture, d, eliashberg={"SO_Bond_Layout": layout})
     finally:
         shutil.rmtree(d, True)
-    out = sc._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys, filling=p.filling,
+    out = sc_bond._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys, filling=p.filling,
                             beta=p.beta, nmat=p.nmat, coeff_tail=p.cfg.coeff_tail)
     for a in (p.epsilon_k, out.eigenvalues, out.carrier.full_sc, out.carrier.deflated_kw,
               out.carrier.green0_tail):
@@ -554,7 +564,7 @@ class TestGreen(unittest.TestCase):
                 self.assertEqual(cfg.coeff_tail, 1.0)
                 self.assertEqual(out.carrier.coeff_tail_applied, 1.0)
                 self.assertEqual(out.carrier.source, "internal")
-                self.assertEqual(out.fp_green, sc._so_green_fp(G))
+                self.assertEqual(out.fp_green, sc_io._so_green_fp(G))
                 off = _off_sector(G)
                 if conserving:
                     self.assertTrue(np.all(off == 0))
@@ -602,7 +612,7 @@ class TestGreen(unittest.TestCase):
         eps = _green_case(fx, "dense")[1]
         with mock.patch.object(so_bond, "canonical_band_eigen",
                                wraps=so_bond.canonical_band_eigen) as spy:
-            again = sc._so_bond_green(eps, run_d, norb_phys=1, filling=fx.filling,
+            again = sc_bond._so_bond_green(eps, run_d, norb_phys=1, filling=fx.filling,
                                       beta=_BETA, nmat=_NMAT, coeff_tail=cfg_d.coeff_tail)
         self.assertEqual(spy.call_count, 1)
         self.assertIs(spy.call_args.kwargs["conserving"], True)
@@ -618,7 +628,7 @@ class TestGreen(unittest.TestCase):
         taken at build time), and coeff_tail must be the resolved value."""
         fx = F.ZEEMAN_EXTERN
         run, eps, cfg, _ = _green_case(fx)
-        out = sc._so_bond_green(eps, run, norb_phys=1, filling=fx.filling, beta=_BETA,
+        out = sc_bond._so_bond_green(eps, run, norb_phys=1, filling=fx.filling, beta=_BETA,
                                 nmat=_NMAT, coeff_tail=cfg.coeff_tail)
         c = out.carrier
         for name in ("full_sc", "deflated_kw", "green0_tail"):
@@ -627,9 +637,9 @@ class TestGreen(unittest.TestCase):
                 self.assertFalse(a.flags.writeable)
                 with self.assertRaises(ValueError):
                     a[(0,) * a.ndim] = 1.0
-        self.assertEqual(out.fp_green, sc._so_green_fp(c.full_sc))
+        self.assertEqual(out.fp_green, sc_io._so_green_fp(c.full_sc))
         with self.assertRaises(ValueError) as cm:
-            sc._so_bond_green(eps, run, norb_phys=1, filling=fx.filling, beta=_BETA,
+            sc_bond._so_bond_green(eps, run, norb_phys=1, filling=fx.filling, beta=_BETA,
                               nmat=_NMAT, coeff_tail=None)
         self.assertEqual(str(cm.exception),
                          "_so_bond_green: coeff_tail must be the resolved "
@@ -643,11 +653,11 @@ class TestGreen(unittest.TestCase):
         _, eps, _, out = _green_case(fx)
         hr = {(R, (0, 0)): complex(t) for R, t in fx.hopping}
         k = [np.linspace(0, 2.0 * np.pi, n, endpoint=False) for n in fx.shape]
-        w, _ = sc._calc_eigenvalues(sc._build_hamiltonian_k(*k, hr, 1))
-        mu_non_so = sc._determine_mu(w, _BETA, fx.filling, 1)
+        w, _ = sc_band._calc_eigenvalues(sc_band._build_hamiltonian_k(*k, hr, 1))
+        mu_non_so = sc_band._determine_mu(w, _BETA, fx.filling, 1)
         self.assertLessEqual(abs(out.mu - mu_non_so), 1e-13)
         # counting the spin-orbital eigenvalues over one orbital misses
-        self.assertGreater(abs(sc._determine_mu(out.eigenvalues, _BETA, fx.filling, 1)
+        self.assertGreater(abs(sc_band._determine_mu(out.eigenvalues, _BETA, fx.filling, 1)
                                - mu_non_so), 1e-3)
 
     def test_band_order_from_so_epsilon_k(self):
@@ -713,12 +723,12 @@ class TestWriteCase(unittest.TestCase):
         non_so = self._case(fx, mode={"ENABLE_SPIN_ORBITAL": False})
         self.assertEqual(self._spellings(non_so["mode"], "enable_spin_orbital"),
                          ["Enable_Spin_Orbital"])
-        self.assertIs(sc._resolve_spin_orbital_flag(non_so), False)
-        self.assertIs(sc._resolve_spin_orbital_flag(so), True)
-        geom, hr, tables = sc._read_interaction_files(non_so)
+        self.assertIs(sc_config._resolve_spin_orbital_flag(non_so), False)
+        self.assertIs(sc_config._resolve_spin_orbital_flag(so), True)
+        geom, hr, tables = sc_io._read_interaction_files(non_so)
         self.assertEqual(geom["norb"], 1)
         self.assertEqual(hr, {(R, (0, 0)): complex(t) for R, t in fx.hopping})
-        geom_so, hr_so, tables_so = sc._read_interaction_files(so)
+        geom_so, hr_so, tables_so = sc_io._read_interaction_files(so)
         self.assertEqual(geom_so["norb"], 2)
         self.assertEqual(len(hr_so), 2 * len(hr))
         self.assertEqual(tables, tables_so)
@@ -816,20 +826,20 @@ def _bridge_prepared(fixture):
 
 
 def _green_of(p):
-    return sc._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys,
+    return sc_bond._so_bond_green(p.epsilon_k, p.so_run, norb_phys=p.norb_phys,
                              filling=p.filling, beta=p.beta, nmat=p.nmat,
                              coeff_tail=p.cfg.coeff_tail)
 
 
 def _admit(p, method="arnoldi"):
-    return sc._admit_so_bond_static(
+    return sc_bond._admit_so_bond_static(
         p.so_run, cfg=p.cfg, cell=p.cell, nmat=p.nmat, nd=2 * p.norb_phys, shape=p.shape,
         solver_mode=p.solver_mode, num_eigenvalues=p.num_eigenvalues, max_iter=p.max_iter,
         spectral_shift=p.spectral_shift, eigenvalue_method=method, log=_BRIDGE_LOG)
 
 
 def _operator(p, so_green, adm):
-    return sc._build_so_bond_operator(p.so_run, adm, so_green, beta=p.beta, nmat=p.nmat,
+    return sc_bond._build_so_bond_operator(p.so_run, adm, so_green, beta=p.beta, nmat=p.nmat,
                                       g2_tail=p.cfg.g2_tail, norb_phys=p.norb_phys)
 
 
@@ -855,7 +865,7 @@ def _layout_of(p):
 
 def _gaps(fixture, count=2, seed=11):
     """``count`` seeded random fermion-antisymmetric gaps (full flat)."""
-    basis = sc._SOAntisymmetricBasis((fixture.nd, fixture.nd) + tuple(fixture.shape))
+    basis = sc_eigen._SOAntisymmetricBasis((fixture.nd, fixture.nd) + tuple(fixture.shape))
     rng = np.random.default_rng(seed)
     return [basis.to_full(rng.standard_normal(basis.dim) + 1j * rng.standard_normal(basis.dim))
             for _ in range(count)]
@@ -1142,7 +1152,7 @@ class TestKernelBridge(unittest.TestCase):
                 adm = _admit(p)
                 parts = _PartsSpy()
                 with mock.patch.object(so_bond, "so_bond_pairing_vertex_parts", parts):
-                    gamma_b, V = sc._so_bond_static_vertex(p.so_run, adm, so_green,
+                    gamma_b, V = sc_bond._so_bond_static_vertex(p.so_run, adm, so_green,
                                                            beta=p.beta, nmat=p.nmat)
                 v_bare, v_fluct = parts.calls[0]["out"]
                 vb0, vf0 = parts.calls[0]["copies"]
@@ -1207,7 +1217,7 @@ class TestKernelBridge(unittest.TestCase):
                 "eigenvalue_method = 'lanczos' is not available on the spin-orbital bond "
                 "path; only \"arnoldi\" is. Set eigenvalue_method = \"arnoldi\" (or remove "
                 "the key).")
-        self.assertEqual(sc._SO_BOND_METHOD_REFUSAL.format(method=repr("lanczos")), text)
+        self.assertEqual(sc_bond._SO_BOND_METHOD_REFUSAL.format(method=repr("lanczos")), text)
         for layout, fx in _BRIDGE.items():
             with self.subTest(layout=layout):
                 p = _bridge_prepared(fx)
@@ -1271,7 +1281,7 @@ class TestKernelBridge(unittest.TestCase):
                     a = getattr(c, n)
                     self.assertFalse(a.flags.writeable, n)
                     self.assertEqual(a.tobytes(), before[n].tobytes(), n)
-                self.assertEqual(so_green.fp_green, sc._so_green_fp(c.full_sc))
+                self.assertEqual(so_green.fp_green, sc_io._so_green_fp(c.full_sc))
 
     def test_bond_sz_residual(self):
         nd, B, nvol = 4, 3, 5
@@ -1338,9 +1348,9 @@ class TestKernelBridge(unittest.TestCase):
     def test_mutation_table(self):
         real_bubble = so_bond.so_bond_bubble
         real_g2 = bond_channels._g2_from_green
-        real_green = sc._build_bond_green
+        real_green = sc_bond._build_bond_green
         real_dress = so_bond.so_bond_dress
-        real_extern = sc._read_so_extern
+        real_extern = sc_io._read_so_extern
         nmat = _NMAT
         report = []
 
@@ -1410,7 +1420,7 @@ class TestKernelBridge(unittest.TestCase):
                 seen.append(args[5])
                 return real_green(*args[:5], 1.0, *args[6:], **kw)
             p, so_green, static = self._row("M3", F.SOC_ALL_TYPES,
-                                            [(sc, "_build_bond_green", m3)])
+                                            [(sc_bond, "_build_bond_green", m3)])
             self.assertEqual(seen, [0.5])
             self.assertEqual(so_green.carrier.coeff_tail_applied, 1.0)
             miss = bridge_b_miss(p, static)
@@ -1471,7 +1481,7 @@ class TestKernelBridge(unittest.TestCase):
                 table, name = real_extern(input_dict, norb_phys)
                 seen.append(dict(table))
                 return {k: -v for k, v in table.items()}, name
-            p, so_green, static = self._row("M6", fx, [(sc, "_read_so_extern", m6)],
+            p, so_green, static = self._row("M6", fx, [(sc_io, "_read_so_extern", m6)],
                                             reprepare=True)
             self.assertEqual(len(seen), 1)
             self.assertTrue(any(v != 0 for v in seen[0].values()))
@@ -1526,7 +1536,7 @@ def _solve_prepared(p, out_dir):
     """``sc._solve_so_bond_static`` on the prepared run ``p`` (its own
     [eliashberg] values; the outputs go to ``out_dir``)."""
     eli = p.eli_param
-    return sc._solve_so_bond_static(
+    return sc_static._solve_so_bond_static(
         p.input_dict, so_run=p.so_run, cfg=p.cfg, epsilon_k=p.epsilon_k, eli_param=eli,
         norb_phys=p.norb_phys, beta=p.beta, nmat=p.nmat, filling=p.filling, shape=p.shape,
         cell=p.cell, kx_array=p.kx, ky_array=p.ky, kz_array=p.kz, output_dir=out_dir,
@@ -1534,7 +1544,7 @@ def _solve_prepared(p, out_dir):
         num_eigenvalues=p.num_eigenvalues, eigenvalue_method="arnoldi",
         max_iter=p.max_iter, alpha=eli.get("alpha", 0.5),
         tol=eli.get("convergence_tol", 1.0e-5),
-        init_gap_mode=sc._resolve_init_gap(eli.get("init_gap"), "singlet"))
+        init_gap_mode=sc_config._resolve_init_gap(eli.get("init_gap"), "singlet"))
 
 
 def _solve_case(test, fixture, eliashberg=None):
@@ -1612,21 +1622,21 @@ class TestSolve(unittest.TestCase):
                 self.assertEqual(keys["gap_status"], "certified")
                 self.assertEqual(keys["pp_sector"], str(int(m["pp_sector"])))
                 self.assertEqual(keys["producer_stage"], "sc_so_bond_static")
-                self.assertEqual(keys["producer_label"], sc._SO_BOND_STATIC_LABEL)
+                self.assertEqual(keys["producer_label"], sc_static._SO_BOND_STATIC_LABEL)
                 self.assertNotIn("lambda_pp", keys)
-                self.assertEqual(sc._SO_BOND_STATIC_LABEL,
+                self.assertEqual(sc_static._SO_BOND_STATIC_LABEL,
                                  "hwave_sc (spin-orbital, bond, static)")
 
     def test_zero_gap_weights_nan_silently(self):
         p = _bridge_prepared(F.ZEEMAN_EXTERN)
         so_green = _green_of(p)
         shape = (p.fixture.nd, p.fixture.nd) + tuple(p.shape)
-        leg = sc.IterationLeg(float("nan"), None, 2, False, 0, (), "iteration")
-        report = sc._so_bond_report("iteration", None, leg, gap_shape=shape)
+        leg = sc_so.IterationLeg(float("nan"), None, 2, False, 0, (), "iteration")
+        report = sc_so._so_bond_report("iteration", None, leg, gap_shape=shape)
         self.assertEqual(report.gap_status, "none")
-        state = sc._so_own_state(so_green.eigenvalues, p.beta, so_green.mu, p.nmat,
+        state = sc_so._so_own_state(so_green.eigenvalues, p.beta, so_green.mu, p.nmat,
                                  p.so_run.state.target)
-        members = sc._so_writer_members("sc_so_bond_static", sc._SO_BOND_STATIC_LABEL,
+        members = sc_so._so_writer_members("sc_so_bond_static", sc_static._SO_BOND_STATIC_LABEL,
                                         p.so_run, so_green.fp_green, state,
                                         bond=p.so_run.bond.inputs)
         d = tempfile.mkdtemp(prefix="sc_so_bond_zero_")
@@ -1634,7 +1644,7 @@ class TestSolve(unittest.TestCase):
         import warnings
         with warnings.catch_warnings(), _quiet_logs():
             warnings.simplefilter("error")
-            sc._so_output_record(d, "gap.dat", p.norb_phys, None, None, None, None,
+            sc_so._so_output_record(d, "gap.dat", p.norb_phys, None, None, None, None,
                                  p.kx, p.ky, p.kz, sz_residual=0.0,
                                  provenance_members=members, bond_report=report,
                                  block_layout="sz_packed")
@@ -1656,13 +1666,16 @@ class TestSolve(unittest.TestCase):
         for layout, fx in _SOLVE.items():
             for mode in ("eigenvalue", "iteration", "both"):
                 with self.subTest(layout=layout, mode=mode), _quiet_logs():
-                    spies = {name: _Calls(getattr(sc, name)) for name in (
+                    spies = {name: _Calls(getattr(sc_so, name)) for name in (
                         "_so_solve_eigenvalue", "_so_solve_iteration", "_so_solve_sectors",
                         "_so_iterate_sectors", "_so_bond_report")}
                     init = _Calls(so_pairing.so_initial_gap)
                     with contextlib.ExitStack() as stack:
                         for name, spy in spies.items():
-                            stack.enter_context(mock.patch.object(sc, name, spy))
+                            # the bond solve calls them from static; so_solve
+                            # calls its own drivers from its namespace
+                            stack.enter_context(mock.patch.object(sc_static, name, spy))
+                            stack.enter_context(mock.patch.object(sc_so, name, spy))
                         stack.enter_context(mock.patch.object(so_pairing, "so_initial_gap",
                                                               init))
                         # a short iteration: the legs and the member policy are
@@ -1683,11 +1696,11 @@ class TestSolve(unittest.TestCase):
                     self.assertEqual(args[0], mode)
                     eigen, iteration = args[1], args[2]
                     if run_eigen:
-                        self.assertIsInstance(eigen, sc.EigenLeg)
+                        self.assertIsInstance(eigen, sc_so.EigenLeg)
                     else:
                         self.assertIsNone(eigen)
                     if run_iter:
-                        self.assertIsInstance(iteration, sc.IterationLeg)
+                        self.assertIsInstance(iteration, sc_so.IterationLeg)
                     else:
                         self.assertIsNone(iteration)
                     status = str(m["gap_status"])
@@ -1804,9 +1817,9 @@ class TestEntry(unittest.TestCase):
                 run = F.run_case(fx)
                 msgs = _messages(run.records)
                 topo_line = [i for i, m in enumerate(msgs) if m.startswith("Bond channels: B = ")]
-                pl = [i for i, m in enumerate(msgs) if m == sc._SO_BOND_PAIRLIFT_INFO]
-                b1 = [i for i, m in enumerate(msgs) if m == sc._SO_BOND_B1_INFO]
-                ladder = [i for i, m in enumerate(msgs) if m == sc._SO_BOND_RPA_LADDER]
+                pl = [i for i, m in enumerate(msgs) if m == sc_static._SO_BOND_PAIRLIFT_INFO]
+                b1 = [i for i, m in enumerate(msgs) if m == sc_static._SO_BOND_B1_INFO]
+                ladder = [i for i, m in enumerate(msgs) if m == sc_static._SO_BOND_RPA_LADDER]
                 cap = [i for i, m in enumerate(msgs) if m.startswith(_CAP_LINES)]
                 reason = [i for i, m in enumerate(msgs) if m.startswith("so bond layout: ")]
                 for found in (topo_line, ladder, cap, reason):
@@ -1820,14 +1833,14 @@ class TestEntry(unittest.TestCase):
                 for i in topo_line + pl + reason:
                     self.assertEqual(run.records[i].levelno, logging.INFO)
         self.assertEqual(
-            sc._SO_BOND_RPA_LADDER,
+            sc_static._SO_BOND_RPA_LADDER,
             "[eliashberg] bond_channels=true in spin-orbital mode is a STATIC RPA-ladder bond "
             "dressing on the BARE Green function built from the Transfer (and Extern) input. "
             "It demonstrates the qualitative V-dependence of the pairing eigenvalue; it is NOT "
             "a conserving FLEX result (the bond chi-bar is built here at RPA-ladder level), so "
             "absolute lambda values are not comparable with FLEX/dynamic references.")
         self.assertEqual(
-            sc._SO_BOND_PAIRLIFT_INFO,
+            sc_static._SO_BOND_PAIRLIFT_INFO,
             "off-site PairLift is included in the spin-orbital bond vertex (the "
             "non-spin-orbital bond paths omit it: it has no spin/charge content)")
 
@@ -1857,7 +1870,7 @@ class TestEntry(unittest.TestCase):
                 h = _Infos()
                 log.addHandler(h)
                 try:
-                    adm = sc._admit_so_bond_static(
+                    adm = sc_bond._admit_so_bond_static(
                         p.so_run, cfg=p.cfg, cell=p.cell, nmat=p.nmat, nd=fx.nd,
                         shape=p.shape, solver_mode=p.solver_mode,
                         num_eigenvalues=p.num_eigenvalues, max_iter=p.max_iter,
@@ -1877,10 +1890,16 @@ class TestEntry(unittest.TestCase):
             with self.subTest(fixture=fx.name):
                 with contextlib.ExitStack() as stack:
                     stack.enter_context(mock.patch.object(
-                        sc, "_read_bond_config",
+                        sc_static, "_read_bond_config",
                         side_effect=AssertionError("the non-spin-orbital bond reader ran")))
-                    spies = {name: stack.enter_context(mock.patch.object(
-                        sc, name, wraps=getattr(sc, name))) for name in legacy}
+                    # one spy per name, in every module of the package that
+                    # binds it (a call is made from the caller's namespace)
+                    spies = {}
+                    for name in legacy:
+                        homes = [m for m in _SC_MODULES if hasattr(m, name)]
+                        spies[name] = mock.Mock(wraps=getattr(homes[0], name))
+                        for m in homes:
+                            stack.enter_context(mock.patch.object(m, name, spies[name]))
                     get_backend = stack.enter_context(mock.patch.object(
                         backend, "get_backend", wraps=backend.get_backend))
                     topology = stack.enter_context(mock.patch.object(
@@ -1889,10 +1908,11 @@ class TestEntry(unittest.TestCase):
                         so_bond, "slot_geometry", wraps=so_bond.slot_geometry))
                     vertex = stack.enter_context(mock.patch.object(
                         so_bond, "so_bond_vertex", wraps=so_bond.so_bond_vertex))
-                    run_inputs = _Returns(sc._so_run_inputs)
-                    stack.enter_context(mock.patch.object(sc, "_so_run_inputs", run_inputs))
+                    run_inputs = _Returns(sc_so._so_run_inputs)
+                    stack.enter_context(mock.patch.object(sc_static, "_so_run_inputs", run_inputs))
                     writer = stack.enter_context(mock.patch.object(
-                        sc, "_so_writer_members", wraps=sc._so_writer_members))
+                        sc_static, "_so_writer_members", wraps=sc_so._so_writer_members))
+                    stack.enter_context(mock.patch.object(sc_so, "_so_writer_members", writer))
                     run = F.run_case(fx, fresh=True, eliashberg={"Gpu": True})
                 self.assertTrue(np.isfinite(run.value))
                 self.assertEqual(str(run.gap_npz["block_layout"]), layout)
@@ -1919,7 +1939,7 @@ class TestEntry(unittest.TestCase):
         d = tempfile.mkdtemp(prefix="sc_so_bond_gpu_")
         self.addCleanup(shutil.rmtree, d, True)
         inp = F.write_case(d, F.SOC_ALL_TYPES, eliashberg={"GPU_Required": True})
-        with mock.patch.object(sc, "_read_interaction_files",
+        with mock.patch.object(sc_static, "_read_interaction_files",
                                side_effect=AssertionError("a file was read")), \
                 mock.patch.object(backend, "get_backend",
                                   side_effect=AssertionError("a backend was selected")):
@@ -2001,7 +2021,7 @@ class TestFlip(unittest.TestCase):
                     "\"flex\" (the chiq and green of a spin-orbital FLEX run).".format(value))
         eli = {"Bond_Channels": True, "Chi0q_Mode": "flex"}
         so_pairing.check_so_config(_config(eli))
-        self.assertEqual(self._refusal(sc._read_so_bond_config, CaseInsensitiveDict(eli)),
+        self.assertEqual(self._refusal(sc_config._read_so_bond_config, CaseInsensitiveDict(eli)),
                          _SO_BOND_FLEX_REFUSAL)
 
     def test_offsite_accepted_with_bond_channels(self):
@@ -2066,28 +2086,28 @@ def _solve_leg(p, static, mode):
     which traces the production run, is the guard against the drift."""
     nd = 2 * p.norb_phys
     gap_shape = (nd, nd) + tuple(p.shape)
-    shift = sc._resolve_spectral_shift(p.spectral_shift, mode)
+    shift = sc_eigen._resolve_spectral_shift(p.spectral_shift, mode)
     if mode == "iteration":
-        sigma = so_pairing.so_initial_gap(sc._resolve_init_gap(p.eli_param.get("init_gap"),
+        sigma = so_pairing.so_initial_gap(sc_config._resolve_init_gap(p.eli_param.get("init_gap"),
                                                                "singlet"),
                                           p.norb_phys, p.kx, p.ky, p.kz)
-        sigma = sc._project_gap_parity(sigma, "triplet")
+        sigma = sc_eigen._project_gap_parity(sigma, "triplet")
         sigma = sigma / np.linalg.norm(sigma)
     if static.layout == "dense":
         if mode == "iteration":
-            sc._so_solve_iteration(static.operator, static.basis, sigma, p.max_iter, 0.5,
+            sc_so._so_solve_iteration(static.operator, static.basis, sigma, p.max_iter, 0.5,
                                    1.0e-5, spectral_shift=shift, info_out={})
             return None
         info = {}
-        sc._so_solve_eigenvalue(static.operator, static.basis, p.num_eigenvalues, "arnoldi",
+        sc_so._so_solve_eigenvalue(static.operator, static.basis, p.num_eigenvalues, "arnoldi",
                                 sigma_shift=None, spectral_shift=shift, info_out=info)
         return info["selection"]
     ops = tuple(static.kernel.sector_op(q) for q in (1, 0, -1))
     if mode == "iteration":
-        sc._so_iterate_sectors(ops, sigma, gap_shape=gap_shape, max_iter=p.max_iter,
+        sc_so._so_iterate_sectors(ops, sigma, gap_shape=gap_shape, max_iter=p.max_iter,
                                alpha=0.5, tol=1.0e-5, spectral_shift=shift)
     else:
-        sc._so_solve_sectors(ops, p.num_eigenvalues, "arnoldi", gap_shape=gap_shape,
+        sc_so._so_solve_sectors(ops, p.num_eigenvalues, "arnoldi", gap_shape=gap_shape,
                              spectral_shift=shift)
     return None
 
@@ -2119,15 +2139,15 @@ def traced_phases(p, mode, green_fn=None):
         so_green = (_green_of if green_fn is None else green_fn)(p)
         measured["green_static"] = tracemalloc.get_traced_memory()[1]
         tracemalloc.reset_peak()
-        gamma_b, V = sc._so_bond_static_vertex(p.so_run, adm, so_green, beta=p.beta,
+        gamma_b, V = sc_bond._so_bond_static_vertex(p.so_run, adm, so_green, beta=p.beta,
                                                nmat=p.nmat)
         measured["pairing_static"] = tracemalloc.get_traced_memory()[1]
         del gamma_b
         tracemalloc.reset_peak()
-        G2 = sc._so_bond_static_g2(so_green, beta=p.beta, g2_tail=p.cfg.g2_tail)
+        G2 = sc_bond._so_bond_static_g2(so_green, beta=p.beta, g2_tail=p.cfg.g2_tail)
         measured["g2_static"] = tracemalloc.get_traced_memory()[1]
         tracemalloc.reset_peak()
-        static = sc._so_bond_static_kernel(p.so_run, adm, V, G2, so_green, beta=p.beta,
+        static = sc_bond._so_bond_static_kernel(p.so_run, adm, V, G2, so_green, beta=p.beta,
                                            norb_phys=p.norb_phys)
         measured["kernel_static"] = tracemalloc.get_traced_memory()[1]
         tracemalloc.reset_peak()
@@ -2252,9 +2272,9 @@ class TestAdmission(unittest.TestCase):
         if tracemalloc.is_tracing():
             raise unittest.SkipTest("tracemalloc is already tracing")
         seen = {}
-        real_admit, real_green = sc._admit_so_bond_static, sc._so_bond_green
-        real_operator = sc._build_so_bond_operator
-        real_record, real_save = sc._so_output_record, sc._save_results
+        real_admit, real_green = sc_bond._admit_so_bond_static, sc_bond._so_bond_green
+        real_operator = sc_bond._build_so_bond_operator
+        real_record, real_save = sc_so._so_output_record, sc_output._save_results
         real_savez = np.savez
 
         def admit(*args, **kw):
@@ -2289,10 +2309,12 @@ class TestAdmission(unittest.TestCase):
             tracemalloc.stop()
             return out
 
-        patches = ((sc, "_admit_so_bond_static", admit), (sc, "_so_bond_green", green),
-                   (sc, "_build_so_bond_operator", operator),
-                   (sc, "_so_output_record", record), (np, "savez", savez),
-                   (sc, "_save_results", save))
+        # the bond solve (static) calls all five from its own namespace
+        patches = ((sc_static, "_admit_so_bond_static", admit),
+                   (sc_static, "_so_bond_green", green),
+                   (sc_static, "_build_so_bond_operator", operator),
+                   (sc_static, "_so_output_record", record), (np, "savez", savez),
+                   (sc_static, "_save_results", save))
         for layout, fixture in _ADM.items():
             seen.clear()
             with self.subTest(layout=layout):
@@ -2323,9 +2345,9 @@ class TestAdmission(unittest.TestCase):
                                 "listing")
 
     def test_over_cap_refused_before_carrier(self):
-        green = _Calls(sc._build_bond_green)
+        green = _Calls(sc_bond._build_bond_green)
         vertex = _Calls(so_bond.so_bond_vertex)
-        with mock.patch.object(sc, "_build_bond_green", green), \
+        with mock.patch.object(sc_bond, "_build_bond_green", green), \
                 mock.patch.object(so_bond, "so_bond_vertex", vertex), _quiet_logs():
             with self.assertRaises(ValueError) as cm:
                 F.run_case(_ADM["dense"], fresh=True,
@@ -2432,7 +2454,8 @@ def _exit_status(value):
         path = os.path.join(d, "in.toml")
         with open(path, "w") as f:
             f.write("[mode]\nmode = \"SC\"\n")
-        with mock.patch.object(sc, "calc_eliashberg", return_value=value), \
+        # main (static) calls calc_eliashberg from its own namespace
+        with mock.patch.object(sc_static, "calc_eliashberg", return_value=value), \
                 mock.patch("sys.argv", ["hwave_sc", "-q", path]), \
                 mock.patch("logging.basicConfig"), _quiet_logs():
             try:
@@ -2456,18 +2479,18 @@ def _policy_rows(shape):
     g = [gap() for _ in range(6)]
     nan = float("nan")
     zeros = np.zeros(shape, dtype=complex)
-    e_ok = sc.EigenLeg(np.array([0.5, 0.2], complex), np.array([g[0], g[1]]),
+    e_ok = sc_so.EigenLeg(np.array([0.5, 0.2], complex), np.array([g[0], g[1]]),
                        np.array([0, 1], np.int8), True, 0.5 + 0j, "+1:dense-LR;0:dense-LR", ())
-    e_unconv = sc.EigenLeg(np.array([0.2], complex), np.array([g[1]]), np.array([1], np.int8),
+    e_unconv = sc_so.EigenLeg(np.array([0.2], complex), np.array([g[1]]), np.array([1], np.int8),
                            False, complex(nan), "+1:dense-LR;0:not-converged", (0,))
-    e_sentinel = sc.EigenLeg.from_dense(np.full(2, nan + 0j), np.array([g[2], g[3]]),
+    e_sentinel = sc_so.EigenLeg.from_dense(np.full(2, nan + 0j), np.array([g[2], g[3]]),
                                         selection="not-converged")
-    e_empty = sc.EigenLeg(np.zeros(0, complex), np.zeros((0,) + shape, complex),
+    e_empty = sc_so.EigenLeg(np.zeros(0, complex), np.zeros((0,) + shape, complex),
                           np.zeros(0, np.int8), False, complex(nan),
                           "+1:empty;0:empty;-1:empty", ())
-    i_ok = sc.IterationLeg(0.45, g[4], 0, True, 12, (), "iteration")
-    i_unconv = sc.IterationLeg(nan, g[5], -1, False, 50, (-1,), "iteration")
-    i_none = sc.IterationLeg(nan, None, 2, False, 0, (), "iteration")
+    i_ok = sc_so.IterationLeg(0.45, g[4], 0, True, 12, (), "iteration")
+    i_unconv = sc_so.IterationLeg(nan, g[5], -1, False, 50, (-1,), "iteration")
+    i_none = sc_so.IterationLeg(nan, None, 2, False, 0, (), "iteration")
     L, B = _LIT_WITH_LISTING, _LIT_BASE
     return (
         ("eigenvalue converged", "eigenvalue", e_ok, None, "certified", L, g[0], 2, True),
@@ -2496,17 +2519,17 @@ def _null_sector_op(op):
     n = op.basis.n
     zero = LinearOperator((n, n), matvec=lambda x: np.zeros(n, complex),
                           rmatvec=lambda y: np.zeros(n, complex), dtype=complex)
-    return sc.SectorOp(op.pp_sector, zero, op.basis, True)
+    return sc_so.SectorOp(op.pp_sector, zero, op.basis, True)
 
 
 def _empty_sector_op(kernel, op):
     """``op`` with an empty fermion-antisymmetric gap space."""
     from scipy.sparse.linalg import LinearOperator
-    basis = sc._SOAntisymmetricBasis.from_subset(kernel.gap_shape, np.zeros(0, np.int64),
-                                                 reverse=sc._reverse_k_and_orbital)
+    basis = sc_eigen._SOAntisymmetricBasis.from_subset(kernel.gap_shape, np.zeros(0, np.int64),
+                                                 reverse=sc_eigen._reverse_k_and_orbital)
     zero = LinearOperator((0, 0), matvec=lambda x: np.zeros(0, complex),
                           rmatvec=lambda y: np.zeros(0, complex), dtype=complex)
-    return sc.SectorOp(op.pp_sector, zero, basis, True)
+    return sc_so.SectorOp(op.pp_sector, zero, basis, True)
 
 
 @contextlib.contextmanager
@@ -2530,7 +2553,7 @@ def patched_sectors(null=(), empty=()):
 #: the antisymmetric dimension of the Zeeman fixture's pair-S_z 0 sector
 #: (the leader's; the +1 and -1 sectors have 6)
 ZEEMAN_DIM_PP0 = 16
-_REAL_DENSE_EIGEN = sc._so_dense_reduced_eigen
+_REAL_DENSE_EIGEN = sc_so._so_dense_reduced_eigen
 
 
 def eigen_fails(dim):
@@ -2540,13 +2563,13 @@ def eigen_fails(dim):
         if d == dim:
             raise np.linalg.LinAlgError("forced")
         return _REAL_DENSE_EIGEN(red, d, k, seed_vec)
-    return mock.patch.object(sc, "_so_dense_reduced_eigen", fake)
+    return mock.patch.object(sc_so, "_so_dense_reduced_eigen", fake)
 
 
 def empty_gap_warnings(run):
     """How many times ``run`` logged the empty gap space WARNING."""
     return sum(1 for r in run.records
-               if r.levelno == logging.WARNING and r.getMessage() == sc._SO_BOND_EMPTY_GAP)
+               if r.levelno == logging.WARNING and r.getMessage() == sc_static._SO_BOND_EMPTY_GAP)
 
 
 def reporting_cell(test, fixture, mode, *, layout="auto", patches=()):
@@ -2600,9 +2623,9 @@ class TestOutputs(unittest.TestCase):
         p = _bridge_prepared(F.ZEEMAN_EXTERN)
         so_green = _green_of(p)
         shape = (p.fixture.nd, p.fixture.nd) + tuple(p.shape)
-        state = sc._so_own_state(so_green.eigenvalues, p.beta, so_green.mu, p.nmat,
+        state = sc_so._so_own_state(so_green.eigenvalues, p.beta, so_green.mu, p.nmat,
                                  p.so_run.state.target)
-        members = sc._so_writer_members("sc_so_bond_static", sc._SO_BOND_STATIC_LABEL,
+        members = sc_so._so_writer_members("sc_so_bond_static", sc_static._SO_BOND_STATIC_LABEL,
                                         p.so_run, so_green.fp_green, state,
                                         bond=p.so_run.bond.inputs)
         # the literal sets are the ones the run's own policy names
@@ -2612,13 +2635,13 @@ class TestOutputs(unittest.TestCase):
         self.assertEqual(len(rows), 10)
         for name, mode, eigen, iteration, status, want, want_gap, n_sz, finite in rows:
             with self.subTest(row=name):
-                report = sc._so_bond_report(mode, eigen, iteration, gap_shape=shape)
+                report = sc_so._so_bond_report(mode, eigen, iteration, gap_shape=shape)
                 self.assertEqual(report.gap_status, status)
                 d = tempfile.mkdtemp(prefix="sc_so_bond_policy_")
                 self.addCleanup(shutil.rmtree, d, True)
                 match = (np.ones(len(report.vals), dtype=bool) if len(report.vals) else None)
                 with _quiet_logs():
-                    sc._so_output_record(d, "gap.dat", p.norb_phys, None, None, None, match,
+                    sc_so._so_output_record(d, "gap.dat", p.norb_phys, None, None, None, match,
                                          p.kx, p.ky, p.kz, sz_residual=0.0,
                                          provenance_members=members, bond_report=report,
                                          block_layout="sz_packed")
@@ -2677,12 +2700,12 @@ class TestOutputs(unittest.TestCase):
         the reported sector's iteration: its Rayleigh residual (a number) and
         its own step count."""
         seen = []
-        real = sc._so_iterate_sectors
+        real = sc_so._so_iterate_sectors
 
         def spy(*args, **kw):
             seen.append(real(*args, **kw))
             return seen[-1]
-        with mock.patch.object(sc, "_so_iterate_sectors", spy):
+        with mock.patch.object(sc_static, "_so_iterate_sectors", spy):
             run = F.run_case(F.ZEEMAN_EXTERN, fresh=True, param={"Nmat": 8},
                              eliashberg={"Solver_Mode": "iteration"})
         it, = seen
@@ -2765,8 +2788,8 @@ class TestOutputs(unittest.TestCase):
     def test_onsite_path_never_enters_bond_code(self):
         solve = mock.Mock(side_effect=AssertionError("the bond solve was entered"))
         admit = mock.Mock(side_effect=AssertionError("the bond admission was entered"))
-        with mock.patch.object(sc, "_solve_so_bond_static", solve), \
-                mock.patch.object(sc, "_admit_so_bond_static", admit):
+        with mock.patch.object(sc_static, "_solve_so_bond_static", solve), \
+                mock.patch.object(sc_static, "_admit_so_bond_static", admit):
             run = F.run_case(F.SOC_ONSITE, fresh=True, eliashberg=_ONSITE_ELI)
         self.assertEqual((solve.call_count, admit.call_count), (0, 0))
         self.assertTrue(np.isfinite(run.value))
@@ -2778,11 +2801,11 @@ class TestOutputs(unittest.TestCase):
             run = F.run_case(F.ZEEMAN_EXTERN, fresh=True,
                              eliashberg={"Solver_Mode": "iteration"})
         self.assertEqual(
-            sc._SO_BOND_EMPTY_GAP,
+            sc_static._SO_BOND_EMPTY_GAP,
             "spin-orbital bond pairing: no pair-S_z sector has a fermion-antisymmetric gap "
             "space on this k grid; no gap is reported (gap_status = \"none\")")
         msgs = [r.getMessage() for r in run.records if r.levelno == logging.WARNING]
-        self.assertEqual(msgs.count(sc._SO_BOND_EMPTY_GAP), 1, msgs)
+        self.assertEqual(msgs.count(sc_static._SO_BOND_EMPTY_GAP), 1, msgs)
         m = run.gap_npz
         self.assertTrue(np.isnan(run.value))
         self.assertEqual(str(m["gap_status"]), "none")
@@ -2850,7 +2873,7 @@ def _su2_inputs(fixture, layout):
         if layout != "auto":
             eli["SO_Bond_Layout"] = layout
         p = F.prepare(fixture, d, eliashberg=eli)
-        geom_info, _, interactions = sc._read_interaction_files(p.input_dict)
+        geom_info, _, interactions = sc_io._read_interaction_files(p.input_dict)
     finally:
         shutil.rmtree(d, True)
     return p, geom_info, interactions
@@ -2867,15 +2890,15 @@ def nonso_kernels(test, p, geom_info, interactions):
     eps = p.epsilon_k
     test.assertEqual(float(np.abs(eps[:n, n:]).max()), 0.0)
     test.assertEqual(float(np.abs(eps[n:, n:] - eps[:n, :n]).max()), 0.0)
-    ev, evec = sc._calc_eigenvalues(np.ascontiguousarray(eps[:n, :n]))
-    mu = sc._determine_mu(ev, p.beta, p.filling, n)
-    topo, _, split = sc._resolve_bond_topology(interactions, geom_info, n, None)
-    carrier = sc._build_bond_green(ev, evec, mu, p.beta, p.nmat, p.cfg.coeff_tail, None,
+    ev, evec = sc_band._calc_eigenvalues(np.ascontiguousarray(eps[:n, :n]))
+    mu = sc_band._determine_mu(ev, p.beta, p.filling, n)
+    topo, _, split = sc_bond._resolve_bond_topology(interactions, geom_info, n, None)
+    carrier = sc_bond._build_bond_green(ev, evec, mu, p.beta, p.nmat, p.cfg.coeff_tail, None,
                                    spin_orbital_mode=False)
     test.assertEqual(carrier.coeff_tail_applied, 0.5)
     ops = {}
     for eta in ("singlet", "triplet"):
-        (A, size), _, _ = sc._build_bond_operator(
+        (A, size), _, _ = sc_bond._build_bond_operator(
             topo, split, carrier, n, p.kx, p.ky, p.kz, p.beta, eta,
             bond_max_shells=None, bond_memory_cap_gb=8.0, g2_tail=p.cfg.g2_tail)
         test.assertEqual(size, n * n * int(np.prod(p.shape)))
@@ -2890,7 +2913,7 @@ def parity_bases(norb, shape):
     ``u``, ``E_-`` the columns ``(e_u - e_Pu) / sqrt 2`` for ``u < Pu``."""
     gshape = (norb, norb) + tuple(shape)
     n = int(np.prod(gshape))
-    partner = sc._reverse_k_and_orbital(np.arange(n).reshape(gshape)).ravel()
+    partner = sc_eigen._reverse_k_and_orbital(np.arange(n).reshape(gshape)).ravel()
     plus, minus = [], []
     for u in range(n):
         pu = int(partner[u])
@@ -2952,7 +2975,7 @@ def su2_match(test, fixture, layout):
     test.assertEqual(n_self, n * so_bond.n_trim(p.shape))
     Ks, Kt = _projected(K["singlet"], Ep), _projected(K["triplet"], Em)
     mats = so_reduced_matrices(static)
-    full = sc._SOAntisymmetricBasis((2 * n, 2 * n) + tuple(p.shape))
+    full = sc_eigen._SOAntisymmetricBasis((2 * n, 2 * n) + tuple(p.shape))
     test.assertEqual(full.dim, 2 * n_phi - n_self)
     test.assertEqual(sum(m.shape[0] for m in mats), full.dim)
     test.assertEqual(Ks.shape[0] + 3 * Kt.shape[0], full.dim)
@@ -3342,7 +3365,7 @@ def entry_spectra(test, fixture, layout, H=ZF_H):
     ``H`` in ``layout``: the complete listings (``num_eigenvalues`` above
     the antisymmetric dimension, every solve dense) and the listed
     eigenvectors at ``H[0]`` (columns, full flat gap)."""
-    dim = sc._SOAntisymmetricBasis((fixture.nd, fixture.nd) + tuple(fixture.shape)).dim
+    dim = sc_eigen._SOAntisymmetricBasis((fixture.nd, fixture.nd) + tuple(fixture.shape)).dim
     lams, vecs0 = [], None
     for h in H:
         with _quiet_logs():
@@ -3466,16 +3489,16 @@ class TestZeroField(unittest.TestCase):
         2) fails, in both layouts (the Green-function oracle is off here).
         The replacement band is asserted to have received the Extern table
         at every nonzero field."""
-        real = sc._so_epsilon_k
+        real = sc_so._so_epsilon_k
         fields = []
 
         def no_sigma_z(input_dict, kx, ky, kz, hr, extern_table, norb_phys):
             eps = real(input_dict, kx, ky, kz, hr, None, norb_phys)
-            coeff = sc._so_coeff_extern(input_dict)
+            coeff = sc_so._so_coeff_extern(input_dict)
             fields.append((coeff, extern_table is not None))
             if extern_table is not None:
                 n = norb_phys
-                h1 = coeff * sc._build_hamiltonian_k(kx, ky, kz, extern_table, n)
+                h1 = coeff * sc_band._build_hamiltonian_k(kx, ky, kz, extern_table, n)
                 eps[:n, :n] += h1
                 eps[n:, n:] += h1
             return eps
@@ -3483,7 +3506,7 @@ class TestZeroField(unittest.TestCase):
         for layout in ("dense", "auto"):
             with self.subTest(layout=layout):
                 fields.clear()
-                with mock.patch.object(sc, "_so_epsilon_k", no_sigma_z):
+                with mock.patch.object(sc_so, "_so_epsilon_k", no_sigma_z):
                     lams, vecs0, _ = zero_field_spectra(self, ZF_4X2, layout, oracle=False)
                 self.assertEqual(sorted(set(fields)), [(h, True) for h in ZF_H])
                 m = Z.zero_field_measures(lams, vecs0, shape, ZF_4X2.norb_phys, ZF_H)
@@ -3675,7 +3698,7 @@ def independent_chain(p, layout):
         kernel = so_bond.PackedBondPairKernel(
             so_bond.PackedArrays(sm, tuple(b[None] for b in V.blocks)), G2, geom, sm,
             plan=plan, spatial_shape=shape, beta=p.beta, nfreq=1, host_cap=None)
-        static = sc._SOBondStatic(layout, reason, geom, plan, None, None, kernel, 0.0,
+        static = sc_bond._SOBondStatic(layout, reason, geom, plan, None, None, kernel, 0.0,
                                   float(so_bond.green_leak(carrier.full_sc, p.norb_phys,
                                                            axes=(0, 1))))
     else:
@@ -3686,10 +3709,10 @@ def independent_chain(p, layout):
             vertex, G2, geom, xp=np, spatial_shape=shape, norb=nd, beta=p.beta, nfreq=1,
             V_inst=None, residency="host", host_cap=np.inf)
         n = nd * nd * nvol
-        static = sc._SOBondStatic(
+        static = sc_bond._SOBondStatic(
             layout, reason, geom, plan, LinearOperator((n, n), matvec=kernel.matvec,
                                                        dtype=complex),
-            sc._SOAntisymmetricBasis((nd, nd) + shape), None,
+            sc_eigen._SOAntisymmetricBasis((nd, nd) + shape), None,
             float(so_pairing.bond_sz_conservation_residual(V, nd=nd, B=geom.B)),
             float(so_bond.green_leak(carrier.full_sc, p.norb_phys, axes=(0, 1))))
     return static, {"bubble": X, "chi": chi, "V": V, "green": carrier.full_sc}
@@ -3788,14 +3811,14 @@ class TestNonSU2Bonds(unittest.TestCase):
 #: topology, the memory admission and the Green function (the first bond
 #: array)
 _ENTRY_STAGES = (
-    (sc, "_read_so_bond_config"), (sc, "_read_interaction_files"),
-    (spin_orbital, "build_so_entry_context"), (sc, "_so_bond_run"),
-    (sc, "_admit_so_bond_static"), (sc, "_so_bond_green"))
+    (sc_static, "_read_so_bond_config"), (sc_static, "_read_interaction_files"),
+    (spin_orbital, "build_so_entry_context"), (sc_static, "_so_bond_run"),
+    (sc_static, "_admit_so_bond_static"), (sc_static, "_so_bond_green"))
 _STAGE_NAMES = tuple(name for _, name in _ENTRY_STAGES)
 #: the non-spin-orbital bond readers and guards, and the backend selection
 #: (which a bond run skips)
-_NON_SO_STAGES = ((sc, "_read_bond_config"), (sc, "_validate_bond_prereqs"),
-                  (sc, "_check_nonbond_offsite"), (backend, "get_backend"))
+_NON_SO_STAGES = ((sc_static, "_read_bond_config"), (sc_static, "_validate_bond_prereqs"),
+                  (sc_static, "_check_nonbond_offsite"), (backend, "get_backend"))
 #: fragments of the non-spin-orbital bond refusals
 _NON_SO_FRAGMENTS = ("bond_channels=true is incompatible", "bond_channels=true requires",
                      "must be a positive finite number")
@@ -3919,11 +3942,11 @@ def _admission_refusal(fixture, eliashberg):
     try:
         with _quiet_logs():
             p = F.prepare(fixture, d, eliashberg=eliashberg)
-            sc._admit_so_bond_static(
+            sc_bond._admit_so_bond_static(
                 p.so_run, cfg=p.cfg, cell=p.cell, nmat=p.nmat, nd=fixture.nd, shape=p.shape,
                 solver_mode=p.solver_mode, num_eigenvalues=p.num_eigenvalues,
                 max_iter=p.max_iter, spectral_shift=p.spectral_shift,
-                eigenvalue_method="arnoldi", log=sc.logger)
+                eigenvalue_method="arnoldi", log=sc_static.logger)
     except ValueError as err:
         return str(err)
     finally:
@@ -4056,7 +4079,7 @@ WARNING_ROWS = (
     ("chi0q_tensor", {}, {"Chi0q_Tensor": "reduced"},
      _SO_BOND_CHI0Q_UNUSED % ("unset", "reduced")),
     ("flex_chi_c", {}, {"Flex_Chi_C": "x.npz"}, _SO_BOND_FLEX_KEYS_UNUSED % ("Flex_Chi_C",)),
-    ("sigma_shift (packed)", {}, {"Sigma_Shift": 0.1}, sc._SIGMA_SHIFT_IGNORED),
+    ("sigma_shift (packed)", {}, {"Sigma_Shift": 0.1}, sc_eigen._SIGMA_SHIFT_IGNORED),
 )
 #: the cheap state point of the warning runs (a fixed cap: no cap WARNING)
 _WARN_PARAM = {"Nmat": 8}
@@ -4092,7 +4115,7 @@ class TestWarningMatrix(unittest.TestCase):
             eli.update(e)
         run = F.run_case(ZEEMAN_PAIRHOP, fresh=True, param=param, eliashberg=eli)
         check_completed(self, run)
-        want = [text for _, _, _, text in WARNING_ROWS] + [sc._SO_BOND_RPA_LADDER]
+        want = [text for _, _, _, text in WARNING_ROWS] + [sc_static._SO_BOND_RPA_LADDER]
         self.assertEqual(sorted(warning_messages(run)), sorted(want))
 
     def test_each_warning_row(self):
@@ -4103,7 +4126,7 @@ class TestWarningMatrix(unittest.TestCase):
                 run = F.run_case(fx, fresh=True, param=dict(_WARN_PARAM, **param),
                                  eliashberg=dict(_WARN_ELI, **eli))
                 check_completed(self, run)
-                want = [sc._SO_BOND_RPA_LADDER] + ([] if text is None else [text])
+                want = [sc_static._SO_BOND_RPA_LADDER] + ([] if text is None else [text])
                 self.assertEqual(sorted(warning_messages(run)), sorted(want))
 
     def test_layout_key_with_bond_off(self):
@@ -4114,31 +4137,31 @@ class TestWarningMatrix(unittest.TestCase):
         self.assertIsNotNone(run.eigenvalue_dat)
         self.assertNotIn("block_layout", run.gap_npz)
         warned = warning_messages(run)
-        self.assertEqual(warned.count(sc._SO_BOND_LAYOUT_IGNORED), 1, warned)
-        self.assertNotIn(sc._SO_BOND_RPA_LADDER, warned)
+        self.assertEqual(warned.count(sc_config._SO_BOND_LAYOUT_IGNORED), 1, warned)
+        self.assertNotIn(sc_static._SO_BOND_RPA_LADDER, warned)
 
     def test_sigma_shift_text_shared(self):
         """One sigma_shift WARNING text for every eigenvalue solve that takes
         sigma_shift: the ARPACK path, the dense spin-orbital branch and the
         S_z-packed sector solve (the row above)."""
         from scipy.sparse.linalg import aslinearoperator
-        self.assertEqual(sc._SIGMA_SHIFT_IGNORED, (
+        self.assertEqual(sc_eigen._SIGMA_SHIFT_IGNORED, (
             "[eliashberg] sigma_shift is ignored for eigenvalue_method='arnoldi' (it targets "
             "the shift-invert methods); use spectral_shift to bias the arnoldi selection."))
         n = 12
         A = np.diag(np.arange(1.0, n + 1)).astype(complex)
         op = aslinearoperator(A)
-        basis = sc._SOAntisymmetricBasis((2, 2, 3, 1, 1))
+        basis = sc_eigen._SOAntisymmetricBasis((2, 2, 3, 1, 1))
         calls = (
-            ("ARPACK", lambda: sc._solve_leading(lambda: (op, n), n, "arnoldi",
+            ("ARPACK", lambda: sc_eigen._solve_leading(lambda: (op, n), n, "arnoldi",
                                                  num_eigenvalues=2, sigma_shift=0.1)),
-            ("dense spin-orbital", lambda: sc._so_solve_eigenvalue(
+            ("dense spin-orbital", lambda: sc_so._so_solve_eigenvalue(
                 aslinearoperator(np.eye(basis.n, dtype=complex)), basis, basis.dim, "arnoldi",
                 sigma_shift=0.1)))
         for name, call in calls:
-            with self.subTest(solve=name), self.assertLogs(sc.logger, "WARNING") as cm:
+            with self.subTest(solve=name), self.assertLogs(sc_static.logger, "WARNING") as cm:
                 call()
-            self.assertIn(sc._SIGMA_SHIFT_IGNORED, [r.getMessage() for r in cm.records])
+            self.assertIn(sc_eigen._SIGMA_SHIFT_IGNORED, [r.getMessage() for r in cm.records])
 
 
 if __name__ == "__main__":

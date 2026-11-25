@@ -22,7 +22,7 @@ import unittest
 
 import numpy as np
 
-from hwave.solver import eliashberg_bond as eb
+from hwave.solver.eliashberg import bond_dynamic as eb
 from hwave.solver import flex_bond
 from hwave.solver.so_bond import PackedArrays, so_bond_bubble, so_bond_vertex, sz_sector_map
 from hwave.solver import so_bond

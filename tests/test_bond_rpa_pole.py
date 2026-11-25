@@ -864,7 +864,7 @@ class TestPackedSectors(unittest.TestCase):
 
     def _run(self, per_sector):
         import types
-        from hwave import sc
+        from hwave.solver.eliashberg import bond as sc_bond
         from hwave.solver import bond_channels as bc
         from hwave.solver import so_bond
         sm = so_bond.sz_sector_map(types.SimpleNamespace(reverse=np.array([0])), 2)
@@ -874,7 +874,7 @@ class TestPackedSectors(unittest.TestCase):
         with mock.patch.object(bc, "static_pole_indicator",
                                side_effect=lambda *a, **k: next(vals)), \
                 _captured() as rec:
-            rep = sc._so_bond_static_pole(X, G, (1, 1, 1))
+            rep = sc_bond._so_bond_static_pole(X, G, (1, 1, 1))
         return rep, rec
 
     def test_maximum_in_a_transverse_sector(self):

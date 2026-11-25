@@ -15,7 +15,7 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import bond as sc_bond
 from hwave.solver import flex_bond
 from hwave.solver.so_bond import (SLOT_CONVENTION, BondSlotGeometry, PackedArrays, SOBondCaps,
                                   SOBondPlan, _file_records, estimate_packed_kernel_workspace_bytes,
@@ -98,8 +98,8 @@ def _project_charge_sz(g, norb):
 
 def _non_so_SC(tables, norb, shape):
     """``S``, ``C`` of the non-spin-orbital static bond path and its channels."""
-    topo, _view, split = sc._resolve_bond_topology(tables, {"rvec": np.eye(3)}, norb, None)
-    S, C = sc._build_bond_vertices(topo, split, norb, shape)
+    topo, _view, split = sc_bond._resolve_bond_topology(tables, {"rvec": np.eye(3)}, norb, None)
+    S, C = sc_bond._build_bond_vertices(topo, split, norb, shape)
     return S, C, topo
 
 

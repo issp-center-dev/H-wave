@@ -38,7 +38,9 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver import bond_channels as bc
 from tests.heavy_tests import heavy
 from tests.test_bond_onari_milestone import (_odd_spectrum, _kgrid, _interactions, DEG_TOL,
@@ -74,11 +76,11 @@ def _point_from_green(green_path, V):
     green = raw[0].reshape(nmat, Lg, Lg, 1, 1, 1).transpose(4, 5, 1, 2, 3, 0).copy()
     kx, ky, kz = _kgrid(Lg)
     it = _interactions(V, True)
-    topo, _, split = sc._resolve_bond_topology(it, {"rvec": np.eye(3)}, 1, None)
-    carrier = sc._BondGreen(full_sc=green, deflated_kw=sc._green_sc_to_canonical(green),
+    topo, _, split = sc_bond._resolve_bond_topology(it, {"rvec": np.eye(3)}, 1, None)
+    carrier = sc_kernel._BondGreen(full_sc=green, deflated_kw=sc_kernel._green_sc_to_canonical(green),
                             green0_tail=None, coeff_tail_requested=0.0, coeff_tail_applied=0.0,
                             source="external_npz")
-    (A, vec_size), provenance, attribution = sc._build_bond_operator(
+    (A, vec_size), provenance, attribution = sc_bond._build_bond_operator(
         topo, split, carrier, 1, kx, ky, kz, BETA,
         "triplet", bond_max_shells=None, bond_memory_cap_gb=0.0, g2_tail=False)
     evals, vecs = _odd_spectrum(A, vec_size, attribution["weight"], Lg)
@@ -91,8 +93,8 @@ def lambda_sweep(green_paths, v_grid):
     points = [_point_from_green(p, V) for p, V in zip(green_paths, v_grid)]
     Lg = points[0]["L"]
     kx, ky, kz = _kgrid(Lg)
-    seed = sc._initialize_gap("f_x", 1, kx, ky, kz).ravel()
-    basis = sc._odd_harmonic_basis(1, kx, ky, kz)
+    seed = sc_eigen._initialize_gap("f_x", 1, kx, ky, kz).ravel()
+    basis = sc_eigen._odd_harmonic_basis(1, kx, ky, kz)
     records = bc.track_subspace([(p["evals"], p["vecs"]) for p in points], seed=seed,
                                 weight=points[0]["weight"], basis=basis, deg_tol=DEG_TOL,
                                 capture_tol=0.2)

@@ -2129,7 +2129,7 @@ class RPA:
         companion options (Phase W experimental gate, spec
         2026-08-15-bond-transverse-design.md "Production surface").
 
-        Mirrors sc.py's ``_read_bond_config`` for the (eliashberg)
+        Mirrors ``eliashberg.config._read_bond_config`` for the (eliashberg)
         longitudinal bond gate: the switch defaults to ``False``, is
         parsed ONLY under ``calc_type='ring+ladder'`` (the transverse
         ladder channel itself is unreachable otherwise), and every
@@ -5012,7 +5012,8 @@ class RPA:
                     "a reduced chi0q must be embedded at its DENSITY-PAIR "
                     "positions chi0_+-[a,a,b,b] = chi0_red[a,b] -- NOT scattered "
                     "as delta_{{l2,l4}}, which drops the very components the "
-                    "vertex reads (see sc._expand_flex_chi).".format(
+                    "vertex reads (see "
+                    "hwave.solver.eliashberg.io._expand_flex_chi).".format(
                         chi0q_orig.ndim))
             chi0q_pm = chi0q_orig.copy()
 

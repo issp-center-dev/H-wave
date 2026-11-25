@@ -23,7 +23,7 @@ shows that, read in the pair slots, it is the antisymmetrized
 particle-particle vertex ``A`` of ``H = 1/4 sum A_pq,rs c+_p c+_q c_s c_r``.
 The first-order gap equation of an antisymmetrized vertex carries a 1/2
 (``Delta = -1/2 A F``), so with ``Delta_ad = -sum_bc V_abcd F_bc`` (the
-contraction of ``sc._make_kernel_operator``)
+contraction of ``eliashberg.kernel._make_kernel_operator``)
 
     V_bare[a, b, c, d] = 1/2 Gamma[(a, b), (c, d)],
 
@@ -124,7 +124,7 @@ def so_pairing_vertex_parts(gam, chi, nd, spatial_shape):
     -------
     (V_bare, V_fluct) : ndarrays, (nd, nd, nd, nd, Nx, Ny, Nz)
         In the layout of the general-mode ``Vs_q`` of
-        ``sc._make_kernel_operator`` (``Delta_ad = -sum_bc V_abcd F_bc``):
+        ``eliashberg.kernel._make_kernel_operator`` (``Delta_ad = -sum_bc V_abcd F_bc``):
         ``V_bare = 1/2 Gamma``, ``V_fluct = -Gamma chi Gamma`` (see the module
         docstring).
     """
@@ -195,7 +195,7 @@ def so_pairing_vertex_dynamic(gam, chi_w, nd, spatial_shape):
 _SEED_SPIN_EVEN = np.array([[0.0, 1.0], [-1.0, 0.0]], dtype=complex)
 _SEED_SPIN_ODD = np.array([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
 
-#: the odd (k -> -k) form factors of ``sc._initialize_gap``
+#: the odd (k -> -k) form factors of ``eliashberg.eigen._initialize_gap``
 _ODD_SEEDS = ("p_x", "p_y", "p_z", "f_x", "f_y")
 
 
@@ -203,19 +203,19 @@ def so_initial_gap(init_gap_mode, norb_phys, kx_array, ky_array, kz_array):
     """Initial spin-orbital gap ``(nd, nd, Nx, Ny, Nz)``, ``nd = 2 norb_phys``,
     spin-block order (``A = s * norb_phys + a``).
 
-    The orbital seed of ``sc._initialize_gap`` (``1_orb (x) f(k)``) times a
+    The orbital seed of ``eliashberg.eigen._initialize_gap`` (``1_orb (x) f(k)``) times a
     spin structure that makes it fermion-antisymmetric
     (``Delta_AB(k) = -Delta_BA(-k)``): ``i sigma_y`` (singlet) for an even
     form factor, ``sigma_z i sigma_y`` (the S_z = 0 triplet) for an odd one
     (``p_*``, ``f_*``). ``"random"`` fills the whole spin-orbital matrix (the
     caller's antisymmetric projection then keeps its admissible part). The
     result has unit norm unless the form factor vanishes on the grid."""
-    from hwave import sc
+    from hwave.solver.eliashberg.eigen import _initialize_gap
     if init_gap_mode == "random":
-        return sc._initialize_gap("random", 2 * int(norb_phys),
-                                  kx_array, ky_array, kz_array)
-    phi = sc._initialize_gap(init_gap_mode, int(norb_phys),
-                             kx_array, ky_array, kz_array)
+        return _initialize_gap("random", 2 * int(norb_phys),
+                               kx_array, ky_array, kz_array)
+    phi = _initialize_gap(init_gap_mode, int(norb_phys),
+                          kx_array, ky_array, kz_array)
     spin = _SEED_SPIN_ODD if init_gap_mode in _ODD_SEEDS else _SEED_SPIN_EVEN
     n = int(norb_phys)
     gap = np.einsum("st,ab...->satb...", spin, phi).reshape(
@@ -273,10 +273,10 @@ def _check_so_dynamic_config(eli):
             "run) or \"calc\" (the spinful chi0 is computed here at every "
             "bosonic frequency). A loaded chi0q carries no Green function for "
             "the pair bubble.".format(_SO_DYN_WHAT, mode))
-    from hwave import sc
+    from hwave.solver.eliashberg.config import _bond_bool_option
     for key in ("zero_chi_s", "zero_chi_c"):
         # strict parse, as on the bond path: a typo is refused, false is fine
-        if sc._bond_bool_option(eli, key, False):
+        if _bond_bool_option(eli, key, False):
             raise ValueError(
                 "{}: [eliashberg] {} has no meaning in spin-orbital mode: the "
                 "pairing vertex is built from the single spinful channel, which "
@@ -298,8 +298,8 @@ def _static_bond_channels(eli, freq):
     with ``frequency = "dynamic"`` is refused here."""
     if eli.get("bond_channels") is None:
         return False
-    from hwave import sc
-    if not sc._bond_bool_option(eli, "bond_channels", False):
+    from hwave.solver.eliashberg.config import _bond_bool_option
+    if not _bond_bool_option(eli, "bond_channels", False):
         return False
     if freq == "dynamic":
         raise ValueError(_SO_DYNAMIC_BOND_REFUSAL)
@@ -334,8 +334,8 @@ def check_so_config(input_dict):
     (``spinful_vertex_exchange`` not false). An ``Extern`` file (a Zeeman
     field ``coeff_extern * sigma^z H_ab(R)`` in physical orbital indices,
     issue #88) is accepted; it enters the band through
-    :func:`hwave.sc._so_epsilon_k` and is checked by
-    :func:`hwave.sc._read_so_extern`."""
+    :func:`hwave.solver.eliashberg.so_solve._so_epsilon_k` and is checked by
+    :func:`hwave.solver.eliashberg.io._read_so_extern`."""
     from hwave.solver.backend import strict_bool
     eli = _ci(input_dict.get("eliashberg", {}))
     freq = eli.get("frequency", "static")
@@ -358,7 +358,7 @@ def check_so_config(input_dict):
             "{}: [eliashberg] eigenvalue_method = {!r} is not supported; only "
             "\"arnoldi\" is. Set eigenvalue_method = \"arnoldi\" (or remove the "
             "key).".format(_SO_WHAT, method))
-    from hwave.sc import DEFAULT_SOLVER_MODE
+    from hwave.solver.eliashberg.static import DEFAULT_SOLVER_MODE
     solver_mode = eli.get("solver_mode", DEFAULT_SOLVER_MODE)
     if solver_mode not in ("iteration", "eigenvalue", "both"):
         raise ValueError(

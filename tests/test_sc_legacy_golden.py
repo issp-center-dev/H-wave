@@ -33,6 +33,7 @@ import unittest
 import numpy as np
 
 import hwave.sc as sc
+from hwave.solver.eliashberg import kernel as sc_kernel
 
 
 GOLDEN_DIR = os.path.join("tests", "sc", "legacy_golden")
@@ -207,7 +208,7 @@ class TestCalcG2MovedToBondChannels(unittest.TestCase):
                 rng = np.random.default_rng(11)
                 green = (rng.normal(size=shape) + 1j * rng.normal(size=shape))
                 beta = 3.7
-                got = sc._calc_g2(green, beta, tail=False)
+                got = sc_kernel._calc_g2(green, beta, tail=False)
                 ref = self._calc_g2_pre_branch(green, beta)
                 self.assertEqual(got.dtype, ref.dtype)
                 self.assertEqual(got.shape, ref.shape)

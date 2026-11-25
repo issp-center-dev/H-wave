@@ -837,7 +837,7 @@ class TestCompatibility(_Copies):
 
 class TestCrossRefusals(_Copies):
     def test_nonso_loader(self):
-        from hwave.solver import eliashberg_bond_io
+        from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
         for name in ("packed_npz", "dense_sidecar"):
             with self.subTest(base=name):
                 path = self.copy(name)
@@ -884,11 +884,11 @@ class TestCrossRefusals(_Copies):
         .npy array, an empty or truncated file and an npz without the stage
         member are left to the checks that follow; a bond output is
         refused."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import io as sc_io
         out = os.path.dirname(self.copy("packed_npz"))
         chiq = os.path.join(out, "chiq.npz")
         with self.assertRaises(ValueError) as cm:
-            sc._refuse_bond_flex_output(chiq)
+            sc_io._refuse_bond_flex_output(chiq)
         self.assertEqual(str(cm.exception), T_ONSITE_BOND.format(path=chiq))
         d = os.path.join(self.dir, "peek")
         os.makedirs(d)
@@ -905,7 +905,7 @@ class TestCrossRefusals(_Copies):
         np.savez(plain, x=np.zeros(2))
         for path in (os.path.join(d, "absent.npz"), npy, empty, half, plain):
             with self.subTest(path=os.path.basename(path)):
-                self.assertIsNone(sc._refuse_bond_flex_output(path))
+                self.assertIsNone(sc_io._refuse_bond_flex_output(path))
 
     def test_capability_backstop(self):
         """The capability check behind the on-site peek: a copy of the

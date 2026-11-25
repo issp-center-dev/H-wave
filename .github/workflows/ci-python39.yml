@@ -83,10 +83,10 @@ jobs:
             numpy: "<2"
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -103,7 +103,7 @@ jobs:
 
     - name: Load cached venv
       id: cached-poetry-dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: .venv
         # The numpy pin is part of the key: a venv cached for the numpy 2
@@ -138,7 +138,7 @@ jobs:
       # a reference that is present but unusable (wrong revision, dirty) is a
       # failure rather than a silent skip.
       #
-      # actions/checkout@v4 fetches depth 1, hence the explicit fetch of the
+      # actions/checkout@v5 fetches depth 1, hence the explicit fetch of the
       # named revision. The added worktree shares this checkout's object
       # store, and it lives under RUNNER_TEMP -- outside the checkout -- so
       # the "tracked tree clean" step below is unaffected (the command writes
@@ -276,9 +276,23 @@ jobs:
         fi
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      # v6 is the first codecov-action release on the Node 24 runtime (the
+      # action itself is composite; its one JavaScript step is github-script
+      # v8). `file` was renamed `files` in v5. The upload is best-effort:
+      # no Codecov token and no OIDC are configured in this repository.
+      # Unless the Codecov organization has opted out of upload tokens,
+      # codecov-action v4 and later accept a tokenless upload only from a
+      # pull request opened from a fork, so uploads from pushes and from
+      # same-repository pull requests are rejected and the coverage of the
+      # base branch is not refreshed. To enable them, either add a
+      # CODECOV_TOKEN secret AND pass it to this step
+      # (`token: ${{ secrets.CODECOV_TOKEN }}` under `with:`), or set
+      # `use_oidc: true` and grant the `id-token: write` permission.
+      # fail_ci_if_error stays false, so a rejected upload cannot fail
+      # the gate.
+      uses: codecov/codecov-action@v6
       with:
-        file: ./coverage.xml
+        files: ./coverage.xml
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
@@ -334,10 +348,10 @@ jobs:
         shard: [1, 2, 3]
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -359,7 +373,7 @@ jobs:
     - name: Load cached venv (shard 1, restores and saves)
       if: matrix.shard == 1
       id: cached-poetry-dependencies
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: .venv
         # The numpy pin is part of the key (see the `test` job).
@@ -368,7 +382,7 @@ jobs:
     - name: Load cached venv (other shards, restore only)
       if: matrix.shard != 1
       id: restored-poetry-dependencies
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v5
       with:
         path: .venv
         # The same key as shard 1, numpy pin included.
@@ -396,7 +410,7 @@ jobs:
       # a reference that is present but unusable (wrong revision, dirty) is a
       # failure rather than a silent skip.
       #
-      # actions/checkout@v4 fetches depth 1, hence the explicit fetch of the
+      # actions/checkout@v5 fetches depth 1, hence the explicit fetch of the
       # named revision. The added worktree shares this checkout's object
       # store, and it lives under RUNNER_TEMP -- outside the checkout -- so
       # the "tracked tree clean" step below is unaffected (the command writes
@@ -548,10 +562,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: "3.11"
 

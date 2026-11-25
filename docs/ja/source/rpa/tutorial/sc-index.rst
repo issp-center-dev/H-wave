@@ -958,6 +958,26 @@ ARPACK の求解（最初の絶対値最大の求解または実部最大の求�
    ことがあるので、真偽値や\ ``is None``\ ではなく\ ``math.isnan``\ または
    ``numpy.isnan``\ で判定してください。
 
+   **Python API（モジュール構成）。** これはPythonスクリプトにのみ関係します。
+   ``hwave_sc``\ コマンドとその入力・出力ファイルは変わりません。
+   ``hwave_sc``\ の実装はモジュール\ ``hwave.sc``\ からパッケージ
+   ``hwave.solver.eliashberg``\ へ移り、役割ごとのサブモジュール（\ ``config``\ 、
+   ``band``\ 、\ ``vertex``\ 、\ ``kernel``\ 、\ ``eigen``\ 、\ ``io``\ 、\ ``output``\ 、
+   ``bond``\ 、\ ``so_solve``\ 、\ ``static``\ と動的ソルバー）に分かれました。
+   ``hwave.sc``\ が再エクスポートするのは公開API（\ ``calc_eliashberg``\ 、
+   ``main``\ 、\ ``reject_spin_orbital_mode``\ と定数\ ``DEFAULT_SOLVER_MODE``\ 、
+   ``IN_PROCESS_DEFAULT_SOLVER_MODE``\ 、\ ``EXIT_EIGEN_NOT_CONVERGED``\ ）のみです。
+   ``hwave.sc``\ 経由で非公開のヘルパー（内部関数や定数など）を参照していたスクリプト
+   （例：\ ``hwave.sc._load_chi0q``\ ）は、それを定義しているサブモジュールから
+   インポートしてください（\ ``hwave.solver.eliashberg.io._load_chi0q``\ ）。
+   次の4つの旧モジュール名は、移動先モジュールの別名として1リリースの間だけ
+   インポートでき、その後削除されます（インポート時に警告は出ません）。
+
+   - ``hwave.solver.eliashberg_dynamic`` → ``hwave.solver.eliashberg.dynamic``
+   - ``hwave.solver.eliashberg_dynamic_so`` → ``hwave.solver.eliashberg.dynamic_so``
+   - ``hwave.solver.eliashberg_bond`` → ``hwave.solver.eliashberg.bond_dynamic``
+   - ``hwave.solver.eliashberg_bond_io`` → ``hwave.solver.eliashberg.bond_io``
+
 
 物理的解釈
 ----------------------------

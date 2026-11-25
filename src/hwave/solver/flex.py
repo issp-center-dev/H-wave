@@ -791,10 +791,10 @@ class FLEX(RPA):
     def _install_pairing_controls(self, eliashberg_param):
         """The ``[eliashberg]`` table of the FLEX input, evaluated once at
         construction (spec 7). ``self._pairing_controls`` is a
-        :class:`~hwave.solver.eliashberg_bond_io.PairingControls` when the
+        :class:`~hwave.solver.eliashberg.bond_io.PairingControls` when the
         in-process pairing step is requested and ``None`` otherwise."""
-        from hwave.solver.eliashberg_bond_io import PairingControls
-        from hwave.sc import IN_PROCESS_DEFAULT_SOLVER_MODE
+        from hwave.solver.eliashberg.bond_io import PairingControls
+        from hwave.solver.eliashberg.static import IN_PROCESS_DEFAULT_SOLVER_MODE
         self._pairing_controls = None
         types = self.longitudinal_bond_pairing
         if types == "none":
@@ -1416,7 +1416,7 @@ class FLEX(RPA):
         correction of issue #232 when this run's declaration is
         placement-sensitive (judged on the PRE-fold declaration and the
         CellShape grid): such a seed belongs to a different Hamiltonian."""
-        from hwave.sc import check_placement_stamp
+        from hwave.solver.eliashberg.vertex import check_placement_stamp
         hi = getattr(self, "ham_info", None)
         decl = (getattr(hi, "param_ham_orig", None) or getattr(hi, "param_ham", None)
                 if hi is not None else None)
@@ -1575,7 +1575,7 @@ class FLEX(RPA):
                 # allocation, so the pairing step is admitted here -- after
                 # H0 is diagonalised (the IR auto-wmax reads its bands) and
                 # before the first map.
-                from hwave.solver import eliashberg_bond_io
+                from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
                 eliashberg_bond_io.pairing_preflight(self)
         else:
             self._calc_epsilon_k(green_info)
@@ -3038,7 +3038,7 @@ class FLEX(RPA):
                             # spec 7: NON-THROWING. The store (chibar of the
                             # last map), the bond device context and the
                             # final-state green_kw on xp are all alive here.
-                            from hwave.solver import eliashberg_bond_io
+                            from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
                             eliashberg_bond_io.run_inprocess_pairing(
                                 self, store, dev, green_kw, beta, green_info)
                 else:
@@ -3524,7 +3524,7 @@ class FLEX(RPA):
         if self._ir_axF is not None:
             return
         from hwave.solver.ir_axis import IRAxis, auto_wmax
-        import hwave.sc as sc
+        from hwave.solver.eliashberg.band import _determine_mu
         wmax = self.ir_wmax
         if wmax is None:
             ew = _bk.to_host(self.H0_eigenvalue)
@@ -3543,7 +3543,7 @@ class FLEX(RPA):
                 Ncond_target = (self.Ncond / 2 if self.spin_mode == "spin-free"
                                 else self.Ncond)
                 filling = float(Ncond_target) / float(ew.size)
-                mu = sc._determine_mu(
+                mu = _determine_mu(
                     np.asarray(ew).reshape(-1, 1, 1, 1), beta, filling, 1)
             else:
                 mu = float(self.mu_value)
@@ -3779,7 +3779,7 @@ class FLEX(RPA):
         channel vertices keep it so through the RPA solve. The consumers
         rely on that -- ``hwave_sc`` embeds the up block alone and checks
         that what it discards is redundant to the bit
-        (``sc._check_spin_block_discarded``).
+        (``eliashberg.config._check_spin_block_discarded``).
 
         The densifying GEMM does not promise it: the two blocks are
         different columns of one ``(nmat, L) @ (L, nvol*nd*nd)`` product,
@@ -4893,7 +4893,7 @@ class FLEX(RPA):
         The S/C matrices are built via
         ``hwave.solver._sc_matrices_myo.build_sc_matrices_locality_split``
         from three ``inter_k`` dicts assembled with
-        ``hwave.sc._build_interaction_k``: the whole (reader's folded,
+        ``hwave.solver.eliashberg.vertex._build_interaction_k``: the whole (reader's folded,
         normalised) table, and its on-site and off-site parts split on the
         PRE-fold declarations (#181, Tier 1). On-site Kanamori entries give
         q-independent matrices; off-site entries give a q-DEPENDENT Hartree
@@ -5819,7 +5819,7 @@ class FLEX(RPA):
         removal is one WARNING and never hides the original exception).
         ``paths`` is the mapping the output paths were validated with."""
         from hwave.solver import so_bond_archive
-        from hwave.solver.eliashberg_bond_io import _tmp_name
+        from hwave.solver.eliashberg.bond_io import _tmp_name
         adm = self._so_admission
         green_path, path = paths["green"], paths["longitudinal_bond"]
         compiled = self.ham_info.so_context.compiled
@@ -6101,7 +6101,7 @@ class FLEX(RPA):
             # Deliberately NOT stamped on reduced files: those axes are
             # spin-orbital (s*norb + a), not four orbital legs -- the loader has
             # to extract a spin block before the array becomes an orbital-pair
-            # object at all (see sc._to_orbital_pair). Calling them "acbd" would
+            # object at all (see eliashberg.io._expand_flex_chi). Calling them "acbd" would
             # be false machine-readable metadata. The reader accepts
             # marker-less "kuroki" files; only "myo" requires the marker.
             common_meta["chi_orbital_layout"] = "acbd"
@@ -6215,7 +6215,7 @@ class FLEX(RPA):
                 beta=1.0 / self.T,
                 momentum_convention=MOMENTUM_CONVENTION,
                 # bond placement of issue #232 (checked by the
-                # Eliashberg consumers, hwave.sc.check_placement_stamp)
+                # Eliashberg consumers, hwave.solver.eliashberg.vertex.check_placement_stamp)
                 sc_vertex_version=np.int64(3),
                 **green_extra,
                 **_freq_meta("F"),
@@ -6308,6 +6308,6 @@ class FLEX(RPA):
         # In-process pairing (spec 7): AFTER every FLEX artifact, in its own
         # guarded block -- a failure here never costs the FLEX outputs.
         if getattr(self, "_pairing_controls", None) is not None:
-            from hwave.solver import eliashberg_bond_io
+            from hwave.solver.eliashberg import bond_io as eliashberg_bond_io
             eliashberg_bond_io.write_pairing_outputs(self, info_outputfile, green_info,
                                                      path_to_output)
