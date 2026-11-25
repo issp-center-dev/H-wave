@@ -33,6 +33,10 @@ class UHFk(solver_base):
 
         # Initialize solver components
         self._init_mode(info_mode)  # Set solver modes like Fock term
+        # a spin-resolved (9-column) Transfer is read but not yet consumed
+        # here (issue #323, enabled with the H(k) builder switch)
+        spin_orbital.reject_spin_resolved_transfer(
+            param_ham, "UHFk", self.enable_spin_orbital)
         self._init_param()          # Initialize parameters
         self._init_lattice()        # Setup lattice geometry
         self._init_orbit()          # Setup orbital structure
