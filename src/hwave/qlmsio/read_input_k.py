@@ -243,15 +243,21 @@ class QLMSkInput():
                 value = float(_data[-1])
                 info[list] = value
         elif value_type == "complex":
+            # every repeat is compared with the FIRST value of its row, so
+            # small differences cannot drift past the tolerance; the last
+            # value is kept, as before
+            first = {}
             for _data in data:
                 list = tuple([int(i) for i in _data[:-2]])
                 value = float(_data[-2]) + 1j * float(_data[-1])
-                if list in info and abs(info[list] - value) > DUPLICATE_ROW_TOL:
+                if list not in first:
+                    first[list] = value
+                elif abs(first[list] - value) > DUPLICATE_ROW_TOL:
                     logger.error(
                         "read_input_k: {}: row {} appears twice with different "
                         "values {} and {} (tolerance {:g})".format(
                             file_name, " ".join(str(i) for i in list),
-                            info[list], value, DUPLICATE_ROW_TOL))
+                            first[list], value, DUPLICATE_ROW_TOL))
                     exit(1)
                 info[list] = value
         return info

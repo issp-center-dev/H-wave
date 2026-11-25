@@ -1075,7 +1075,11 @@ class UHFk(solver_base):
             # G(d) = <c^dag(R+d)c(R)>, with the same sign as _save_greenone.
             d = ((ix-jx) % lx, (iy-jy) % ly, (iz-jz) % lz)
             elem = (_pack_site(*d),s,a,t,b)
-            if elem in placed:
+            # compared with the FIRST row of the element (no drift past the
+            # tolerance); the last row's value is kept, as before
+            if elem not in placed:
+                placed[elem] = ((i,j), v)
+            else:
                 (i0,j0), v0 = placed[elem]
                 if abs(v - v0) > DUPLICATE_ROW_TOL:
                     logger.error(
@@ -1085,12 +1089,11 @@ class UHFk(solver_base):
                             i0, s, j0, t, i, s, j, t, s, a, t, b, list(d), v0, v,
                             DUPLICATE_ROW_TOL))
                     exit(1)
-            placed[elem] = ((i,j), v)
             green_uhf[elem] = v
 
         if n_unused > 0:
-            logger.info("initial_uhf: {} row(s) with site i outside the origin "
-                        "cell were not used (translation invariance: only rows "
+            logger.info("initial_uhf: {} distinct (i, s, j, t) row(s) with site i "
+                        "outside the origin cell were not used (translation invariance: only rows "
                         "with i in cell 0 0 0 are read)".format(n_unused))
         return green_uhf
 

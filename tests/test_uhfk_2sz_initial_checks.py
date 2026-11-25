@@ -208,7 +208,7 @@ def test_rows_outside_origin_cell_are_counted(chain, caplog):
             if "outside the origin cell were not used" in r.getMessage()]
     # 3 of the 4 sites are outside the origin cell: 3 * 2 * 4 * 2 rows
     assert len(info) == 1
-    assert info[0].startswith("initial_uhf: 48 row(s)")
+    assert info[0].startswith("initial_uhf: 48 distinct (i, s, j, t) row(s)")
     # values: G[d, s, 0, t, 0] from the origin row (i = 0, j = -d mod 4)
     for d in range(4):
         for s in range(2):
@@ -267,3 +267,55 @@ def test_distinct_rows_mapping_to_one_element(chain, caplog):
     assert "rows (0 0 1 0) and (0 0 4 0) give the same element" in msg
     assert "G[s=0, a=0; t=0, b=0](d=[3, 0, 0])" in msg
     assert "(0.25+0j)" in msg and "(0.75+0j)" in msg
+
+
+def test_repeated_rows_cannot_drift_past_the_tolerance(chain, caplog):
+    """Each repeat is compared with the first value: 0, 0.75e-10 and
+    1.5e-10 are refused although neighbouring values agree."""
+    step = 0.75 * DUPLICATE_ROW_TOL
+    rows = "".join("0 0 1 0 {!r} 0\n".format(k * step) for k in range(3))
+    with pytest.raises(SystemExit):
+        chain(rows)
+    assert "row 0 0 1 0 appears twice with different values" in caplog.text
+
+
+def test_element_collisions_cannot_drift_past_the_tolerance(chain, caplog):
+    solver, _ = chain("0 0 0 0 0.5 0\n")
+    geom = _geom([(x, 0, 0, 0) for x in range(4)] + [(5, 0, 0, 0), (9, 0, 0, 0)])
+    step = 0.75 * DUPLICATE_ROW_TOL
+    rows = {(0, 0, j, 0): complex(k * step) for k, j in enumerate((1, 4, 5))}
+    with pytest.raises(SystemExit):
+        solver._initial_green_uhf(rows, geom)
+    assert "rows (0 0 1 0) and (0 0 5 0) give the same element" in caplog.text
+
+
+def _legacy_initial_green_uhf(solver, info, geom):
+    """The construction before #372, verbatim apart from names."""
+    lx, ly, lz = solver.cellshape
+    lvol, norb, ns = solver.cellvol, solver.norb, solver.ns
+
+    def _pack_site(ix, iy, iz):
+        return iz + lz * (iy + ly * ix)
+    tbl = {idx: (_pack_site(ix, iy, iz), a)
+           for idx, (ix, iy, iz, a) in geom["site2vec"].items()}
+    green = np.zeros((lvol, lvol, ns, norb, ns, norb), dtype=np.complex128)
+    for (i, s, j, t), v in info.items():
+        isite, a = tbl[i]
+        _, b = tbl[j]
+        ix, iy, iz, _ = geom["site2vec"][i]
+        jx, jy, jz, _ = geom["site2vec"][j]
+        green[isite, _pack_site((ix - jx) % lx, (iy - jy) % ly,
+                                (iz - jz) % lz), s, a, t, b] = v
+    return green[0]
+
+
+def test_valid_input_is_bitwise_unchanged(chain):
+    """A full-lattice file (every i): the same bytes as before."""
+    rng = np.random.default_rng(3)
+    solver, green_info = chain(_all_rows(
+        lambda i, s, j, t: complex(*rng.standard_normal(2))))
+    new = solver._initial_green(green_info)
+    old = _legacy_initial_green_uhf(solver, green_info["initial_uhf"],
+                                    green_info["geometry_uhf"])
+    assert new.dtype == old.dtype and new.shape == old.shape
+    assert new.tobytes() == old.tobytes()

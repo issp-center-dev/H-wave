@@ -137,7 +137,7 @@ that has no effect under the current settings.
 - ``2Sz``
 
   **Type :**
-  Integer, String, or None (default value is None)
+  Integer, or the string ``"free"`` (default: not set, which is the same as ``"free"``)
 
   **Description :**
   Twice the :math:`z` component of the total spin, when it is fixed.
@@ -345,10 +345,10 @@ and the latter on the output files (such as locations to store).
   By translation invariance only rows whose site ``i`` lies in the cell ``0 0 0`` are used;
   elements without such a row start from zero, so a complete initial state needs every
   ``(i, s, j, t)`` with ``i`` in the cell ``0 0 0`` and ``j`` over all sites.
-  The other rows are not used; their number is reported in one INFO line of the log.
+  The other rows are not used; the number of distinct ``(i, s, j, t)`` among them is reported in one INFO line of the log.
   Rows that give the same element (a repeated ``(i, s, j, t)``, or two sites ``j`` that are
-  the same after the modulo) must agree to :math:`10^{-10}` (absolute difference of the complex values);
-  equal rows are accepted, and different values stop the run with an error that names
+  the same after the modulo) must agree with the first such row to :math:`10^{-10}` (absolute difference of the complex values);
+  equal rows are accepted (the last one is used), and different values stop the run with an error that names
   the element and both values.
   ``geometry_uhf`` in ``file.input`` is required. It cannot be specified together with ``initial``.
   This input requires ``SubShape = [1, 1, 1]``; otherwise the run stops with an error.
