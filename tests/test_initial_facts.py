@@ -88,8 +88,8 @@ class TestFacts(_Tmp):
         self.assertEqual(f0.n_c, 0)
 
     def test_interacting_orbitals_spin_orbital(self):
-        """Two-body indices are physical in SO mode: U on physical orbital 1
-        makes spin-orbitals 2 and 3 interacting."""
+        """Two-body indices are physical in SO mode, and so is the reported
+        set: U on physical orbital 1 gives (1,)."""
         from hwave.initial import facts
         transfer = {((1, 0, 0), a, a): -1.0 for a in range(4)}
         transfer.update({((-1, 0, 0), a, a): -1.0 for a in range(4)})
@@ -100,7 +100,7 @@ class TestFacts(_Tmp):
         f = facts.model_facts(toml)
         self.assertTrue(f.spin_orbital)
         self.assertEqual((f.norb, f.norb_phys), (4, 2))
-        self.assertEqual(f.interacting_orbitals, (2, 3))
+        self.assertEqual(f.interacting_orbitals, (1,))
         self.assertEqual(f.n_c, 1)
 
     def test_filling_resolves_like_solver(self):
@@ -279,6 +279,95 @@ class TestSiteGroups(_Tmp):
         self.assertEqual(f.site_groups, facts.SiteGroups("user", ((0, 1),), ()))
         with self.assertRaises(ValueError):
             facts.model_facts(toml, orbital_site=[0])
+
+
+def _so_chain(dest, centers_phys, *, so_centers=None, param=None):
+    """A spin-orbital chain with one physical orbital per centre of
+    ``centers_phys`` (spin-orbitals 2a, 2a+1 at the same centre unless
+    ``so_centers`` is given), U on physical orbital 0."""
+    nphys = len(centers_phys)
+    nso = 2 * nphys
+    transfer = {((1, 0, 0), a, a): -1.0 for a in range(nso)}
+    transfer.update({((-1, 0, 0), a, a): -1.0 for a in range(nso)})
+    centers = so_centers if so_centers is not None else [
+        c for c in centers_phys for _ in range(2)]
+    p = {"Ncond": 4, "T": 0.1, "SubShape": [1, 1, 1]}
+    p.update(param or {})
+    return initial_fixtures.write_input(
+        dest, cellshape=(4, 1, 1), norb=nso, transfer=transfer, centers=centers,
+        interactions={"CoulombIntra": {((0, 0, 0), 0, 0): 3.0}},
+        mode={"enable_spin_orbital": True}, param=p)
+
+
+def _normal_chain(dest, centers_phys, param=None):
+    n = len(centers_phys)
+    transfer = {((1, 0, 0), a, a): -1.0 for a in range(n)}
+    transfer.update({((-1, 0, 0), a, a): -1.0 for a in range(n)})
+    p = {"Ncond": 4, "T": 0.1, "SubShape": [1, 1, 1]}
+    p.update(param or {})
+    return initial_fixtures.write_input(
+        dest, cellshape=(4, 1, 1), norb=n, transfer=transfer, centers=centers_phys,
+        interactions={"CoulombIntra": {((0, 0, 0), 0, 0): 3.0}}, param=p)
+
+
+class TestPhysicalIndices(_Tmp):
+    """Ruling R8: every public index of the facts is a physical orbital."""
+
+    CENTERS = [(0.0005, 0, 0), (0.9996, 0, 0), (0.5, 0, 0)]
+
+    def test_so_site_groups_equal_the_normal_mode_ones(self):
+        from hwave.initial import facts
+        so = facts.model_facts(_so_chain(self.path("so"), self.CENTERS))
+        nm = facts.model_facts(_normal_chain(self.path("nm"), self.CENTERS))
+        self.assertEqual(so.site_groups, nm.site_groups)
+        self.assertEqual(so.site_groups, facts.SiteGroups("clustered", ((0, 1), (2,)), ()))
+        self.assertEqual((so.interacting_orbitals, so.n_c), (nm.interacting_orbitals, nm.n_c))
+        self.assertEqual(so.interacting_orbitals, (0,))
+        self.assertEqual(so.norb_phys, 3)
+
+    def test_site_labels_fit_the_results_reader(self):
+        """The groups give one label per physical orbital, the
+        ``site_of_orbital`` form of ``hwave.results``."""
+        from hwave.initial import facts
+        from hwave.results.uhf import _site_of_orbital
+        f = facts.model_facts(_so_chain(self.path("so"), self.CENTERS))
+        labels = [None] * f.norb_phys
+        for site, group in enumerate(f.site_groups.groups):
+            for a in group:
+                labels[a] = site
+        np.testing.assert_array_equal(_site_of_orbital(labels, f.norb_phys), [0, 0, 1])
+
+    def test_so_mismatched_centres_refused(self):
+        from hwave.initial import facts
+        so_centers = [(0, 0, 0), (0, 0, 0), (0.5, 0, 0), (0.25, 0, 0)]
+        toml = _so_chain(self.path("bad"), [(0, 0, 0), (0.5, 0, 0)], so_centers=so_centers)
+        with self.assertRaisesRegex(ValueError, r"orbital 1 \(spin-orbitals 2 and 3"):
+            facts.model_facts(toml)
+
+    def test_so_orbital_site_is_physical(self):
+        from hwave.initial import facts
+        toml = _so_chain(self.path("lab"), self.CENTERS, param={"orbital_site": [0, 1, 1]})
+        f = facts.model_facts(toml)
+        self.assertEqual(f.site_groups, facts.SiteGroups("orbital_site", ((0,), (1, 2)), ()))
+        # a spin-orbital-length key is refused with a hint
+        toml = _so_chain(self.path("long"), self.CENTERS,
+                         param={"orbital_site": [0, 0, 1, 1, 1, 1]})
+        with self.assertRaisesRegex(ValueError, "spin-orbital count"):
+            facts.model_facts(toml)
+
+    def test_user_orbital_site_lengths(self):
+        from hwave.initial import facts
+        so = _so_chain(self.path("so"), self.CENTERS)
+        f = facts.model_facts(so, orbital_site=[2, 2, 0])
+        self.assertEqual(f.site_groups, facts.SiteGroups("user", ((0, 1), (2,)), ()))
+        with self.assertRaisesRegex(ValueError, "spin-orbital count"):
+            facts.model_facts(so, orbital_site=[0, 0, 0, 0, 1, 1])
+        with self.assertRaisesRegex(ValueError, "3 physical orbitals"):
+            facts.model_facts(so, orbital_site=[0, 1])
+        nm = _normal_chain(self.path("nm"), self.CENTERS)
+        with self.assertRaisesRegex(ValueError, "3 physical orbitals") as cm:
+            facts.model_facts(nm, orbital_site=[0, 0, 1, 1, 1, 1])
+        self.assertNotIn("spin-orbital count", str(cm.exception))
 
 
 if __name__ == "__main__":

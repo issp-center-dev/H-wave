@@ -5,9 +5,12 @@ the orbital counts, the modes, the interacting orbitals, the site groups,
 the lattice, the temperature, the electron count, warnings and the SHA-256
 of every input file the TOML names.
 
-Orbital indices are those of the original (primitive) cell, as in the
-Geometry file: physical orbitals in normal mode, spin-orbitals (``2 * orb
-+ spin``) in spin-orbital mode.
+Every orbital index here is a **physical** orbital of the original
+(primitive) cell, in spin-orbital mode too (where the Geometry lists the
+spin-orbitals ``2a`` and ``2a + 1`` of each physical orbital ``a``). This
+is the index of PatternSpec ``orb_a``/``orb_b``, of ``[mode.param]
+orbital_site`` and of the ``site_of_orbital`` labels of
+``hwave.results``.
 """
 import hashlib
 import itertools
@@ -51,7 +54,7 @@ class SiteGroups:
     ``source`` is ``"orbital_site"`` (``[mode.param] orbital_site``),
     ``"user"`` (the ``orbital_site`` argument of :func:`model_facts`) or
     ``"clustered"`` (orbital centres closer than :data:`SITE_TOL`).
-    ``groups`` holds the orbital indices of each site, sorted, ordered by
+    ``groups`` holds the physical orbital indices of each site, sorted, ordered by
     their first orbital. ``ambiguous`` holds one message per clustered
     group that is wider than the tolerance or joins two images of one
     orbital; such a grouping should be given explicitly.
@@ -71,11 +74,9 @@ class ModelFacts:
     included in spin-orbital mode). ``norb_phys``: physical orbitals of the
     original cell. ``spin_orbital``, ``iflag_fock``.
 
-    ``interacting_orbitals``: the orbitals with a nonzero entry in any
-    two-body table of the original cell (before the sublattice fold); in
-    spin-orbital mode both spin-orbitals ``2a, 2a + 1`` of an interacting
-    physical orbital ``a``. ``n_c``: the number of interacting physical
-    orbitals.
+    ``interacting_orbitals``: the physical orbitals with a nonzero entry in
+    any two-body table of the original cell (before the sublattice fold;
+    two-body indices are physical in every mode). ``n_c``: their number.
 
     ``site_groups`` (:class:`SiteGroups`). ``cellshape``, ``T``, ``ncond``
     (as the solver resolves ``Ncond`` and ``Filling``), ``ncond_per_cell``
@@ -147,10 +148,8 @@ def _interacting(param_ham_orig, spin_orbital):
         for (_irvec, orbvec), v in table.items():
             if v != 0:
                 phys.update(int(a) for a in orbvec)
-    phys = sorted(phys)
-    if spin_orbital:
-        return tuple(i for a in phys for i in (2 * a, 2 * a + 1)), len(phys)
-    return tuple(phys), len(phys)
+    phys = tuple(sorted(phys))
+    return phys, len(phys)
 
 
 def _groups_from_labels(labels):
@@ -248,18 +247,45 @@ def cluster_sites(centers, rvec, tol=SITE_TOL):
     return groups, tuple(ambiguous)
 
 
-def _site_groups(problem, norb, user):
+def _min_image_distance(f1, f2, rvec):
+    d = np.asarray(f2, dtype=float) - np.asarray(f1, dtype=float)
+    return float(np.linalg.norm((d - np.round(d)) @ rvec))
+
+
+def _physical_centers(problem):
+    """The centre of each physical orbital of the original cell. In
+    spin-orbital mode the Geometry lists ``2a`` and ``2a + 1`` for orbital
+    ``a``; their centres must coincide within :data:`SITE_TOL`."""
+    geom = problem.geometry
+    centers = np.asarray(geom["center"], dtype=float).reshape(-1, 3)
+    rvec = np.asarray(geom["rvec"], dtype=float).reshape(3, 3)
+    if not problem.enable_spin_orbital:
+        return centers, rvec
+    bad = []
+    for a in range(centers.shape[0] // 2):
+        dist = _min_image_distance(centers[2 * a], centers[2 * a + 1], rvec)
+        if dist > SITE_TOL:
+            bad.append("orbital {} (spin-orbitals {} and {}, {:.3g} apart)".format(
+                a, 2 * a, 2 * a + 1, dist))
+    if bad:
+        raise ValueError(
+            "spin-orbital mode: the Geometry centres of the two spin-orbitals 2a, "
+            "2a+1 of a physical orbital must coincide (within site_tol = {:g}); "
+            "they do not for {}".format(SITE_TOL, "; ".join(bad)))
+    return centers[0::2], rvec
+
+
+def _site_groups(problem, norb_phys, user, centers, rvec):
     if user is not None:
-        labels = _user_labels(user, norb)
+        labels = _user_labels(user, norb_phys, problem)
         return SiteGroups("user", _groups_from_labels(labels), ())
     if problem.orbital_site is not None:
         return SiteGroups("orbital_site", _groups_from_labels(problem.orbital_site), ())
-    geom = problem.geometry
-    groups, ambiguous = cluster_sites(geom["center"], geom["rvec"], SITE_TOL)
+    groups, ambiguous = cluster_sites(centers, rvec, SITE_TOL)
     return SiteGroups("clustered", groups, ambiguous)
 
 
-def _user_labels(user, norb):
+def _user_labels(user, norb, problem):
     if isinstance(user, (str, bytes)) or not hasattr(user, "__len__"):
         raise ValueError("orbital_site must be a list with one site label per orbital, "
                          "got {!r}".format(user))
@@ -270,8 +296,14 @@ def _user_labels(user, norb):
                              .format(user))
         labels.append(int(v))
     if len(labels) != norb:
+        hint = ""
+        if problem.enable_spin_orbital and len(labels) == problem.norb_orig:
+            hint = ("; {} is the spin-orbital count: give one label per physical "
+                    "orbital (orbital a covers spin-orbitals 2a and 2a+1)"
+                    .format(len(labels)))
         raise ValueError("orbital_site has {} entries but the original cell has {} "
-                         "orbitals (one label per Geometry orbital)".format(len(labels), norb))
+                         "physical orbitals (one label per physical orbital){}"
+                         .format(len(labels), norb, hint))
     return labels
 
 
@@ -310,15 +342,17 @@ def model_facts(input_path, *, subshape=None, orbital_site=None):
     subshape : tuple of int, optional
         Overrides ``[mode.param] SubShape`` for the loaded problem.
     orbital_site : list of int, optional
-        A site label per orbital of the original cell (Geometry order);
-        overrides ``[mode.param] orbital_site`` and the clustering.
+        A site label per physical orbital of the original cell; overrides
+        ``[mode.param] orbital_site`` and the clustering.
 
     Raises
     ------
     ValueError
         No single UHFk TOML, a refused input (see
-        :func:`initial_facade.load_problem`), or a named file that is
-        missing.
+        :func:`initial_facade.load_problem`), a named file that is
+        missing, an ``orbital_site`` of the wrong length, or (spin-orbital
+        mode) two spin-orbitals of one physical orbital at different
+        centres.
     """
     toml = _resolve_toml(input_path)
     problem = initial_facade.load_problem(toml, subshape=subshape)
@@ -326,6 +360,7 @@ def model_facts(input_path, *, subshape=None, orbital_site=None):
     norb = problem.norb_orig
     norb_phys = norb // 2 if so else norb
     interacting, n_c = _interacting(problem.param_ham_orig, so)
+    centers, rvec = _physical_centers(problem)
 
     warnings = []
     if "Extern" in problem.param_ham_orig:
@@ -343,7 +378,7 @@ def model_facts(input_path, *, subshape=None, orbital_site=None):
     return ModelFacts(
         problem=problem, norb=norb, norb_phys=norb_phys, spin_orbital=so,
         iflag_fock=problem.iflag_fock, interacting_orbitals=interacting, n_c=n_c,
-        site_groups=_site_groups(problem, norb, orbital_site),
+        site_groups=_site_groups(problem, norb_phys, orbital_site, centers, rvec),
         cellshape=tuple(problem.cellshape), T=problem.T, ncond=ncond,
         ncond_per_cell=ncond_per_cell, two_sz=problem.two_sz,
         warnings=tuple(warnings), input_sha256=_input_sha256(toml))

@@ -34,7 +34,7 @@ import numpy as np
 logger = logging.getLogger("qlms").getChild("uhfk")
 
 __all__ = ["ShellRecord", "FillInfo", "MuNotConvergedError", "diag_blocks",
-           "fill_green", "find_dist_group", "find_dist_group_zero_t",
+           "group_blocks", "assemble_green", "fill_green", "find_dist_group", "find_dist_group_zero_t",
            "find_dist_group_nonzero_t"]
 
 _FILLS = ("solver", "uniform")
@@ -242,8 +242,50 @@ def _shell(ws_group, ncond, shell_tol):
     return int(np.count_nonzero(below)), int(np.count_nonzero(in_shell)), in_shell, below
 
 
+def group_blocks(block_to_group, ngroup):
+    """The block indices of each mu-group, in block order."""
+    groups = [[] for _ in range(ngroup)]
+    for b in range(len(block_to_group)):
+        groups[block_to_group[b]].append(b)
+    return groups
+
+
+def assemble_green(vs_list, dists, blocks, *, shape, ns, norb):
+    """The stored ``G(r)`` ``(nvol, ns, norb, ns, norb)`` of the per-block
+    eigenvectors ``vs_list`` and occupations ``dists`` (the assembly and
+    Fourier transform of ``UHFk._green``)."""
+    nx, ny, nz = shape
+    nvol = nx * ny * nz
+    nd = ns * norb
+
+    # Build full Green's function in k-space by assembling blocks
+    gab_k = np.zeros((nvol, nd, nd), dtype=np.complex128)
+
+    for k in range(len(blocks)):
+        v = vs_list[k]
+        dist = dists[k]
+
+        # G_ab(k) for this block
+        #   G_ab(k) = sum_l conj(V_kal) dist_kl V_kbl
+        #   = Vconj @ diag(dist) @ V^T, batched over k. Explicit matmul lowers
+        #   to batched GEMM (numpy einsum does not); numerically equivalent to
+        #   the 'kal,kl,kbl->kab' einsum to ~1e-14 (reduction order).
+        gg_blk = np.matmul(np.conjugate(v) * dist[:, None, :], v.transpose(0, 2, 1))
+
+        # Place into full matrix
+        idx = np.array(blocks[k])
+        ix = np.ix_(idx, idx)
+        gab_k[:, ix[0], ix[1]] = gg_blk
+
+    # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
+    gab_r = np.fft.fftn(gab_k.reshape(nx, ny, nz, nd, nd),
+                        axes=(0, 1, 2), norm='forward')
+
+    return gab_r.reshape(nvol, ns, norb, ns, norb)
+
+
 def fill_green(ws_list, vs_list, blocks, block_to_group, group_nconds, *, shape,
-               ns, norb, T, ene_cutoff=1.0e2, fill="solver", shell_tol=None,
+               ns, norb, T, ene_cutoff, fill="solver", shell_tol=None,
                return_info=False):
     """The stored Green function of the eigen-decomposition ``ws_list``,
     ``vs_list`` (:func:`diag_blocks`) of the blocks ``blocks``.
@@ -272,10 +314,6 @@ def fill_green(ws_list, vs_list, blocks, block_to_group, group_nconds, *, shape,
                          "the Fermi shell)")
     tol = 0.0 if shell_tol is None else float(shell_tol)
 
-    nx, ny, nz = shape
-    nvol = nx * ny * nz
-    nd = ns * norb
-
     nblock = len(blocks)
     ngroup = len(group_nconds)
 
@@ -283,15 +321,13 @@ def fill_green(ws_list, vs_list, blocks, block_to_group, group_nconds, *, shape,
     mus = np.zeros(ngroup, dtype=float)
 
     # Group blocks by mu-group
-    group_blocks = [[] for _ in range(ngroup)]
-    for b in range(nblock):
-        group_blocks[block_to_group[b]].append(b)
+    groups = group_blocks(block_to_group, ngroup)
 
     # Find mu for each group using all eigenvalues in that group
     group_dists = [None] * nblock
     shells = []
     for g in range(ngroup):
-        blist = group_blocks[g]
+        blist = groups[g]
         ws_group = [ws_list[b] for b in blist]
         vs_group = [vs_list[b] for b in blist]
         ncond = group_nconds[g]
@@ -324,30 +360,7 @@ def fill_green(ws_list, vs_list, blocks, block_to_group, group_nconds, *, shape,
         for i, b in enumerate(blist):
             group_dists[b] = dists[i]
 
-    # Build full Green's function in k-space by assembling blocks
-    gab_k = np.zeros((nvol, nd, nd), dtype=np.complex128)
-
-    for k in range(nblock):
-        v = vs_list[k]
-        dist = group_dists[k]
-
-        # G_ab(k) for this block
-        #   G_ab(k) = sum_l conj(V_kal) dist_kl V_kbl
-        #   = Vconj @ diag(dist) @ V^T, batched over k. Explicit matmul lowers
-        #   to batched GEMM (numpy einsum does not); numerically equivalent to
-        #   the 'kal,kl,kbl->kab' einsum to ~1e-14 (reduction order).
-        gg_blk = np.matmul(np.conjugate(v) * dist[:, None, :], v.transpose(0, 2, 1))
-
-        # Place into full matrix
-        idx = np.array(blocks[k])
-        ix = np.ix_(idx, idx)
-        gab_k[:, ix[0], ix[1]] = gg_blk
-
-    # G_ab(r) = 1/V sum_k G_ab(k) e^{-ikr}
-    gab_r = np.fft.fftn(gab_k.reshape(nx, ny, nz, nd, nd),
-                        axes=(0, 1, 2), norm='forward')
-
-    green = gab_r.reshape(nvol, ns, norb, ns, norb)
+    green = assemble_green(vs_list, group_dists, blocks, shape=shape, ns=ns, norb=norb)
     if return_info:
         return green, mus, FillInfo(mu=tuple(float(m) for m in mus), shell=tuple(shells))
     return green, mus

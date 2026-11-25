@@ -1118,16 +1118,38 @@ class UHFk(solver_base):
     def _green(self):
         logger.debug(">>> _green")
 
-        # one mu per mu-group, the occupations and G(r) (uhfk_fill.fill_green)
-        try:
-            green, mus = uhfk_fill.fill_green(
-                self._green_list["eigenvalue"], self._green_list["eigenvector"],
-                self.block_info, self.block_to_group, self.group_nconds,
-                shape=self.shape, ns=self.ns, norb=self.norb, T=self.T,
-                ene_cutoff=self.ene_cutoff)
-        except uhfk_fill.MuNotConvergedError:
-            exit(1)
-        self._green_list["mu"] = mus
+        ws_list = self._green_list["eigenvalue"]
+        vs_list = self._green_list["eigenvector"]
+        blocks = self.block_info
+        nblock = len(blocks)
+        block_to_group = self.block_to_group
+        group_nconds = self.group_nconds
+        ngroup = len(group_nconds)
+
+        # Find a single global mu per group (shared across all blocks in the group)
+        self._green_list["mu"] = np.zeros(ngroup, dtype=float)
+
+        # Group blocks by mu-group
+        group_blocks = uhfk_fill.group_blocks(block_to_group, ngroup)
+
+        # Find mu for each group using all eigenvalues in that group
+        group_dists = [None] * nblock
+        for g in range(ngroup):
+            blist = group_blocks[g]
+            ws_group = [ws_list[b] for b in blist]
+            vs_group = [vs_list[b] for b in blist]
+            ncond = group_nconds[g]
+
+            dists, mu = self._find_dist_group(ws_group, vs_group, ncond)
+
+            self._green_list["mu"][g] = mu
+            logger.debug("mu[group {}] = {}".format(g, mu))
+            for i, b in enumerate(blist):
+                group_dists[b] = dists[i]
+
+        # G(k) assembled from the blocks, then G(r) (uhfk_fill.assemble_green)
+        green = uhfk_fill.assemble_green(vs_list, group_dists, blocks, shape=self.shape,
+                                         ns=self.ns, norb=self.norb)
 
         # store
         self.Green_prev = self.Green

@@ -401,9 +401,21 @@ class TestProblem(_Cases):
         def labelled_so(doc):
             doc["mode"]["param"]["orbital_site"] = [0, 0, 1]
 
-        # spin-orbital mode never parses the key (as the RPA solver)
+        # spin-orbital mode: one label per physical orbital (3 here)
         p = fac.load_problem(self._variant(labelled_so, "so_all_types"))
-        self.assertIsNone(p.orbital_site)
+        self.assertEqual(p.orbital_site, (0, 0, 1))
+
+        def labelled_so_long(doc):
+            doc["mode"]["param"]["orbital_site"] = [0, 0, 0, 0, 1, 1]
+
+        with self.assertRaisesRegex(ValueError, "spin-orbital count.*physical orbital"):
+            fac.load_problem(self._variant(labelled_so_long, "so_all_types"))
+
+        def labelled_so_short(doc):
+            doc["mode"]["param"]["orbital_site"] = [0, 1]
+
+        with self.assertRaisesRegex(ValueError, "orbital_site"):
+            fac.load_problem(self._variant(labelled_so_short, "so_all_types"))
 
     def test_subshape_override_independent(self):
         """Two loads of one TOML with different SubShape do not share
@@ -584,15 +596,30 @@ class TestGreenFunction(_Cases):
     def test_uhfk_calls_the_lifted_fill(self):
         from unittest import mock
         from hwave.solver import uhfk_fill
-        solver = self._first_iteration("uhfk_2sz1")
         boom = RuntimeError("sentinel")
-        for fn, step in (("diag_blocks", solver._diag), ("fill_green", solver._green)):
-            with self.subTest(fn=fn):
-                if fn == "fill_green":
-                    solver._diag()
-                with mock.patch.object(uhfk_fill, fn, side_effect=boom):
-                    with self.assertRaisesRegex(RuntimeError, "sentinel"):
-                        step()
+        # T = 0 (uhfk_2sz1) and T > 0 (so_all_types)
+        for name, finder in (("uhfk_2sz1", "find_dist_group_zero_t"),
+                             ("so_all_types", "find_dist_group_nonzero_t")):
+            solver = self._first_iteration(name)
+            for fn in ("diag_blocks", finder, "assemble_green"):
+                with self.subTest(case=name, fn=fn):
+                    if fn != "diag_blocks":
+                        solver._diag()
+                    step = solver._diag if fn == "diag_blocks" else solver._green
+                    with mock.patch.object(uhfk_fill, fn, side_effect=boom):
+                        with self.assertRaisesRegex(RuntimeError, "sentinel"):
+                            step()
+
+    def test_green_goes_through_find_dist_group(self):
+        """``UHFk._green`` still finds each group's occupations through
+        ``self._find_dist_group`` (the solver's call path)."""
+        from unittest import mock
+        solver = self._first_iteration("uhfk_2sz1")
+        solver._diag()
+        with mock.patch.object(type(solver), "_find_dist_group", autospec=True,
+                               side_effect=type(solver)._find_dist_group) as fdg:
+            solver._green()
+        self.assertEqual(fdg.call_count, len(solver.group_nconds))
 
     def test_uniform_fill_open_shell_16x16(self):
         """Half filling, T = 0, h = 0: the Fermi shell |n_x| + |n_y| = 8
@@ -702,6 +729,38 @@ class TestGreenFunction(_Cases):
                     self.assertEqual((rec.open_shell, rec.shell_degeneracy, rec.shell_fill),
                                      (False, None, None))
 
+    def test_ene_cutoff_follows_the_solver(self):
+        """The default cut is the solvers' own default, and an input's
+        ``ene_cutoff`` reaches the problem; both match the frozen fill."""
+        from unittest import mock
+        from hwave.solver import base
+        from hwave.solver import initial_facade as fac
+        from tests import initial_fixtures
+        toml = initial_fixtures.square(os.path.join(self.root, "cut"), 6, U=2.0, T=0.05,
+                                       subshape=(2, 1, 1), param={"ene_cutoff": 3.0})
+        p = fac.load_problem(toml)
+        self.assertEqual(p.ene_cutoff, 3.0)
+        solver, _, _ = fac._build_solver(toml)
+        solver.Green = np.zeros((solver.nvol, solver.ns, solver.norb, solver.ns,
+                                 solver.norb), dtype=np.complex128)
+        solver._make_ham()
+        view = legacy.LegacyView(solver)
+        view._diag()
+        view._green()
+        kw = dict(shape=p.shape, ns=p.ns, norb=p.norb)
+        g = fac.green_function(solver.ham, p.T, p.blocks, ene_cutoff=p.ene_cutoff, **kw)
+        _assert_bitwise(self, g, view.Green)
+        g_default = fac.green_function(solver.ham, p.T, p.blocks, **kw)
+        self.assertGreater(float(np.abs(g_default - g).max()), 1e-12)
+        # the default is read from the solvers' parameter defaults
+        _assert_bitwise(self, g_default, fac.green_function(
+            solver.ham, p.T, p.blocks, ene_cutoff=base.PARAM_DEFAULTS["ene_cutoff"], **kw))
+        with mock.patch.dict(base.PARAM_DEFAULTS, {"ene_cutoff": 3.0}):
+            _assert_bitwise(self, fac.green_function(solver.ham, p.T, p.blocks, **kw), g)
+            plain = initial_fixtures.square(os.path.join(self.root, "cut2"), 6, U=2.0,
+                                            T=0.05, subshape=(2, 1, 1))
+            self.assertEqual(fac.load_problem(plain).ene_cutoff, 3.0)
+
     def test_returns_G_not_rho(self):
         """A complex-hopping 2x1 fixture (two orbitals, an imaginary
         inter-orbital term): ``green_function`` is UHFk's stored G bit for
@@ -720,18 +779,20 @@ class TestGreenFunction(_Cases):
                                  solver.norb), dtype=np.complex128)
         solver._make_ham()
         ham = solver.ham.copy()
-        solver._diag()
-        solver._green()
+        # the frozen d72f35f6 _diag + _green (never the delegating solver)
+        view = legacy.LegacyView(solver)
+        view._diag()
+        view._green()
         p = fac.load_problem(toml)
         g = fac.green_function(ham, p.T, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb,
                                ene_cutoff=p.ene_cutoff)
-        _assert_bitwise(self, g, solver.Green)
+        _assert_bitwise(self, g, view.Green)
         gt = g.transpose(0, 3, 4, 1, 2)
         self.assertGreater(float(np.abs(g - gt).max()), 1e-2)
         # <H> = sum_ab H_ab G_ab = sum_l f_l eps_l; the transposed form differs
         gk = _gk(g, p.shape)
         w, v = np.linalg.eigh(ham)
-        mu = solver._green_list["mu"][0]
+        mu = view._green_list["mu"][0]
         f = 1.0 / (1.0 + np.exp((w - mu) / p.T))
         e_band = float(np.sum(f * w))
         self.assertLessEqual(abs(np.einsum("kab,kab->", ham, gk) - e_band), 1e-12)

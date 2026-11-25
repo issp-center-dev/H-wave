@@ -149,6 +149,20 @@ def check_spin_flip_with_fixed_sz(trans_abs, norb):
             "mode.".format(cross, cross / scale))
 
 
+#: the default ``[mode.param]`` values of every solver (``solver_base``);
+#: code outside the solvers that needs one of them reads it from here
+PARAM_DEFAULTS = {
+    "Nsite":  0,
+    "Ncond":  0,
+    "2Sz":    None,
+    "Mix":    0.5,
+    "EPS":    6,
+    "IterationMax": 20000,
+    "RndSeed": 1234,
+    "T":      0.0,
+    "ene_cutoff": 1.0e+2,
+}
+
 class solver_base():
     """Base solver class for Hartree-Fock calculations.
     
@@ -189,17 +203,7 @@ class solver_base():
         self.threshold = 1.0e-12  # cutoff on elements of green function
 
         # default values
-        para_init = CaseInsensitiveDict({
-            "Nsite":  0,
-            "Ncond":  0,
-            "2Sz":    None,
-            "Mix":    0.5,
-            "EPS":    6,
-            "IterationMax": 20000,
-            "RndSeed": 1234,
-            "T":      0.0,
-            "ene_cutoff": 1.0e+2,
-        })
+        para_init = CaseInsensitiveDict(PARAM_DEFAULTS)
 
         range_list = {
             "T":     [ 0, None ],

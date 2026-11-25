@@ -91,8 +91,8 @@ class UHFkProblem:
     them, before the sublattice fold.
 
     Geometry: ``geometry`` (of the original cell), ``orbital_site`` (the
-    ``[mode.param] orbital_site`` labels, ``None`` when absent or in
-    spin-orbital mode).
+    ``[mode.param] orbital_site`` labels, one per physical orbital of the
+    original cell in every mode; ``None`` when absent).
 
     ``blocks`` (:class:`SolverBlocks`) and ``input_files`` (the absolute
     paths of the Geometry, Transfer and interaction files read).
@@ -243,11 +243,20 @@ def _interaction_files(interaction):
 
 
 def _orbital_site(solver):
-    if solver.enable_spin_orbital:
-        # spin-orbital mode never parses the key (as the RPA solver)
-        return None
+    """``[mode.param] orbital_site``: one site label per physical orbital of
+    the original cell, in spin-orbital mode too (``sites.parse_orbital_site``);
+    a spin-orbital-length list is refused with a hint."""
     from .sites import parse_orbital_site
-    return parse_orbital_site(solver.param_mod.get("orbital_site"), solver.norb_phys_orig)
+    raw = solver.param_mod.get("orbital_site")
+    if (solver.enable_spin_orbital and raw is not None and hasattr(raw, "__len__")
+            and not isinstance(raw, (str, bytes)) and len(raw) == solver.norb_orig
+            and solver.norb_orig != solver.norb_phys_orig):
+        raise ValueError(
+            "[mode.param] orbital_site has {} entries, the spin-orbital count; in "
+            "spin-orbital mode give one label per physical orbital ({} entries, "
+            "orbital a covering spin-orbitals 2a and 2a+1)".format(
+                len(raw), solver.norb_phys_orig))
+    return parse_orbital_site(raw, solver.norb_phys_orig)
 
 
 def _ham_trans_r(solver):
@@ -410,7 +419,7 @@ def hf_potential(green, tables, *, include_fock, blocks):
 
 
 def green_function(ham_k, T, blocks, *, shape, ns, norb, fill="solver",
-                   shell_tol=None, ene_cutoff=1.0e2, return_info=False):
+                   shell_tol=None, ene_cutoff=None, return_info=False):
     """The stored Green function UHFk builds from the Hamiltonian ``ham_k``.
 
     ``ham_k`` ``(nvol, nd, nd)`` is a Hamiltonian in the solver's index
@@ -435,7 +444,9 @@ def green_function(ham_k, T, blocks, *, shape, ns, norb, fill="solver",
       solver's fill.
 
     ``ene_cutoff`` is the solver's Fermi-function cut (``[mode.param]
-    ene_cutoff``, :attr:`UHFkProblem.ene_cutoff`). With ``return_info`` the
+    ene_cutoff``, :attr:`UHFkProblem.ene_cutoff`); ``None`` takes the
+    solvers' default (``hwave.solver.base.PARAM_DEFAULTS``), so pass the
+    problem's value for an input that sets it. With ``return_info`` the
     result is ``(G, FillInfo)``: ``mu`` per group (at T = 0 the midpoint of
     the HOMO-LUMO gap, as the solver) and one :class:`ShellRecord` per
     group (at T = 0 the shell of ``shell_tol``, exact ties when it is
@@ -443,7 +454,10 @@ def green_function(ham_k, T, blocks, *, shape, ns, norb, fill="solver",
 
     Raises :class:`MuNotConvergedError` when the T > 0 ``mu`` search fails.
     """
+    from .base import PARAM_DEFAULTS
     from .uhfk_fill import diag_blocks, fill_green
+    if ene_cutoff is None:
+        ene_cutoff = PARAM_DEFAULTS["ene_cutoff"]
     ham_k = np.asarray(ham_k)
     nvol = int(np.prod(shape))
     nd = ns * norb
