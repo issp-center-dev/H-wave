@@ -22,9 +22,11 @@ module it imports; it does not import ``hwave.initial``.
   cell on the ``CellShape`` mesh, built by the solver's
   :mod:`hamiltonian_k` (one Fourier convention).
 * Re-exported pure helpers: :func:`to_k` (``hamiltonian_k.to_k``, the
-  solver's R -> k transform ``T(k) = sum_R e^{+ikR} T(R)``) and
+  solver's R -> k transform ``T(k) = sum_R e^{+ikR} T(R)``),
   :func:`interleaved_index` (``spin_orbital.interleaved_index``, the
-  spin-orbital index ``2*orb + spin``).
+  spin-orbital index ``2*orb + spin``) and :func:`fold_layout` /
+  :func:`unfold_layout` (``fold``, the sublattice layout UHFk reads and
+  writes its Green function in).
 
 Every function takes and returns the stored Green function of UHFk,
 ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>`` (the layout of the
@@ -40,6 +42,7 @@ from typing import Optional, Tuple
 import numpy as np
 
 from . import hamiltonian_k
+from .fold import fold_layout, unfold_layout
 from .hamiltonian_k import to_k
 from .spin_orbital import interleaved_index
 from .uhfk_blocks import HFTables, SolverBlocks, accumulate_hf_projected
@@ -49,7 +52,8 @@ __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "MuNotConvergedError", "TWO_BODY_TYPES", "load_problem",
            "solver_blocks", "hf_tables", "accumulate_hf_projected",
            "hf_potential", "green_function", "referenced_input_files",
-           "primitive_h0_k", "to_k", "interleaved_index"]
+           "primitive_h0_k", "to_k", "interleaved_index", "fold_layout",
+           "unfold_layout"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
 #: and the combined ``Coulomb`` table, uhfk.py ``_check_interaction``)

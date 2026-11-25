@@ -17,6 +17,13 @@ The capture uses only solver code present at the revision (``QLMSkInput``,
 ``UHFk`` and its methods), so the golden values are those of the solver
 before the facade existed. The tests rebuild the same inputs with
 :func:`facade_cases`.
+
+``--writer`` writes ``tests/initial_ref/writer_reference.npz``, the
+initial-state file of :func:`writer_reference_case` as
+``hwave.initial.writer.initial_state`` writes it on the current tree (the
+cross-numpy content reference of ``tests/test_initial_writer.py``)::
+
+    PYTHONPATH=$PWD/src:$PWD python -B tests/initial_reference_capture.py --writer
 """
 import argparse
 import json
@@ -314,17 +321,52 @@ def capture_facade(out_path):
     print("wrote {} at revision {}".format(out_path, head))
 
 
+#: the committed reference of ``--writer``
+WRITER_REFERENCE = os.path.join(_REPO, "tests", "initial_ref", "writer_reference.npz")
+
+
+def writer_reference_case(dest):
+    """The input and candidate of the writer reference: a 4 x 4 Hubbard
+    square lattice (hopping 1, U = 2, T = 0.1, half filling), SubShape
+    2 x 2, a Neel seed. ``(toml, candidate)``."""
+    from hwave.initial import Candidate
+    from hwave.initial.patterns import Entry, PatternSpec
+    from tests import initial_fixtures
+    toml = initial_fixtures.square(dest, 4, U=2.0, T=0.1, subshape=(2, 2, 1))
+    spec = PatternSpec(q=("1/2", "1/2", "0"), subshape=(2, 2, 1), phase=0.0, sign=1,
+                       modulation="cos", entries=(Entry(0, 0, (0, 0, 0), cz=1.0),))
+    return toml, Candidate.user(pattern=spec, label="Neel")
+
+
+def capture_writer(out_path):
+    import tempfile
+    from hwave.initial.writer import initial_state
+    root = tempfile.mkdtemp(prefix="initial_capture_")
+    try:
+        toml, cand = writer_reference_case(os.path.join(root, "case"))
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+        initial_state(toml, cand, out=out_path)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    print("wrote {} with numpy {}".format(out_path, np.__version__))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--facade", action="store_true",
                         help="capture the facade golden file")
-    parser.add_argument("--out", default=FACADE_GOLDEN, help="output .npz path")
+    parser.add_argument("--writer", action="store_true",
+                        help="write the initial-state writer reference")
+    parser.add_argument("--out", default=None, help="output .npz path")
     args = parser.parse_args(argv)
-    if not args.facade:
-        parser.error("nothing to do: pass --facade")
+    if args.facade == args.writer:
+        parser.error("pass exactly one of --facade and --writer")
     if _REPO not in sys.path:
         sys.path.insert(0, _REPO)
-    capture_facade(args.out)
+    if args.facade:
+        capture_facade(args.out or FACADE_GOLDEN)
+    else:
+        capture_writer(args.out or WRITER_REFERENCE)
 
 
 if __name__ == "__main__":
