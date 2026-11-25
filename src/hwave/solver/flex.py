@@ -43,6 +43,10 @@ from . import spin_orbital
 from . import fingerprint
 from . import matsubara as _ms
 from . import half_grid as _half_grid
+
+from .spin_orbital import spinful_label as _spinful_label
+from .spin_orbital import spinful_one_body as _spinful_one_body
+from .spin_orbital import spinful_term as _spinful_term
 from . import flex_diagnostics as _diag
 
 
@@ -294,6 +298,10 @@ class FLEX(RPA):
     #: spin-orbital vertex refuses off-site rows); a separate marker from
     #: _accepts_flex_keys, which gates the FLEX-only [mode.param] keys
     _SO_OFFSITE_INFO = False
+    #: a spin-resolved (9-column) Transfer without spin dependence takes
+    #: the 7-column path (the gates below follow the one-body form, so the
+    #: spin structure must be judged from the matrix first, #323)
+    _COLLAPSE_SPIN_FREE_TRANSFER = True
     #: the spin-orbital (spinful) Hartree-Fock FLEX of #83; set by _init_spin_orbital
     _so_spinful = False
     _keep_spinful = False
@@ -922,12 +930,14 @@ class FLEX(RPA):
         return static, fluct
 
     def _init_spin_orbital(self):
-        """Admit ``[mode] enable_spin_orbital = true`` (#83): the spinful
-        general FLEX of Hartree-Fock FLEX.
+        """Admit a one-body term that carries a spin index -- ``[mode]
+        enable_spin_orbital = true`` (#83) or a spin-resolved (9-column)
+        Transfer (#323) -- the spinful general FLEX of Hartree-Fock FLEX.
 
-        The spin is folded into the orbital index, so H0 is kept in its full
-        ``nd x nd`` spin-orbital form (``nd = 2 norb``, spin-block order of
-        :mod:`hwave.solver.spin_orbital`) even when it is spin-diagonal, and
+        H0 is kept in its full ``nd x nd`` form (``nd = 2 norb``, spin-block
+        order of :mod:`hwave.solver.spin_orbital`; the spin-orbital file is
+        reordered from its interleaved index, the spin-resolved one arrives
+        in that order) even when it is spin-diagonal, and
         the fluctuation part is built from the antisymmetrized spinful
         vertex (see :meth:`_flex_compute_veff_spinful`). This version takes
         the Hartree-Fock FLEX route only (``flex_hartree_fock = true``,
@@ -938,8 +948,10 @@ class FLEX(RPA):
         ``longitudinal_bond_channels = true`` it is the spin-orbital
         bond-resolved FLEX of #270 (``self._so_bond``, host only: a GPU
         request is ignored with a WARNING, ``gpu_required`` refused),
-        admitted by :meth:`_phase_b_preflight`."""
-        g = "[mode] enable_spin_orbital = true (FLEX)"
+        admitted by :meth:`_phase_b_preflight`. The bond-resolved FLEX is
+        built from the spin-orbital entry context, so a spin-resolved
+        Transfer is refused with the bond channels."""
+        g = "{} (FLEX)".format(_spinful_label(self.ham_info))
         raw = self._phase_b_raw     # installed as attributes only after this init
         if not raw["flex_hartree_fock"]:
             raise ValueError(
@@ -951,6 +963,14 @@ class FLEX(RPA):
                 g + " requires spinful_vertex_exchange = true (the antisymmetrized "
                 "vertex is what makes the second order exact).")
         if raw["longitudinal_bond_channels"]:
+            if not getattr(self.ham_info, "enable_spin_orbital", False):
+                # a spin-resolved (9-column) Transfer (#323): the bond FLEX
+                # below reads ham_info.so_context, which only spin-orbital
+                # mode builds
+                raise ValueError(
+                    g + " does not support longitudinal_bond_channels (the bond-resolved "
+                    "spinful FLEX is available with [mode] enable_spin_orbital = true "
+                    "only).")
             # the spin-orbital bond FLEX (#270): host only in this version
             H = FLEX._SO_BOND_HEAD
             if self.gpu_required:
@@ -1034,16 +1054,19 @@ class FLEX(RPA):
         # guard is enforced in solve(), where spin_mode is determined).
         if scheme == "general":
             # FLEX general is the paramagnetic full-vertex path: it sums the
-            # RPA *ring* (bubble) series with the full rank-4 vertex.
-            if getattr(self.ham_info, "enable_spin_orbital", False):
+            # RPA *ring* (bubble) series with the full rank-4 vertex. A
+            # one-body term that carries a spin index (spin-orbital mode or
+            # a spin-resolved Transfer, #323) takes the spinful route.
+            if _spinful_one_body(self.ham_info):
                 self._init_spin_orbital()
             self._flex_general = True
         elif scheme == "reduced":
-            if getattr(self.ham_info, "enable_spin_orbital", False):
+            if _spinful_one_body(self.ham_info):
                 raise ValueError(
                     "calc_scheme='reduced' FLEX does not support "
-                    "enable_spin_orbital; use calc_scheme='general' with "
-                    "[mode.param] flex_hartree_fock = true.")
+                    "{}; use calc_scheme='general' with "
+                    "[mode.param] flex_hartree_fock = true.".format(
+                        _spinful_term(self.ham_info)))
             self._flex_general = False
         else:
             # ring+ladder was already rejected as step 0 above, and 'auto'
@@ -1187,7 +1210,11 @@ class FLEX(RPA):
         """
         from hwave.solver import scheme as _scheme
         types = _scheme.declared_types(self._scheme_source_tables())
-        chosen, token = _scheme.resolve_flex(types)
+        # a one-body term that carries a spin index (spin-orbital mode, or a
+        # spin-resolved Transfer that depends on spin) is only supported on
+        # the general scheme, so auto resolves there
+        spinful = _spinful_one_body(self.ham_info)
+        chosen, token = _scheme.resolve_flex(types, spinful_one_body=spinful)
         assert token in _scheme.RESOLUTION_TOKENS
         # commit
         self.calc_scheme = chosen
@@ -1202,7 +1229,12 @@ class FLEX(RPA):
             legacy = _scheme.legacy_1_0_resolution(types, self.calc_type)
             est = self._log_scheme_memory_estimate(
                 "auto-resolved calc_scheme (FLEX)")
-            if chosen != legacy:
+            if spinful and token != "auto:flex_forcing":
+                logger.info(
+                    "auto mode for calc_scheme: set to {} ({}): {} is supported "
+                    "on the general scheme only".format(
+                        chosen, token, _spinful_label(self.ham_info)))
+            elif chosen != legacy:
                 logger.warning(
                     "FLEX calc_scheme='auto' resolved to '{}' ({}); H-wave 1.0.x "
                     "resolved this input to '{}'. Reason: {} carry cross-family "
@@ -2143,8 +2175,9 @@ class FLEX(RPA):
         from hwave.solver.offsite import split_locality
         g = ("[mode.param] longitudinal_bond_channels=true (FLEX)"
              if self.longitudinal_bond_channels else "[mode.param] flex_hartree_fock=true")
-        if getattr(self.ham_info, "enable_spin_orbital", False) and not self._so_spinful:
-            raise ValueError(g + " does not support enable_spin_orbital.")
+        if _spinful_one_body(self.ham_info) and not self._so_spinful:
+            raise ValueError(g + " does not support {}.".format(
+                _spinful_term(self.ham_info)))
         split = split_locality(self.ham_info, self.lattice)
         if self._so_bond:
             # the spin-orbital bond FLEX (#270): every off-site row is in the
@@ -2154,13 +2187,21 @@ class FLEX(RPA):
         if self._so_spinful and split.offsite_types:
             itype = sorted(split.offsite_types)[0]
             (irvec, orbvec) = next(iter(split.offsite_prefold_tbl[itype]))
+            if getattr(self.ham_info, "enable_spin_orbital", False):
+                scope = "only without the bond channels"
+                hint = ("; set [mode.param] longitudinal_bond_channels = true to resolve "
+                        "their exchange exactly.")
+            else:
+                # a spin-resolved Transfer has no bond channels to point to
+                # (refused in _init_spin_orbital)
+                scope = "only"
+                hint = "."
             raise ValueError(
-                "[mode] enable_spin_orbital = true (FLEX) supports on-site and in-cell "
-                "interactions only without the bond channels (the antisymmetrized spinful "
-                "vertex carries the on-site exchange crossing only); the off-site '{}' "
-                "declaration at irvec={}, orbvec={} is refused; set [mode.param] "
-                "longitudinal_bond_channels = true to resolve their exchange exactly."
-                .format(itype, tuple(irvec), tuple(orbvec)))
+                "{} (FLEX) supports on-site and in-cell interactions {} (the "
+                "antisymmetrized spinful vertex carries the on-site exchange crossing "
+                "only); the off-site '{}' declaration at irvec={}, orbvec={} is refused{}"
+                .format(_spinful_label(self.ham_info), scope, itype, tuple(irvec),
+                        tuple(orbvec), hint))
         refused = () if self.longitudinal_bond_channels else ("PairHop", "Exchange")
         for itype in refused:
             if itype in split.offsite_types:
@@ -2956,6 +2997,9 @@ class FLEX(RPA):
                            "mu": float(mu)}
                 if self._so_spinful:
                     physics.update(self._spin_vector(dens.rho_r))
+                if self.ham_info.enable_spin_orbital:
+                    # (not a spin-resolved Transfer, #323: its archives carry
+                    # no spin-orbital provenance, as in RPA)
                     # #88: the closure density of the final state, electrons
                     # per cell over all spin-orbitals (the trace runs over
                     # both spins), at the final dressed mu
@@ -5835,6 +5879,20 @@ class FLEX(RPA):
         # ONCE and merged into chiq, green, sigma and chi0q; the Green digest
         # is that of the array written to green.npz
         so_prov = {}
+        # the marker of a spinful run. spin_orbital (#83) goes on every
+        # archive of an enable_spin_orbital run and on no other: a
+        # spin-resolved (9-column) Transfer (#323) takes the same spinful
+        # route but is not a spin-orbital run (physical orbital indices, no
+        # spin-orbital provenance), and marks its chi0q / chiq with
+        # spin_resolved instead, as RPA does
+        _spinful_run = bool(getattr(self, "_so_spinful", False))
+        _ham_info = getattr(self, "ham_info", None)
+        so_mark = ({"spin_orbital": True}
+                   if _spinful_run and getattr(_ham_info, "enable_spin_orbital", False)
+                   else {})
+        chi_mark = so_mark or (
+            {"spin_resolved": True}
+            if _spinful_run and spin_orbital.spin_resolved_one_body(_ham_info) else {})
         # the chi0q / chiq provenance: the same dict, except on the
         # spin-orbital bond FLEX, whose chi0q / chiq carry the digest and the
         # state point (mu, density) of the last map's Green function
@@ -5997,9 +6055,9 @@ class FLEX(RPA):
                      # #83: the spin-orbital marker, written ONLY by a
                      # spin-orbital run (a non-spin-orbital archive keeps its
                      # member set); hwave_sc requires it in spin-orbital
-                     # flex mode -- index_convention alone is on every file
-                     **({"spin_orbital": True}
-                        if getattr(self, "_so_spinful", False) else {}),
+                     # flex mode -- index_convention alone is on every file.
+                     # A spin-resolved Transfer writes spin_resolved (#323)
+                     **chi_mark,
                      **so_prov_map)
             logger.info("save_results: save chi0q in file {}".format(file_name))
 
@@ -6086,8 +6144,8 @@ class FLEX(RPA):
                 save_dict["chiq"] = green_info["chiq"]
                 save_dict["index_convention"] = spin_orbital.INDEX_CONVENTION
             if self._so_spinful:
-                # #83: written ONLY by a spin-orbital run (see chi0q above)
-                save_dict["spin_orbital"] = True
+                # the marker of this spinful run (see chi0q above)
+                save_dict.update(chi_mark)
                 save_dict.update(so_prov_map)
             np.savez(file_name, **save_dict)
             logger.info("save_results: save chiq in file {}".format(file_name))
@@ -6108,7 +6166,7 @@ class FLEX(RPA):
                                    **self._provenance_block("final_state"))
             if self._so_spinful:
                 sigma_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
-                sigma_extra["spin_orbital"] = True
+                sigma_extra.update(so_mark)
                 sigma_extra.update(so_prov)
             np.savez(file_name,
                      sigma=green_info.get("sigma"),
@@ -6143,7 +6201,7 @@ class FLEX(RPA):
                 # of the archive checks) and the spin-orbital marker
                 green_extra["index_convention"] = spin_orbital.INDEX_CONVENTION
                 green_extra["green_layout"] = fingerprint.GREEN_LAYOUT
-                green_extra["spin_orbital"] = True
+                green_extra.update(so_mark)
                 green_extra.update(so_prov)
             green_members = dict(
                 green=green_info.get("green"),

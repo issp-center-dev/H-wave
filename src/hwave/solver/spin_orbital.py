@@ -252,6 +252,131 @@ def check_spin_resolved_norb(param_ham, norb_geom, solver):
         .format(name, tag, n_file, norb_geom, solver))
 
 
+def spin_free_transfer_table(table, norb_phys):
+    """The 7-column table of a spin-resolved Transfer that does not depend
+    on spin, else ``None``.
+
+    ``table`` is keyed on the spin-block composite index ``s*norb_phys + a``
+    (the reader's fold of the 9-column rows). It is spin-independent when
+    no entry couples the two spins (a zero-valued one is ignored) and the
+    up-up and down-down blocks are identical, value for value; the result
+    is then the up-up block on physical indices -- exactly the table the
+    equivalent 7-column file reads to. Any spin dependence (a Zeeman-like
+    asymmetry or a spin flip), or an index outside ``[0, 2*norb_phys)``,
+    gives ``None``.
+    """
+    n = int(norb_phys)
+    blocks = ({}, {})
+    for (irvec, (i, j)), v in table.items():
+        if not (0 <= i < 2 * n and 0 <= j < 2 * n):
+            return None
+        si, sj = i // n, j // n
+        if si != sj:
+            if v != 0:
+                return None
+            continue
+        blocks[si][(irvec, (i - si * n, j - sj * n))] = v
+    up, dn = blocks
+    for key in set(up) | set(dn):
+        if up.get(key, 0) != dn.get(key, 0):
+            return None
+    # an entry present in the down block only is zero (checked above)
+    return dict(up)
+
+
+def validate_spin_resolved_closure(table, norb_phys, source="Transfer"):
+    """Refuse a spin-resolved Transfer that is not Hermitian-closed.
+
+    In the 9-column format the partner of ``T_{as,bt}(R)`` is
+    ``T_{bt,as}(-R)`` and the two must be complex conjugates; a declared
+    entry without its partner (a spin-flip row written in one direction
+    only, say) is refused, naming both entries as (orbital, spin). The
+    same rule and tolerance as the two-body declarations
+    (:func:`hwave.solver.declarations.validate_hermitian_closure`).
+    ``table`` is keyed on the spin-block index ``s*norb_phys + a``.
+    """
+    from .declarations import REVERSE_ATOL, REVERSE_RTOL
+    n = int(norb_phys)
+
+    def fmt(irvec, i, j):
+        (a, s), (b, t) = spinblock_split(i, n), spinblock_split(j, n)
+        return "R={} (orbital, spin) = ({}, {}), ({}, {})".format(
+            tuple(irvec), a + 1, s, b + 1, t)
+
+    for (irvec, (i, j)), v in table.items():
+        if not np.isfinite(complex(v)):
+            raise ValueError(
+                "{}: the spin-resolved Transfer declares a non-finite "
+                "coefficient at {}: {}".format(source, fmt(irvec, i, j), v))
+        neg = tuple(-x for x in irvec)
+        partner = table.get((neg, (j, i)))
+        if partner is None:
+            raise ValueError(
+                "{}: the spin-resolved Transfer declares {} = {} with NO "
+                "partner entry at {}: declare both directions "
+                "(T_as,bt(R) = conj T_bt,as(-R))".format(
+                    source, fmt(irvec, i, j), v, fmt(neg, j, i)))
+        if abs(v - np.conj(partner)) > REVERSE_ATOL + REVERSE_RTOL * abs(v):
+            raise ValueError(
+                "{}: the spin-resolved Transfer is not Hermitian-closed: "
+                "{} = {} but {} = {} (expected its conjugate, {})".format(
+                    source, fmt(irvec, i, j), v, fmt(neg, j, i), partner,
+                    np.conj(v)))
+
+
+def private_table_container(param_ham):
+    """A copy of the k-space reader's table container that a solver can
+    rewrite without touching the caller's: the same tables (shared, not
+    copied) and the same record attributes (``source_files``,
+    ``source_dimensions``, ``source_formats``; their dicts copied)."""
+    new = type(param_ham)()
+    for key, value in param_ham.items():
+        new[key] = value
+    for attr, value in vars(param_ham).items():
+        if attr == "_store":
+            continue
+        setattr(new, attr, dict(value) if isinstance(value, dict) else value)
+    return new
+
+
+def spinful_one_body(ham_info):
+    """Whether the one-body term of ``ham_info`` carries a spin index (is
+    held as nd x nd): spin-orbital mode or a spin-resolved Transfer.
+
+    The one accessor every consumer uses, so an Interaction-like object
+    that predates ``spinful_one_body`` (a test stub, an external caller)
+    falls back to its ``enable_spin_orbital`` instead of silently losing
+    the spin-orbital gates or raising AttributeError."""
+    value = getattr(ham_info, "spinful_one_body", None)
+    if value is not None:
+        return bool(value)
+    return bool(getattr(ham_info, "enable_spin_orbital", False))
+
+
+def spin_resolved_one_body(ham_info):
+    """Whether ``ham_info``'s Transfer came from a spin-resolved (9-column)
+    file; False for an Interaction-like object that predates the
+    attribute."""
+    return bool(getattr(ham_info, "spin_resolved_transfer", False))
+
+
+def spinful_label(ham_info):
+    """How the spinful one-body term was declared, for messages: the
+    spin-orbital switch or a spin-resolved (9-column) Transfer (#323)."""
+    if getattr(ham_info, "enable_spin_orbital", False):
+        return "[mode] enable_spin_orbital = true"
+    return "a spin-resolved (9-column) Transfer"
+
+
+def spinful_term(ham_info):
+    """Short form of :func:`spinful_label` for "... does not support X"
+    messages; the spin-orbital wording is the historical one the
+    equivalence-table reject fragments pin."""
+    if getattr(ham_info, "enable_spin_orbital", False):
+        return "enable_spin_orbital"
+    return "a spin-resolved (9-column) Transfer"
+
+
 def reject_spin_resolved_transfer(param_ham, solver, enable_spin_orbital):
     """Refuse a spin-resolved (9-column) Transfer table a solver does not
     consume yet, and -- always -- its combination with spin-orbital mode.
