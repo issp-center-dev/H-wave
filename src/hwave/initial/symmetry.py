@@ -49,7 +49,7 @@ from hwave.solver import initial_facade
 __all__ = [
     "SU2_TOL", "TR_TOL", "MAP_TOL", "TR_SPIN_ROTATION", "MAX_HF_APPLICATIONS", "SZ_WARNING",
     "Su2Result", "TrResult", "su2_check", "tr_check", "find_map",
-    "sign_map_verified", "table_probes", "hermitian_green", "rotate_green",
+    "sign_map_verified", "map_invariants", "table_probes", "hermitian_green", "rotate_green",
     "spin_rotation", "time_reverse_green",
 ]
 
@@ -451,7 +451,11 @@ def tr_check(problem, *, rng_seed=364):
 
 def _to_r(o_k, problem):
     """``O(R)`` ``(nx, ny, nz, nd, nd)`` of a Hamiltonian-convention
-    ``O(k)`` (the inverse of ``O(k) = sum_R e^{ikR} O(R)``)."""
+    ``O(k)`` (the inverse of ``O(k) = sum_R e^{ikR} O(R)``).
+
+    Package-internal on purpose: :mod:`hwave.initial.labels` reads patterns
+    with it, so the two modules share one inverse of the solver's
+    ``to_k``; it is not part of the public API (no stability promise)."""
     nx, ny, nz = problem.shape
     nd = problem.nd
     o = np.asarray(o_k, dtype=np.complex128)
@@ -617,6 +621,28 @@ def find_map(O1, O2, *, problem, su2, tr) -> Optional[
     """
     return _search(_to_r(O1, problem), _to_r(O2, problem), problem, su2, tr,
                    plain_translations=True)
+
+
+def map_invariants(O, *, problem) -> Tuple[np.ndarray, np.ndarray]:
+    """Two quantities that every map of :func:`find_map` keeps, for a cheap
+    pre-filter before it: the sorted eigenvalues of ``O(k)`` over every k
+    (the spectrum of the pattern on the whole lattice; translations, spin
+    rotations and time reversal are unitary or anti-unitary), and the
+    translation autocorrelation ``Re <O, T_tau O> / ||O||^2`` for every
+    in-cell translation ``tau`` of :func:`find_map` (translations commute
+    with each other, with a global spin rotation and with time reversal;
+    the real part is kept by the complex conjugation of time reversal). A
+    zero pattern gives zeros. Two patterns whose invariants differ are
+    related by no map; equal invariants decide nothing."""
+    o = _to_r(O, problem)
+    spectrum = np.sort(np.linalg.eigvalsh(np.asarray(O, dtype=np.complex128)).ravel())
+    n2 = float(np.vdot(o, o).real)
+    taus = _translations(problem)
+    if n2 == 0.0:
+        return spectrum, np.zeros(len(taus))
+    corr = np.array([float(np.vdot(o, _translate(o, problem, tau)).real) / n2
+                     for tau in taus])
+    return spectrum, corr
 
 
 def sign_map_verified(O, *, problem, su2, tr) -> bool:
