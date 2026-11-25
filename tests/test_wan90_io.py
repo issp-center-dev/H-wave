@@ -11,7 +11,22 @@ import os
 import tempfile
 import unittest
 
+import numpy as np
+
 from hwave.qlmsio import wan90
+
+
+def test_read_geometry(tmp_path):
+    path = tmp_path / "geometry.dat"
+    path.write_text("1 0 0\n0 1 0\n0 0 1\n0 0 0\n2 0 0\n0 1 0\n0 0 1\n"
+                    "0 0 0 0\n1 0 0 0\n")
+    geometry = wan90.read_geometry(os.path.relpath(path))
+    np.testing.assert_array_equal(geometry["unit_vec"], np.eye(3))
+    np.testing.assert_array_equal(geometry["degree"], [0, 0, 0])
+    np.testing.assert_array_equal(geometry["cell_vec"], np.diag([2, 1, 1]))
+    np.testing.assert_array_equal(geometry["site2vec"][0], [0, 0, 0, 0])
+    np.testing.assert_array_equal(geometry["site2vec"][1], [1, 0, 0, 0])
+    assert geometry["n_orb"] == 1
 
 
 def _write_hr(lines):

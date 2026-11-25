@@ -293,6 +293,80 @@ and the latter on the output files (such as locations to store).
   
   - ``random``: set the initial configuration by random numbers.
 
+- ``geometry_uhf``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the filename of the geometry in the real-space site representation,
+  in the ``geometry.dat`` format written by StdFace of mVMC: three lines with one lattice vector each,
+  one line with the three boundary phases (read but not used: UHFk always uses periodic boundaries),
+  three lines with one supercell vector each, then one integer ``x y z orbital`` row per site.
+  The site rows are numbered from 0, and that number is the site index ``i`` or ``j`` used by
+  ``initial_uhf``, ``onebodyg_uhf`` and ``onebodyg``; ``x y z`` are the cell coordinates
+  :math:`0 \le x < L_x` (and so on) in ``CellShape``, also when ``SubShape`` is used, and
+  ``orbital`` counts from 0.
+  It is required by ``initial_uhf`` and by ``onebodyg`` in ``file.output``. It is optional otherwise.
+
+- ``initial_uhf``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the filename of the initial configuration of the one-body Green's function
+  in the real-space site representation. Each line holds one element
+  ``i s j t Re Im`` (sites and spins of :math:`\langle c^\dagger_{is} c_{jt}\rangle`), without a header;
+  ``i`` and ``j`` are site indices of ``geometry_uhf`` and ``s``, ``t`` are spin indices,
+  0 (up) or 1 (down). This is the layout that ``onebodyg`` in ``file.output`` writes, so that output can be fed back here.
+  The UHFr outputs ``green`` (headerless) and ``initial`` (five-line header) have the same rows;
+  a file whose first line starts with ``=`` is read after skipping five header lines.
+  A row with site ``i`` at cell :math:`\vec{R}_i`, orbital :math:`a` and site ``j`` at
+  :math:`\vec{R}_j`, orbital :math:`b` sets the ``green.npz`` element
+  :math:`G_{sa,tb}(\vec{R}_i-\vec{R}_j)` (displacement taken modulo ``CellShape``).
+  By translation invariance only rows whose site ``i`` lies in the cell ``0 0 0`` are used;
+  elements without such a row start from zero, so a complete initial state needs every
+  ``(i, s, j, t)`` with ``i`` in the cell ``0 0 0`` and ``j`` over all sites.
+  ``geometry_uhf`` in ``file.input`` is required. It cannot be specified together with ``initial``.
+  This input requires ``SubShape = [1, 1, 1]``; otherwise the run stops with an error.
+  Give sublattice-ordered states through ``initial`` (``green.npz``) instead.
+  When neither ``initial`` nor ``initial_uhf`` is set,
+  the initial configuration follows ``initial_mode``.
+
+  .. _uhfk-greenone-migration:
+
+  .. note::
+
+     **Release and migration note: greenone.dat and initial_uhf.** ``onebodyg`` now writes
+     :math:`\langle c^\dagger_{\vec{R}_i a s} c_{\vec{R}_j b t}\rangle
+     = G_{sa,tb}(\vec{R}_i-\vec{R}_j)` (conventionally to ``greenone.dat``), looking the displacement
+     up in the same (z-fastest) order as ``green.npz``, and ``initial_uhf`` reads it back the same way.
+     Before, the writer
+     read :math:`G(\vec{R}_j-\vec{R}_i)` packed x-fastest, and under ``SubShape`` larger than
+     ``[1, 1, 1]`` it lost the sublattice resolution (every creation site was treated as the
+     first sublattice site). With ``SubShape = [1, 1, 1]`` elements with both sites in the same
+     cell are unchanged; the others can change for states without inversion symmetry (for example with
+     complex hopping) and for cells extended in more than one direction. With ``SubShape`` larger
+     than ``[1, 1, 1]`` any element can change, including same-cell elements on the other sublattice
+     sites. The values now agree with UHFr on the same cluster. In earlier releases reading
+     ``geometry_uhf`` failed on NumPy 1.24 and later, so neither ``onebodyg`` nor ``initial_uhf``
+     could be used on the supported NumPy versions. The file has no version marker: regenerate any old
+     ``greenone.dat`` before reusing it with ``initial_uhf``.
+
+.. _uhfk-input-onebodyg-uhf:
+
+- ``onebodyg_uhf``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the filename of the list of the one-body Green's function elements
+  (the ``greenone.def`` format of mVMC and UHFr: five header lines, which are skipped, then one
+  ``i s j t`` row per element) to be written by :ref:`onebodyg <uhfk-output-onebodyg>`
+  in ``file.output``. It is required when ``onebodyg`` is set, and optional otherwise.
+
 ``file.input.interaction`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -363,6 +437,25 @@ to the definition files.
   **Description :**
   This parameter specifies the name of the file to store the one-body Green's functions.
   If it is set to an empty string, no output will be generated.
+
+.. _uhfk-output-onebodyg:
+
+- ``onebodyg``
+
+  **Type :**
+  String
+
+  **Description :**
+  This parameter specifies the name of the file to store the one-body Green's function elements
+  listed in :ref:`onebodyg_uhf <uhfk-input-onebodyg-uhf>` in ``file.input``
+  in the real-space site representation (``i s j t Re Im`` per line,
+  no header). Each row is :math:`\langle c^\dagger_{is} c_{jt}\rangle`, the same quantity and
+  layout as the UHFr output ``green``. With ``SubShape = [1, 1, 1]`` the file can be read back
+  through ``initial_uhf`` (see the :ref:`migration note <uhfk-greenone-migration>`); for larger
+  ``SubShape`` restart from ``green`` through ``initial``.
+  ``geometry_uhf`` and ``onebodyg_uhf`` in ``file.input`` are required.
+  Under ``SubShape`` larger than ``[1, 1, 1]`` the elements keep the sublattice resolution of the
+  converged state. If it is not set, no output will be generated.
 
 - ``scf_status``
 
