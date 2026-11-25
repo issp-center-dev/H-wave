@@ -53,7 +53,7 @@ __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "solver_blocks", "hf_tables", "accumulate_hf_projected",
            "hf_potential", "green_function", "referenced_input_files",
            "primitive_h0_k", "to_k", "interleaved_index", "fold_layout",
-           "unfold_layout"]
+           "unfold_layout", "discard_profile_statistics"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
 #: and the combined ``Coulomb`` table, uhfk.py ``_check_interaction``)
@@ -546,3 +546,13 @@ def referenced_input_files(toml_path):
         if key in finput:
             out[key] = pathlib.Path(os.path.abspath(os.path.join(input_dir, finput[key])))
     return out
+
+
+def discard_profile_statistics():
+    """Drop the timing statistics of the solver's ``@do_profile`` functions,
+    so that the table the solver prints when the interpreter exits is not
+    printed (for a command that only reads models, such as ``python -m
+    hwave.initial``). The solver's own runs are not affected."""
+    from hwave.solver import perf
+    perf._perf_db_data._db_count.clear()
+    perf._perf_db_data._db_value.clear()

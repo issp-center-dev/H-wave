@@ -381,6 +381,39 @@ class TestLabel(_Tmp):
                          sign=None, spiral=False)
         self.assertEqual(a.weights, c.weights)
 
+    def test_ordering_follows_the_onsite_channels(self):
+        """The ordering vectors of a converged state come from its on-site
+        amplitudes: they follow the on-site channels, and a bond channel
+        (here a uniform bond renormalisation) carries none."""
+        from hwave.initial import labels
+        f = self.square_facts()
+        neel = self.neel_rho(f.problem)
+        bond = _rho(f.problem, {(0, 0, 1): {"c0": 0.3}, (0, 1, 0): {"c0": 0.3}})
+        kw = dict(q=None, eta=None, phase=None, sign=None, spiral=False)
+        lab = labels.label(neel + bond, f, ordering=[("1/2", "1/2", "0")], **kw)
+        self.assertGreaterEqual(lab.weights["bond-charge"], labels.DOMINANT_WEIGHT)
+        self.assertEqual(lab.name, "spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge")
+        # a near tie: every vector, in the given order
+        lab = labels.label(neel + bond, f, ordering=[("1/2", "0", "0"), ("0", "1/2", "0")],
+                           **kw)
+        self.assertEqual(lab.name,
+                         "spin-z ferro-orbital q=(1/2,0,0) q=(0,1/2,0) + bond-charge")
+        # no bond channel: the ordering vector ends the name
+        lab = labels.label(neel, f, ordering=[("1/2", "1/2", "0")], **kw)
+        self.assertEqual(lab.name, "spin-z ferro-orbital q=(1/2,1/2,0)")
+        # no on-site channel named, or para: no ordering vector is written
+        lab = labels.label(bond, f, ordering=[("0", "0", "0")], **kw)
+        self.assertEqual(lab.name, "bond-charge")
+        lab = labels.label(np.zeros_like(neel), f, ordering=[("1/2", "1/2", "0")], **kw)
+        self.assertEqual(lab.name, "para")
+        # a pattern's q still describes the whole pattern
+        lab = labels.label(neel + bond, f, q=("1/2", "1/2", "0"), eta=None, phase=None,
+                           sign=None, spiral=False)
+        self.assertEqual(lab.name, "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)")
+        with self.assertRaisesRegex(ValueError, "exclusive"):
+            labels.label(neel, f, q=("0", "0", "0"), eta=None, phase=None, sign=None,
+                         spiral=False, ordering=[("0", "0", "0")])
+
     def test_bond_label_prefix(self):
         """Entries between two sites (in the cell or across cells) are
         labelled as bonds: ``bond-...``."""

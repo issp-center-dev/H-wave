@@ -30,6 +30,10 @@ _LAZY = {"candidate_states": "hwave.initial.enumerate", "Limits": "hwave.initial
          "CheckResult": "hwave.initial.writer", "InitialStateError": "hwave.initial.writer"}
 
 
+def __dir__():
+    return sorted(set(globals()) | set(__all__))
+
+
 def __getattr__(name):
     if name in _LAZY:
         import importlib

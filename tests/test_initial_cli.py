@@ -759,6 +759,10 @@ class TestCollect(_Base):
         self.assertIn("q=(1/2,1/2,0)", para["final_label"])
         self.assertIn("q=(0,0,0)", ferro["final_label"])
         self.assertNotEqual(para["final_label"], ferro["final_label"])
+        # q follows the on-site spin channel it belongs to, never a bond one
+        for r in (para, ferro):
+            self.assertRegex(r["final_label"], r"^spin-z \S+-orbital q=\(", r["final_label"])
+            self.assertNotRegex(r["final_label"], r"bond-[a-z-]+ q=", r["final_label"])
 
     def test_dominant_q_near_tie(self):
         from hwave.initial.cli import _dominant_q
@@ -787,6 +791,61 @@ class TestCollect(_Base):
             self.assertIn(word, err)
             self.assertNotIn("Traceback", err)
             self.assertEqual(len(err.strip().splitlines()), 1, err)
+
+    def test_collect_duplicate_run_id_refused(self):
+        work, ids = self.prepared()
+        m = self.manifest(work)
+        m["runs"].append(dict(m["runs"][0]))
+        with open(os.path.join(work, "manifest.json"), "w") as f:
+            json.dump(m, f)
+        rc, _, err = self.main("collect", work)
+        self.assertEqual(rc, 1)
+        self.assertIn("duplicate run_id", err)
+        self.assertIn(m["runs"][0]["run_id"], err)
+        self.assertNotIn("Traceback", err)
+
+    def test_collect_refuses_symlinked_outputs(self):
+        # an output name in WORK that is a symbolic link to a file outside
+        # WORK: collect refuses it and never writes through the link
+        work, ids = self.prepared()
+        self.collect(work)
+        victim = self.path("victim.txt")
+        for name in ("summary.txt", "coverage.json"):
+            with open(victim, "w") as f:
+                f.write("keep me\n")
+            dest = os.path.join(work, name)
+            os.remove(dest)
+            os.symlink(victim, dest)
+            rc, _, err = self.main("collect", work)
+            self.assertEqual(rc, 1, name)
+            self.assertIn("symbolic link", err)
+            self.assertIn(name, err)
+            self.assertNotIn("Traceback", err)
+            with open(victim) as f:
+                self.assertEqual(f.read(), "keep me\n")
+            self.assertTrue(os.path.islink(dest))
+            os.remove(dest)
+        # a link at the old fixed temporary name is never opened either
+        os.symlink(victim, os.path.join(work, "coverage.json.tmp"))
+        self.collect(work)
+        with open(victim) as f:
+            self.assertEqual(f.read(), "keep me\n")
+        self.assertFalse(os.path.islink(os.path.join(work, "coverage.json")))
+        self.assertEqual([n for n in os.listdir(work) if n.startswith(".")], [])
+
+    def test_write_text_replaces_atomically(self):
+        from hwave.initial import cli
+        dest = self.path("out.txt")
+        cli._write_text(dest, "a\n")
+        cli._write_text(dest, "b\n")
+        with open(dest) as f:
+            self.assertEqual(f.read(), "b\n")
+        self.assertEqual(sorted(os.listdir(self.tmp)), ["_bin", "out.txt"])
+        dangling = self.path("dangling.txt")
+        os.symlink(self.path("nowhere"), dangling)
+        with self.assertRaisesRegex(ValueError, "symbolic link"):
+            cli._write_text(dangling, "x")
+        self.assertFalse(os.path.exists(self.path("nowhere")))
 
     def test_collect_status_input_changed(self):
         work, ids = self.prepared()
@@ -873,6 +932,15 @@ class TestHelp(_Base):
             self.assertEqual(res.returncode, 0, res.stdout)
             self.assertNotIn("Statistics", res.stdout)
             self.assertNotIn("msec", res.stdout)
+        # the process exits normally: exit handlers run
+        code = ("import atexit, runpy, sys; atexit.register(lambda: print('exit handler ran')); "
+                "sys.argv = ['hwave.initial', 'check', '--require-provenance', {!r}]; "
+                "runpy.run_module('hwave.initial', run_name='__main__')").format(toml)
+        res = subprocess.run([sys.executable, "-c", code], env=self.env,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertEqual(res.returncode, 0, res.stdout)
+        self.assertIn("exit handler ran", res.stdout)
+        self.assertNotIn("Statistics", res.stdout)
 
     def test_toml_serialiser(self):
         import tomli

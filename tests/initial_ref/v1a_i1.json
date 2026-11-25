@@ -103,25 +103,25 @@
  "numpy_version": "2.4.6",
  "rows": {
   "baseline-q0_1_2_0-charge-q-0-1-2-0-phi-0-r0-phi0-b2x2x1": {
-   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.7970288098315074,
    "moment": 0.3453281595895941,
    "status": "converged"
   },
   "baseline-q0_1_2_0-spin-z-ferro-orbital-q-0-1-2-0-phi-0-r0-phi0-b2x2x1": {
-   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.797028792250471,
    "moment": 0.34532815282274887,
    "status": "converged"
   },
   "baseline-q1_2_0_0-charge-q-1-2-0-0-phi-0-r0-phi0-b2x2x1": {
-   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.7970287908604967,
    "moment": 0.3453281521846562,
    "status": "converged"
   },
   "baseline-q1_2_0_0-spin-z-ferro-orbital-q-1-2-0-0-phi-0-r0-phi0-b2x2x1": {
-   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.797028785595908,
    "moment": 0.3453281502310829,
    "status": "converged"
@@ -133,13 +133,13 @@
    "status": "not_converged"
   },
   "baseline-q1_2_1_2_0-spin-z-ferro-orbital-q-1-2-1-2-0-phi-0-r0-phi0-b2x2x1": {
-   "final_label": "spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.7970288133386025,
    "moment": 0.34532816095851665,
    "status": "converged"
   },
   "ferro-q0_0_0-spin-z-ferro-orbital-q-0-0-0-phi-0-r0-phi0-b2x2x1": {
-   "final_label": "spin-z ferro-orbital + bond-spin-z + bond-charge q=(0,0,0)",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z + bond-charge",
    "free_energy_per_site": -0.6281618696814233,
    "moment": 0.07424125478434732,
    "status": "converged"
@@ -151,25 +151,25 @@
    "status": "converged"
   },
   "random-s0-b2x2x1": {
-   "final_label": "spin-x ferro-orbital + spin-y ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-x ferro-orbital + spin-y ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.797028913436389,
    "moment": 0.3453282000296107,
    "status": "converged"
   },
   "random-s1-b2x2x1": {
-   "final_label": "spin-z ferro-orbital + spin-x ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-z ferro-orbital + spin-x ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.7970289134369635,
    "moment": 0.3453282000298339,
    "status": "converged"
   },
   "random-s2-b2x2x1": {
-   "final_label": "spin-y ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-y ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.7970289134363752,
    "moment": 0.3453282000296078,
    "status": "converged"
   },
   "random-s3-b2x2x1": {
-   "final_label": "spin-y ferro-orbital + spin-z ferro-orbital + bond-charge q=(1/2,1/2,0)",
+   "final_label": "spin-y ferro-orbital + spin-z ferro-orbital q=(1/2,1/2,0) + bond-charge",
    "free_energy_per_site": -0.7970289134372414,
    "moment": 0.34532820002994796,
    "status": "converged"

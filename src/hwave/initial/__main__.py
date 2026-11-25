@@ -1,16 +1,15 @@
 """``python -m hwave.initial``: the commands prepare, check and collect.
 
-The process ends with ``os._exit`` after flushing its streams: the solver's
-profiling table, printed when the interpreter shuts down, is not part of
-the output of these commands (the solver is left unchanged).
+The solver's profiling table, printed when the interpreter shuts down, is
+not part of the output of these commands: its statistics are dropped
+before the normal exit (the solver is left unchanged).
 """
-import os
 import sys
 
 from hwave.initial.cli import main
+from hwave.solver.initial_facade import discard_profile_statistics
 
 if __name__ == "__main__":
     code = main()
-    sys.stdout.flush()
-    sys.stderr.flush()
-    os._exit(code)
+    discard_profile_statistics()
+    sys.exit(code)

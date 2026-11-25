@@ -21,7 +21,8 @@ The original TOML's absolute path is kept in ``manifest.json`` for
 
 **Exit codes** (:data:`EXIT_CODES`): 0 done (for ``check``: verified, or
 unverified without ``--require-provenance``); 1 an error or a refusal; 2 an
-argument error; 3 stage 0 pending (not used by the large tier); 4 ``check
+argument error; 3 reserved for a later release (a preliminary paramagnetic
+run is pending; never returned now); 4 ``check
 --require-provenance`` on an initial-state file without provenance.
 """
 import argparse
@@ -34,6 +35,7 @@ import numbers
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import sys
 from dataclasses import dataclass
@@ -56,8 +58,8 @@ EXIT_CODES = (
     (EXIT_OK, "done (check: verified, or unverified without --require-provenance)"),
     (EXIT_ERROR, "error, or the check refused the file"),
     (EXIT_USAGE, "argument error"),
-    (EXIT_STAGE0_PENDING, "stage 0 pending: run its commands, then the same prepare "
-                          "command again (not used by the large tier)"),
+    (EXIT_STAGE0_PENDING, "reserved for a later release (a preliminary paramagnetic run "
+                          "is pending); never returned now"),
     (EXIT_NO_PROVENANCE, "check --require-provenance: the initial-state file has no "
                          "provenance"),
 )
@@ -388,7 +390,7 @@ def stage_run_dir(run_dir, doc, *, source_dir, overrides, source_name=None) -> S
     empty) for the parsed input TOML ``doc`` of the directory ``source_dir``.
 
     ``overrides``: the per-directory values, ``[mode.param]`` keys (e.g.
-    ``SubShape``, and ``T`` for stage 0; an existing key is replaced in its
+    ``SubShape``, or ``T``; an existing key is replaced in its
     own spelling) and ``"green"`` for ``[file.output] green``.
 
     The rules: ``[file.input] path_to_input = ""`` and ``initial =
@@ -587,7 +589,8 @@ def _para_green(facts, cache):
     return cache[key]
 
 
-def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False):
+def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False,
+                 ordering=None):
     """The label of the state ``G`` from ``delta rho`` against the bare-H0
     paramagnet of its cell (the rho = G^T convention)."""
     from hwave.initial import labels
@@ -607,7 +610,7 @@ def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False
     if float(np.max(np.abs(d), initial=0.0)) <= labels.PARA_TOL:
         d = np.zeros_like(d)
     return labels.label(d, facts, q=q, eta=None, phase=phase, sign=sign,
-                        spiral=spiral).name
+                        spiral=spiral, ordering=ordering).name
 
 
 #: q vectors whose weight is at least this fraction of the largest one are
@@ -618,8 +621,8 @@ _Q_FLOOR = 1e-16
 
 
 def _dominant_q(op):
-    """The ordering vectors of a converged state, from the PR 1a order
-    parameters ``op`` (the JSON of :func:`report.order_parameter_records`,
+    """The ordering vectors of a converged state, from the order parameters
+    ``op`` of :mod:`hwave.results` (the JSON of :func:`report.order_parameter_records`,
     per orbital): the weight of q is ``|S(q)|^2 + |dn(q)|^2`` (the q = 0
     density, fixed by N, left out); the q of the largest weight and every q
     within :data:`Q_TIE` of it, as ``"a,b,c"`` strings in the reader's
@@ -651,12 +654,41 @@ def _commands_text(run_ids):
     return "\n".join(lines) + "\n"
 
 
+def _refuse_link(path):
+    """``ValueError`` when ``path`` is a symbolic link (dangling or not)."""
+    if os.path.islink(os.fspath(path)):
+        raise ValueError("{}: is a symbolic link; hwave.initial writes its outputs "
+                         "only as regular files inside WORK. Remove the link and "
+                         "repeat the command".format(path))
+
+
+def _write_text(path, text):
+    """Write ``text`` to ``path`` atomically: into a fresh temporary file
+    next to it (created exclusively, so an existing file or symbolic link of
+    that name is never opened), then renamed onto ``path``. A symbolic link
+    at ``path`` is refused (``ValueError``): the outputs of WORK are written
+    in WORK only, never through a link to a file elsewhere."""
+    path = pathlib.Path(os.fspath(path))
+    _refuse_link(path)
+    while True:
+        tmp = path.parent / ".{}.{}.tmp".format(path.name, secrets.token_hex(8))
+        try:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            break
+        except FileExistsError:
+            continue
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(str(tmp), str(path))
+    except BaseException:
+        if os.path.lexists(str(tmp)):
+            os.remove(str(tmp))
+        raise
+
+
 def _write_json(path, obj):
-    tmp = str(path) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=1, allow_nan=False)
-        f.write("\n")
-    os.replace(tmp, str(path))
+    _write_text(path, json.dumps(obj, indent=1, allow_nan=False) + "\n")
 
 
 def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None,
@@ -799,8 +831,7 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
         made.append(work / CANDIDATES)
         _write_json(work / COVERAGE, cov)
         made.append(work / COVERAGE)
-        with open(work / COMMANDS, "w", encoding="utf-8") as f:
-            f.write(_commands_text([e["run_id"] for e in entries]))
+        _write_text(work / COMMANDS, _commands_text([e["run_id"] for e in entries]))
         made.append(work / COMMANDS)
         manifest = dict(record, manifest_version=MANIFEST_VERSION,
                         hwave_version=hwave.__version__, work_dir_at_prepare=str(work),
@@ -965,11 +996,10 @@ def _read_outputs(row, run, run_toml, model, facts_cache, para_cache):
     if G is None:
         raise UnsupportedLayoutError("{}: the output green cannot be read".format(run_toml))
     qs = _dominant_q(row["order_parameters"]["per_orbital"])
-    name = _state_label(G, facts, para_cache,
-                        q=qs[0].split(",") if len(qs) == 1 else None)
-    if len(qs) > 1 and name != "para":
-        name += " " + " ".join("q=({})".format(q) for q in qs)
-    row["final_label"] = name
+    # the ordering vectors come from the on-site amplitudes, so they follow
+    # the on-site channels of the name, not a bond channel
+    row["final_label"] = _state_label(G, facts, para_cache,
+                                      ordering=[q.split(",") for q in qs])
 
 
 _OUTPUT_ROW_FIELDS = ("energy_total", "free_energy_total", "rest", "free_energy_per_cell",
@@ -1105,6 +1135,9 @@ def _check_manifest(manifest, path):
             if os.path.isabs(name) or ".." in _parts(name):
                 raise ValueError("{}: runs[{}]: {!r} is not a path inside WORK".format(
                     path, i, name))
+        if e["run_id"] in out:
+            raise ValueError("{}: runs[{}]: duplicate run_id {!r}; each run is listed "
+                             "once".format(path, i, e["run_id"]))
         out[e["run_id"]] = e
     return out
 
@@ -1128,6 +1161,8 @@ def collect(work, *, stdout=None, stderr=None) -> int:
     from hwave.initial.report import coverage_document, rank, summary_text
     stdout, stderr = stdout or sys.stdout, stderr or sys.stderr
     work = pathlib.Path(os.path.abspath(os.fspath(work)))
+    for name in (COVERAGE, SUMMARY):
+        _refuse_link(work / name)          # before anything is written
     manifest = _read_json(work / MANIFEST, "manifest")
     entries = _check_manifest(manifest, work / MANIFEST)
     data = _read_json(work / CANDIDATES, "candidate set")
@@ -1158,8 +1193,7 @@ def collect(work, *, stdout=None, stderr=None) -> int:
     text = summary_text(doc, ranking)
     if warnings:
         text += "\nCollect warnings:\n" + "\n".join("  " + w for w in warnings) + "\n"
-    with open(work / SUMMARY, "w", encoding="utf-8") as f:
-        f.write(text)
+    _write_text(work / SUMMARY, text)
     for w in warnings:
         print("warning: {}".format(w), file=stderr)
     stdout.write(text)
@@ -1244,7 +1278,9 @@ def build_parser():
                     help="a JSON list of {family: user|literature, pattern, label, "
                          "citation}; the pattern follows patternspec.schema.json")
     pp.add_argument("--t-hint", type=_positive_float, metavar="T",
-                    help="the hint temperature (overrides the input T for the hints only)")
+                    help="the hint temperature, in input energy units (default: the input "
+                         "T, or a rule from the bands and k mesh at T = 0); recorded in "
+                         "the report only, it never changes the candidates or the seeds")
     pp.add_argument("--amplitude", type=float, metavar="A",
                     help="the requested seed amplitude, in (0, 1) (default 0.5)")
     pp.add_argument("--max-candidates", type=_nonneg_int, metavar="N",

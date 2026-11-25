@@ -1,12 +1,12 @@
-"""The initial-state writer and its check (design section 9).
+"""The initial-state writer and its check.
 
-:func:`initial_state` seeds one candidate on one ``SubShape`` (design
-section 7) and writes the Green function UHFk reads as ``[file.input]
+:func:`initial_state` seeds one candidate on one ``SubShape``
+(:mod:`hwave.initial.seed`) and writes the Green function UHFk reads as ``[file.input]
 initial``; with a ``site_map`` it writes the ``Initial`` file of a UHFr
 input instead. :func:`check_initial_state` checks such a file against the
 input that will read it, before ``hwave`` runs.
 
-**Keys** (design section 9.1). ``prod(SubShape) > 1``: ``green_sublattice``
+**Keys.** ``prod(SubShape) > 1``: ``green_sublattice``
 (the member UHFk reads, ``UHFk._read_green_from_data``) and ``green``, its
 unfolded view (:func:`initial_facade.unfold_layout`, the solver's
 ``_deflate_green``; lossy for a seed that breaks the translations of the
@@ -76,7 +76,7 @@ __all__ = [
 #: the provenance schema this module writes and reads
 INITIAL_STATE_SCHEMA = 1
 
-#: the provenance members (design section 9.1), in sorted order
+#: the provenance members, in sorted order
 PROVENANCE_KEYS = tuple(sorted((
     "initial_state_schema", "run_id", "candidate_id", "label", "q", "phase", "sign",
     "subshape", "cellshape", "norb_orig", "spin_orbital", "index_convention", "two_sz",
@@ -90,11 +90,11 @@ CONVENTION_MEMBERS = {"green_convention": "green_slot_first",
 #: or interleaved ``2 * orb + spin`` with ``ns = 1`` (spin-orbital mode)
 _INDEX_CONVENTION = {False: "spin_block", True: "interleaved"}
 
-#: design section 9.3, verbatim
+#: the warning for an initial-state file without provenance
 NO_PROVENANCE_WARNING = ("no provenance: SubShape, SO convention and electron sectors "
                          "cannot be confirmed beyond shape")
 
-#: design section 9.2, verbatim
+#: the refusal of a spin-orbital model written for UHFr
 SO_UHFR_REFUSAL = "UHFr has no spin-orbital mode; use UHFk with enable_spin_orbital"
 
 #: ``max |G(r)_ab - conj(G(-r)_ba)|`` above this is not Hermitian
@@ -200,7 +200,7 @@ def initial_key_value(config_path, npz_path) -> str:
 
 
 # --------------------------------------------------------------------------
-# the checks on a stored Green function (design section 9.2)
+# the checks on a stored Green function
 # --------------------------------------------------------------------------
 
 def _neg_r(shape):
@@ -211,7 +211,7 @@ def _neg_r(shape):
 
 
 def check_green(G, problem, *, what="green") -> None:
-    """The design section 9.2 checks of the stored Green function ``G``
+    """The checks of the stored Green function ``G``
     ``(nvol, ns, norb, ns, norb)`` against ``problem`` (an
     :class:`initial_facade.UHFkProblem`): the shape, Hermiticity ``G(r)_ab =
     conj(G(-r)_ba)``, ``0 <= eig G(k) <= 1`` at every k, the trace
@@ -368,7 +368,7 @@ def _run_of(candidate_or_run, subshape):
 
 
 def _seed(facts, run, para):
-    """The seed of ``run`` on the cell of ``facts`` (design section 7);
+    """The seed of ``run`` on the cell of ``facts``;
     a :class:`SeedResult` whose ``tried`` may be false."""
     from hwave.initial.cells import representable, to_qfrac
     from hwave.initial.hints import t_hint_bare
@@ -414,7 +414,7 @@ def _provenance(facts, run, res):
 
 def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
                   site_map=None, uhfr_toml=None, para=None) -> pathlib.Path:
-    """Seed one candidate and write its initial-state file (design section 9).
+    """Seed one candidate and write its initial-state file.
 
     Parameters
     ----------
@@ -428,7 +428,7 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
         ``ValueError``).
     out : path-like
         The file to write (its directory must exist). UHFk: the npz of
-        design section 9.1, read as ``[file.input] initial``; UHFr: the
+        the module text (**Keys**), read as ``[file.input] initial``; UHFr: the
         ``Initial`` text file.
     site_map : sequence of ``(ix, iy, iz, a)``, optional
         UHFr only, with ``uhfr_toml``: for UHFr site ``i = 0 ... Nsite - 1``
@@ -451,7 +451,7 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
     ------
     InitialStateError
         The seed is refused (block check, no response, the checks of
-        design section 9.2) or a spin-orbital model is written for UHFr.
+        :func:`check_green`) or a spin-orbital model is written for UHFr.
     ValueError
         A conflicting ``subshape``, a pattern q the cell cannot hold, a
         bad ``site_map`` or a UHFr input that does not fit it.
@@ -493,7 +493,7 @@ def seed_and_write(toml, run, *, out, para=None):
     the :class:`~hwave.initial.seed.SeedResult`; ``facts`` the
     :class:`~hwave.initial.facts.ModelFacts` on the run's ``SubShape``.
     Raises :class:`InitialStateError` when the seed fails the checks of
-    design section 9.2."""
+    :func:`check_green`."""
     from hwave.initial.facts import model_facts
     facts = model_facts(toml, subshape=tuple(run.subshape))
     p = facts.problem
@@ -722,8 +722,7 @@ def _check_provenance(members, problem, config_path, path):
 
 def check_initial_state(config_path, npz_path=None, *, require_provenance=False
                         ) -> CheckResult:
-    """Check an initial-state npz against the UHFk input that will read it
-    (design section 9.3).
+    """Check an initial-state npz against the UHFk input that will read it.
 
     ``npz_path=None`` checks the file the solver will read
     (:func:`solver_initial_path`). With provenance the members
@@ -739,17 +738,24 @@ def check_initial_state(config_path, npz_path=None, *, require_provenance=False
     ``require_provenance`` a :class:`ProvenanceMissingError`.
 
     Raises :class:`InitialStateError` on any refusal, naming the field or
-    the check (also for an unreadable input, ``ValueError`` from
+    the check, also for a missing or unreadable input TOML (``OSError``) and
+    an input the solver refuses (``ValueError`` from
     :func:`initial_facade.load_problem`).
     """
     config_path = _abs(config_path)
     try:
         problem = initial_facade.load_problem(config_path)
+        doc = _read_doc(config_path)
+    except OSError as exc:
+        raise InitialStateError(
+            "{}: the input TOML cannot be read ({}: {}); give the path of the "
+            "readable UHFk input the solver will run".format(
+                config_path, type(exc).__name__, exc.strerror or exc)) from None
     except ValueError as exc:
         if isinstance(exc, InitialStateError):
             raise
         raise InitialStateError(str(exc)) from None
-    finput = _finput(_read_doc(config_path))
+    finput = _finput(doc)
     if "initial" in finput and "initial_uhf" in finput:
         raise InitialStateError("{}: [file.input] sets both initial and initial_uhf, which "
                                 "the solver refuses; remove initial_uhf".format(config_path))

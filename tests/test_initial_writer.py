@@ -416,6 +416,27 @@ class TestCheck(_Tmp):
         _edit(toml, lambda d: d["mode"]["param"].pop("2Sz"))
         self.assertTrue(check_initial_state(toml, out).verified)
 
+    def test_check_missing_or_unreadable_toml(self):
+        # the public API raises InitialStateError, naming the path, for an
+        # input TOML that does not exist or cannot be read
+        from hwave.initial.writer import InitialStateError, check_initial_state
+        missing = os.path.join(self.root, "nonexistent", "x.toml")
+        with self.assertRaises(InitialStateError) as cm:
+            check_initial_state(missing)
+        self.assertIn(missing, str(cm.exception))
+        self.assertIn("cannot be read", str(cm.exception))
+        toml, out = self.written_neel()
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file")
+        os.chmod(toml, 0)
+        try:
+            with self.assertRaises(InitialStateError) as cm:
+                check_initial_state(toml, out)
+        finally:
+            os.chmod(toml, 0o644)
+        self.assertIn(os.path.abspath(toml), str(cm.exception))
+        self.assertIn("cannot be read", str(cm.exception))
+
     def test_check_refuses_spin_orbital_flag(self):
         toml = _so_square(self.dest(), 4, (2, 2, 1))
         out = self.write(toml, _neel())

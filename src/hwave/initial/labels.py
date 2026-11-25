@@ -1,4 +1,4 @@
-"""Labels and frames of candidate patterns (design section 6.5).
+"""Labels and frames of candidate patterns.
 
 Each local pattern on a site (or between two sites) is decomposed in the
 sigma (x) orbital-pair basis
@@ -20,14 +20,14 @@ twice the spin moment.
   block: real-symmetric) ``c^0`` and imaginary (imaginary-antisymmetric)
   ``c^i``; TR-odd the converse. The parity is ``"even"`` or ``"odd"``
   when the other parity carries less than :data:`TR_MINOR_WEIGHT` of the
-  weight, ``"mixed"`` otherwise (owner decision O8).
+  weight, ``"mixed"`` otherwise.
 * :func:`gauge_dependent`: whether the spin-independent part of the
   Transfer table is complex anywhere (then the TR parities, read in the
   orbital gauge of the input, depend on that gauge).
 * :func:`pattern_label`: the name of a candidate, read from its seeding
-  pattern ``O`` itself (owner decision O8 (a); this name gives the id
-  slug). :func:`label`: the name of an induced or converged state, read
-  from its ``delta rho`` (O8 (b)). Both name a state by its dominant
+  pattern ``O`` itself (this name gives the id slug).
+  :func:`label`: the name of an induced or converged state, read from its
+  ``delta rho``. Both name a state by its dominant
   components only (weight at least :data:`DOMINANT_WEIGHT`), on-site
   channels before bond channels.
 
@@ -43,7 +43,8 @@ from it.
 ``rho = G^T`` per displacement (``rho(r)_{ij} = <c^dag_j(r) c_i(0)>`` with
 ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>`` the stored slot); the
 callers transpose a stored Green function before calling it. Orbital
-indices are physical (ruling R8): in spin-orbital mode the interleaved
+indices are physical (the convention of :mod:`hwave.results`): in
+spin-orbital mode the interleaved
 ``2*orb + spin`` index of the solver is split into the physical orbital
 and the spin here, internally.
 """
@@ -92,11 +93,11 @@ _EVEN = frozenset(("charge", "orbital-polarization", "orbital-hybridization",
 #: the two time-reversal weights listed with the channel weights
 TR_KEYS = ("TR-even", "TR-odd")
 
-#: a channel names the label when its weight is at least this (O8)
+#: a channel names the label when its weight is at least this
 DOMINANT_WEIGHT = 0.1
 
 #: the parity is even (odd) when the TR-odd (TR-even) weight is below this;
-#: otherwise it is mixed (O8)
+#: otherwise it is mixed
 TR_MINOR_WEIGHT = 0.1
 
 #: a ``delta rho`` (or pattern) whose largest entry is at most this is
@@ -132,7 +133,7 @@ _SIGMA = np.array([np.eye(2),
 
 @dataclass(frozen=True)
 class Label:
-    """A label (design section 6.5).
+    """The name of a pattern or state, with its channel weights.
 
     ``name``: the readable display name (may contain non-ASCII text).
     ``weights``: every channel of :data:`CHANNELS` (they sum to 1; all 0
@@ -232,7 +233,8 @@ def _tr_parts(c):
 
 
 def _parity(even, odd):
-    """The O8 rule on the squared norms of the two parities."""
+    """The parity rule (:data:`TR_MINOR_WEIGHT`) on the squared norms of the
+    two parities."""
     total = even + odd
     if total == 0.0 or odd < TR_MINOR_WEIGHT * total:
         return "even"
@@ -250,7 +252,7 @@ def tr_parity(c) -> Literal["even", "odd", "mixed"]:
     ``c^i``; real-symmetric ``c^0`` and imaginary-antisymmetric ``c^i`` are
     TR-even on a Hermitian block) carries less than
     :data:`TR_MINOR_WEIGHT` of the squared norm; ``"odd"``: the converse;
-    ``"mixed"`` otherwise (owner decision O8). Zero coefficients are
+    ``"mixed"`` otherwise. Zero coefficients are
     ``"even"``.
     """
     return _parity(*_tr_parts(c))
@@ -275,10 +277,10 @@ def gauge_dependent(problem) -> bool:
 
     The table is ``problem.ham_trans_r`` (the folded Transfer, dense, in
     the solver's index order), decomposed per entry by :func:`decompose`
-    (ruling R5, for 9-column and spin-orbital tables). **Normalisation.**
+    (also for 9-column and spin-orbital tables). **Normalisation.**
     With ``O = 1/2 sum c^mu sigma^mu`` the coefficient is ``c^0 = T_upup +
     T_dndn``, twice the spin-independent hopping. The threshold applies to
-    the hopping per spin, ``c^0 / 2 = (T_upup + T_dndn) / 2`` (R5), so a
+    the hopping per spin, ``c^0 / 2 = (T_upup + T_dndn) / 2``, so a
     spin-independent ``t`` warns when ``|Im t| > GAUGE_TOL``; in terms of
     ``c^0`` the test is ``|Im c^0| > 2 GAUGE_TOL``. Spin parts (e.g. the
     SOC ``i lambda sigma^z``, an imaginary ``c^z``) are exempt.
@@ -457,27 +459,30 @@ def _name_suffix(q, eta, phase, sign, spiral):
 
 
 def _dominant_tokens(weights, c, sites):
-    """The dominant channels (weight >= DOMINANT_WEIGHT): on-site channels
-    first, then bond channels, each heaviest first (ties in CHANNELS
-    order); the heaviest channel alone when none is dominant."""
+    """The dominant channels (weight >= DOMINANT_WEIGHT) as two lists, the
+    on-site channels and the bond channels, each heaviest first (ties in
+    CHANNELS order); the heaviest channel alone when none is dominant."""
     order = sorted(range(len(CHANNELS)), key=lambda i: (-round(weights[CHANNELS[i]], 12), i))
     dominant = [CHANNELS[i] for i in order if weights[CHANNELS[i]] >= DOMINANT_WEIGHT]
-    dominant = ([ch for ch in dominant if not ch.startswith("bond-")]
-                + [ch for ch in dominant if ch.startswith("bond-")])
-    tokens = []
+    onsite, bond = [], []
     for ch in dominant or [CHANNELS[order[0]]]:
+        if ch.startswith("bond-"):
+            bond.append(ch)
+            continue
         if ch in ("spin-x", "spin-y", "spin-z"):
             ch = "{} {}".format(ch, _orbital_qualifier(c["c" + ch[-1]], sites))
-        tokens.append(ch)
-    return " + ".join(tokens)
+        onsite.append(ch)
+    return onsite, bond
 
 
-def _label(m, facts, source, q, eta, phase, sign, spiral):
+def _label(m, facts, source, q, eta, phase, sign, spiral, ordering=None):
     problem = facts.problem
     suffix = _name_suffix(q, eta, phase, sign, spiral)
+    onsite_q = [_q_text(v) for v in (ordering or ())]
     if float(np.max(np.abs(m), initial=0.0)) <= PARA_TOL:
         weights = dict.fromkeys(CHANNELS + TR_KEYS, 0.0)
-        head, tr = "para", "even"
+        onsite, bond, tr = ["para"], [], "even"
+        onsite_q = []
     else:
         c = decompose(m, layout=_layout(problem))
         sites = _folded_sites(facts, c["c0"].shape[-1])
@@ -487,7 +492,13 @@ def _label(m, facts, source, q, eta, phase, sign, spiral):
         odd = total - even
         weights = {k: v / total for k, v in norms.items()}
         weights["TR-even"], weights["TR-odd"] = even / total, odd / total
-        head, tr = _dominant_tokens(weights, c, sites), _parity(even, odd)
+        (onsite, bond), tr = _dominant_tokens(weights, c, sites), _parity(even, odd)
+    # the ordering vectors describe the on-site components: they follow
+    # those, never a bond channel
+    parts = [" + ".join(onsite)] + onsite_q if onsite else []
+    head = " ".join(parts)
+    if bond:
+        head = " + ".join(([head] if head else []) + bond)
     name = " ".join([head] + suffix)
     return Label(name=name, weights=weights, tr=tr, gauge_dependent=gauge_dependent(problem),
                  ascii_name=ascii_name(name), source=source, thresholds=dict(THRESHOLDS))
@@ -512,16 +523,17 @@ _NAME_DOC = """
     :data:`DOMINANT_WEIGHT` (the heaviest one if none is): on-site channels
     first, then bond channels, each group heaviest first, joined by
     ``" + "``. A ``spin-<axis>`` channel is followed by ``ferro-orbital``
-    or ``antiferro-orbital``. ``tr`` follows the :data:`TR_MINOR_WEIGHT`
+    or ``antiferro-orbital``. The suffix (``q``, ``eta``, ``phase``,
+    ``sign``, ``spiral``) describes the whole pattern and follows every
+    channel. ``tr`` follows the :data:`TR_MINOR_WEIGHT`
     rule. An input whose largest entry is at most :data:`PARA_TOL` is
     named ``para``. The thresholds are recorded in ``Label.thresholds``.
 """
 
 
 def pattern_label(pattern_k, facts, *, q, eta, phase, sign, spiral: bool) -> Label:
-    """The label of a seeding pattern ``O`` (owner decision O8 (a): a
-    candidate and its id slug are named by its pattern, not by the induced
-    ``delta rho``).
+    """The label of a seeding pattern ``O``: a candidate and its id slug are
+    named by its pattern, not by the induced ``delta rho``.
 
     Parameters
     ----------
@@ -539,10 +551,10 @@ def pattern_label(pattern_k, facts, *, q, eta, phase, sign, spiral: bool) -> Lab
     return _label(m, facts, "pattern", q, eta, phase, sign, spiral)
 
 
-def label(rho_delta_cell, facts, *, q, eta, phase, sign, spiral: bool) -> Label:
-    """The label of an induced or converged state, from its ``delta rho``
-    (design section 6.5; owner decision O8 (b): named by its dominant
-    components only).
+def label(rho_delta_cell, facts, *, q, eta, phase, sign, spiral: bool,
+          ordering=None) -> Label:
+    """The label of an induced or converged state, from its ``delta rho``,
+    named by its dominant components only.
 
     Parameters
     ----------
@@ -555,10 +567,21 @@ def label(rho_delta_cell, facts, *, q, eta, phase, sign, spiral: bool) -> Label:
     facts : :class:`~hwave.initial.facts.ModelFacts`
         Of the cell ``delta rho`` lives on (its sites decide what is
         on-site and what is a bond).
+    ordering : sequence of q vectors, or None
+        The ordering vectors of the on-site components of a converged state
+        (each three rationals, as ``q``), exclusive with ``q``. Each is
+        written ``q=(...)`` right after the on-site channels and before any
+        bond channel, which carries no ordering vector of its own: the Néel
+        state with a uniform bond renormalisation is ``spin-z ferro-orbital
+        q=(1/2,1/2,0) + bond-charge``. Omitted for ``para`` and when no
+        on-site channel is named.
     """
+    if ordering is not None and q is not None:
+        raise ValueError("ordering and q are exclusive: ordering names the on-site "
+                         "ordering vectors of a state, q the vector of its whole pattern")
     problem = facts.problem
     return _label(_delta_rho(rho_delta_cell, problem), facts, "state", q, eta, phase, sign,
-                  spiral)
+                  spiral, ordering=ordering)
 
 
 if pattern_label.__doc__ and label.__doc__:   # absent under python -OO
