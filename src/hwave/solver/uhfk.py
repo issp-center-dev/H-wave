@@ -8,6 +8,7 @@ from .kgrid import reverse_fft_axes
 from . import hartree_fock
 from . import spin_orbital
 from . import hamiltonian_k
+from . import uhfk_blocks
 from ..qlmsio import wan90
 
 logger = logging.getLogger("qlms").getChild("uhfk")
@@ -1021,182 +1022,21 @@ class UHFk(solver_base):
         Sets self.block_info: list of arrays, each containing nd-space indices
         for one independent block. Also sets self.group_nconds and
         self.block_to_group for global chemical potential determination.
+        The detection itself is :func:`hwave.solver.uhfk_blocks.detect_blocks`.
         """
         logger.debug(">>> _detect_blocks")
 
         nd = self.nd
-        norb = self.norb
-        ns = self.ns
-
-        # Build connectivity matrix in nd x nd space
-        connectivity = np.zeros((nd, nd), dtype=np.float64)
-
-        # 1. Transfer Hamiltonian: sum |ham_trans(k)| over k
-        # (kept as a local: the 2Sz-fixed spin-flip check below reuses it)
-        trans_conn = np.sum(np.abs(self.ham_trans), axis=0)
-        connectivity += trans_conn
-
-        # 2. Interaction terms: expand (norb_inter, norb_inter) x spin(2,2,2,2) -> (nd, nd)
-        norb_inter = self.norb_phys if self.enable_spin_orbital else norb
-
-        for type_name in self.inter_table:
-            if self.inter_table[type_name] is not None:
-                jab = self.inter_table[type_name]
-                spin = self.spin_table[type_name]
-
-                # Sum |J_ab(r)| over r to get orbital connectivity
-                jab_sum = np.sum(np.abs(jab.reshape(-1, norb_inter, norb_inter)), axis=0)
-
-                # For Hartree: spin_mat_h[s,t] = any(spin[s,:,:,t] != 0)
-                spin_mat_h = np.any(spin != 0, axis=(1, 2)).astype(float)
-                orb_connected_h = (jab_sum > 0).any(axis=1).astype(float)
-
-                if self.enable_spin_orbital:
-                    # In spin-orbital mode: (s, a) -> the interleaved index
-                    for s in range(2):
-                        for t in range(2):
-                            if spin_mat_h[s, t] > 0:
-                                for a in range(norb_inter):
-                                    if orb_connected_h[a]:
-                                        connectivity[spin_orbital.interleaved_index(a, s),
-                                                     spin_orbital.interleaved_index(a, t)] += 1.0
-                    if self.iflag_fock:
-                        spin_fock = np.max(np.abs(spin), axis=(1, 3))
-                        for s in range(2):
-                            for t in range(2):
-                                if spin_fock[s, t] > 0:
-                                    for a in range(norb_inter):
-                                        for b in range(norb_inter):
-                                            if jab_sum[a, b] > 0:
-                                                connectivity[spin_orbital.interleaved_index(a, s),
-                                                                     spin_orbital.interleaved_index(b, t)] += jab_sum[a, b]
-                else:
-                    # Normal mode: (s, a) -> nd_idx = s * norb + a
-                    for s in range(ns):
-                        for t in range(ns):
-                            if spin_mat_h[s, t] > 0:
-                                for a in range(norb):
-                                    if orb_connected_h[a]:
-                                        connectivity[s * norb + a, t * norb + a] += 1.0
-
-                    if self.iflag_fock:
-                        spin_mat_f = np.any(
-                            spin.transpose(0, 2, 1, 3).reshape(ns * ns, ns * ns) != 0
-                        ).astype(float) if ns > 1 else np.ones((1, 1))
-                        spin_fock = np.max(np.abs(spin), axis=(1, 3))
-                        for s in range(ns):
-                            for t in range(ns):
-                                if spin_fock[s, t] > 0:
-                                    connectivity[s * norb:(s + 1) * norb,
-                                                 t * norb:(t + 1) * norb] += jab_sum
-
-        # 2Sz-fixed mode: each spin sector carries its own electron count
-        # (Ncond +- 2Sz)/2, so the up and down sectors are diagonalized
-        # independently and spin off-diagonal (Fock) entries are not used,
-        # exactly as in the pre-block full-matrix implementation
-        # (einsum 'ksasb->skab' kept only the spin-diagonal blocks).
-        # Interaction terms only produce spin off-diagonal Fock entries via
-        # the spin off-diagonal Green components, which vanish identically in
-        # the spin-diagonal state enforced by the constraint -- so their
-        # potential cross-spin connectivity is masked out here.  Without the
-        # mask, such interaction patterns would merge the two sectors into
-        # one mu-group and the 2Sz constraint would be silently lost.
-        # One-body spin-flip terms, in contrast, genuinely break Sz
-        # conservation, so a fixed 2Sz is ill-defined: reject them.
-        if not self.sz_free and not self.enable_spin_orbital and ns == 2:
-            self._check_spin_flip_with_fixed_sz(trans_conn, norb)
-            spin_diag = np.zeros((nd, nd), dtype=bool)
-            spin_diag[:norb, :norb] = True
-            spin_diag[norb:, norb:] = True
-            connectivity[~spin_diag] = 0.0
-
-        # Symmetrize
-        connectivity = connectivity + connectivity.T
-
-        # Find connected components
-        threshold = 1.0e-12
-        adj = np.abs(connectivity) > threshold
-
-        # BFS/label propagation
-        labels = np.arange(nd)
-        changed = True
-        while changed:
-            changed = False
-            for i in range(nd):
-                neighbors = np.where(adj[i])[0]
-                if len(neighbors) > 0:
-                    min_label = min(labels[i], np.min(labels[neighbors]))
-                    if labels[i] != min_label:
-                        labels[i] = min_label
-                        changed = True
-                    for n in neighbors:
-                        if labels[n] != min_label:
-                            labels[n] = min_label
-                            changed = True
-
-        unique_labels = np.unique(labels)
-        blocks = [np.where(labels == lbl)[0] for lbl in unique_labels]
-
-        # Sort blocks by first index
-        blocks.sort(key=lambda b: b[0])
-
-        # Group blocks by spin sector for shared chemical potential.
-        # Instead of distributing Ncond per block (which can violate the
-        # global energy minimum), we group blocks that share the same
-        # electron reservoir and find a single mu per group.
-        if self.sz_free:
-            # All blocks share one global mu
-            # group_nconds[g] = target electron count for group g
-            # block_to_group[b] = which group block b belongs to
-            block_to_group = [0] * len(blocks)
-            group_nconds = [self.Nconds[0]]
-        else:
-            # Classify blocks by spin content
-            ncond_up, ncond_down = self.Nconds[0], self.Nconds[1]
-            block_to_group = []
-            # group 0 = up-only, group 1 = down-only, group 2 = mixed
-            group_nconds_dict = {}  # group_id -> ncond
-            for blk in blocks:
-                if self.enable_spin_orbital:
-                    n_up = np.sum(spin_orbital.spin_of(np.asarray(blk)) == 0)
-                    n_down = np.sum(spin_orbital.spin_of(np.asarray(blk)) == 1)
-                else:
-                    n_up = np.sum(blk < norb)
-                    n_down = np.sum(blk >= norb)
-                if n_up > 0 and n_down == 0:
-                    block_to_group.append(0)
-                    group_nconds_dict[0] = ncond_up
-                elif n_up == 0 and n_down > 0:
-                    block_to_group.append(1)
-                    group_nconds_dict[1] = ncond_down
-                else:
-                    # Mixed block (couples up and down indices). A single mixed
-                    # block spanning the whole system is fine -- it just takes
-                    # the total ncond. But if a mixed block COEXISTS with pure
-                    # up/down blocks, assigning each group its own (global)
-                    # ncond double-counts the electrons (sum > Ncond), and the
-                    # per-spin split cannot be enforced on the mixed block.
-                    block_to_group.append(2)
-                    group_nconds_dict[2] = ncond_up + ncond_down
-            # Guard the genuine over-count: a mixed group together with a pure
-            # up/down group.
-            if 2 in block_to_group and (0 in block_to_group or 1 in block_to_group):
-                logger.error(
-                    "2Sz-fixed mode found a spin-mixed block coexisting with "
-                    "pure-spin blocks; the per-group electron counts would "
-                    "double-count (sum != Ncond). Use the Sz-free mode (global "
-                    "chemical potential) for such systems.")
-                raise ValueError(
-                    "2Sz-fixed mode cannot mix a spin-coupled block with "
-                    "pure-spin blocks; use Sz-free mode.")
-            # Build ordered list: group_nconds[g] for each unique group
-            unique_groups = sorted(set(block_to_group))
-            group_remap = {g: i for i, g in enumerate(unique_groups)}
-            block_to_group = [group_remap[g] for g in block_to_group]
-            group_nconds = [group_nconds_dict[g] for g in unique_groups]
+        found = uhfk_blocks.detect_blocks(
+            self.ham_trans, self.inter_table, self.spin_table,
+            nd=nd, norb=self.norb, ns=self.ns, iflag_fock=self.iflag_fock,
+            sz_free=self.sz_free, enable_spin_orbital=self.enable_spin_orbital,
+            nconds=tuple(self.Nconds))
+        blocks = list(found.block_info)
+        group_nconds = list(found.group_nconds)
 
         self.block_info = blocks
-        self.block_to_group = block_to_group
+        self.block_to_group = list(found.block_to_group)
         self.group_nconds = group_nconds
 
         # Log detected structure
@@ -1235,17 +1075,8 @@ class UHFk(solver_base):
     def _make_ham(self):
         logger.debug(">>> _make_ham")
 
-        nx,ny,nz = self.shape
         nvol     = self.nvol
         nd       = self.nd
-        ns       = self.ns
-
-        # In spin-orbital mode, use virtual (ns=2, norb_phys) form for interactions
-        # green function G_{ab,st}(r) : gab_r(r,s,a,t,b)
-        if self.enable_spin_orbital:
-            gab_r = self._so_to_virtual_green(self.Green)
-        else:
-            gab_r = self.Green
 
         # hamiltonian H_{ab,st}(k) : ham(k,(s,a),(t,b))
         ham = np.zeros((nvol,nd,nd), dtype=np.complex128)
@@ -1254,39 +1085,23 @@ class UHFk(solver_base):
         logger.debug("Transfer")
         ham += self.ham_trans
 
-        # interaction term: the shared kernel adds every interaction
-        # contribution IN PLACE, in the original order and with the original
-        # expressions (bit-identical in normal mode; #181 Phase B). In
-        # spin-orbital mode it runs in the virtual spin-block frame and the
-        # sum is mapped back to the interleaved order (#83).
-        if not self.enable_spin_orbital:
-            hartree_fock.accumulate_hf(
-                ham, gab_r, self.inter_table, self.spin_table, self.shape,
-                include_fock=self.iflag_fock, debug=logger.debug)
-        else:
-            # accumulate onto the transfer term reordered to the virtual
-            # frame: the reorder is a pure permutation, so every element sees
-            # the same additions in the same order as the interleaved loop
-            # this replaced (bit-identical)
-            ham_virt = np.ascontiguousarray(
-                spin_orbital.interleaved_to_spinblock(ham, nd // 2))
-            hartree_fock.accumulate_hf(
-                ham_virt, gab_r, self.inter_table, self.spin_table, self.shape,
-                include_fock=self.iflag_fock, debug=logger.debug)
-            ham = self._virtual_ham_to_so(
-                ham_virt.reshape(nvol, 2, nd // 2, 2, nd // 2))
-
-        # Enforce block structure: zero out cross-block entries
-        if len(self.block_info) > 1:
-            mask = np.zeros((nd, nd), dtype=bool)
-            for blk in self.block_info:
-                idx = np.array(blk)
-                ix = np.ix_(idx, idx)
-                mask[ix] = True
-            ham[:, ~mask] = 0.0
+        # interaction term and the block mask, in place
+        # (uhfk_blocks.accumulate_hf_projected: in spin-orbital mode the
+        # interactions run in the virtual spin-block frame, #83)
+        uhfk_blocks.accumulate_hf_projected(
+            ham, self.Green, self._hf_tables(), include_fock=self.iflag_fock,
+            blocks=self.block_info, debug=logger.debug)
 
         # store
         self.ham = ham
+
+    def _hf_tables(self):
+        """The interaction tables of this solver as a
+        :class:`hwave.solver.uhfk_blocks.HFTables`."""
+        return uhfk_blocks.HFTables(
+            inter_table=self.inter_table, spin_table=self.spin_table,
+            shape=tuple(self.shape), enable_spin_orbital=self.enable_spin_orbital,
+            norb_phys=self.norb_phys)
 
     @do_profile
     def _diag(self):
