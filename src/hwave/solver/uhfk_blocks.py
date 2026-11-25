@@ -281,6 +281,31 @@ def detect_blocks(ham_trans, inter_table, spin_table, *, nd, norb, ns,
     return SolverBlocks(tuple(blocks), tuple(block_to_group), tuple(group_nconds))
 
 
+def _check_hf_shapes(out_k, green, tables):
+    """``ValueError`` unless ``out_k``, ``green`` and ``tables`` describe
+    one problem: ``out_k`` ``(nvol, nd, nd)`` with ``nvol`` the size of
+    ``tables.shape`` and ``nd = 2 * tables.norb_phys``, and ``green``
+    ``(nvol, 1, nd, 1, nd)`` (spin-orbital) or ``(nvol, 2, nd/2, 2, nd/2)``."""
+    nvol = int(np.prod(tables.shape))
+    nd = 2 * int(tables.norb_phys)
+    if tuple(out_k.shape) != (nvol, nd, nd):
+        raise ValueError(
+            "Hartree-Fock potential: the Hamiltonian has shape {}, but the "
+            "interaction tables are for {} k-points (shape {}) and nd = {} "
+            "({} physical orbitals)".format(tuple(out_k.shape), nvol, tuple(tables.shape),
+                                           nd, tables.norb_phys))
+    if tables.enable_spin_orbital:
+        want = (nvol, 1, nd, 1, nd)
+    else:
+        want = (nvol, 2, nd // 2, 2, nd // 2)
+    if tuple(np.shape(green)) != want:
+        raise ValueError(
+            "Hartree-Fock potential: the Green function has shape {}, but the "
+            "interaction tables need {} ({} mode)".format(
+                tuple(np.shape(green)), want,
+                "spin-orbital" if tables.enable_spin_orbital else "normal"))
+
+
 def accumulate_hf_projected(out_k, green, tables, *, include_fock, blocks,
                             debug=None):
     """Add the Hartree(-Fock) potential of ``green`` onto ``out_k`` IN
@@ -308,7 +333,14 @@ def accumulate_hf_projected(out_k, green, tables, *, include_fock, blocks,
     Returns
     -------
     None
+
+    Raises
+    ------
+    ValueError
+        ``out_k``, ``green`` and ``tables`` do not have matching shapes
+        (for example tables of a problem with another SubShape).
     """
+    _check_hf_shapes(out_k, green, tables)
     nvol = out_k.shape[0]
     nd = out_k.shape[-1]
     block_info = blocks.block_info if isinstance(blocks, SolverBlocks) else blocks

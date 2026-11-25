@@ -7,7 +7,9 @@ running a self-consistent calculation. This module is the only solver
 module it imports; it does not import ``hwave.initial``.
 
 * :func:`load_problem` reads an input TOML layer by layer as ``hwave`` does
-  and returns the frozen :class:`UHFkProblem`.
+  and returns the frozen :class:`UHFkProblem`. Relative paths are taken
+  from the TOML's directory (``hwave`` takes them from its working
+  directory; the two agree when ``hwave`` runs in the TOML's directory).
 * :func:`solver_blocks`, :func:`hf_tables`: the block structure and the
   interaction tables of a problem.
 * :func:`accumulate_hf_projected`, :func:`hf_potential`: the Hartree-Fock
@@ -17,7 +19,6 @@ Every function takes and returns the stored Green function of UHFk,
 ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>`` (the layout of the
 ``green`` output), and Hamiltonians in the solver's index order.
 """
-import copy
 import os
 import pathlib
 from collections.abc import Mapping
@@ -63,6 +64,9 @@ class UHFkProblem:
     Modes: ``enable_spin_orbital``, ``iflag_fock``, ``sz_free``,
     ``nconds`` (``(Ncond,)`` or ``(N_up, N_down)``), ``T``,
     ``spin_resolved_transfer`` (a 9-column Transfer, normal mode).
+
+    Every field is read-only: arrays have ``writeable = False`` and
+    mappings are read-only views of copies.
 
     One-body: ``ham_trans_k`` ``(nvol, nd, nd)``, the solver's ``T(k)``
     (the same array UHFk adds), and ``ham_trans_r`` ``(nx, ny, nz, nd,
@@ -251,6 +255,44 @@ def _read_only(a):
     return a
 
 
+class FrozenCaseInsensitiveMap(Mapping):
+    """A read-only mapping with the case-insensitive string keys of
+    ``requests.structures.CaseInsensitiveDict`` (the solver's table
+    container)."""
+
+    def __init__(self, items):
+        from requests.structures import CaseInsensitiveDict
+        self._store = CaseInsensitiveDict(items)
+
+    def __getitem__(self, key):
+        return self._store[key]
+
+    def __iter__(self):
+        return iter(self._store)
+
+    def __len__(self):
+        return len(self._store)
+
+    def __repr__(self):
+        return "FrozenCaseInsensitiveMap({!r})".format(dict(self._store.items()))
+
+
+def _deep_frozen(obj):
+    """A read-only deep copy of ``obj``: arrays copied and made
+    read-only, mappings as read-only mappings (case-insensitive ones stay
+    case-insensitive), lists as tuples."""
+    from requests.structures import CaseInsensitiveDict
+    if isinstance(obj, np.ndarray):
+        return _read_only(obj)
+    if isinstance(obj, CaseInsensitiveDict):
+        return FrozenCaseInsensitiveMap({k: _deep_frozen(v) for k, v in obj.items()})
+    if isinstance(obj, Mapping):
+        return MappingProxyType({k: _deep_frozen(v) for k, v in obj.items()})
+    if isinstance(obj, (list, tuple)):
+        return tuple(_deep_frozen(v) for v in obj)
+    return obj
+
+
 def load_problem(toml_path, *, subshape=None):
     """The UHFk model of the input ``toml_path``, without solving.
 
@@ -259,9 +301,20 @@ def load_problem(toml_path, *, subshape=None):
     variant of a known key is refused, naming the solver spelling;
     misplaced ``[mode]`` keys are refused with the messages of
     ``qlms.check_mode_tables``), ``[mode.param]`` and
-    ``[file.input.interaction]`` case-insensitively. Relative paths resolve
-    from the TOML's directory, where ``hwave`` runs. Each call reads the
+    ``[file.input.interaction]`` case-insensitively. Each call reads the
     input files anew, so two problems never share a table.
+
+    **Paths.** Relative ``path_to_input`` values and file names are taken
+    relative to the directory of ``toml_path``, whatever the current
+    directory is. ``hwave`` itself takes them relative to its working
+    directory, so the problem is the model ``hwave`` solves when ``hwave``
+    runs in the TOML's directory (as the run directories of
+    ``hwave.initial`` are set up to); started from another directory,
+    ``hwave`` may read other files.
+
+    Every array and mapping of the returned problem is a read-only copy
+    (``param_ham_orig`` is a case-insensitive read-only mapping; the
+    reader's ``source_*`` attributes are not kept).
 
     Parameters
     ----------
@@ -279,14 +332,14 @@ def load_problem(toml_path, *, subshape=None):
         A non-UHFk mode, a refused key, or an input the solver refuses.
     """
     solver, _, input_files = _build_solver(toml_path, subshape=subshape)
-    if solver.has_sublattice:
-        param_ham_orig = solver.param_ham_orig
-    else:
-        param_ham_orig = copy.deepcopy(solver.param_ham)
+    # every container of the problem is a read-only copy (arrays included),
+    # so no consumer can change the model another call sees
+    param_ham_orig = _deep_frozen(
+        solver.param_ham_orig if solver.has_sublattice else solver.param_ham)
     blocks = SolverBlocks(tuple(solver.block_info), tuple(solver.block_to_group),
                           tuple(solver.group_nconds))
-    tables = HFTables(inter_table=MappingProxyType(dict(solver.inter_table)),
-                      spin_table=MappingProxyType(dict(solver.spin_table)),
+    tables = HFTables(inter_table=_deep_frozen(dict(solver.inter_table)),
+                      spin_table=_deep_frozen(dict(solver.spin_table)),
                       shape=tuple(solver.shape),
                       enable_spin_orbital=solver.enable_spin_orbital,
                       norb_phys=solver.norb_phys)
@@ -328,8 +381,12 @@ def hf_potential(green, tables, *, include_fock, blocks):
     complex128 in the Hamiltonian convention and the solver's index
     order."""
     green = np.asarray(green)
+    if green.ndim != 5:
+        raise ValueError("hf_potential: green must be (nvol, ns, norb, ns, norb), "
+                         "got shape {}".format(green.shape))
     nvol, ns, norb = green.shape[0], green.shape[1], green.shape[2]
     nd = ns * norb
     out = np.zeros((nvol, nd, nd), dtype=np.complex128)
+    # accumulate_hf_projected checks green and the tables against out
     accumulate_hf_projected(out, green, tables, include_fock=include_fock, blocks=blocks)
     return out

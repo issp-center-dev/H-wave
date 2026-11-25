@@ -226,6 +226,83 @@ class TestHFPotential(_Cases):
                 _assert_bitwise(self, out, solver.ham, name)
 
 
+class TestDelegation(_Cases):
+    """UHFk reaches its blocks and its Hartree-Fock potential through the
+    lifted functions (a re-inlined copy in UHFk would still match the
+    frozen oracle; these sentinels would not)."""
+
+    def test_uhfk_calls_the_lifted_functions(self):
+        from unittest import mock
+        from hwave.solver import initial_facade as fac
+        from hwave.solver import uhfk_blocks
+        for name in ("uhfk_2sz0", "so_all_types"):
+            with self.subTest(case=name):
+                with mock.patch.object(uhfk_blocks, "detect_blocks",
+                                       wraps=uhfk_blocks.detect_blocks) as det:
+                    solver, green_info, _ = fac._build_solver(self.cases[name],
+                                                              with_green=True)
+                self.assertEqual(det.call_count, 1)
+                self.assertIs(det.call_args.args[0], solver.ham_trans)
+                solver.Green = solver._initial_green(green_info)
+                with mock.patch.object(uhfk_blocks, "accumulate_hf_projected",
+                                       wraps=uhfk_blocks.accumulate_hf_projected) as acc:
+                    solver._make_ham()
+                self.assertEqual(acc.call_count, 1)
+                self.assertIs(acc.call_args.args[0], solver.ham)
+                self.assertIs(acc.call_args.args[1], solver.Green)
+                self.assertIs(acc.call_args.kwargs["blocks"], solver.block_info)
+
+    def test_sentinels_reach_uhfk(self):
+        from unittest import mock
+        from hwave.solver import initial_facade as fac
+        from hwave.solver import uhfk_blocks
+        solver, green_info, _ = fac._build_solver(self.cases["uhfk_exchange"],
+                                                  with_green=True)
+        solver.Green = solver._initial_green(green_info)
+        boom = RuntimeError("sentinel")
+        with mock.patch.object(uhfk_blocks, "detect_blocks", side_effect=boom):
+            with self.assertRaisesRegex(RuntimeError, "sentinel"):
+                solver._detect_blocks()
+        with mock.patch.object(uhfk_blocks, "accumulate_hf_projected", side_effect=boom):
+            with self.assertRaisesRegex(RuntimeError, "sentinel"):
+                solver._make_ham()
+
+
+class TestShapeChecks(_Cases):
+    def test_mismatched_tables_raise(self):
+        from hwave.solver import initial_facade as fac
+        toml = self.cases["uhfk_coulombinter"]
+        p1 = fac.load_problem(toml, subshape=(1, 1, 1))
+        p2 = fac.load_problem(toml, subshape=(2, 2, 1))
+        so = fac.load_problem(self.cases["so_all_types"])
+        g1 = np.zeros((p1.nvol, p1.ns, p1.norb, p1.ns, p1.norb), dtype=np.complex128)
+        g2 = np.zeros((p2.nvol, p2.ns, p2.norb, p2.ns, p2.norb), dtype=np.complex128)
+        gso = np.zeros((so.nvol, so.ns, so.norb, so.ns, so.norb), dtype=np.complex128)
+        # the matching calls work
+        fac.hf_potential(g1, p1.tables, include_fock=True, blocks=p1.blocks)
+        fac.hf_potential(gso, so.tables, include_fock=True, blocks=so.blocks)
+        bad = [
+            (g1, p2), (g2, p1),                       # another SubShape
+            (gso, p1),                                # SO G, normal tables
+            (g1[:, :1, :, :1, :], p1),                # wrong spin axis
+            (g2[..., :1], p2),                        # wrong orbital count
+            (g1[0], p1),                              # not 5-d
+        ]
+        for i, (g, p) in enumerate(bad):
+            with self.subTest(i=i):
+                with self.assertRaises(ValueError):
+                    fac.hf_potential(g, p.tables, include_fock=True, blocks=p.blocks)
+        # an SO problem's tables with a normal-layout G of the same nd
+        g_norm = np.zeros((so.nvol, 2, so.nd // 2, 2, so.nd // 2), dtype=np.complex128)
+        with self.assertRaisesRegex(ValueError, "spin-orbital"):
+            fac.hf_potential(g_norm, so.tables, include_fock=True, blocks=so.blocks)
+        # accumulate_hf_projected checks the Hamiltonian too
+        out = np.zeros((p2.nvol, p2.nd, p2.nd), dtype=np.complex128)
+        with self.assertRaisesRegex(ValueError, "Hamiltonian"):
+            fac.accumulate_hf_projected(out, g1, p1.tables, include_fock=True,
+                                        blocks=p1.blocks)
+
+
 class TestProblem(_Cases):
     def test_fields(self):
         from hwave.solver import initial_facade as fac
@@ -255,10 +332,50 @@ class TestProblem(_Cases):
                     self.assertTrue(f.is_absolute() and f.is_file(), f)
                 with self.assertRaises(dataclasses.FrozenInstanceError):
                     p.T = 1.0
+                self._assert_deeply_read_only(p)
         self.assertTrue(fac.load_problem(self.cases["w90spin_flip"]).spin_resolved_transfer)
         self.assertTrue(fac.load_problem(self.cases["so_all_types"]).enable_spin_orbital)
         self.assertFalse(fac.load_problem(self.cases["pairhop_fock_off"]).iflag_fock)
         self.assertEqual(fac.load_problem(self.cases["uhfk_2sz0"]).nconds, (8, 8))
+
+    def _assert_deeply_read_only(self, p):
+        from collections.abc import Mapping
+
+        def walk(obj, where):
+            if isinstance(obj, np.ndarray):
+                self.assertFalse(obj.flags.writeable, where)
+            elif isinstance(obj, Mapping):
+                with self.assertRaises(TypeError, msg=where):
+                    obj["__new__"] = 1
+                for k, v in obj.items():
+                    walk(v, "{}[{!r}]".format(where, k))
+            elif isinstance(obj, (list, dict, set)):
+                self.fail("mutable {} at {}".format(type(obj).__name__, where))
+            elif isinstance(obj, tuple):
+                for i, v in enumerate(obj):
+                    walk(v, "{}[{}]".format(where, i))
+
+        for field in dataclasses.fields(p):
+            value = getattr(p, field.name)
+            if field.name in ("tables", "blocks"):
+                for sub in dataclasses.fields(value):
+                    walk(getattr(value, sub.name), "{}.{}".format(field.name, sub.name))
+            else:
+                walk(value, field.name)
+
+    def test_problem_tables_are_copies(self):
+        """Writing is refused, and the problem's tables are not the
+        solver's (a later solver step cannot change them either)."""
+        from hwave.solver import initial_facade as fac
+        p = fac.load_problem(self.cases["uhfk_exchange"])
+        with self.assertRaises(ValueError):
+            p.tables.inter_table["Exchange"][0, 0, 0, 0, 0] = 1.0
+        with self.assertRaises(ValueError):
+            p.geometry["center"][0, 0] = 1.0
+        with self.assertRaises(TypeError):
+            p.param_ham_orig["Transfer"][((0, 0, 0), (0, 0))] = 1.0
+        # case-insensitive like the solver's container
+        self.assertIs(p.param_ham_orig["transfer"], p.param_ham_orig["Transfer"])
 
     def test_hf_tables_is_the_problem_tables(self):
         from hwave.solver import initial_facade as fac
