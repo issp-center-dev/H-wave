@@ -400,6 +400,73 @@ class TestSearch(_Tmp):
         with self.assertRaises(seed.MuSearchFailed):
             seed.density_at(f, f.problem.ham_trans_k, Ok, failed, T_run=0.1, W0=4.0)
 
+    def test_other_runtime_errors_propagate(self):
+        """Only the mu search failure is converted: a RuntimeError subclass
+        from the fill (here NotImplementedError, RecursionError) propagates."""
+        from hwave.initial import patterns, seed
+        from hwave.solver import initial_facade
+        f = self.chain(4, (2, 1, 1), ncond=4, T=0.1)
+        O = patterns.realise(_spec([_e(cz=1.0)], ("1/2", "0", "0"), (2, 1, 1)), f, (2, 1, 1))
+        for exc in (NotImplementedError("x"), RecursionError("y")):
+            with mock.patch.object(initial_facade, "green_function", side_effect=exc):
+                with self.assertRaises(type(exc)):
+                    seed.density_at(f, f.problem.ham_trans_k, O, 1.0, T_run=0.1, W0=4.0)
+        for exc in (RuntimeError("newton"), initial_facade.MuNotConvergedError("mu")):
+            with mock.patch.object(initial_facade, "green_function", side_effect=exc):
+                with self.assertRaises(seed.MuSearchFailed):
+                    seed.density_at(f, f.problem.ham_trans_k, O, 1.0, T_run=0.1, W0=4.0)
+
+    def test_small_h_unrefined_and_raw(self):
+        """At moderate h the fill is the solver's, bit for bit, with no
+        refinement."""
+        from hwave.initial import patterns, seed
+        from hwave.solver import initial_facade
+        f = self.chain(4, (2, 1, 1), ncond=4, T=0.1, two_sz=2)
+        p = f.problem
+        O = patterns.realise(_spec([_e(cz=1.0)], ("1/2", "0", "0"), (2, 1, 1)), f, (2, 1, 1))
+        for h in (0.0, 0.3, 3.0, 50.0):
+            G, info, meta = seed.density_at(f, p.ham_trans_k, O, h, T_run=0.1, W0=4.0,
+                                            return_meta=True)
+            self.assertIs(meta["mu_refined"], False)
+            tol = 1e-10 * max(1.0, 4.0, h * seed.op_norm(O))
+            G_raw, info_raw = initial_facade.green_function(
+                p.ham_trans_k - h * O, 0.1, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb,
+                fill="uniform", shell_tol=tol, ene_cutoff=p.ene_cutoff, return_info=True)
+            np.testing.assert_array_equal(G, G_raw)
+            self.assertEqual(info.mu, info_raw.mu)
+
+    def test_mu_failure_in_bisection(self):
+        """A mu search failure at a bisection midpoint: the kept point
+        already meets the target, so there is no cap_reason; the failure is
+        in meta only."""
+        from hwave.initial import seed
+        f = self.chain(4, (2, 1, 1), ncond=4, T=0.1)
+        spec = _spec([_e(c0=1.0)], ("1/2", "0", "0"), (2, 1, 1))
+        ref, _ = self.seed(f, spec)
+        self.assertIsNone(ref.cap_reason)
+        self.assertNotEqual(ref.h_used, ref.h_hi)          # the bisection ran
+        # the first doubling point meets the target, so every 0 < h < h_hi
+        # call below is a bisection midpoint
+        self.assertEqual(ref.h_hi, seed.w_floor(f.problem.ham_trans_k))
+        real = seed.density_at
+        calls = []
+
+        def failing(*a, **k):
+            h = a[3]
+            if 0 < h < ref.h_hi:
+                calls.append(h)
+                if len(calls) == 1:
+                    raise seed.MuSearchFailed(h, RuntimeError("test"))
+            return real(*a, **k)
+
+        with mock.patch.object(seed, "density_at", failing):
+            res, _ = self.seed(f, spec)
+        self.assertTrue(res.tried)
+        self.assertIsNone(res.cap_reason)
+        self.assertEqual(res.meta["mu_search_failed_at"], calls[0])
+        self.assertEqual(res.h_used, res.h_hi)
+        self.assertGreaterEqual(res.m_used, res.m_target)
+
     def test_electron_count_warning(self):
         """A count still off after the refinement is logged with its size."""
         from hwave.initial import patterns, seed

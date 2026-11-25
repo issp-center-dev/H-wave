@@ -100,9 +100,10 @@ class SeedResult:
     ``cap_reason`` (only at the cap: ``"target not reached at the cap"``,
     or ``"mu search failed at h=<h>"`` when the solver's T > 0 mu search
     failed at a larger h, the seed then stopping at the last h that
-    succeeded). ``meta`` (tried rows): ``{"n_residual", "mu_refined"}`` of
-    the written G (:func:`density_at`), plus ``"mu_search_failed_at"``
-    after such a failure.
+    succeeded). A failure inside the bisection, where the kept h already
+    meets the target, sets no ``cap_reason``. ``meta`` (tried rows):
+    ``{"n_residual", "mu_refined"}`` of the written G (:func:`density_at`),
+    plus ``"mu_search_failed_at"`` after any such failure.
 
     Set fields per state: seeded: all (``cap_reason`` only at the cap);
     para: ``G``, ``seed_base``, ``shell``, ``moments_h0``, ``h_used = 0``;
@@ -331,7 +332,9 @@ def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta
     group, e.g. about ``2^26 W_floor`` on a two-site chain at T = 0.1) the
     solver's own mu search can fail outright; that failure (a
     ``RuntimeError`` of the T > 0 fill) is raised as :class:`MuSearchFailed`,
-    which :func:`seed_pattern` treats as reaching the cap. With
+    which :func:`seed_pattern` treats as reaching the cap. Only the solver's
+    ``MuNotConvergedError`` and a plain ``RuntimeError`` (scipy's newton) are
+    converted; other ``RuntimeError`` subclasses propagate. With
     ``return_meta`` the result is
     ``(G, FillInfo, meta)``, ``meta = {"n_residual": float, "mu_refined":
     bool}`` (the largest group-count error of the returned G)."""
@@ -351,8 +354,12 @@ def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta
             return initial_facade.green_function(
                 hk, T_run, p.blocks, shape=p.shape, ns=p.ns, norb=p.norb, fill="uniform",
                 shell_tol=tol, ene_cutoff=p.ene_cutoff, return_info=True)
-        except RuntimeError as exc:     # MuNotConvergedError, scipy's newton
-            if T_run > 0:
+        except RuntimeError as exc:
+            # only the mu search: the solver's MuNotConvergedError, or the
+            # plain RuntimeError scipy's newton raises; any other subclass
+            # (NotImplementedError, RecursionError, ...) is not a mu failure
+            if T_run > 0 and (isinstance(exc, initial_facade.MuNotConvergedError)
+                              or type(exc) is RuntimeError):
                 raise MuSearchFailed(h, exc) from exc
             raise
 
@@ -552,8 +559,9 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
                 try:
                     d, G, info = evaluate(mid)
                 except MuSearchFailed as exc:
+                    # the kept point already meets the target: no cap, the
+                    # failure is recorded in meta only
                     failed_at = exc.h
-                    cap_reason = "mu search failed at h={:.6g}".format(failed_at)
                     break
                 if abs(d - target) <= tol:
                     h_used, d_used, G_used, info_used = mid, d, G, info
