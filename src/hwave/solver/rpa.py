@@ -1084,9 +1084,9 @@ class Interaction:
                 if not self.enable_spin_orbital:
                     raise
                 raise ValueError(
-                    "{}; in spin-orbital mode the geometry norb (the "
-                    "spin-orbital count, 2 x physical) must cover all "
-                    "Transfer indices".format(exc)) from exc
+                    "{}; in spin-orbital mode the norb of the geometry file "
+                    "(the spin-orbital count, 2 x physical) must cover every "
+                    "1-based Transfer index".format(exc)) from exc
             if self.enable_spin_orbital:
                 # The SO transfer file uses the interleaved convention
                 # (index = 2*orb + spin, matching UHFk and the docs), while

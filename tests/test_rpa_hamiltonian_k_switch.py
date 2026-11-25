@@ -136,8 +136,8 @@ class TestSpinOrbitalBranch(unittest.TestCase):
     def test_out_of_range_index_raises(self):
         # geometry norb = 2 (one physical orbital); index 3 is outside
         _write_chain(self.d, 2, _CHAIN + [" 0 0 0 3 3 0.5 0.0"], geom_norb=2)
-        with self.assertRaisesRegex(ValueError, r"outside \[0, 2\).*geometry "
-                                    r"norb \(the spin-orbital count"):
+        with self.assertRaisesRegex(ValueError, r"outside \[0, 2\).*norb of the "
+                                    r"geometry file \(the spin-orbital count"):
             _rpa(self.d, [1, 1, 1], enable_spin_orbital=True)
 
     def test_interleaved_file_lands_in_spin_block_order(self):

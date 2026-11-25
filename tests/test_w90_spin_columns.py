@@ -117,7 +117,10 @@ class TestReaderSpinColumns(unittest.TestCase):
             _read(lines)
         self.assertIn("has 9 columns, expected 7", str(ctx.exception))
         self.assertNotIn("w90spin", str(ctx.exception))
-        with self.assertRaisesRegex(ValueError, "no 'w90spin/1' marker"):
+        # where the format is accepted, both readings are offered: a
+        # 7-column row with two extra tokens, or a missing marker
+        with self.assertRaisesRegex(ValueError, r"expected 7 \(Rx Ry Rz a b Re Im\); "
+                                    r"line 1 carries no 'w90spin/1' marker"):
             _read(lines, allow_spin_columns=True)
 
     def test_orbital_index_beyond_header_norb_refused(self):
@@ -273,6 +276,10 @@ class TestInputReaderAndSolverRefusal(unittest.TestCase):
                         "output": {"path_to_output": os.path.join(self.d, "out")}}}
         with self.assertRaisesRegex(ValueError, "hwave_sc does not accept the "
                                     "spin-resolved"):
+            sc.calc_eliashberg(inp)
+        inp["mode"]["enable_spin_orbital"] = True
+        with self.assertRaisesRegex(ValueError, "hwave_sc does not accept the "
+                                    "spin-resolved.*interleaved 7-column form"):
             sc.calc_eliashberg(inp)
 
     def test_flex_hf_bare_transfer_refuses(self):

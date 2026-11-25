@@ -244,8 +244,8 @@ def check_spin_resolved_norb(param_ham, norb_geom, solver):
         return
     name, tag = _spin_resolved_name_tag(param_ham, fmt)
     raise ValueError(
-        "{}: line 2 of this spin-resolved Transfer file ({}) gives {} "
-        "orbitals, but the Geometry norb is {} ({}). In this format line 2 "
+        "{}: line 2 of this spin-resolved Transfer file ({}) gives norb = "
+        "{}, but the Geometry norb is {} ({}). In this format line 2 "
         "is the number of PHYSICAL orbitals and must equal the Geometry "
         "norb (the spin is a separate column); the rows are indexed with "
         "it, so a different value would mix up spin and orbital."
