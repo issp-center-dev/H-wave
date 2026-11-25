@@ -2635,12 +2635,19 @@ def _read_interaction_files(input_dict):
     spin_marker = (wan90.read_w90_header_marker(transfer_file)
                    if os.path.isfile(transfer_file) else None)
     if spin_marker is not None:
+        from hwave.solver import spin_orbital as _so
+        if _so.resolve_flag(input_dict.get("mode", {})):
+            hint = ("With [mode] enable_spin_orbital = true the Transfer "
+                    "uses the interleaved 7-column form (index 2*orb + "
+                    "spin + 1, Geometry norb = 2 x physical).")
+        else:
+            hint = ("Write the Transfer in the 7-column form, or fold the "
+                    "spin into the orbital index and set [mode] "
+                    "enable_spin_orbital = true.")
         raise ValueError(
             "{}: hwave_sc does not accept the spin-resolved (9-column) "
-            "Transfer format ({}/{}) yet. Write the Transfer in the "
-            "7-column form, or fold the spin into the orbital index and "
-            "set [mode] enable_spin_orbital = true.".format(
-                transfer_file, *spin_marker))
+            "Transfer format ({}/{}) yet. {}".format(
+                transfer_file, spin_marker[0], spin_marker[1], hint))
     hr = wan90.read_w90(transfer_file)
 
     interaction_types = ["CoulombIntra", "CoulombInter", "Hund", "Exchange",

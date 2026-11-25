@@ -252,13 +252,13 @@ class TestLineTwoNorbMustMatchGeometry(unittest.TestCase):
                         ((1, 0, 0), 1, 1, 1, 1): -1.0})
         with self.assertRaisesRegex(
                 ValueError, r"line 2 of this spin-resolved Transfer file "
-                r"\(w90spin/1\) gives 1 orbitals, but the Geometry norb is 2"):
+                r"\(w90spin/1\) gives norb = 1, but the Geometry norb is 2"):
             _solver(self.d, [4, 1, 1])
 
     def test_line_two_larger_than_geometry_refused(self):
         # 2 * physical, as a spin-orbital-mode file would declare
         self._write(4, _spin_independent(_ORB))
-        with self.assertRaisesRegex(ValueError, "gives 4 orbitals, but the "
+        with self.assertRaisesRegex(ValueError, "gives norb = 4, but the "
                                     "Geometry norb is 2"):
             _solver(self.d, [4, 1, 1])
 

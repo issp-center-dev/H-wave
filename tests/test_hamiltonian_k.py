@@ -76,7 +76,8 @@ class TestDenseTable(unittest.TestCase):
         with self.assertLogs("qlms", level="WARNING") as cm:
             tab = hk.dense_table(tbl, (2, 1, 1), 1, out_of_range="drop")
         self.assertEqual(len(cm.output), 1)
-        self.assertIn("2 entries", cm.output[0])
+        self.assertIn("2 entries with orbital indices outside 1..1 (1-based",
+                      cm.output[0])
         self.assertEqual(tab[0, 0, 0, 0, 0], -1.0)
         self.assertEqual(np.count_nonzero(tab), 1)
 
@@ -310,7 +311,7 @@ class TestEquivalenceSC(unittest.TestCase):
 
     def test_build_hamiltonian_k_off_the_fft_grid(self):
         # sc._build_hamiltonian_k takes arbitrary k arrays; to_k is
-        # FFT-grid only, so a switch of sc (plan 2.3) has to keep the
+        # FFT-grid only, so moving sc onto the shared builder has to keep the
         # explicit sum for these. Pin the general-k behaviour here.
         from hwave import sc
         rng = np.random.default_rng(9)
