@@ -3241,7 +3241,8 @@ def _diagnostic_residuals(fixture, solver_factory=build_solver):
         # ---- checkpoint 6: cross-counter residuals (spec Change 2) ----
         # Two invariants, four scalars: counter identity |N_fermi -
         # N_mats| at both roots; root quality |N(own root) - target|.
-        from hwave.solver.rpa import _masked_fermi_delta_n
+        from hwave.solver.hartree_fock import (
+            masked_fermi_delta_n as _masked_fermi_delta_n)
         lam, ew_flex = flex_obj._matsubara_number_operator(sigma_zero, beta)
 
         def _n_fermi(mu):

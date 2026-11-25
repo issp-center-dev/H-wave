@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 from .rpa import (RPA, Lattice, Interaction, MOMENTUM_CONVENTION,
                   _case_insensitive_file_input, PAIRLIFT_INERT_WARNING, canonical_scheme_name)
 from .density_projection import project_density_pairs
+from .hartree_fock import masked_fermi as _masked_fermi
 from . import backend as _bk
 from . import bubble
 from . import spin_orbital
@@ -4030,7 +4031,7 @@ class FLEX(RPA):
         xp = _bk.array_module_of(sigma)
 
         # analytic non-interacting reference (Fermi function)
-        n_ref = self._fermi_occupation(1.0 / beta, mu, ew).sum()
+        n_ref = _masked_fermi(1.0 / beta, mu, ew).sum()
 
         # dressed correction Tr[G - G0], summed over the finite Matsubara grid
         green = self._calc_dressed_green(beta, mu, sigma)
@@ -4041,20 +4042,6 @@ class FLEX(RPA):
         corr = (trG - trG0).sum() / beta
 
         return float(n_ref + corr.real)
-
-    @staticmethod
-    def _fermi_occupation(t, mu, ev, ene_cutoff=1.0e2):
-        """Fermi function with the same overflow guard as RPA._find_mu.
-        Must stay arithmetically identical to rpa.py's module-level
-        _masked_fermi_delta_n and to _find_mu's internal _fermi closure
-        (both in src/hwave/solver/rpa.py) -- three copies of the same
-        masked Fermi factor."""
-        xp = _bk.array_module_of(ev)
-        w = (ev - mu) / t
-        mask = w < ene_cutoff
-        w1 = xp.where(mask, w, 0.0)
-        v1 = 1.0 / (1.0 + xp.exp(w1))
-        return xp.where(mask, v1, 0.0)
 
     @do_profile
     def _calc_occupation_dressed(self, green_kw, mu, beta):
@@ -4103,7 +4090,7 @@ class FLEX(RPA):
         vsq = xp.abs(ev) ** 2                          # |V_aj|^2
 
         # bare per-orbital reference: n0_a = sum_j |V_aj|^2 f(eps_j - mu)
-        f = self._fermi_occupation(1.0 / beta, mu, ew)     # (nblock, nvol, j)
+        f = _masked_fermi(1.0 / beta, mu, ew)     # (nblock, nvol, j)
         n0 = xp.einsum('bkaj,bkj->bka', vsq, f)            # (nblock, nvol, a)
 
         # dressed correction (1/beta) sum_n [G_aa - G0_aa]
@@ -4269,7 +4256,7 @@ class FLEX(RPA):
         xp = _bk.array_module_of(lam)
         iomega = (xp.arange(nmat) * 2 + 1 - nmat) * np.pi / beta
 
-        f = self._fermi_occupation(T, mu, ew)
+        f = _masked_fermi(T, mu, ew)
         n_ref = f.sum()
 
         denomG = lam + mu                                    # (nb, nmat, nvol, nd)

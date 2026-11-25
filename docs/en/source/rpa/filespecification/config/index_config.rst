@@ -999,7 +999,7 @@ that has no effect under the current settings.
   Float (default value is 100.0)
 
   **Description :**
-  This parameter specifies the upper cutoff of the exponent in the Fermi distribution function to avoid overflow during the calculation.
+  This parameter specifies the upper cutoff of the exponent in the Fermi distribution function to avoid overflow during the calculation: the weight of an energy with :math:`(\epsilon - \mu)/T` larger than the cutoff is zero. **Release note:** an energy exactly at the cutoff, :math:`(\epsilon - \mu)/T =` ``ene_cutoff``, is evaluated (its weight is :math:`1/(1 + e^{c})` for the cutoff :math:`c`, :math:`3.7 \times 10^{-44}` for the default); earlier releases set it to zero. An energy that is not a number (NaN) gives a NaN weight; earlier releases counted it as an empty level, so that the chemical potential was computed without it. The chemical potential search now stops with an error in that case.
 
 - ``gpu``
 

@@ -12,7 +12,9 @@ import numpy as np
 from scipy import optimize
 
 from hwave.solver.rpa import RPA
-from hwave.solver.rpa import _masked_fermi_delta_n, _polish_mu_root
+from hwave.solver.hartree_fock import (
+    masked_fermi_delta_n as _masked_fermi_delta_n,
+    polish_mu_root as _polish_mu_root)
 
 
 def _masked_fermi_count(w, T, mu, ene_cutoff):
