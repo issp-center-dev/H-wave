@@ -992,6 +992,26 @@ ARPACK の求解（最初の絶対値最大の求解または実部最大の求�
 返すようになりました（以前はそこで<code class="docutils literal notranslate"><span class="pre">None</span></code>を返していました）。値は<code class="docutils literal notranslate"><span class="pre">NaN</span></code>の
 ことがあるので、真偽値や<code class="docutils literal notranslate"><span class="pre">is</span> <span class="pre">None</span></code>ではなく<code class="docutils literal notranslate"><span class="pre">math.isnan</span></code>または
 <code class="docutils literal notranslate"><span class="pre">numpy.isnan</span></code>で判定してください。</p>
+<p><strong>Python API（モジュール構成）。</strong> これはPythonスクリプトにのみ関係します。
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>コマンドとその入力・出力ファイルは変わりません。
+<code class="docutils literal notranslate"><span class="pre">hwave_sc</span></code>の実装はモジュール<code class="docutils literal notranslate"><span class="pre">hwave.sc</span></code>からパッケージ
+<code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg</span></code>へ移り、役割ごとのサブモジュール（<code class="docutils literal notranslate"><span class="pre">config</span></code>、
+<code class="docutils literal notranslate"><span class="pre">band</span></code>、<code class="docutils literal notranslate"><span class="pre">vertex</span></code>、<code class="docutils literal notranslate"><span class="pre">kernel</span></code>、<code class="docutils literal notranslate"><span class="pre">eigen</span></code>、<code class="docutils literal notranslate"><span class="pre">io</span></code>、<code class="docutils literal notranslate"><span class="pre">output</span></code>、
+<code class="docutils literal notranslate"><span class="pre">bond</span></code>、<code class="docutils literal notranslate"><span class="pre">so_solve</span></code>、<code class="docutils literal notranslate"><span class="pre">static</span></code>と動的ソルバー）に分かれました。
+<code class="docutils literal notranslate"><span class="pre">hwave.sc</span></code>が再エクスポートするのは公開API（<code class="docutils literal notranslate"><span class="pre">calc_eliashberg</span></code>、
+<code class="docutils literal notranslate"><span class="pre">main</span></code>、<code class="docutils literal notranslate"><span class="pre">reject_spin_orbital_mode</span></code>と定数<code class="docutils literal notranslate"><span class="pre">DEFAULT_SOLVER_MODE</span></code>、
+<code class="docutils literal notranslate"><span class="pre">IN_PROCESS_DEFAULT_SOLVER_MODE</span></code>、<code class="docutils literal notranslate"><span class="pre">EXIT_EIGEN_NOT_CONVERGED</span></code>）のみです。
+<code class="docutils literal notranslate"><span class="pre">hwave.sc</span></code>経由で非公開のヘルパー（内部関数や定数など）を参照していたスクリプト
+（例：<code class="docutils literal notranslate"><span class="pre">hwave.sc._load_chi0q</span></code>）は、それを定義しているサブモジュールから
+インポートしてください（<code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg.io._load_chi0q</span></code>）。
+次の4つの旧モジュール名は、移動先モジュールの別名として1リリースの間だけ
+インポートでき、その後削除されます（インポート時に警告は出ません）。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg_dynamic</span></code> → <code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg.dynamic</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg_dynamic_so</span></code> → <code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg.dynamic_so</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg_bond</span></code> → <code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg.bond_dynamic</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg_bond_io</span></code> → <code class="docutils literal notranslate"><span class="pre">hwave.solver.eliashberg.bond_io</span></code></p></li>
+</ul>
 </div>
 </section>
 </section>
