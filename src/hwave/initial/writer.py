@@ -55,7 +55,7 @@ import math
 import numbers
 import os
 import pathlib
-import tempfile
+import secrets
 import zipfile
 from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
@@ -177,12 +177,25 @@ def solver_initial_path(config_path) -> Optional[pathlib.Path]:
 def initial_key_value(config_path, npz_path) -> str:
     """The ``[file.input] initial`` value under which ``hwave config_path``
     (run in the TOML's directory) reads ``npz_path``: its path relative to
-    ``<TOML dir>/path_to_input``, in POSIX form."""
+    ``<TOML dir>/path_to_input``, in POSIX form.
+
+    The solver joins the two strings and the kernel resolves the result,
+    symbolic links before ``..``; so the relative path is taken between the
+    resolved directory (``os.path.realpath``) and the resolved file, and
+    the join is checked to name ``npz_path`` (``ValueError`` otherwise)."""
     config_path = _abs(config_path)
     finput = _finput(_read_doc(config_path))
-    base = os.path.join(str(config_path.parent), _path_to_input(finput))
-    rel = os.path.relpath(os.path.abspath(os.fspath(npz_path)), os.path.abspath(base))
-    return pathlib.PurePath(rel).as_posix()
+    pti = _path_to_input(finput)
+    base = os.path.join(str(config_path.parent), pti)
+    target = os.fspath(npz_path)
+    rel = os.path.relpath(os.path.realpath(target), os.path.realpath(base))
+    key = pathlib.PurePath(rel).as_posix()
+    joined = os.path.join(str(config_path.parent), os.path.join(pti, key))
+    if os.path.exists(target):
+        if not (os.path.exists(joined) and os.path.samefile(joined, target)):
+            raise ValueError("{}: initial = {!r} under path_to_input = {!r} does not name "
+                             "{}".format(config_path, key, pti, target))
+    return key
 
 
 # --------------------------------------------------------------------------
@@ -283,11 +296,19 @@ def _write_npz(path, members):
     """``members`` as an npz archive at ``path``: sorted names, fixed zip
     time stamps, no pickle; written to a temporary file and renamed."""
     path = _abs(path)
-    fd, tmp = tempfile.mkstemp(prefix=".initial-", suffix=".npz", dir=str(path.parent))
-    os.close(fd)
+    # a fresh temporary name next to ``path``, created with mode 0666 so the
+    # kernel applies the process umask (as open() does); the umask is never
+    # changed
+    while True:
+        tmp = str(path.parent / ".initial-{}.npz".format(secrets.token_hex(8)))
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            break
+        except FileExistsError:
+            continue
     try:
-        with zipfile.ZipFile(tmp, mode="w", compression=zipfile.ZIP_STORED,
-                             allowZip64=True) as zf:
+        with os.fdopen(fd, "wb") as fh, zipfile.ZipFile(
+                fh, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
             for name in sorted(members):
                 info = zipfile.ZipInfo(name + ".npy", date_time=_ZIP_TIME)
                 info.compress_type = zipfile.ZIP_STORED
@@ -295,10 +316,6 @@ def _write_npz(path, members):
                 with zf.open(info, mode="w", force_zip64=True) as fid:
                     np.lib.format.write_array(fid, np.asanyarray(members[name]),
                                               allow_pickle=False)
-        # mkstemp creates the file 0600; give it the mode open() would
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, str(path))
     except BaseException:
         if os.path.exists(tmp):
@@ -663,14 +680,17 @@ def _check_provenance(members, problem, config_path, path):
                 path, key, value, None if got is None else repr(str(got[()]))))
     warnings = []
     sha = prov["input_sha256"]
-    if isinstance(sha, dict):
-        now = {}
-        for key, f in initial_facade.referenced_input_files(config_path).items():
-            now[key] = _sha256(f) if f.is_file() else None
-        changed = sorted(k for k in set(now) | set(sha) if now.get(k) != sha.get(k))
-        if changed:
-            warnings.append("input_sha256: the input files {} differ from those the seed "
-                            "was written for".format(", ".join(changed)))
+    if not isinstance(sha, dict) or not all(isinstance(v, str) for v in sha.values()):
+        raise InitialStateError(
+            "{}: input_sha256: an object of SHA-256 strings keyed by TOML key expected, got "
+            "{}".format(path, json.dumps(sha)))
+    now = {}
+    for key, f in initial_facade.referenced_input_files(config_path).items():
+        now[key] = _sha256(f) if f.is_file() else None
+    changed = sorted(k for k in set(now) | set(sha) if now.get(k) != sha.get(k))
+    if changed:
+        warnings.append("input_sha256: the input files {} differ from those the seed "
+                        "was written for".format(", ".join(changed)))
     return warnings
 
 
@@ -707,6 +727,7 @@ def check_initial_state(config_path, npz_path=None, *, require_provenance=False
     if "initial" in finput and "initial_uhf" in finput:
         raise InitialStateError("{}: [file.input] sets both initial and initial_uhf, which "
                                 "the solver refuses; remove initial_uhf".format(config_path))
+    warnings = []
     if npz_path is None:
         npz_path = solver_initial_path(config_path)
         if npz_path is None:
@@ -719,14 +740,22 @@ def check_initial_state(config_path, npz_path=None, *, require_provenance=False
                 "joined with initial = {}, from the TOML's directory), which resolves to "
                 "{}: no such file".format(
                     config_path, os.path.join(pti, finput["initial"]), json.dumps(pti),
-                    json.dumps(finput["initial"]), os.path.abspath(npz_path)))
-    path = _abs(npz_path)
+                    json.dumps(finput["initial"]), npz_path))
+    else:
+        solver_path = solver_initial_path(config_path)
+        if solver_path is not None and os.path.isfile(solver_path) \
+                and os.path.isfile(npz_path) and not os.path.samefile(solver_path, npz_path):
+            warnings.append("{} is not the file the solver reads ({})".format(
+                npz_path, solver_path))
+    # the path as given, unnormalised: the kernel resolves it as it resolves
+    # the solver's join (symbolic links before "..")
+    path = pathlib.Path(os.fspath(npz_path))
     if not path.is_file():
         raise InitialStateError("{}: no such file".format(path))
     members = _load_members(path)
     sub = int(np.prod(problem.subshape)) > 1
     has_prov = "initial_state_schema" in members
-    warnings = []
+
     if has_prov:
         warnings += _check_provenance(members, problem, config_path, path)
     if sub and "green_sublattice" in members:

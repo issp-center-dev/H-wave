@@ -131,8 +131,13 @@ def _resolve_toml(input_path):
         toml = found[0]
         mode = _read_toml(toml).get("mode", {})
         if not isinstance(mode, Mapping) or mode.get("mode") != "UHFk":
+            hint = ""
+            if isinstance(mode, Mapping) and mode.get("mode") == "UHFr":
+                hint = ("; a UHFr input has no lattice geometry: give the UHFk input of "
+                        "the same lattice, and write the UHFr initial file with "
+                        "hwave.initial.writer.initial_state(..., site_map=, uhfr_toml=)")
             raise ValueError("{}: the only *.toml input, {} (mode {}), is not a UHFk "
-                             "input".format(p, toml.name, _mode_of(toml)))
+                             "input{}".format(p, toml.name, _mode_of(toml), hint))
         return toml
     if not p.is_file():
         raise ValueError("{}: no such input file or directory".format(p))

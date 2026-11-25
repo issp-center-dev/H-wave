@@ -174,8 +174,13 @@ def _read_config(toml_path):
     if "mode" not in info_mode:
         raise ValueError("{}: mode is not defined in [mode].".format(toml_path))
     if info_mode["mode"] != "UHFk":
-        raise ValueError("{}: [mode] mode = {!r}: only UHFk inputs are supported"
-                         .format(toml_path, info_mode["mode"]))
+        hint = ""
+        if info_mode["mode"] == "UHFr":
+            hint = ("; a UHFr input has no lattice geometry: give the UHFk input of the "
+                    "same lattice, and write the UHFr initial file with "
+                    "hwave.initial.writer.initial_state(..., site_map=, uhfr_toml=)")
+        raise ValueError("{}: [mode] mode = {!r}: only UHFk inputs are supported{}"
+                         .format(toml_path, info_mode["mode"], hint))
     # the [file] layers by the UHFk rules (UHFr reads some keys in any case)
     info_file = doc.get("file", {})
     if isinstance(info_file, Mapping):

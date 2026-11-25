@@ -439,6 +439,12 @@ class TestCheck(_Tmp):
         bad = os.path.join(self.root, "schema.npz")
         _save(bad, m)
         self.assert_refused(toml, bad, "initial_state_schema")
+        for value in (None, ["abc"], "abc", {"Transfer": 1}):
+            m = dict(members)
+            m["input_sha256"] = np.array(json.dumps(value))
+            bad = os.path.join(self.root, "sha.npz")
+            _save(bad, m)
+            self.assert_refused(toml, bad, "input_sha256")
         m = dict(members)
         del m["ncond"]
         bad = os.path.join(self.root, "noncond.npz")
@@ -612,8 +618,11 @@ class TestFileContract(_Tmp):
                     json.loads(str(v[()]))
 
     def test_bytes_identical_two_runs(self):
+        from unittest import mock
         toml = self.square()
-        a = self.write(toml, _neel(), name="a.npz")
+        # the process umask is never touched while writing (threads)
+        with mock.patch("os.umask", side_effect=AssertionError("umask changed")):
+            a = self.write(toml, _neel(), name="a.npz")
         b = self.write(toml, _neel(), name="b.npz")
         with open(a, "rb") as fa, open(b, "rb") as fb:
             self.assertEqual(fa.read(), fb.read())
@@ -707,11 +716,17 @@ class TestFileContract(_Tmp):
         with self.assertRaises(ValueError) as cm:
             initial_state(toml, cand, out=out, subshape=(2, 2, 1))
         self.assertIn("not representable", str(cm.exception))
-        # para has no amplitude to refuse; para is fine. UHFr TOML as model:
+        # a UHFr TOML (or its directory) as the model names the site_map route,
+        # in the writer and in model_facts
+        from hwave.initial.facts import model_facts
         uhfr = self.uhfr_input(4)
-        with self.assertRaises(ValueError) as cm:
-            initial_state(uhfr, _neel(), out=out)
-        self.assertIn("site_map", str(cm.exception))
+        for arg in (uhfr, os.path.dirname(uhfr)):
+            with self.assertRaises(ValueError) as cm:
+                initial_state(arg, _neel(), out=out)
+            self.assertIn("site_map", str(cm.exception))
+            with self.assertRaises(ValueError) as cm:
+                model_facts(arg)
+            self.assertIn("site_map", str(cm.exception))
 
     def test_so_physical_index_realisation(self):
         """Review Focus 5: a cz entry on physical orbital 1 is +1/2 / -1/2 on
@@ -951,10 +966,19 @@ class TestSolverPath(_Tmp):
         _set_run(toml, initial=key)
         self.assertTrue(os.path.samefile(solver_initial_path(toml), out))
         self.assertTrue(check_initial_state(toml).verified)
-        with self.assertLogs("qlms", level="INFO") as cm:
-            _run_hwave(toml)
-        self.assertTrue(any("read initial from inputs/../initial.npz" in m
-                            for m in cm.output))
+        # the console entry as a process, from d: exit code 0 and the log line
+        import subprocess
+        import sys
+        import hwave
+        src = os.path.dirname(os.path.dirname(os.path.abspath(hwave.__file__)))
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join(
+            [src, os.environ.get("PYTHONPATH", "")]))
+        proc = subprocess.run(
+            [sys.executable, "-B", "-c", "import sys; from hwave.qlms import main; "
+             "sys.argv = ['hwave', 'input.toml']; main()"],
+            cwd=d, env=env, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        self.assertIn("read initial from inputs/../initial.npz", proc.stdout + proc.stderr)
         self.assertTrue(os.path.exists(os.path.join(d, "output", "green.npz")))
         # the naive key resolves under path_to_input
         _set_run(toml, initial="initial.npz")
@@ -970,6 +994,50 @@ class TestSolverPath(_Tmp):
         _set_run(toml, initial=out)
         self.assertEqual(str(solver_initial_path(toml)), out)
         self.assertEqual(initial_key_value(toml, out), "../initial.npz")
+
+    def test_symlinked_path_to_input(self):
+        """``path_to_input`` a symbolic link to a directory elsewhere: the
+        solver's ``inputs/../x`` resolves through the link, so the key is
+        taken between resolved paths, and the check reads the file the
+        solver opens (not a lexically normalised one)."""
+        from hwave.initial.writer import (
+            check_initial_state, initial_key_value, initial_state, solver_initial_path)
+        d = self.dest()
+        elsewhere = os.path.join(self.root, "elsewhere")
+        data = os.path.join(elsewhere, "data")
+        src = initial_fixtures.square(data, 4, U=2.0, T=0.1, subshape=(1, 1, 1))
+        os.makedirs(d)
+        toml = os.path.join(d, "input.toml")
+        shutil.move(src, toml)
+        os.symlink(data, os.path.join(d, "inputs"))
+
+        def paths(doc):
+            doc["file"]["input"]["path_to_input"] = "inputs"
+            doc["file"]["input"]["interaction"]["path_to_input"] = "inputs"
+        _edit(toml, paths)
+        ferro = _user(_spec([_e(cz=1.0)], ("0", "0", "0"), (1, 1, 1)))
+        out = os.path.join(d, "initial.npz")
+        initial_state(toml, ferro, out=out)
+        # a decoy where the lexical key "../initial.npz" lands through the link
+        decoy = os.path.join(elsewhere, "initial.npz")
+        initial_state(toml, _user(_spec([_e(cz=-1.0)], ("0", "0", "0"), (1, 1, 1))),
+                      out=decoy)
+        _save(decoy, {"green": _load(decoy)["green"]})      # no provenance
+        key = initial_key_value(toml, out)
+        self.assertNotEqual(key, "../initial.npz")
+        _set_run(toml, initial=key)
+        self.assertTrue(os.path.samefile(solver_initial_path(toml), out))
+        self.assertTrue(check_initial_state(toml).verified)
+        # the lexical key: the solver (and the check) read the decoy
+        _set_run(toml, initial="../initial.npz")
+        self.assertTrue(os.path.samefile(solver_initial_path(toml), decoy))
+        self.assertFalse(check_initial_state(toml).verified)    # the decoy is checked
+        read = _load(str(solver_initial_path(toml)))["green"]
+        np.testing.assert_array_equal(read, _load(decoy)["green"])
+        self.assertGreater(np.max(np.abs(read - _load(out)["green"])), 1e-3)
+        # checking the written file under that key warns that the solver reads another
+        res = check_initial_state(toml, out)
+        self.assertTrue(any("not the file the solver reads" in w for w in res.warnings))
 
 
 if __name__ == "__main__":
