@@ -166,6 +166,29 @@ class TestRepresentability(unittest.TestCase):
                   (F(1, 2), F(1, 3), F(0))):
             self.assertIsNone(propose(q, (48, 48, 1)).rotated_note, q)
 
+    def test_rotated_note_names_sqrt3_only_at_k_60(self):
+        # K and K' in the 60-degree basis: sqrt3 x sqrt3, conditionally
+        for q in (K, (F(1, 3), F(2, 3), F(0))):
+            note = propose(q, (12, 12, 1)).rotated_note
+            self.assertIn("3 primitive cells", note)
+            self.assertIn("√3×√3 if the lattice is triangular with a 60°",
+                          note)
+            self.assertIn("K point", note)
+        # order 3 too, but not K in that basis, or not in-plane
+        for q in ((F(1, 3), F(1, 3), F(0)), (F(1, 3), F(0), F(1, 3))):
+            note = propose(q, (12, 12, 3)).rotated_note
+            self.assertIn("3 primitive cells", note, q)
+            self.assertNotIn("√3", note, q)
+            self.assertNotIn("K point", note, q)
+
+    def test_reason_caps_approximants(self):
+        r = rationalise((0.3, 0.3, 0.3), max_denominator=2)
+        self.assertEqual(len(r.approximants), 8)
+        self.assertIn(q_string(r.approximants[0]), r.reason)
+        self.assertIn(q_string(r.approximants[1]), r.reason)
+        self.assertNotIn(q_string(r.approximants[2]) + " ", r.reason)
+        self.assertIn("(6 more)", r.reason)
+
     def test_rotated_note_general_index(self):
         # order 4 < 4*4: a smaller non-diagonal cell exists, but it is not
         # the triangular one

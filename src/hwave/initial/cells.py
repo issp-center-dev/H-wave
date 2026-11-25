@@ -46,6 +46,13 @@ QFrac = Tuple[Fraction, Fraction, Fraction]
 
 _AXES = ("x", "y", "z")
 
+#: K and K' of a triangular lattice in the 60-degree basis (spec V2)
+_K_60 = ((Fraction(2, 3), Fraction(1, 3), Fraction(0)),
+         (Fraction(1, 3), Fraction(2, 3), Fraction(0)))
+
+#: how many approximants :attr:`Rationalised.reason` names
+_REASON_APPROXIMANTS = 2
+
 
 def lcm(a: int, b: int) -> int:
     """The least common multiple of two positive integers."""
@@ -161,14 +168,18 @@ class Rationalised:
     @property
     def reason(self) -> Optional[str]:
         """``None`` when commensurate; otherwise the message of the
-        not-representable row, naming the approximants."""
+        not-representable row, naming the two nearest approximants (the
+        full list is :attr:`approximants`)."""
         if not self.incommensurate:
             return None
+        shown = self.approximants[:_REASON_APPROXIMANTS]
+        rest = len(self.approximants) - len(shown)
+        more = " ({} more)".format(rest) if rest else ""
         return ("q = ({}) is not representable within max_denominator = {}"
-                "; incommensurate: approximated by {}".format(
+                "; incommensurate: approximated by {}{}".format(
                     ", ".join(repr(x) for x in self.original),
                     self.max_denominator,
-                    " or ".join(q_string(a) for a in self.approximants)))
+                    " or ".join(q_string(a) for a in shown), more))
 
 
 def _neighbours(x, max_denominator):
@@ -256,7 +267,8 @@ def representable(q, subshape) -> Tuple[bool, str]:
 
     Returns ``(True, "")`` or ``(False, reason)``, the reason naming the
     first failing axis exactly: ``"q_x denominator 3 does not divide B_x =
-    2"``."""
+    2"``. Other axes may fail too; the complete remedy is the cell of
+    :func:`propose`, not the reason."""
     dens = _denominators(q)
     shape = _shape(subshape, "SubShape")
     for d, b, ax in zip(dens, shape, _AXES):
@@ -299,8 +311,13 @@ def propose(q, cellshape) -> CellProposal:
     note = None
     if n < vol:
         tri = ""
-        if n == 3 and sorted(dens) == [1, 3, 3]:
-            tri = " (the √3×√3 cell when the lattice is triangular)"
+        if to_qfrac(q) in _K_60:
+            # the K points of a triangular lattice in the 60-degree basis
+            # (a2 = (1/2, sqrt3/2, 0), spec V2); the kernel of R -> q.R is
+            # then the sqrt3 x sqrt3 sublattice. In another basis the same
+            # fractions are not K, so the shape is only named conditionally.
+            tri = (" (√3×√3 if the lattice is triangular with a 60° angle "
+                   "between a1 and a2, where this q is a K point)")
         note = ("a non-diagonal supercell of {} primitive cells{} is smaller "
                 "than the diagonal {} cell ({} primitive cells); SubShape "
                 "builds only diagonal cells, so it needs a rebuilt unit cell "
