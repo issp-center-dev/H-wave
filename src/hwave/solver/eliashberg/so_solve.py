@@ -157,14 +157,13 @@ def _so_run_inputs(input_dict, hr, extern_table, norb_phys, beta, nmat,
 
 def _so_own_state(eigenvalues, beta, mu, nmat, target):
     """The state of a kernel built on this run's own band and mu: the masked
-    Fermi count of the eigenvalues at ``mu`` (``rpa._masked_fermi_delta_n``,
+    Fermi count of the eigenvalues at ``mu`` (``hartree_fock.masked_fermi_delta_n``,
     the count ``_determine_mu`` roots) per cell, the ``calc_mu = True``
     branch."""
-    from hwave.solver import fingerprint
-    from hwave.solver import rpa as _rpa
+    from hwave.solver import fingerprint, hartree_fock as _hf
     w = np.asarray(backend.to_host(eigenvalues))
     nvol = int(np.prod(w.shape[:3]))
-    count = _rpa._masked_fermi_delta_n(w, 1.0 / beta, mu, 0.0, 100.0)[0]
+    count = _hf.masked_fermi_delta_n(w, 1.0 / beta, mu, 0.0, 100.0)[0]
     return fingerprint.so_state(beta=beta, nmat=nmat, mu=mu,
                                 density=float(count) / nvol, calc_mu=True,
                                 target=target)

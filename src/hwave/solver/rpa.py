@@ -32,6 +32,8 @@ from hwave.solver.vertex_table import fierz_coefficients, ring_spin_table
 from hwave.solver.kgrid import reverse_fft_axes
 from hwave.solver.declarations import symmetrise_dense
 from hwave.solver.density_projection import project_density_pairs
+from hwave.solver.hartree_fock import (masked_fermi, masked_fermi_delta_n,
+                                       polish_mu_root)
 from hwave.solver import scheme as _scheme
 from . import backend as _bk
 from . import bond_channels
@@ -538,62 +540,6 @@ def spinful_bubble_vertex(ham_inter_q, exchange):
         ham = ham + np.asarray(exchange).reshape(nd, nd, nd, nd)[None, ...]
     return np.ascontiguousarray(_to_bubble_pair_convention(ham)).reshape(
         nvol, nd * nd, nd * nd)
-
-
-def _masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
-    # Mask arithmetic must stay identical to _find_mu's internal _fermi
-    # closure below (both implement the same overflow-guarded Fermi
-    # function) and to hartree_fock.masked_fermi, which FLEX uses for
-    # the dressed-Green mu search.
-    """delta_n(mu) = sum over ALL (block, k, band) entries of the masked
-    Fermi factor, minus ``target`` -- the exact counter ``_find_mu``
-    root-finds (a PLAIN sum: no k normalization, no spin factor; the
-    caller pre-halves the target for spin-free) -- and its exact
-    analytic derivative sum f(1-f)/T under the IDENTICAL mask. At the
-    mask boundary the neglected derivative term is O(exp(-ene_cutoff)),
-    far below every tolerance in use (#160 spec, Change 1).
-    """
-    x = (w - mu) / T
-    mask = x < ene_cutoff
-    x1 = np.where(mask, x, 0.0)
-    f = np.where(mask, 1.0 / (1.0 + np.exp(x1)), 0.0)
-    n = float(np.sum(f).real) - target
-    dn = float(np.sum(f * (1.0 - f)).real / T)
-    return n, dn
-
-
-def _polish_mu_root(delta_n_and_deriv, mu_root, bracket=None, max_iter=3):
-    """Transactional Newton polish of a mu root (#160 spec, Change 1).
-
-    Accepts a candidate ONLY on a strictly smaller finite residual, so
-    it can never return a worse root than ``mu_root``. Guards: zero/
-    non-finite derivative, non-finite candidate, non-finite candidate
-    residual, optional bracket clipping, ``max_iter`` rounds. Module
-    level (not a closure) so the guard branches are unit-testable with
-    synthetic counters.
-    """
-    best_mu = float(mu_root)
-    n, dn = delta_n_and_deriv(best_mu)
-    best_r = abs(n)
-    if not np.isfinite(best_r):
-        return best_mu
-    for _ in range(max_iter):
-        if best_r == 0.0:
-            break
-        if not (np.isfinite(dn) and dn > 0.0):
-            break
-        cand = best_mu - n / dn
-        if not np.isfinite(cand):
-            break
-        if bracket is not None:
-            cand = min(max(cand, bracket[0]), bracket[1])
-        n_c, dn_c = delta_n_and_deriv(cand)
-        r = abs(n_c)
-        if np.isfinite(r) and r < best_r:
-            best_mu, best_r, n, dn = cand, r, n_c, dn_c
-        else:
-            break
-    return best_mu
 
 
 def _enforce_tail_endpoint(meta, source):
@@ -4340,8 +4286,8 @@ class RPA:
         ORIGINAL unit cell (``lattice.cellvol``), also under a sublattice."""
         ncell = self.lattice.cellvol          # ORIGINAL cells (nvol * subvol)
         nspin = 2 if self.spin_mode == "spin-free" else 1
-        count = _masked_fermi_delta_n(_bk.to_host(self.H0_eigenvalue), self.T, mu,
-                                      0.0, self.ene_cutoff)[0]
+        count = masked_fermi_delta_n(_bk.to_host(self.H0_eigenvalue), self.T, mu,
+                                     0.0, self.ene_cutoff)[0]
         target = self.Ncond / ncell if self.calc_mu else mu
         return fingerprint.so_state(beta=1.0 / self.T, nmat=self.nmat, mu=mu,
                                     density=nspin * count / ncell,
@@ -4436,21 +4382,11 @@ class RPA:
         occupied_number = Ncond
 
         def _delta_n_and_deriv(mu):
-            return _masked_fermi_delta_n(w, T, mu, occupied_number,
-                                         ene_cutoff)
+            return masked_fermi_delta_n(w, T, mu, occupied_number,
+                                        ene_cutoff)
 
         def _calc_delta_n(mu):
             return _delta_n_and_deriv(mu)[0]
-
-        def _fermi(t, mu, ev_):
-            # Must stay arithmetically identical to _masked_fermi_delta_n's
-            # mask above and to hartree_fock.masked_fermi, which holds
-            # the same overflow guard.
-            w_ = (ev_ - mu) / t
-            mask_ = w_ < ene_cutoff
-            w1_ = np.where(mask_, w_, 0.0)
-            v1_ = 1.0 / (1.0 + np.exp(w1_))
-            return np.where(mask_, v1_, 0.0)
 
         # find mu s.t. <n>(mu) = N0
         is_converged = False
@@ -4523,11 +4459,11 @@ class RPA:
         # Transactional Newton polish (#160): drives the particle-number
         # residual toward round-off; never returns a worse root. The
         # bracket (if any) is the one the accepted brentq solve used.
-        mu = _polish_mu_root(_delta_n_and_deriv, mu, bracket=polish_bracket)
+        mu = polish_mu_root(_delta_n_and_deriv, mu, bracket=polish_bracket)
 
         logger.info("RPA._find_mu: mu = {}".format(mu))
 
-        dist = _fermi(T, mu, w)
+        dist = masked_fermi(T, mu, w, ene_cutoff)
 
         return dist, mu
 

@@ -243,7 +243,7 @@ def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
 
 
 # =============================================================================
-# The Heff-referenced equal-time density (spec section 2.1)
+# The Fermi function, the particle-number counter and the mu polish
 # =============================================================================
 
 def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
@@ -252,11 +252,11 @@ def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
     and never reaches ``exp``.
 
     ``ev`` is a NumPy or a CuPy array; the result is an array of the same
-    module. FLEX (the non-interacting reference of the dressed particle
-    number and of the orbital occupations) and the Heff-referenced
-    equal-time density below evaluate the distribution through this
-    function. ``rpa._masked_fermi_delta_n`` and the ``_fermi`` closure of
-    ``RPA._find_mu`` hold the same arithmetic.
+    module. This is the one distribution function of RPA, FLEX and
+    hwave_sc: ``RPA._find_mu`` returns it at the root, the counter
+    :func:`masked_fermi_delta_n` sums it, FLEX takes its non-interacting
+    references from it, and so does the Heff-referenced equal-time
+    density below.
     """
     xp = _bk.array_module_of(ev)
     w = (ev - mu) / t
@@ -265,6 +265,59 @@ def masked_fermi(t, mu, ev, ene_cutoff=1.0e2):
     v1 = 1.0 / (1.0 + xp.exp(w1))
     return xp.where(mask, v1, 0.0)
 
+
+def masked_fermi_delta_n(w, T, mu, target, ene_cutoff):
+    """delta_n(mu) = sum over ALL (block, k, band) entries of the masked
+    Fermi factor, minus ``target`` -- the exact counter ``RPA._find_mu``
+    root-finds (a PLAIN sum: no k normalization, no spin factor; the
+    caller pre-halves the target for spin-free) -- and its exact
+    analytic derivative sum f(1-f)/T under the IDENTICAL mask. At the
+    mask boundary the neglected derivative term is O(exp(-ene_cutoff)),
+    far below every tolerance in use (#160 spec, Change 1).
+    """
+    f = masked_fermi(T, mu, w, ene_cutoff)
+    n = float(np.sum(f).real) - target
+    dn = float(np.sum(f * (1.0 - f)).real / T)
+    return n, dn
+
+
+def polish_mu_root(delta_n_and_deriv, mu_root, bracket=None, max_iter=3):
+    """Transactional Newton polish of a mu root (#160 spec, Change 1).
+
+    Accepts a candidate ONLY on a strictly smaller finite residual, so
+    it can never return a worse root than ``mu_root``. Guards: zero/
+    non-finite derivative, non-finite candidate, non-finite candidate
+    residual, optional bracket clipping, ``max_iter`` rounds. Module
+    level (not a closure) so the guard branches are unit-testable with
+    synthetic counters.
+    """
+    best_mu = float(mu_root)
+    n, dn = delta_n_and_deriv(best_mu)
+    best_r = abs(n)
+    if not np.isfinite(best_r):
+        return best_mu
+    for _ in range(max_iter):
+        if best_r == 0.0:
+            break
+        if not (np.isfinite(dn) and dn > 0.0):
+            break
+        cand = best_mu - n / dn
+        if not np.isfinite(cand):
+            break
+        if bracket is not None:
+            cand = min(max(cand, bracket[0]), bracket[1])
+        n_c, dn_c = delta_n_and_deriv(cand)
+        r = abs(n_c)
+        if np.isfinite(r) and r < best_r:
+            best_mu, best_r, n, dn = cand, r, n_c, dn_c
+        else:
+            break
+    return best_mu
+
+
+# =============================================================================
+# The Heff-referenced equal-time density (spec section 2.1)
+# =============================================================================
 
 @dataclass(frozen=True)
 class DensityResult:
