@@ -302,6 +302,72 @@ This parameter specifies how the initial value of the Green’s function is set 
 <li><p><code class="docutils literal notranslate"><span class="pre">random</span></code>: set the initial configuration by random numbers.</p></li>
 </ul>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the filename of the geometry in the real-space site representation,
+in the <code class="docutils literal notranslate"><span class="pre">geometry.dat</span></code> format written by StdFace of mVMC: three lines with one lattice vector each,
+one line with the three boundary phases (read but not used: UHFk always uses periodic boundaries),
+three lines with one supercell vector each, then one integer <code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">y</span> <span class="pre">z</span> <span class="pre">orbital</span></code> row per site.
+The site rows are numbered from 0, and that number is the site index <code class="docutils literal notranslate"><span class="pre">i</span></code> or <code class="docutils literal notranslate"><span class="pre">j</span></code> used by
+<code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>, <code class="docutils literal notranslate"><span class="pre">onebodyg_uhf</span></code> and <code class="docutils literal notranslate"><span class="pre">onebodyg</span></code>; <code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">y</span> <span class="pre">z</span></code> are the cell coordinates
+<span class="math notranslate nohighlight">\(0 \le x &lt; L_x\)</span> (and so on) in <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, also when <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> is used, and
+<code class="docutils literal notranslate"><span class="pre">orbital</span></code> counts from 0.
+It is required by <code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code> and by <code class="docutils literal notranslate"><span class="pre">onebodyg</span></code> in <code class="docutils literal notranslate"><span class="pre">file.output</span></code>. It is optional otherwise.</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the filename of the initial configuration of the one-body Green’s function
+in the real-space site representation. Each line holds one element
+<code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">s</span> <span class="pre">j</span> <span class="pre">t</span> <span class="pre">Re</span> <span class="pre">Im</span></code> (sites and spins of <span class="math notranslate nohighlight">\(\langle c^\dagger_{is} c_{jt}\rangle\)</span>), without a header;
+<code class="docutils literal notranslate"><span class="pre">i</span></code> and <code class="docutils literal notranslate"><span class="pre">j</span></code> are site indices of <code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code> and <code class="docutils literal notranslate"><span class="pre">s</span></code>, <code class="docutils literal notranslate"><span class="pre">t</span></code> are spin indices,
+0 (up) or 1 (down). This is the layout that <code class="docutils literal notranslate"><span class="pre">onebodyg</span></code> in <code class="docutils literal notranslate"><span class="pre">file.output</span></code> writes, so that output can be fed back here.
+The UHFr outputs <code class="docutils literal notranslate"><span class="pre">green</span></code> (headerless) and <code class="docutils literal notranslate"><span class="pre">initial</span></code> (five-line header) have the same rows;
+a file whose first line starts with <code class="docutils literal notranslate"><span class="pre">=</span></code> is read after skipping five header lines.
+A row with site <code class="docutils literal notranslate"><span class="pre">i</span></code> at cell <span class="math notranslate nohighlight">\(\vec{R}_i\)</span>, orbital <span class="math notranslate nohighlight">\(a\)</span> and site <code class="docutils literal notranslate"><span class="pre">j</span></code> at
+<span class="math notranslate nohighlight">\(\vec{R}_j\)</span>, orbital <span class="math notranslate nohighlight">\(b\)</span> sets the <code class="docutils literal notranslate"><span class="pre">green.npz</span></code> element
+<span class="math notranslate nohighlight">\(G_{sa,tb}(\vec{R}_i-\vec{R}_j)\)</span> (displacement taken modulo <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>).
+By translation invariance only rows whose site <code class="docutils literal notranslate"><span class="pre">i</span></code> lies in the cell <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">0</span> <span class="pre">0</span></code> are used;
+elements without such a row start from zero, so a complete initial state needs every
+<code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">s,</span> <span class="pre">j,</span> <span class="pre">t)</span></code> with <code class="docutils literal notranslate"><span class="pre">i</span></code> in the cell <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">0</span> <span class="pre">0</span></code> and <code class="docutils literal notranslate"><span class="pre">j</span></code> over all sites.
+<code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code> in <code class="docutils literal notranslate"><span class="pre">file.input</span></code> is required. It cannot be specified together with <code class="docutils literal notranslate"><span class="pre">initial</span></code>.
+This input requires <code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>; otherwise the run stops with an error.
+Give sublattice-ordered states through <code class="docutils literal notranslate"><span class="pre">initial</span></code> (<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>) instead.
+When neither <code class="docutils literal notranslate"><span class="pre">initial</span></code> nor <code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code> is set,
+the initial configuration follows <code class="docutils literal notranslate"><span class="pre">initial_mode</span></code>.</p>
+<div class="admonition note" id="uhfk-greenone-migration">
+<p class="admonition-title">Note</p>
+<p><strong>Release and migration note: greenone.dat and initial_uhf.</strong> <code class="docutils literal notranslate"><span class="pre">onebodyg</span></code> now writes
+<span class="math notranslate nohighlight">\(\langle c^\dagger_{\vec{R}_i a s} c_{\vec{R}_j b t}\rangle
+= G_{sa,tb}(\vec{R}_i-\vec{R}_j)\)</span> (conventionally to <code class="docutils literal notranslate"><span class="pre">greenone.dat</span></code>), looking the displacement
+up in the same (z-fastest) order as <code class="docutils literal notranslate"><span class="pre">green.npz</span></code>, and <code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code> reads it back the same way.
+Before, the writer
+read <span class="math notranslate nohighlight">\(G(\vec{R}_j-\vec{R}_i)\)</span> packed x-fastest, and under <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> larger than
+<code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code> it lost the sublattice resolution (every creation site was treated as the
+first sublattice site). With <code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code> elements with both sites in the same
+cell are unchanged; the others can change for states without inversion symmetry (for example with
+complex hopping) and for cells extended in more than one direction. With <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> larger
+than <code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code> any element can change, including same-cell elements on the other sublattice
+sites. The values now agree with UHFr on the same cluster. In earlier releases reading
+<code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code> failed on NumPy 1.24 and later, so neither <code class="docutils literal notranslate"><span class="pre">onebodyg</span></code> nor <code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>
+could be used on the supported NumPy versions. The file has no version marker: regenerate any old
+<code class="docutils literal notranslate"><span class="pre">greenone.dat</span></code> before reusing it with <code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>.</p>
+</div>
+</li>
+</ul>
+<ul id="uhfk-input-onebodyg-uhf">
+<li><p><code class="docutils literal notranslate"><span class="pre">onebodyg_uhf</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the filename of the list of the one-body Green’s function elements
+(the <code class="docutils literal notranslate"><span class="pre">greenone.def</span></code> format of mVMC and UHFr: five header lines, which are skipped, then one
+<code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">s</span> <span class="pre">j</span> <span class="pre">t</span></code> row per element) to be written by <a class="reference internal" href="#uhfk-output-onebodyg"><span class="std std-ref">onebodyg</span></a>
+in <code class="docutils literal notranslate"><span class="pre">file.output</span></code>. It is required when <code class="docutils literal notranslate"><span class="pre">onebodyg</span></code> is set, and optional otherwise.</p>
+</li>
 </ul>
 </section>
 <section id="file-input-interaction-section">
@@ -360,6 +426,23 @@ String (default value is <code class="docutils literal notranslate"><span class=
 <p><strong>Description :</strong>
 This parameter specifies the name of the file to store the one-body Green’s functions.
 If it is set to an empty string, no output will be generated.</p>
+</li>
+</ul>
+<ul id="uhfk-output-onebodyg">
+<li><p><code class="docutils literal notranslate"><span class="pre">onebodyg</span></code></p>
+<p><strong>Type :</strong>
+String</p>
+<p><strong>Description :</strong>
+This parameter specifies the name of the file to store the one-body Green’s function elements
+listed in <a class="reference internal" href="#uhfk-input-onebodyg-uhf"><span class="std std-ref">onebodyg_uhf</span></a> in <code class="docutils literal notranslate"><span class="pre">file.input</span></code>
+in the real-space site representation (<code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">s</span> <span class="pre">j</span> <span class="pre">t</span> <span class="pre">Re</span> <span class="pre">Im</span></code> per line,
+no header). Each row is <span class="math notranslate nohighlight">\(\langle c^\dagger_{is} c_{jt}\rangle\)</span>, the same quantity and
+layout as the UHFr output <code class="docutils literal notranslate"><span class="pre">green</span></code>. With <code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code> the file can be read back
+through <code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code> (see the <a class="reference internal" href="#uhfk-greenone-migration"><span class="std std-ref">migration note</span></a>); for larger
+<code class="docutils literal notranslate"><span class="pre">SubShape</span></code> restart from <code class="docutils literal notranslate"><span class="pre">green</span></code> through <code class="docutils literal notranslate"><span class="pre">initial</span></code>.
+<code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code> and <code class="docutils literal notranslate"><span class="pre">onebodyg_uhf</span></code> in <code class="docutils literal notranslate"><span class="pre">file.input</span></code> are required.
+Under <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> larger than <code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code> the elements keep the sublattice resolution of the
+converged state. If it is not set, no output will be generated.</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">scf_status</span></code></p>
 <p><strong>Type :</strong>

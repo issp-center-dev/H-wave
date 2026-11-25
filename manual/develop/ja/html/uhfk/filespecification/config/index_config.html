@@ -233,6 +233,51 @@ true のとき、<code class="docutils literal notranslate"><span class="pre">Ce
 <p><code class="docutils literal notranslate"><span class="pre">one</span></code>または<code class="docutils literal notranslate"><span class="pre">unity</span></code>: 初期値を<span class="math notranslate nohighlight">\(G_{\alpha\sigma,\beta\sigma^\prime}(\vec{r}) = \delta_{\vec{r},0}\delta_{\alpha\beta}\delta_{\sigma\sigma^\prime}\)</span>で与えます。</p>
 <p><code class="docutils literal notranslate"><span class="pre">random</span></code>: 初期値を乱数で与えます。</p>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> 実空間のサイト表示での幾何情報ファイルの名前を指定します。形式は mVMC の StdFace が書き出す<code class="docutils literal notranslate"><span class="pre">geometry.dat</span></code>と同じで、
+格子ベクトル 3 行 (1 行に 1 ベクトル)、境界位相 3 成分の行 (読み込みますが使いません。UHFk の境界条件は常に周期境界です)、
+スーパーセルのベクトル 3 行、そのあとにサイトごとの整数の<code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">y</span> <span class="pre">z</span> <span class="pre">orbital</span></code>の行が並びます。
+サイトの行には 0 から番号を付け、その番号が<code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>、<code class="docutils literal notranslate"><span class="pre">onebodyg_uhf</span></code>、<code class="docutils literal notranslate"><span class="pre">onebodyg</span></code>のサイト番号<code class="docutils literal notranslate"><span class="pre">i</span></code>、<code class="docutils literal notranslate"><span class="pre">j</span></code>になります。
+<code class="docutils literal notranslate"><span class="pre">x</span> <span class="pre">y</span> <span class="pre">z</span></code>は<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>内のセル座標 (<span class="math notranslate nohighlight">\(0 \le x &lt; L_x\)</span>など。<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>を使う場合も同じ)、<code class="docutils literal notranslate"><span class="pre">orbital</span></code>は 0 から数えた軌道番号です。
+<code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>と<code class="docutils literal notranslate"><span class="pre">file.output</span></code>の<code class="docutils literal notranslate"><span class="pre">onebodyg</span></code>で必要で、それ以外では省略できます。</p>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> 実空間のサイト表示での初期状態の一体グリーン関数データを格納したファイルの名前を指定します。
+各行は 1 要素<code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">s</span> <span class="pre">j</span> <span class="pre">t</span> <span class="pre">Re</span> <span class="pre">Im</span></code>(<span class="math notranslate nohighlight">\(\langle c^\dagger_{is} c_{jt}\rangle\)</span>のサイトとスピン) で、ヘッダはありません。
+<code class="docutils literal notranslate"><span class="pre">i</span></code>、<code class="docutils literal notranslate"><span class="pre">j</span></code>は<code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code>のサイト番号、<code class="docutils literal notranslate"><span class="pre">s</span></code>、<code class="docutils literal notranslate"><span class="pre">t</span></code>はスピン番号で 0 (アップ) または 1 (ダウン) です。
+これは<code class="docutils literal notranslate"><span class="pre">file.output</span></code>の<code class="docutils literal notranslate"><span class="pre">onebodyg</span></code>が書き出す形式で、その出力をそのまま読み戻せます。
+UHFr の出力<code class="docutils literal notranslate"><span class="pre">green</span></code>(ヘッダなし) と<code class="docutils literal notranslate"><span class="pre">initial</span></code>(5 行ヘッダ付き) も同じ行の形式で、
+先頭行が<code class="docutils literal notranslate"><span class="pre">=</span></code>で始まるファイルは 5 行のヘッダを読み飛ばして読み込みます。
+セル<span class="math notranslate nohighlight">\(\vec{R}_i\)</span>、軌道<span class="math notranslate nohighlight">\(a\)</span>のサイト<code class="docutils literal notranslate"><span class="pre">i</span></code>とセル<span class="math notranslate nohighlight">\(\vec{R}_j\)</span>、軌道<span class="math notranslate nohighlight">\(b\)</span>のサイト<code class="docutils literal notranslate"><span class="pre">j</span></code>の行は、
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>の要素<span class="math notranslate nohighlight">\(G_{sa,tb}(\vec{R}_i-\vec{R}_j)\)</span>(変位は<code class="docutils literal notranslate"><span class="pre">CellShape</span></code>を法として取ります) を与えます。
+並進対称性により、サイト<code class="docutils literal notranslate"><span class="pre">i</span></code>がセル<code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">0</span> <span class="pre">0</span></code>にある行だけを使い、そのような行のない要素は 0 から始めます。
+したがって完全な初期状態には、<code class="docutils literal notranslate"><span class="pre">i</span></code>がセル<code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">0</span> <span class="pre">0</span></code>にあり<code class="docutils literal notranslate"><span class="pre">j</span></code>がすべてのサイトを走るすべての<code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">s,</span> <span class="pre">j,</span> <span class="pre">t)</span></code>が必要です。
+<code class="docutils literal notranslate"><span class="pre">file.input</span></code>の<code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code>が必要です。<code class="docutils literal notranslate"><span class="pre">initial</span></code>と同時には指定できません。この入力には<code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>が必要で、それ以外ではエラーで停止します。
+副格子秩序をもつ状態は、代わりに<code class="docutils literal notranslate"><span class="pre">initial</span></code>(<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>) で与えてください。
+<code class="docutils literal notranslate"><span class="pre">initial</span></code>も<code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>も指定しない場合、初期値は<code class="docutils literal notranslate"><span class="pre">initial_mode</span></code>に従います。</p>
+<div class="admonition note" id="uhfk-greenone-migration">
+<p class="admonition-title">注釈</p>
+<p><strong>リリースと移行に関する注意: greenone.dat と initial_uhf。</strong>
+<code class="docutils literal notranslate"><span class="pre">onebodyg</span></code>は<span class="math notranslate nohighlight">\(\langle c^\dagger_{\vec{R}_i a s} c_{\vec{R}_j b t}\rangle = G_{sa,tb}(\vec{R}_i-\vec{R}_j)\)</span>を、
+変位を<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>と同じ順序 (z 方向優先) で参照して (通常は<code class="docutils literal notranslate"><span class="pre">greenone.dat</span></code>に) 書き出すようになり、<code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>も同じ規約で読み戻します。
+以前は<span class="math notranslate nohighlight">\(G(\vec{R}_j-\vec{R}_i)\)</span>を x 方向優先の順序で読んでおり、<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>が<code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>より大きい場合は
+副格子の分解が失われていました (生成演算子のサイトをすべて最初の副格子のサイトとして扱っていました)。
+<code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>では、2 つのサイトが同じセルにある要素は変わりません。それ以外の要素は、反転対称性のない状態 (複素数のホッピングなど) や
+2 方向以上に広がったセルで値が変わることがあります。<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>が<code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>より大きい場合は、他の副格子のサイトにある同じセル内の要素を含め、どの要素も変わりえます。
+値は同じクラスタの UHFr と一致するようになりました。
+以前のリリースでは NumPy 1.24 以降で<code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code>の読み込みが失敗したため、サポート対象の NumPy では<code class="docutils literal notranslate"><span class="pre">onebodyg</span></code>も<code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>も使えませんでした。
+ファイルにはバージョンを識別する情報がありません。古い<code class="docutils literal notranslate"><span class="pre">greenone.dat</span></code>を<code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>で再利用する前に、再生成してください。</p>
+</div>
+</li>
+</ul>
+<ul id="uhfk-input-onebodyg-uhf">
+<li><p><code class="docutils literal notranslate"><span class="pre">onebodyg_uhf</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> <code class="docutils literal notranslate"><span class="pre">file.output</span></code>の<a class="reference internal" href="#uhfk-output-onebodyg"><span class="std std-ref">onebodyg</span></a>で書き出す一体グリーン関数の要素の一覧 (mVMC / UHFr の<code class="docutils literal notranslate"><span class="pre">greenone.def</span></code>形式: 読み飛ばされるヘッダ 5 行のあとに 1 要素 1 行の<code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">s</span> <span class="pre">j</span> <span class="pre">t</span></code>)
+を格納したファイルの名前を指定します。<code class="docutils literal notranslate"><span class="pre">onebodyg</span></code>を指定する場合は必要で、使わない場合は省略できます。</p>
+</li>
 </ul>
 </section>
 <section id="file-input-interaction">
@@ -271,6 +316,17 @@ true のとき、<code class="docutils literal notranslate"><span class="pre">Ce
 <li><p><code class="docutils literal notranslate"><span class="pre">green</span></code></p>
 <p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;green&quot;</span></code> )</p>
 <p><strong>説明 :</strong> 一体グリーン関数を出力するファイル名を指定します。空文字列<code class="docutils literal notranslate"><span class="pre">&quot;&quot;</span></code>を指定した場合には情報は出力されません。</p>
+</li>
+</ul>
+<ul id="uhfk-output-onebodyg">
+<li><p><code class="docutils literal notranslate"><span class="pre">onebodyg</span></code></p>
+<p><strong>形式 :</strong> str型</p>
+<p><strong>説明 :</strong> <code class="docutils literal notranslate"><span class="pre">file.input</span></code>の<a class="reference internal" href="#uhfk-input-onebodyg-uhf"><span class="std std-ref">onebodyg_uhf</span></a>に列挙した一体グリーン関数の要素を実空間のサイト表示 (1 行に<code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">s</span> <span class="pre">j</span> <span class="pre">t</span> <span class="pre">Re</span> <span class="pre">Im</span></code>、ヘッダなし) で出力する
+ファイル名を指定します。各行は<span class="math notranslate nohighlight">\(\langle c^\dagger_{is} c_{jt}\rangle\)</span>で、UHFr の出力<code class="docutils literal notranslate"><span class="pre">green</span></code>と同じ量・同じ形式です。
+<code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>の場合、このファイルは<code class="docutils literal notranslate"><span class="pre">initial_uhf</span></code>で読み戻せます (<a class="reference internal" href="#uhfk-greenone-migration"><span class="std std-ref">移行に関する注意</span></a>を参照)。
+それより大きい<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>では<code class="docutils literal notranslate"><span class="pre">green</span></code>の出力を<code class="docutils literal notranslate"><span class="pre">initial</span></code>で読み込んで再開してください。<code class="docutils literal notranslate"><span class="pre">file.input</span></code>の<code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code>と<code class="docutils literal notranslate"><span class="pre">onebodyg_uhf</span></code>が必要です。
+<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>が<code class="docutils literal notranslate"><span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>より大きい場合も、収束した状態の副格子分解を保って出力します。
+このキーワードがない場合には情報は出力されません。</p>
 </li>
 <li><p><code class="docutils literal notranslate"><span class="pre">scf_status</span></code></p>
 <p><strong>形式 :</strong> str型 (デフォルトは<code class="docutils literal notranslate"><span class="pre">&quot;scf_status.dat&quot;</span></code> )</p>
