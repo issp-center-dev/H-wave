@@ -54,6 +54,8 @@ def _terms(*names, hund=0.8, exchange=0.8):
             out["Exchange"] = _pair((0, 0, 0), 0, 1, exchange)
         elif name == "pairhop":
             out["PairHop"] = _pair((0, 0, 0), 0, 1, 0.6)
+        elif name == "pairhop_complex":  # a complex bond coefficient (TR-odd map)
+            out["PairHop"] = _pair((1, 0, 0), 0, 1, 0.6 * np.exp(0.4j))
         elif name == "pairlift":
             out["PairLift"] = _pair((0, 0, 0), 0, 1, 0.6)
         elif name == "ising":
@@ -354,28 +356,30 @@ class TestNotApplicable(_Tmp):
         self.assertIsNone(r.sz_residual)
 
     def test_2sz_sz_failure_warns(self):
-        """In 2Sz mode the blocks mask every transverse output, so the
-        solver's tables conserve S_z there. Without that mask, PairLift
-        (``G^{st}_bb -> Sigma^{st}_aa``, the wrong phase under a rotation
-        about z) breaks it: the residual goes to ``sz_residual`` with the
-        exact warning and the status does not change."""
-        import dataclasses
+        """Ruling R9: in 2Sz mode the S_z check runs on the UNMASKED map of
+        the raw tables. PairLift (``G^{st}_bb -> Sigma^{st}_aa``, the wrong
+        phase under a rotation about z) breaks it; the warning names the
+        term and says the solver drops it under the block mask. The status
+        does not change."""
         from hwave.initial import symmetry
-        from hwave.solver import initial_facade as fac
-        p = self.model("pairlift", two_sz=0)
-        r = symmetry.su2_check(p)
-        self.assertEqual(r.status, "not applicable (2Sz fixed)")
-        self.assertLessEqual(r.sz_residual, 1e-12)
-        self.assertEqual(r.warnings, ())
-        one = fac.SolverBlocks((np.arange(p.nd),), (0,), (p.ncond,))
-        unmasked = dataclasses.replace(p, blocks=one)
         with self.assertLogs("hwave.initial", level="WARNING") as cm:
-            r = symmetry.su2_check(unmasked)
+            r = symmetry.su2_check(self.model("intra", "pairlift", two_sz=0))
         self.assertEqual(r.status, "not applicable (2Sz fixed)")
         self.assertGreater(r.sz_residual, 1e-3)
         self.assertEqual(r.residuals[:2], (None, None))
-        self.assertEqual(r.warnings, (SZ_WARNING,))
-        self.assertTrue(any(SZ_WARNING in line for line in cm.output))
+        self.assertEqual(len(r.warnings), 1)
+        msg = r.warnings[0]
+        self.assertTrue(msg.startswith(SZ_WARNING))
+        self.assertIn("(PairLift)", msg)
+        self.assertNotIn("CoulombIntra", msg)
+        self.assertIn("the solver drops", msg)
+        self.assertIn("2Sz block mask", msg)
+        self.assertTrue(any(msg in line for line in cm.output))
+        # SU(2)-invariant tables give no warning
+        r = symmetry.su2_check(self.model("intra", "inter", "hund", "exchange", "pairhop",
+                                          two_sz=0))
+        self.assertLessEqual(r.sz_residual, 1e-12)
+        self.assertEqual(r.warnings, ())
 
 
 class TestTimeReversal(_Tmp):
@@ -430,12 +434,18 @@ class TestTimeReversal(_Tmp):
 
     def test_tr_equivariance_catches_a_tr_odd_map(self):
         """The HF part is a numerical check of the map, not a reading of
-        the tables: the solver's Hartree-Fock map on a complex PairHop
-        coefficient is tested as it is."""
+        H0: a complex PairHop coefficient on a bond (Theta maps v to v*)
+        breaks time reversal through the Hartree-Fock map alone, while a
+        real one does not."""
         from hwave.initial import symmetry
-        r = symmetry.tr_check(self.model("intra", "pairhop", cellshape=(4, 1, 1), ncond=8))
+        chain = dict(cellshape=(4, 1, 1), ncond=8)
+        r = symmetry.tr_check(self.model("intra", "pairhop", **chain))
         self.assertTrue(r.invariant)
         self.assertLessEqual(r.hf_residual, 1e-12)
+        r = symmetry.tr_check(self.model("intra", "pairhop_complex", **chain))
+        self.assertFalse(r.invariant)
+        self.assertGreater(r.hf_residual, 0.1)
+        self.assertLessEqual(r.h0_residual, 1e-12)
 
 
 def _spin_pattern(problem, c, *, spin=None, orb=None):
@@ -574,6 +584,58 @@ class TestMaps(_Tmp):
                          "time_reversal")
         self.assertTrue(symmetry.sign_map_verified(cur, problem=p, su2=off, tr=tr))
         self.assertFalse(symmetry.sign_map_verified(even, problem=p, su2=off, tr=tr))
+
+    def test_time_reversal_with_rotation(self):
+        """A moment plus a TR-even spin current: time reversal flips only
+        the moment and a pi rotation about z then flips the currents. The
+        composite map is named as such, and ``sign_map_verified`` agrees
+        with ``find_map(O, -O)``."""
+        from hwave.initial import symmetry
+        from hwave.solver import hamiltonian_k
+        p = self.square()
+        su2 = symmetry.su2_check(p)
+        tr = symmetry.tr_check(p)
+        sx = np.array([[0, 1], [1, 0]], dtype=complex)
+        sy = np.array([[0, -1j], [1j, 0]], dtype=complex)
+        sz = np.diag([1.0, -1.0]).astype(complex)
+        norb = p.norb
+        o_r = np.zeros(tuple(p.shape) + (2, norb, 2, norb), dtype=complex)
+        for a in range(norb):
+            o_r[0, 0, 0, :, a, :, a] = sz / 2
+        for (i, j), s in (((0, 1), sx), ((0, 2), sy)):   # in-cell x and y bonds
+            o_r[0, 0, 0, :, i, :, j] = 1j * s / 2
+            o_r[0, 0, 0, :, j, :, i] = -1j * s / 2
+        o = hamiltonian_k.to_k(o_r.reshape(tuple(p.shape) + (p.nd, p.nd)))
+        self.assertEqual(symmetry.find_map(o, -o, problem=p, su2=su2, tr=tr),
+                         symmetry.TR_SPIN_ROTATION)
+        self.assertEqual(symmetry.TR_SPIN_ROTATION, "time_reversal+spin_rotation")
+        self.assertTrue(symmetry.sign_map_verified(o, problem=p, su2=su2, tr=tr))
+        # either symmetry alone does not do it
+        no_tr = symmetry.TrResult(invariant=False, h0_residual=1.0, hf_residual=0.0)
+        off = symmetry.Su2Result(status="failed", max_residual=1.0, method="generator",
+                                 sz_residual=None)
+        for s2, t2 in ((su2, no_tr), (off, tr)):
+            self.assertIsNone(symmetry.find_map(o, -o, problem=p, su2=s2, tr=t2))
+            self.assertFalse(symmetry.sign_map_verified(o, problem=p, su2=s2, tr=t2))
+
+    def test_sign_map_agrees_with_find_map(self):
+        """``sign_map_verified(O)`` is true exactly when ``find_map(O, -O)``
+        gives a map other than a translation alone."""
+        from hwave.initial import symmetry
+        p = self.square()
+        su2 = symmetry.su2_check(p)
+        tr = symmetry.tr_check(p)
+        no_tr = symmetry.TrResult(invariant=False, h0_residual=1.0, hf_residual=0.0)
+        rng = np.random.default_rng(5)
+        pats = [_spin_pattern(p, [[0, 0, 0, 1]] * 4),
+                _spin_pattern(p, [[1, 0, 0, 0], [0.5, 0, 0, 0], [0.5, 0, 0, 0], [1, 0, 0, 0]]),
+                _spin_pattern(p, rng.normal(size=(4, 4)))]
+        for o in pats:
+            for t2 in (tr, no_tr):
+                m = symmetry.find_map(o, -o, problem=p, su2=su2, tr=t2)
+                if m != "translation":
+                    self.assertEqual(symmetry.sign_map_verified(o, problem=p, su2=su2, tr=t2),
+                                     m is not None)
 
     def test_tolerance_is_entrywise_relative(self):
         from hwave.initial import symmetry

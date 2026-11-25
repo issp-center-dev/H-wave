@@ -36,6 +36,7 @@ cell. A folded orbital is ``aa = a + norb_orig * ir`` with the in-cell index
 ``ir = ix + Bx*(iy + By*iz)`` (spin-block ``s*norb + aa`` in normal mode,
 interleaved inside ``a`` in spin-orbital mode).
 """
+import dataclasses
 import itertools
 import logging
 from dataclasses import dataclass
@@ -46,7 +47,7 @@ import numpy as np
 from hwave.solver import initial_facade
 
 __all__ = [
-    "SU2_TOL", "TR_TOL", "MAP_TOL", "MAX_HF_APPLICATIONS", "SZ_WARNING",
+    "SU2_TOL", "TR_TOL", "MAP_TOL", "TR_SPIN_ROTATION", "MAX_HF_APPLICATIONS", "SZ_WARNING",
     "Su2Result", "TrResult", "su2_check", "tr_check", "find_map",
     "sign_map_verified", "table_probes", "hermitian_green", "rotate_green",
     "spin_rotation", "time_reverse_green",
@@ -315,6 +316,62 @@ def _random_residual(problem, axes, rng_seed):
     return res / max(1.0, norm)
 
 
+def _hf_residual(problem, axes, rng_seed, max_hf_applications):
+    """``(method, residual, per_axis)`` of the Hartree-Fock map of
+    ``problem`` (its tables and blocks)."""
+    probes = table_probes(problem)
+    if 4 * len(probes) > max_hf_applications:
+        return "random", _random_residual(problem, axes, rng_seed), None
+    r = _generator_residuals(problem, probes, axes)
+    hf = max(r.values()) if r else 0.0
+    return "generator", hf, tuple(r.get(mu) for mu in range(3))
+
+
+def _unmasked(problem):
+    """``problem`` with one block: the Hartree-Fock map of the raw
+    interaction tables, without the block mask."""
+    nd = problem.nd
+    one = initial_facade.SolverBlocks((np.arange(nd),), (0,), (int(problem.ncond),))
+    return dataclasses.replace(problem, blocks=one)
+
+
+def _only(problem, name):
+    """``problem`` with the interaction table ``name`` alone."""
+    tables = problem.tables
+    inter = {k: (v if k == name else None) for k, v in tables.inter_table.items()}
+    return dataclasses.replace(problem, tables=dataclasses.replace(tables, inter_table=inter))
+
+
+def _sz_check(problem, h0, rng_seed, max_hf_applications):
+    """The S_z-only check of a fixed-2Sz problem (ruling R9).
+
+    The block mask of 2Sz mode removes every spin-transverse output, and the
+    H-wave tables that break S_z (PairLift) write only such outputs, so the
+    masked map is always covariant about z. The check therefore runs on the
+    UNMASKED map of the raw tables; a residual names the terms responsible
+    in the warning, which says that the solver drops them under the mask."""
+    free = _unmasked(problem)
+    method, hf, per_axis = _hf_residual(free, (2,), rng_seed, max_hf_applications)
+    worst = max(hf, h0)
+    warnings = ()
+    if worst > SU2_TOL:
+        names = [name for name in sorted(problem.tables.inter_table)
+                 if problem.tables.inter_table[name] is not None
+                 and _hf_residual(_only(free, name), (2,), rng_seed,
+                                  max_hf_applications)[1] > SU2_TOL]
+        msg = SZ_WARNING
+        if names:
+            msg += (" ({}); under the fixed 2Sz block mask the solver drops the "
+                    "spin-flip parts of these terms".format(", ".join(names)))
+        if h0 > SU2_TOL:
+            msg += "; the one-body Transfer does not commute with S_z"
+        logger.warning(msg)
+        warnings = (msg,)
+    return Su2Result(status=_STATUS_2SZ, max_residual=None, method=method,
+                     sz_residual=worst, residuals=per_axis, h0_residual=h0,
+                     warnings=warnings)
+
+
 def su2_check(problem, *, rng_seed=364, max_hf_applications=MAX_HF_APPLICATIONS):
     """The spin-rotation equivariance check of ``problem`` (design section 5
     step 6).
@@ -325,9 +382,12 @@ def su2_check(problem, *, rng_seed=364, max_hf_applications=MAX_HF_APPLICATIONS)
     max_hf_applications`` the probes are replaced by 3 generic G x 3
     random rotations (``default_rng(rng_seed)``), ``method = "random"``.
 
-    2Sz mode: only S_z is checked; the status is ``"not applicable (2Sz
-    fixed)"`` and the residual goes to ``sz_residual``; a failure adds the
-    warning :data:`SZ_WARNING` (logged and in ``warnings``) and changes
+    2Sz mode: only S_z is checked, on the UNMASKED map of the raw tables
+    (the masked map is covariant about z for every H-wave table); the
+    status is ``"not applicable (2Sz fixed)"`` and the residual goes to
+    ``sz_residual``; a failure adds a warning that starts with
+    :data:`SZ_WARNING`, names the terms and says the solver drops them
+    under the 2Sz block mask (logged and in ``warnings``), and changes
     nothing else. Spin-orbital mode: ``"not applicable (spin-orbital)"``.
     """
     if problem.enable_spin_orbital:
@@ -335,25 +395,10 @@ def su2_check(problem, *, rng_seed=364, max_hf_applications=MAX_HF_APPLICATIONS)
                          sz_residual=None)
     axes = (0, 1, 2) if problem.sz_free else (2,)
     h0 = _h0_commutator(problem, axes)
-    probes = table_probes(problem)
-    if 4 * len(probes) > max_hf_applications:
-        method = "random"
-        hf = _random_residual(problem, axes, rng_seed)
-        per_axis = None
-    else:
-        method = "generator"
-        r = _generator_residuals(problem, probes, axes)
-        hf = max(r.values()) if r else 0.0
-        per_axis = tuple(r.get(mu) for mu in range(3))
-    worst = max(hf, h0)
     if not problem.sz_free:
-        warnings = ()
-        if worst > SU2_TOL:
-            logger.warning(SZ_WARNING)
-            warnings = (SZ_WARNING,)
-        return Su2Result(status=_STATUS_2SZ, max_residual=None, method=method,
-                         sz_residual=worst, residuals=per_axis, h0_residual=h0,
-                         warnings=warnings)
+        return _sz_check(problem, h0, rng_seed, max_hf_applications)
+    method, hf, per_axis = _hf_residual(problem, axes, rng_seed, max_hf_applications)
+    worst = max(hf, h0)
     status = "passed" if (hf <= SU2_TOL and h0 <= SU2_TOL) else "failed"
     return Su2Result(status=status, max_residual=worst, method=method, sz_residual=None,
                      residuals=per_axis, h0_residual=h0)
@@ -521,28 +566,17 @@ def _tr_ok(problem, tr):
         problem.two_sz is None or int(problem.two_sz) == 0)
 
 
-def find_map(O1, O2, *, problem, su2,
-             tr) -> Optional[Literal["translation", "time_reversal", "spin_rotation"]]:
-    """The verified map taking pattern ``O1`` to ``O2``, or ``None``.
+#: the reason of a merge by time reversal combined with a spin rotation
+TR_SPIN_ROTATION = "time_reversal+spin_rotation"
 
-    Tried in this order, each entrywise to ``MAP_TOL * max(||O1||, ||O2||)``
-    on ``O(R)``: (a) ``"translation"``, a lattice translation of the cell
-    (the identity included); (b) ``"time_reversal"``, time reversal followed
-    by a translation, only when ``tr.invariant`` (and ``2Sz`` free or 0),
-    also combined with a global spin rotation when (c) is available; (c)
-    ``"spin_rotation"``, a global spin rotation followed by a translation,
-    only when ``su2.status == "passed"`` (never assumed).
 
-    ``O1``, ``O2``: Hamiltonian-convention ``O(k)`` ``(nvol, nd, nd)`` of
-    ``problem``'s folded cell. Raises ``ValueError`` for another shape.
-    """
-    o1 = _to_r(O1, problem)
-    o2 = _to_r(O2, problem)
+def _search(o1, o2, problem, su2, tr, *, plain_translations):
     tol = _map_tol(o1, o2)
     taus = _translations(problem)
-    for tau in taus:
-        if _close(_translate(o1, problem, tau), o2, tol):
-            return "translation"
+    if plain_translations:
+        for tau in taus:
+            if _close(_translate(o1, problem, tau), o2, tol):
+                return "translation"
     tr_on = _tr_ok(problem, tr)
     su2_on = _su2_ok(problem, su2)
     if tr_on:
@@ -553,25 +587,43 @@ def find_map(O1, O2, *, problem, su2,
     if su2_on:
         norb = problem.norb
         for tau in taus:
-            moved = _translate(o1, problem, tau)
-            if _close(_rotated_fit(moved, o2, norb), o2, tol):
+            if _close(_rotated_fit(_translate(o1, problem, tau), o2, norb), o2, tol):
                 return "spin_rotation"
         if tr_on:
+            o1t = _time_reverse_r(o1, problem)
             for tau in taus:
-                moved = _translate(_time_reverse_r(o1, problem), problem, tau)
-                if _close(_rotated_fit(moved, o2, norb), o2, tol):
-                    return "time_reversal"
+                if _close(_rotated_fit(_translate(o1t, problem, tau), o2, norb), o2, tol):
+                    return TR_SPIN_ROTATION
     return None
 
 
+def find_map(O1, O2, *, problem, su2, tr) -> Optional[
+        Literal["translation", "time_reversal", "spin_rotation",
+                "time_reversal+spin_rotation"]]:
+    """The verified map taking pattern ``O1`` to ``O2``, or ``None``.
+
+    Tried in this order, each entrywise to ``MAP_TOL * max(||O1||, ||O2||)``
+    on ``O(R)``, and each possibly followed by a lattice translation of the
+    cell: (a) ``"translation"``, a translation alone (the identity
+    included); (b) ``"time_reversal"``, only when ``tr.invariant`` (and
+    ``2Sz`` free or 0); (c) ``"spin_rotation"``, a global spin rotation,
+    only when ``su2.status == "passed"`` (never assumed); (b+c)
+    ``"time_reversal+spin_rotation"`` (:data:`TR_SPIN_ROTATION`), both, when
+    both are verified. The reason names every symmetry the merge relies on
+    besides translations.
+
+    ``O1``, ``O2``: Hamiltonian-convention ``O(k)`` ``(nvol, nd, nd)`` of
+    ``problem``'s folded cell. Raises ``ValueError`` for another shape.
+    """
+    return _search(_to_r(O1, problem), _to_r(O2, problem), problem, su2, tr,
+                   plain_translations=True)
+
+
 def sign_map_verified(O, *, problem, su2, tr) -> bool:
-    """Whether a verified map (b) time reversal or (c) a global spin
-    rotation takes ``O`` to ``-O`` (no translation: at q not equivalent to
-    -q a translation is a phase shift, design section 5 step 6)."""
+    """Whether a verified map other than a translation alone takes ``O``
+    to ``-O``: time reversal, a global spin rotation, or both, each possibly
+    followed by a translation (the maps (b) and (c) of :func:`find_map`, so
+    the two functions agree). A translation alone does not count: at q not
+    equivalent to -q it is a phase shift (design section 5 step 6)."""
     o = _to_r(O, problem)
-    tol = _map_tol(o, o)
-    if _tr_ok(problem, tr) and _close(_time_reverse_r(o, problem), -o, tol):
-        return True
-    if _su2_ok(problem, su2) and _close(_rotated_fit(o, -o, problem.norb), -o, tol):
-        return True
-    return False
+    return _search(o, -o, problem, su2, tr, plain_translations=False) is not None
