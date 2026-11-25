@@ -589,7 +589,7 @@ class TestOldSidecars(_Dir):
     def test_tmp_name_pattern(self):
         """The skipped names are exactly those of the writers' temporary
         index (``eliashberg_bond_io._tmp_name``)."""
-        from hwave.solver.eliashberg_bond_io import _tmp_name
+        from hwave.solver.eliashberg.bond_io import _tmp_name
         for target in ("lb.npz", os.path.join("d", "longitudinal_bond.npz"), "a.b.npz"):
             with self.subTest(target=target):
                 self.assertRegex(os.path.basename(_tmp_name(target)), sa._TMP_NAME_RE)

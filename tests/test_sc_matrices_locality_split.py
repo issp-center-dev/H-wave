@@ -36,16 +36,16 @@ def _bond(a, b, v, R=(1, 0, 0)):
 class TestLocalitySplitBuilder(unittest.TestCase):
 
     def _build(self, onsite, offsite, norb, n=4):
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
         from hwave.solver._sc_matrices_myo import (
             build_sc_matrices_locality_split)
 
         kx, ky, kz = _grid(n)
         full = {t: {**onsite.get(t, {}), **offsite.get(t, {})}
                 for t in list(onsite) + [t for t in offsite if t not in onsite]}
-        ik = sc._build_interaction_k(kx, ky, kz, full, norb)
-        ik_on = sc._build_interaction_k(kx, ky, kz, onsite, norb)
-        ik_off = sc._build_interaction_k(kx, ky, kz, offsite, norb)
+        ik = sc_vertex._build_interaction_k(kx, ky, kz, full, norb)
+        ik_on = sc_vertex._build_interaction_k(kx, ky, kz, onsite, norb)
+        ik_off = sc_vertex._build_interaction_k(kx, ky, kz, offsite, norb)
         return build_sc_matrices_locality_split(ik, ik_on, ik_off, norb,
                                                 n, n, 1)
 
@@ -53,7 +53,7 @@ class TestLocalitySplitBuilder(unittest.TestCase):
         """With no off-site part the split builder IS the existing one:
         every on-site slot family (diag, cross, density, antidiag) keeps
         its adjudicated content bit for bit."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         onsite = {
             "CoulombIntra": {((0, 0, 0), (0, 0)): 2.0, ((0, 0, 0), (1, 1)): 1.5},
@@ -64,8 +64,8 @@ class TestLocalitySplitBuilder(unittest.TestCase):
             "PairHop": {((0, 0, 0), (0, 1)): 0.2, ((0, 0, 0), (1, 0)): 0.2},
         }
         kx, ky, kz = _grid(4)
-        ik = sc._build_interaction_k(kx, ky, kz, onsite, 2)
-        S_ref, C_ref = sc._build_sc_matrices_all_q(ik, 2, 4, 4, 1)
+        ik = sc_vertex._build_interaction_k(kx, ky, kz, onsite, 2)
+        S_ref, C_ref = sc_vertex._build_sc_matrices_all_q(ik, 2, 4, 4, 1)
         S, C = self._build(onsite, {}, 2)
         self.assertTrue(np.array_equal(S, S_ref))
         self.assertTrue(np.array_equal(C, C_ref))
@@ -81,7 +81,7 @@ class TestLocalitySplitBuilder(unittest.TestCase):
         CoulombInter contribution (the summation order inside the shared
         builder's Case 3 must not change: 2 (V_0 + V(q)) is not
         2 V_0 + 2 V(q) in floating point)."""
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import vertex as sc_vertex
 
         onsite = {"CoulombInter": {((0, 0, 0), (0, 0)): 0.3,
                                    ((0, 0, 0), (1, 1)): 0.7},
@@ -92,8 +92,8 @@ class TestLocalitySplitBuilder(unittest.TestCase):
         full = {t: {**onsite.get(t, {}), **offsite.get(t, {})}
                 for t in set(onsite) | set(offsite)}
         kx, ky, kz = _grid(4)
-        S_ref, C_ref = sc._build_sc_matrices_all_q(
-            sc._build_interaction_k(kx, ky, kz, full, 2), 2, 4, 4, 1)
+        S_ref, C_ref = sc_vertex._build_sc_matrices_all_q(
+            sc_vertex._build_interaction_k(kx, ky, kz, full, 2), 2, 4, 4, 1)
         S, C = self._build(onsite, offsite, 2)
         self.assertTrue(np.array_equal(S, S_ref))
         self.assertTrue(np.array_equal(C, C_ref))

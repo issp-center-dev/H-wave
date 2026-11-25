@@ -8,7 +8,9 @@ import unittest
 
 import numpy as np
 from scipy.sparse.linalg import LinearOperator
-import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import config as sc_config
+from hwave.solver.eliashberg import output as sc_output
 from tests.approx_util import _caplog
 
 
@@ -44,7 +46,7 @@ class TestArnoldiSpectralShiftSelection(unittest.TestCase):
         real part and the driver re-solves for it: +0.05, not a repulsive
         mode."""
         mk, n = _make_operator_for(SPECTRUM)
-        lead, _, info = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
+        lead, _, info = sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
         np.testing.assert_allclose(lead.real, 0.05, rtol=0, atol=1e-6)
         assert info["selection"] == "LR_retry"
 
@@ -52,25 +54,25 @@ class TestArnoldiSpectralShiftSelection(unittest.TestCase):
         """A LM set whose largest real part is at least its smallest
         magnitude already holds the global largest real part: no re-solve."""
         mk, n = _make_operator_for([0.9, -0.5, 0.4, -0.1, 0.05, 0.03])
-        lead, _, info = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
+        lead, _, info = sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
         np.testing.assert_allclose(lead.real, 0.9, rtol=0, atol=1e-8)
         assert info["selection"] == "LM"
 
     def test_spectral_shift_auto_recovers_positive_leading(self):
         mk, n = _make_operator_for(SPECTRUM)
-        lead, _, _ = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+        lead, _, _ = sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
                                        spectral_shift="auto")
         np.testing.assert_allclose(lead.real, 0.05, rtol=0, atol=1e-6)
 
     def test_spectral_shift_numeric_recovers_positive_leading(self):
         mk, n = _make_operator_for(SPECTRUM)
-        lead, _, _ = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+        lead, _, _ = sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
                                        spectral_shift=1.0)
         np.testing.assert_allclose(lead.real, 0.05, rtol=0, atol=1e-6)
 
     def test_spectral_shift_complex_spectrum_picks_largest_real(self):
         mk, n = _make_operator_for(SPECTRUM_CX)
-        lead, _, _ = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+        lead, _, _ = sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
                                        spectral_shift="auto")
         np.testing.assert_allclose(lead.real, 0.05, rtol=0, atol=1e-6)
         assert abs(lead.imag) < 1e-6
@@ -82,7 +84,7 @@ class TestArnoldiSpectralShiftSelection(unittest.TestCase):
         M = np.diag(np.asarray(SPECTRUM_CX, dtype=complex))
         M[0, 1] = 5.0
         mk, n = self._make_operator_dense(M)
-        lead, _, _ = sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+        lead, _, _ = sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
                                        spectral_shift="auto")
         np.testing.assert_allclose(lead.real, 0.05, rtol=0, atol=1e-4)
         assert abs(lead.imag) < 1e-4
@@ -102,13 +104,13 @@ class TestArnoldiSpectralShiftSelection(unittest.TestCase):
         for bad in (0.0, -1.0, float("nan"), float("inf")):
             with self.subTest(bad=bad):
                 with self.assertRaisesRegex(ValueError, "spectral_shift"):
-                    sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+                    sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
                                       spectral_shift=bad)
 
     def test_spectral_shift_rejects_bad_string(self):
         mk, n = _make_operator_for(SPECTRUM)
         with self.assertRaisesRegex(ValueError, "spectral_shift"):
-            sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+            sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
                               spectral_shift="invalid")
 
     def test_spectral_shift_rejects_bool_true_on_both_validation_paths(self):
@@ -118,35 +120,35 @@ class TestArnoldiSpectralShiftSelection(unittest.TestCase):
         solver_mode values ``_validate_spectral_shift`` otherwise accepts a
         numeric shift for."""
         with self.assertRaisesRegex(ValueError, "spectral_shift"):
-            sc._validate_spectral_shift(True, "arnoldi")
+            sc_config._validate_spectral_shift(True, "arnoldi")
         with self.assertRaisesRegex(ValueError, "spectral_shift"):
-            sc._validate_spectral_shift(False, "arnoldi")
+            sc_config._validate_spectral_shift(False, "arnoldi")
         with self.assertRaisesRegex(ValueError, "spectral_shift"):
-            sc._validate_spectral_shift(True, "iteration")
+            sc_config._validate_spectral_shift(True, "iteration")
 
     def test_spectral_shift_rejects_bool_true_via_solve_leading_arnoldi(self):
         mk, n = _make_operator_for(SPECTRUM)
         with self.assertRaisesRegex(ValueError, "spectral_shift"):
-            sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
+            sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3,
                               spectral_shift=True)
 
     def test_spectral_shift_rejected_for_non_arnoldi(self):
         mk, n = _make_operator_for(SPECTRUM)
         with self.assertRaisesRegex(ValueError, "arnoldi"):
-            sc._solve_leading(mk, n, "shift-invert", num_eigenvalues=3,
+            sc_eigen._solve_leading(mk, n, "shift-invert", num_eigenvalues=3,
                               spectral_shift="auto")
 
     def test_spectral_shift_rejected_for_subspace(self):
         # method="subspace" bypasses _solve_leading; _solve_eigenvalue must reject
         # a spectral_shift itself rather than silently ignoring it.
         with self.assertRaisesRegex(ValueError, "arnoldi"):
-            sc._solve_eigenvalue(None, None, 1, 1, 1, 1, num_eigenvalues=3,
+            sc_eigen._solve_eigenvalue(None, None, 1, 1, 1, 1, num_eigenvalues=3,
                                  method="subspace", spectral_shift="auto")
 
     def test_uncertified_lm_set_warns_for_unseeded_arnoldi(self):
         mk, n = _make_operator_for(SPECTRUM)
         with _caplog("WARNING") as records:
-            sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
+            sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=3)
         assert any("largest real part" in r.getMessage() for r in records)
 
     def test_negative_leading_no_warn_with_seed_vec(self):
@@ -156,7 +158,7 @@ class TestArnoldiSpectralShiftSelection(unittest.TestCase):
         seed = np.zeros(n, dtype=complex)
         seed[0] = 1.0  # overlaps the -0.5 eigenvector
         with _caplog("WARNING") as records:
-            sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=5, seed_vec=seed)
+            sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=5, seed_vec=seed)
         assert not any("negative" in r.message for r in records)
 
 
@@ -182,7 +184,7 @@ def _iterate(diag, init=None, **kw):
         init = np.ones(n, dtype=complex) / np.sqrt(n)
     kwargs = dict(_ITER_KW)
     kwargs.update(kw)
-    return sc._solve_leading(mk, n, "iteration", init_vec=init, **kwargs)
+    return sc_eigen._solve_leading(mk, n, "iteration", init_vec=init, **kwargs)
 
 
 # dominant (largest-|lambda|) eigenvalue is NEGATIVE => plain power iteration
@@ -256,7 +258,7 @@ class TestPowerIterationSpectralShift(unittest.TestCase):
             return keep * v
 
         init = project_fn(np.ones(n, dtype=complex) / np.sqrt(n))
-        lead, vec, info = sc._solve_leading(mk, n, "iteration", init_vec=init,
+        lead, vec, info = sc_eigen._solve_leading(mk, n, "iteration", init_vec=init,
                                             project_fn=project_fn,
                                             spectral_shift="auto", **_ITER_KW)
         assert info["converged"] is True
@@ -288,7 +290,7 @@ class TestPowerIterationSpectralShift(unittest.TestCase):
     def test_spectral_shift_still_rejected_for_shift_invert(self):
         mk, n = _make_operator_for(SPECTRUM)
         with self.assertRaisesRegex(ValueError, "spectral_shift"):
-            sc._solve_leading(mk, n, "shift-invert-gmres", num_eigenvalues=3,
+            sc_eigen._solve_leading(mk, n, "shift-invert-gmres", num_eigenvalues=3,
                               spectral_shift="auto")
 
     def test_negative_leading_no_warn_for_roundoff_scale(self):
@@ -296,7 +298,7 @@ class TestPowerIterationSpectralShift(unittest.TestCase):
         # must not trigger the recommendation.
         mk, n = _make_operator_for([-1.0e-14, -2.0e-14, 1.0e-15, 3.0e-15])
         with _caplog("WARNING") as records:
-            sc._solve_leading(mk, n, "arnoldi", num_eigenvalues=2)
+            sc_eigen._solve_leading(mk, n, "arnoldi", num_eigenvalues=2)
         assert not any("negative" in r.message for r in records)
 
 
@@ -394,14 +396,14 @@ class TestShiftedEigenvalueNote(unittest.TestCase):
     def test_note_labels_a_validated_shifted_value_as_an_eigenvalue(self):
         info = {"eigenvalue_validated": True, "rayleigh_residual": 1.2e-12,
                 "eigenvalue_kind": "eigenvalue"}
-        note = sc._shifted_eigenvalue_note("iteration", "auto", True, 12, info)
+        note = sc_output._shifted_eigenvalue_note("iteration", "auto", True, 12, info)
         assert "SIGNED eigenvalue" in note
         assert "converged" in note
 
     def test_note_labels_a_non_converged_value_as_not_an_eigenvalue(self):
         info = {"eigenvalue_validated": False, "rayleigh_residual": 0.55,
                 "eigenvalue_kind": "not-converged"}
-        note = sc._shifted_eigenvalue_note("iteration", 1.0, False, 3, info)
+        note = sc_output._shifted_eigenvalue_note("iteration", 1.0, False, 3, info)
         lower = note.lower()
         assert "not an eigenvalue" in lower
         assert "nan" in lower
@@ -411,7 +413,7 @@ class TestShiftedEigenvalueNote(unittest.TestCase):
 
     def test_note_names_the_two_cycle(self):
         info = {"two_cycle": True, "cycle_eigenvalue": -1.93}
-        note = sc._shifted_eigenvalue_note("iteration", None, False, 14, info)
+        note = sc_output._shifted_eigenvalue_note("iteration", None, False, 14, info)
         assert "two-cycle" in note
         assert "NEGATIVE" in note
         assert "no spectral_shift" in note
@@ -438,7 +440,7 @@ class TestShiftedIterationIsUnmixed(unittest.TestCase):
 
     def _run(self, spectral_shift, alpha):
         mk, n, init, lead = self._op()
-        lam, _vec, info = sc._solve_leading(
+        lam, _vec, info = sc_eigen._solve_leading(
             mk, n, "iteration", init_vec=init, alpha=alpha, max_iter=5000,
             convergence_tol=1e-9, spectral_shift=spectral_shift)
         return lam, info, lead
@@ -468,7 +470,7 @@ class TestShiftedIterationIsUnmixed(unittest.TestCase):
         init = np.ones(10, complex)
         runs = {}
         for alpha in (0.5, 0.0):
-            lam, _v, info = sc._solve_leading(
+            lam, _v, info = sc_eigen._solve_leading(
                 mkd, 10, "iteration", init_vec=init, alpha=alpha,
                 max_iter=5000, convergence_tol=1e-9, spectral_shift=None)
             self.assertTrue(info["converged"])

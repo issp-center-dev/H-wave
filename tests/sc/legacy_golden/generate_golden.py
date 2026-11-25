@@ -71,11 +71,12 @@ def main():
     args = parser.parse_args()
 
     import hwave.sc as sc
+    from hwave.solver.eliashberg import io as sc_io
     print("hwave.sc from:", sc.__file__, file=sys.stderr)
 
     os.makedirs(args.outdir, exist_ok=True)
     if args.make_chi0q:
-        chi0q = sc._calc_chi0q_internal(build_input(args.outdir,
+        chi0q = sc_io._calc_chi0q_internal(build_input(args.outdir,
                                                     chi0q_mode="calc"))
         np.savez(os.path.join(args.outdir, "chi0q.npz"), chi0q=chi0q)
         print("wrote chi0q.npz", chi0q.shape, file=sys.stderr)

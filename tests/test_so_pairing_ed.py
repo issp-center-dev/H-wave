@@ -94,9 +94,9 @@ import unittest
 import numpy as np
 
 from hwave.solver import bubble
-from hwave.solver.eliashberg_bond import (ArrayBlockSource, BondPairKernel, PairVertexUniform,
+from hwave.solver.eliashberg.bond_dynamic import (ArrayBlockSource, BondPairKernel, PairVertexUniform,
                                           _vinst_as_block)
-from hwave.solver.eliashberg_dynamic import calc_g2_dynamic
+from hwave.solver.eliashberg.dynamic import calc_g2_dynamic
 from hwave.solver.so_pairing import so_pairing_vertex_parts
 import tests.test_sc_bond_pairing_oracle as O
 from tests.ed_oracle_util import EDFixture, SectorED, TotalNED

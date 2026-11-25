@@ -240,7 +240,7 @@ class TestDynamicGolden(unittest.TestCase):
                 if not iteration:
                     self.assertAlmostEqual(float(w[0]), 1.0, places=9, msg=tag)
                 # the recorded weights describe the gap stored next to them
-                from hwave.solver import eliashberg_dynamic as ed
+                from hwave.solver.eliashberg import dynamic as ed
                 recomputed = ed.gap_sector_weights(a["gap"])
                 for i, label in enumerate(labels):
                     self.assertAlmostEqual(float(w[i]), recomputed[label],
@@ -267,7 +267,7 @@ class TestGoldenFixtures(unittest.TestCase):
 
     def test_symmetric_archive_leader_is_the_dense_channel_leader(self):
         from unittest import mock
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         cap = {}
         real = ed._solve_channel_projected
 
@@ -300,7 +300,7 @@ class TestEigenDriverUnits(unittest.TestCase):
     golden end-to-end runs above."""
 
     def setUp(self):
-        from hwave.solver import eliashberg_dynamic as ed
+        from hwave.solver.eliashberg import dynamic as ed
         self.ed = ed
         self.gap_shape = (1, 1, 2, 2, 1, 4)
         vec_size = int(np.prod(self.gap_shape))
@@ -485,10 +485,10 @@ class TestSecondaryRetryFailure(unittest.TestCase):
 
     def test_failed_retry_is_not_labelled_lr_retry(self):
         from unittest import mock
-        import hwave.sc as sc
+        from hwave.solver.eliashberg import eigen as sc_eigen
         import scipy.sparse.linalg as spl
-        real_leading = sc._solve_leading
-        real_eigs = sc.eigs
+        real_leading = sc_eigen._solve_leading
+        real_eigs = sc_eigen.eigs
         calls = []
 
         def leading(*a, **kw):
@@ -509,9 +509,9 @@ class TestSecondaryRetryFailure(unittest.TestCase):
             return real_eigs(A, k=k, which=which, **kw)
         tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        with mock.patch.object(sc, "_solve_leading", leading), \
-                mock.patch.object(sc, "eigs", eigs), \
-                mock.patch.object(sc, "_DENSE_FALLBACK_MAX", 1):
+        with mock.patch.object(sc_eigen, "_solve_leading", leading), \
+                mock.patch.object(sc_eigen, "eigs", eigs), \
+                mock.patch.object(sc_eigen, "_DENSE_FALLBACK_MAX", 1):
             _run(tmp, "eigenvalue", None, fixture="random")
         self.assertEqual(calls, [None, "auto"])
         txt = open(os.path.join(tmp, "eigenvalue.dat")).read()

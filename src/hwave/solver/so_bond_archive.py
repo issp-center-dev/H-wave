@@ -43,7 +43,7 @@ import numpy as np
 
 from . import fingerprint as _fp
 from . import so_bond
-from .eliashberg_bond_io import _tmp_name
+from hwave.solver.eliashberg.bond_io import _tmp_name
 
 # ---------------------------------------------------------------- fixed values
 SCHEMA = 4

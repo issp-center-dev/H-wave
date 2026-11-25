@@ -46,7 +46,10 @@ import scipy.linalg.lapack as lapack
 from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator
 from scipy.sparse.linalg import eigs as real_eigs
 
-from hwave import sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import so_solve as sc_so
+from hwave.solver.eliashberg import bond as sc_bond
+from hwave.solver.eliashberg import config as sc_config
 from hwave.solver import so_bond, spin_orbital
 from hwave.solver.so_bond import SOBondCaps, plan_so_bond, slot_geometry, so_bond_topology
 from hwave.solver.so_records import compile_interaction
@@ -234,7 +237,7 @@ class TestSectorSizes(unittest.TestCase):
                     got = so_bond.pp_sector_dims(nd, shape)
                     self.assertEqual(tuple(got), _sectors(nd, shape))
                     self.assertEqual(sum(got.dims),
-                                     sc._SOAntisymmetricBasis((nd, nd) + shape).dim)
+                                     sc_eigen._SOAntisymmetricBasis((nd, nd) + shape).dim)
         got = so_bond.pp_sector_dims(2, (4, 4, 1))
         self.assertEqual(got.dims, (6, 16, 6))
         self.assertEqual(got.pair_counts, (1, 2, 1))
@@ -435,7 +438,7 @@ class TestRows(unittest.TestCase):
         self.assertEqual(dense(60, 4, 128, "both", max_iter=7),
                          dense(60, 4, 128, "eigenvalue", max_iter=7)
                          + dense(60, 4, 128, "iteration", max_iter=7))
-        self.assertEqual(so_bond.DENSE_FALLBACK_MAX, sc._DENSE_FALLBACK_MAX)
+        self.assertEqual(so_bond.DENSE_FALLBACK_MAX, sc_eigen._DENSE_FALLBACK_MAX)
         self.assertEqual(so_bond.DENSE_FALLBACK_MAX, 2000)
         # the 32 x 32 grid at nd = 4, B = 5, Nmat = 256: the kernel phase (dim 8184,
         # ARPACK without a fallback) stays below the pairing phase, which a cap of
@@ -597,7 +600,7 @@ class TestRows(unittest.TestCase):
                 continue
             with self.subTest(mirror=repr(value)[:40]):
                 try:
-                    sc._validate_spectral_shift(sc._normalize_spectral_shift(value), "arnoldi")
+                    sc_config._validate_spectral_shift(sc_eigen._normalize_spectral_shift(value), "arnoldi")
                     solver_ok = True
                 except ValueError:
                     solver_ok = False
@@ -784,7 +787,7 @@ def _full_op(shape, M):
     """``(basis, operator)``: the full antisymmetric basis of ``shape`` and
     an operator whose reduced form is ``M`` (forward and adjoint products,
     no ``matmat``, as the kernel's)."""
-    basis = sc._SOAntisymmetricBasis(shape)
+    basis = sc_eigen._SOAntisymmetricBasis(shape)
     return basis, sector_op_of(0, basis, M, matmat=False).operator
 
 
@@ -884,10 +887,10 @@ class TestSolverMemory(unittest.TestCase):
         dense = so_bond.estimate_dense_layout_solver_bytes
         for shape, k, label in ((ARPACK_SHAPE, 4, "arpack"), (DIRECT_SHAPE, 11, "direct")):
             with self.subTest(branch=label):
-                basis, A = _full_op(shape, _random(sc._SOAntisymmetricBasis(shape).dim, 3))
+                basis, A = _full_op(shape, _random(sc_eigen._SOAntisymmetricBasis(shape).dim, 3))
                 info, calls = {}, []
                 with mock.patch.object(np.linalg, "eig", side_effect=_eig_spy(calls)), quiet():
-                    _, peak = _trace(lambda: sc._so_solve_eigenvalue(
+                    _, peak = _trace(lambda: sc_so._so_solve_eigenvalue(
                         A, basis, k, "arnoldi", info_out=info))
                 d = basis.dim
                 self.assertEqual(info["selection"] == "dense-LR", label == "direct")
@@ -907,7 +910,7 @@ class TestSolverMemory(unittest.TestCase):
             basis, A = _full_op(ARPACK_SHAPE, _slow(60, 4))
             init, info = _init(basis, 5), {}
             with quiet():
-                _, peak = _trace(lambda: sc._so_solve_iteration(
+                _, peak = _trace(lambda: sc_so._so_solve_iteration(
                     A, basis, init, MAX_ITER, 0.0, 1e-10, info_out=info))
             self.assertGreaterEqual(info["n_iter"], 200)
             row = dense(basis.dim, 4, basis.n, "iteration", max_iter=MAX_ITER)
@@ -917,7 +920,7 @@ class TestSolverMemory(unittest.TestCase):
             ops, dims, nvec = _packed_ops(_random)
             n_full = int(np.prod(PACKED_SHAPE))
             with quiet():
-                s, peak = _trace(lambda: sc._so_solve_sectors(ops, 4, "arnoldi",
+                s, peak = _trace(lambda: sc_so._so_solve_sectors(ops, 4, "arnoldi",
                                                               gap_shape=PACKED_SHAPE))
             self.assertTrue(s.converged)
             self.assertEqual([lead.selection for lead in s.leaders][1:],
@@ -930,9 +933,9 @@ class TestSolverMemory(unittest.TestCase):
         with self.subTest(branch="packed iteration"):
             ops, dims, nvec = _packed_ops(_slow)
             n_full = int(np.prod(PACKED_SHAPE))
-            init = _init(sc._SOAntisymmetricBasis(PACKED_SHAPE), 6).reshape(PACKED_SHAPE)
+            init = _init(sc_eigen._SOAntisymmetricBasis(PACKED_SHAPE), 6).reshape(PACKED_SHAPE)
             with quiet():
-                it, peak = _trace(lambda: sc._so_iterate_sectors(
+                it, peak = _trace(lambda: sc_so._so_iterate_sectors(
                     ops, init, gap_shape=PACKED_SHAPE, max_iter=MAX_ITER, alpha=0.0,
                     tol=1e-10))
             self.assertGreaterEqual(it.n_iter, 200)
@@ -977,10 +980,10 @@ class TestSolverMemory(unittest.TestCase):
                 info = {}
                 row = so_bond.estimate_dense_layout_solver_bytes(60, 4, basis.n, "eigenvalue",
                                                                  max_iter=MAX_ITER)
-                with mock.patch.object(sc, "eigs", side_effect=fail) as patched:
+                with mock.patch.object(sc_eigen, "eigs", side_effect=fail) as patched:
                     self._check_fallback(
                         "dense layout, {} failure".format(failure),
-                        lambda: sc._so_solve_eigenvalue(A, basis, 4, "arnoldi",
+                        lambda: sc_so._so_solve_eigenvalue(A, basis, 4, "arnoldi",
                                                         info_out=info),
                         row, 60, lambda _: info["selection"])
                 self.assertTrue(patched.called)
@@ -991,10 +994,10 @@ class TestSolverMemory(unittest.TestCase):
                 row = so_bond.estimate_sector_solver_bytes([60], 4, n_full,
                                                            n_sector_vec=[bases[0].n],
                                                            dense_fallback=True)
-                with mock.patch.object(sc, "eigs", side_effect=fail) as patched:
+                with mock.patch.object(sc_eigen, "eigs", side_effect=fail) as patched:
                     self._check_fallback(
                         "packed sector, {} failure".format(failure),
-                        lambda: sc._so_solve_sectors(ops, 4, "arnoldi",
+                        lambda: sc_so._so_solve_sectors(ops, 4, "arnoldi",
                                                      gap_shape=PACKED_SHAPE),
                         row, 60, lambda s: s.leaders[0].selection)
                 self.assertTrue(patched.called)
@@ -1007,10 +1010,10 @@ class TestSolverMemory(unittest.TestCase):
             info = {}
             row = so_bond.estimate_dense_layout_solver_bytes(161, 1, basis.n, "eigenvalue",
                                                              max_iter=MAX_ITER)
-            with mock.patch.object(sc, "eigs", side_effect=_late) as patched:
+            with mock.patch.object(sc_eigen, "eigs", side_effect=_late) as patched:
                 self._check_fallback(
                     "dense layout dim 161, late failure",
-                    lambda: sc._so_solve_eigenvalue(A, basis, 1, "arnoldi", info_out=info),
+                    lambda: sc_so._so_solve_eigenvalue(A, basis, 1, "arnoldi", info_out=info),
                     row, 161, lambda _: info["selection"])
             self.assertTrue(patched.called)
 
@@ -1039,7 +1042,7 @@ class TestSolverMemory(unittest.TestCase):
                                 spectral_shift=shift)
 
                             def run():
-                                return sc._so_solve_eigenvalue(
+                                return sc_so._so_solve_eigenvalue(
                                     A, basis, 1, "arnoldi", spectral_shift=shift,
                                     info_out=info)
 
@@ -1053,7 +1056,7 @@ class TestSolverMemory(unittest.TestCase):
                                 dense_fallback=True, spectral_shift=shift)
 
                             def run():
-                                return sc._so_solve_sectors(ops, 1, "arnoldi",
+                                return sc_so._so_solve_sectors(ops, 1, "arnoldi",
                                                             gap_shape=PACKED_SHAPE,
                                                             spectral_shift=shift)
 
@@ -1061,7 +1064,7 @@ class TestSolverMemory(unittest.TestCase):
                                 return s.leaders[0].selection
                         what = "{} layout, spectral_shift={}, {} failure".format(
                             layout, shift, failure)
-                        with mock.patch.object(sc, "eigs",
+                        with mock.patch.object(sc_eigen, "eigs",
                                                side_effect=_which_recorded(lr_solve, whiches)):
                             if failure == "none":
                                 with quiet():
@@ -1083,7 +1086,7 @@ class TestSolverMemory(unittest.TestCase):
         placeholder solve). The traced peak is within the row of that shift,
         which reserves the second working set, in both layouts."""
         shape = (2, 2, 32, 32, 1)
-        basis = sc._SOAntisymmetricBasis(shape)
+        basis = sc_eigen._SOAntisymmetricBasis(shape)
         d = basis.dim
         self.assertEqual(d, 2044)
         rng = np.random.default_rng(3)
@@ -1101,20 +1104,20 @@ class TestSolverMemory(unittest.TestCase):
                             spectral_shift=shift)
 
                         def run():
-                            return sc._so_solve_eigenvalue(A, basis, 1, "arnoldi",
+                            return sc_so._so_solve_eigenvalue(A, basis, 1, "arnoldi",
                                                            spectral_shift=shift,
                                                            info_out=info)
 
                         def selection(_):
                             return info["selection"]
                     else:
-                        op = sc.SectorOp(0, A, basis, True)
+                        op = sc_so.SectorOp(0, A, basis, True)
                         row = so_bond.estimate_sector_solver_bytes(
                             [d], 1, basis.n, n_sector_vec=[basis.n], dense_fallback=True,
                             spectral_shift=shift)
 
                         def run():
-                            return sc._so_solve_sectors([op], 1, "arnoldi", gap_shape=shape,
+                            return sc_so._so_solve_sectors([op], 1, "arnoldi", gap_shape=shape,
                                                         spectral_shift=shift)
 
                         def selection(s):
@@ -1126,7 +1129,7 @@ class TestSolverMemory(unittest.TestCase):
                         def solve(*a, **kw):
                             whiches.append(kw.get("which"))
                             return (_late if len(whiches) == 1 else real_eigs)(*a, **kw)
-                    with mock.patch.object(sc, "eigs", side_effect=solve), quiet():
+                    with mock.patch.object(sc_eigen, "eigs", side_effect=solve), quiet():
                         out, peak = _trace(run)
                     self.assertEqual(selection(out), "not-converged")
                     self.assertEqual(whiches, order)
@@ -1166,10 +1169,10 @@ def _zeeman_green_inputs(shape, nmat):
     tables = {t: {(R, ab): v for R, ab, v in rows} for t, rows in fx.interactions}
     inp = {"mode": {"param": {"CellShape": list(shape), "coeff_extern": fx.coeff_extern}}}
     ctx = spin_orbital.build_so_entry_context(None, tables, 1, logger)
-    run = sc._so_run_inputs(inp, hr, extern, 1, 2.0, nmat, fx.filling, context=ctx)
+    run = sc_so._so_run_inputs(inp, hr, extern, 1, 2.0, nmat, fx.filling, context=ctx)
     k = [np.linspace(0, 2.0 * np.pi, n, endpoint=False) for n in shape]
     with quiet():
-        eps = sc._so_epsilon_k(inp, *k, hr, extern, 1)
+        eps = sc_so._so_epsilon_k(inp, *k, hr, extern, 1)
     return eps, run
 
 
@@ -1190,10 +1193,10 @@ def _two_orbital_green_inputs(shape, nmat):
     tables = {"CoulombIntra": {((0, 0, 0), (a, a)): 1.0 for a in (0, 1)}}
     inp = {"mode": {"param": {"CellShape": list(shape), "coeff_extern": fx.coeff_extern}}}
     ctx = spin_orbital.build_so_entry_context(None, tables, 2, logger)
-    run = sc._so_run_inputs(inp, hr, extern, 2, 2.0, nmat, fx.filling, context=ctx)
+    run = sc_so._so_run_inputs(inp, hr, extern, 2, 2.0, nmat, fx.filling, context=ctx)
     k = [np.linspace(0, 2.0 * np.pi, n, endpoint=False) for n in shape]
     with quiet():
-        eps = sc._so_epsilon_k(inp, *k, hr, extern, 2)
+        eps = sc_so._so_epsilon_k(inp, *k, hr, extern, 2)
     return eps, run
 
 
@@ -1213,7 +1216,7 @@ class TestGreenMemory(unittest.TestCase):
                 eps, run = _zeeman_green_inputs(shape, nmat)
 
                 def build():
-                    return sc._so_bond_green(eps, run, norb_phys=1, filling=fx.filling,
+                    return sc_bond._so_bond_green(eps, run, norb_phys=1, filling=fx.filling,
                                              beta=2.0, nmat=nmat, coeff_tail=1.0)
                 build()                         # first-call allocations
                 out, peak = _trace(build)
@@ -1231,7 +1234,7 @@ class TestGreenMemory(unittest.TestCase):
             eps, run = _two_orbital_green_inputs(shape, nmat)
 
             def build4():
-                return sc._so_bond_green(eps, run, norb_phys=2, filling=fx.filling, beta=2.0,
+                return sc_bond._so_bond_green(eps, run, norb_phys=2, filling=fx.filling, beta=2.0,
                                          nmat=nmat, coeff_tail=1.0)
             build4()
             out, peak = _trace(build4)

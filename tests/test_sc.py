@@ -18,39 +18,14 @@ import numpy as np
 import numpy.testing as npt
 from numpy.fft import fftn, ifftn
 
-from hwave.sc import (
-    _build_bond_green,
-    _build_hamiltonian_k,
-    _build_interaction_k,
-    _build_sc_matrices,
-    _make_kernel_operator,
-    _calc_chi0q_internal,
-    _calc_eigenvalues,
-    _calc_g2,
-    _compute_vertices,
-    _compute_vertices_simple,
-    _compute_vertices_general,
-    _compute_vertices_flex,
-    _convert_chi0q_to_ref_format,
-    _determine_mu,
-    _eliashberg_kernel_fft,
-    _initialize_gap,
-    _is_gap_parity,
-    _make_kernel_operator,
-    _order_by_seed_overlap,
-    _order_eigenpairs,
-    _project_gap_parity,
-    _reorder_eigenpairs_by_parity,
-    _resolve_init_gap,
-    _reverse_k_and_orbital,
-    _save_results,
-    _shift_from_eigenvalues,
-    _solve_eigenvalue,
-    _solve_iteration,
-    _solve_leading,
-    _solve_subspace_iteration,
-    _solve_shifted_bicg,
-)
+from hwave.solver.eliashberg.bond import _build_bond_green
+from hwave.solver.eliashberg.band import _build_hamiltonian_k, _calc_eigenvalues, _determine_mu
+from hwave.solver.eliashberg.vertex import _build_interaction_k, _build_sc_matrices, _compute_vertices, _compute_vertices_simple, _compute_vertices_general, _compute_vertices_flex
+from hwave.solver.eliashberg.kernel import _make_kernel_operator, _calc_g2, _eliashberg_kernel_fft, _make_kernel_operator
+from hwave.solver.eliashberg.io import _calc_chi0q_internal, _convert_chi0q_to_ref_format
+from hwave.solver.eliashberg.eigen import _initialize_gap, _is_gap_parity, _order_by_seed_overlap, _order_eigenpairs, _project_gap_parity, _reorder_eigenpairs_by_parity, _reverse_k_and_orbital, _shift_from_eigenvalues, _solve_eigenvalue, _solve_iteration, _solve_leading, _solve_subspace_iteration, _solve_shifted_bicg
+from hwave.solver.eliashberg.config import _resolve_init_gap
+from hwave.solver.eliashberg.output import _save_results
 from scipy.sparse.linalg import LinearOperator
 
 
@@ -2564,7 +2539,7 @@ class TestChi0qInternal(unittest.TestCase):
             np.savez(chi0q_file, chi0q=chi0q_calc, momentum_convention="e_plus_ikR")
 
             # Load it back
-            from hwave.sc import _load_chi0q
+            from hwave.solver.eliashberg.io import _load_chi0q
             chi0q_loaded, static_index = _load_chi0q(input_dict)
             self.assertIsNone(static_index,
                               "metadata-less file: the caller slices the "
@@ -2596,7 +2571,7 @@ class TestChi0qInternal(unittest.TestCase):
                      calc_scheme_requested="auto",
                      scheme_resolution="auto:flex_forcing")
 
-            from hwave.sc import _load_chi0q
+            from hwave.solver.eliashberg.io import _load_chi0q
             chi0q_loaded, static_index = _load_chi0q(input_dict)
             self.assertIsNone(static_index,
                               "metadata-less file: the caller slices the "

@@ -31,7 +31,9 @@ import unittest
 
 import numpy as np
 
-import hwave.sc as sc
+from hwave.solver.eliashberg import eigen as sc_eigen
+from hwave.solver.eliashberg import vertex as sc_vertex
+from hwave.solver.eliashberg import kernel as sc_kernel
 from hwave.solver import bubble, rpa
 import tests.test_flex_spin_orbital as fso
 import tests.test_sc_bond_pairing_oracle as O
@@ -135,7 +137,7 @@ def _antisymmetric_gap(rng):
     """A random spin-orbital gap with ``Delta_AB(k) = -Delta_BA(-k)``."""
     phi = (rng.standard_normal((ND, ND, NX, 1, 1))
            + 1j * rng.standard_normal((ND, ND, NX, 1, 1)))
-    return sc._project_gap_parity(phi, "triplet")[:, :, :, 0, 0]
+    return sc_eigen._project_gap_parity(phi, "triplet")[:, :, :, 0, 0]
 
 
 def _static_bubble(g):
@@ -157,7 +159,7 @@ class TestFirstOrderOracle(unittest.TestCase):
     def test_bare_part_matches_spin_orbital_reference(self):
         from hwave.solver.so_pairing import so_pairing_vertex, so_pairing_vertex_parts
         g = _green(_h_spin_orbital(0.3))
-        G2 = sc._calc_g2(g, BETA, tail=False)
+        G2 = sc_kernel._calc_g2(g, BETA, tail=False)
         fx = O.EDFixture(NX, NP, {}, [0.0] * NP, 1.0, 0.0)
         rng = np.random.default_rng(1)
         zero = np.zeros((NX, ND * ND, ND * ND), complex)
@@ -176,7 +178,7 @@ class TestFirstOrderOracle(unittest.TestCase):
                 self.assertEqual(V_bare.shape, (ND,) * 4 + (NX, 1, 1))
                 self.assertEqual(np.abs(V_fl).max(), 0.0)
                 for V in (V_bare, so_pairing_vertex(gam, zero, ND, (NX, 1, 1))):
-                    K, _ = sc._make_kernel_operator(V, G2, ND, NX, 1, 1)
+                    K, _ = sc_kernel._make_kernel_operator(V, G2, ND, NX, 1, 1)
                     got = K.matvec(phi.ravel()).reshape(want.shape)
                     err = np.linalg.norm(got - want) / np.linalg.norm(want)
                     self.assertLess(err, 1e-10, (t, err))
@@ -195,8 +197,8 @@ class TestSU2Limit(unittest.TestCase):
         hso[:, :NP, :NP] = h
         hso[:, NP:, NP:] = h
         cls.gso = _green(hso)
-        cls.G2 = sc._calc_g2(cls.g, BETA, tail=False)
-        cls.G2so = sc._calc_g2(cls.gso, BETA, tail=False)
+        cls.G2 = sc_kernel._calc_g2(cls.g, BETA, tail=False)
+        cls.G2so = sc_kernel._calc_g2(cls.gso, BETA, tail=False)
         chi0 = _static_bubble(cls.g)
         cls.chi0q = chi0.transpose(1, 2, 3, 4, 0).reshape(NP, NP, NP, NP, NX, 1, 1, 1)
         cls.chi0so = _static_bubble(cls.gso).reshape(NX, ND * ND, ND * ND)
@@ -205,19 +207,19 @@ class TestSU2Limit(unittest.TestCase):
         """``components``: the (channel, spin matrix) pairs to compare."""
         from hwave.solver.so_pairing import so_pairing_vertex
         kx = np.linspace(0, 2 * np.pi, NX, endpoint=False)
-        inter_k = sc._build_interaction_k(kx, np.zeros(1), np.zeros(1), decl, NP)
+        inter_k = sc_vertex._build_interaction_k(kx, np.zeros(1), np.zeros(1), decl, NP)
         gam = _gamma(decl)
         chi = np.linalg.solve(np.eye(ND * ND)[None] + self.chi0so @ gam, self.chi0so)
         # the dressing is not negligible: the check covers the fluctuation part
         self.assertGreater(np.linalg.norm(chi - self.chi0so), 1e-2 * np.linalg.norm(self.chi0so))
-        Kso, _ = sc._make_kernel_operator(so_pairing_vertex(gam, chi, ND, (NX, 1, 1)),
+        Kso, _ = sc_kernel._make_kernel_operator(so_pairing_vertex(gam, chi, ND, (NX, 1, 1)),
                                           self.G2so, ND, NX, 1, 1)
         rng = np.random.default_rng(2)
         for eta, spin in components:
-            V = sc._compute_vertices_general(self.chi0q, inter_k, NP, NX, 1, 1, 1,
+            V = sc_vertex._compute_vertices_general(self.chi0q, inter_k, NP, NX, 1, 1, 1,
                                              pairing_type=eta, static_index=0)
-            K, _ = sc._make_kernel_operator(V, self.G2, NP, NX, 1, 1)
-            phi = sc._project_gap_parity(
+            K, _ = sc_kernel._make_kernel_operator(V, self.G2, NP, NX, 1, 1)
+            phi = sc_eigen._project_gap_parity(
                 rng.standard_normal((NP, NP, NX, 1, 1))
                 + 1j * rng.standard_normal((NP, NP, NX, 1, 1)), eta)
             out = K.matvec(phi.ravel()).reshape(NP, NP, NX)
@@ -270,7 +272,7 @@ class TestSU2Limit(unittest.TestCase):
         from hwave.solver.so_pairing import so_pairing_vertex
         gam = _gamma(_onsite_decl("Hund", 0.3))
         chi = np.linalg.solve(np.eye(ND * ND)[None] + self.chi0so @ gam, self.chi0so)
-        Kso, _ = sc._make_kernel_operator(so_pairing_vertex(gam, chi, ND, (NX, 1, 1)),
+        Kso, _ = sc_kernel._make_kernel_operator(so_pairing_vertex(gam, chi, ND, (NX, 1, 1)),
                                           self.G2so, ND, NX, 1, 1)
         rng = np.random.default_rng(5)
         for spin in "szx":
