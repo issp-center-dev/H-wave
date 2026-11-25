@@ -88,3 +88,37 @@ def square(dest, L, *, U=0.0, T=0.0, ncond=None, subshape=None, fock=True,
     return write_input(dest, cellshape=(L, L, 1), transfer=square_transfer(),
                        interactions=inter, param=p,
                        mode=None if fock else {"flag_fock": False})
+
+
+def spin_transfer_text(norb, entries):
+    """A 9-column (spin-resolved) Transfer file of ``{(R, a, b, s, t): v}``
+    (0-based orbitals, spins 0 = up and 1 = down), Hermitian-closed: each
+    entry gets its partner ``(-R, b, a, t, s): conj(v)``. Pass it as
+    ``extra_files={"transfer.dat": ...}`` to :func:`write_input`."""
+    closed = {}
+    for (r, a, b, s, t), v in entries.items():
+        closed[(r, a, b, s, t)] = closed.get((r, a, b, s, t), 0) + complex(v)
+        neg = tuple(-x for x in r)
+        if (neg, b, a, t, s) != (r, a, b, s, t):
+            closed[(neg, b, a, t, s)] = (closed.get((neg, b, a, t, s), 0)
+                                         + complex(v).conjugate())
+    lines = ["Transfer in wannier90-like format for uhfk w90spin/1",
+             str(norb), "1", " 1"]
+    for (r, a, b, s, t), v in closed.items():
+        lines.append("{} {} {} {} {} {} {} {:.15g} {:.15g}".format(
+            *r, a + 1, b + 1, s, t, v.real, v.imag))
+    return "\n".join(lines) + "\n"
+
+
+def spin_independent_entries(transfer):
+    """The 9-column entries ``(R, a, b, s, s)`` of a spin-independent
+    7-column table, one direction of each Hermitian pair
+    (:func:`spin_transfer_text` adds the partners)."""
+    out = {}
+    for (r, a, b), v in transfer.items():
+        neg = tuple(-x for x in r)
+        if (neg, b, a, 0, 0) in out:
+            continue
+        for s in range(2):
+            out[(r, a, b, s, s)] = v
+    return out
