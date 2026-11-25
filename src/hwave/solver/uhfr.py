@@ -11,6 +11,7 @@ import numpy as np
 import itertools
 import os
 from requests.structures import CaseInsensitiveDict
+from . import hartree_fock
 from .perf import do_profile
 
 logger = logging.getLogger("qlms").getChild("uhfr")
@@ -911,9 +912,7 @@ class UHFr(solver_base):
         ndarray
             Fermi-Dirac distribution
         """
-        x = (eigenvalue - mu) / self.T
-        fermi = np.where(x > self.ene_cutoff, 0.0, 1.0 / (np.exp(x) + 1.0))
-        return fermi
+        return hartree_fock.masked_fermi(self.T, mu, eigenvalue, self.ene_cutoff)
 
     def _fermi_level_zero_t(self, eigenvalue, occupied):
         """Chemical potential (Fermi level) at zero temperature.
