@@ -89,9 +89,10 @@ def dense_table(table, shape, dim, *, out_of_range="raise", label="Transfer"):
         tab[rx % nx, ry % ny, rz % nz, a, b] += v
     if dropped:
         logger.warning(
-            "{} has {} entries with orbital indices > {} (spin-dependent "
-            "terms) but enable_spin_orbital is False. These terms are "
-            "ignored. Set enable_spin_orbital = true to use them."
+            "{} has {} entries with orbital indices outside 1..{} (1-based "
+            "file indices; spin-dependent terms) but [mode] "
+            "enable_spin_orbital is false. These terms are ignored. Set "
+            "[mode] enable_spin_orbital = true to use them."
             .format(label, dropped, dim))
     return tab
 
