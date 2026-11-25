@@ -492,7 +492,7 @@ class PatternSpec:
 
 
 # ---------------------------------------------------------------------------
-# realisation on a folded cell (design section 6.3)
+# realisation on a folded cell
 #
 # An amplitude A is a sequence of 'cos' entries (:class:`Entry` with the
 # coefficients c0, cx, cy, cz): the bond slot ``(a, b, r)`` carries the 2x2
@@ -611,8 +611,7 @@ class PhaseRow:
 
 
 def phase_rows(A, q, *, sign_map: bool) -> Tuple[PhaseRow, ...]:
-    """The rows of one eigenvector (design section 5.1 "Rows per
-    eigenvector", section 6.3).
+    """The phase and sign rows of one eigenvector (the rules below).
 
     ``sign_map``: whether a verified map takes O to -O. At q = -q (q = 0
     included) pass whether any verified map does (a translation included,

@@ -29,14 +29,17 @@ __all__ = ["ModelFacts", "SiteGroups", "model_facts", "cluster_sites",
            "SITE_TOL", "EXTERN_WARNING"]
 
 #: centres closer than this (in the length unit of the Geometry lattice
-#: vectors, minimum image) belong to one site (owner-approved value)
+#: vectors, minimum image) belong to one site. The output readers of
+#: :mod:`hwave.results` group orbitals with a tolerance of 1e-8 and no
+#: wrap, so centres that differ by between 1e-8 and this value form one
+#: site here and two sites there
 SITE_TOL = 1e-3
 
-#: the warning for an ``Extern`` table (design section 5, step 1)
+#: the warning for an ``Extern`` table
 EXTERN_WARNING = ("Extern is not used by UHFk; give a Zeeman field as on-site "
                   "Transfer in spin-orbital mode")
 
-#: the warning for an input without ``SubShape`` (design section 5, step 2)
+#: the warning for an input without ``SubShape``
 NO_SUBSHAPE_WARNING = (
     "The input sets no SubShape, so UHFk uses SubShape = CellShape (one "
     "supercell, the Gamma point only); give the candidate SubShape list "
@@ -67,7 +70,7 @@ class SiteGroups:
 # eq=False: ``problem`` holds arrays
 @dataclass(frozen=True, eq=False)
 class ModelFacts:
-    """The facts of one UHFk input (design section 5, step 1; section 4.2).
+    """The facts of one UHFk input: its problem, sites, filling and checks.
 
     ``problem``: the :class:`~hwave.solver.initial_facade.UHFkProblem`.
     ``norb``: orbitals of the original cell (Geometry ``norb``; spin

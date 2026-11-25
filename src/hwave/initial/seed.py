@@ -1,4 +1,5 @@
-"""Field seeding (design section 7, owner decision O1).
+"""Field seeding: a candidate's initial state from the density of
+``H_base - h O``.
 
 A candidate with the pattern ``O`` (the Hamiltonian-convention ``O(k)`` of
 the candidate cell, :func:`hwave.initial.patterns.realise`) is seeded by
@@ -8,7 +9,8 @@ the density of ``H_base - h O``:
   the stored Green function, with the solver's own blocks and mu-groups,
   so ``Ncond`` and ``2Sz`` are exact; ``rho(h) = G(h)^T``. At T = 0 the
   levels within ``shell_tol = 1e-10 * max(1, W0, h ||O||_op)`` of the Fermi
-  level of a group form its shell and are filled uniformly (O7).
+  level of a group form its shell and are filled uniformly, so a
+  symmetric pattern keeps its symmetry.
 * ``m(h) = Re tr[O rho(h)] = Re sum_ab O_ab G_ab(h)`` per primitive cell
   (summed over k and bond slots); ``Re tr[O G]`` would be ``<O^T>``,
   which reverses every imaginary part.
@@ -83,7 +85,8 @@ BLOCK_REASON = "refused: block check"
 
 @dataclass(frozen=True, eq=False)
 class SeedResult:
-    """The seed of one row (design section 7; the null rules of its table).
+    """The seed of one row; the fields that do not apply to the row are
+    ``None``.
 
     ``tried``, ``not_tried_reason`` (``None`` when tried). ``G``: the
     stored Green function ``(nvol, ns, norb, ns, norb)`` written as the
@@ -402,7 +405,7 @@ def _sites(facts):
 
 def moments_of(G, facts) -> dict:
     """``{"spin": [[x, y, z], ...], "charge": [...]}`` per site of the folded
-    cell (:class:`SeedResult`), from PR 1a's
+    cell (:class:`SeedResult`), from
     :func:`hwave.results.order_parameters_from_density` fed the stored
     Green slot ``rho[o, s, t] = G[0, s, o, t, o]`` (normal mode), or
     :func:`hwave.results.so_density_from_green` in spin-orbital mode."""
@@ -443,7 +446,7 @@ def _check_amplitude(amplitude):
 def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
                  seed_base: Literal["para_hf", "bare"]) -> SeedResult:
     """Seed the pattern ``O_k`` (``None``: the para row) on the cell of
-    ``facts.problem`` (design section 7).
+    ``facts.problem`` (the rules of the module docstring).
 
     Parameters
     ----------

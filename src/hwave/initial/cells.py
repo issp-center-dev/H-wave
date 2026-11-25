@@ -35,10 +35,10 @@ __all__ = [
     "representable", "propose", "check_subshapes", "lcm",
 ]
 
-#: the largest denominator :func:`rationalise` accepts (owner-approved)
+#: the largest denominator :func:`rationalise` accepts
 MAX_DENOMINATOR = 16
 
-#: the per-component tolerance of :func:`rationalise` (owner-approved)
+#: the per-component tolerance of :func:`rationalise`
 RATIONALISE_TOL = 1e-6
 
 #: a wave vector: three reduced ``Fraction`` components in ``[0, 1)``
@@ -46,7 +46,8 @@ QFrac = Tuple[Fraction, Fraction, Fraction]
 
 _AXES = ("x", "y", "z")
 
-#: K and K' of a triangular lattice in the 60-degree basis (spec V2)
+#: K and K' of a triangular lattice in the 60-degree basis a1 = (1, 0, 0),
+#: a2 = (1/2, sqrt3/2, 0)
 _K_60 = ((Fraction(2, 3), Fraction(1, 3), Fraction(0)),
          (Fraction(1, 3), Fraction(2, 3), Fraction(0)))
 
@@ -313,7 +314,7 @@ def propose(q, cellshape) -> CellProposal:
         tri = ""
         if to_qfrac(q) in _K_60:
             # the K points of a triangular lattice in the 60-degree basis
-            # (a2 = (1/2, sqrt3/2, 0), spec V2); the kernel of R -> q.R is
+            # (a1 = (1, 0, 0), a2 = (1/2, sqrt3/2, 0)); the kernel of R -> q.R is
             # then the sqrt3 x sqrt3 sublattice. In another basis the same
             # fractions are not K, so the shape is only named conditionally.
             tri = (" (√3×√3 if the lattice is triangular with a 60° angle "

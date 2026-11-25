@@ -1,4 +1,4 @@
-"""Instability hints: the hint temperature ``T_hint`` (design section 6.4).
+"""Instability hints: the hint temperature ``T_hint``.
 
 :func:`t_hint_bare` sets the temperature at which the static para hints are
 evaluated, from the bare one-body Hamiltonian ``H0 = T(k)`` and the k mesh
@@ -101,7 +101,7 @@ _EFFECT = (
 
 @dataclass(frozen=True)
 class THint:
-    """The hint temperature and its inputs (design section 6.4).
+    """The hint temperature and its inputs.
 
     ``T_hint``; ``rule`` (the formula used, a sentence); ``W0 = max(W_act,
     1e-3)``, ``W_act`` (the active-window span), ``W_all`` (the all-band
@@ -216,7 +216,7 @@ def _check_t_user(t_user):
 
 def t_hint_bare(problem, *, t_user: Optional[float] = None) -> THint:
     """The hint temperature of ``problem`` (a ``UHFkProblem``) from its bare
-    bands and k mesh (design section 6.4).
+    bands and k mesh (the rules of the module docstring).
 
     ``t_user``, when given, is the ``T_hint`` used (also for a T > 0
     input; the runs stay at the input T); it must be finite and > 0

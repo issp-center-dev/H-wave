@@ -808,3 +808,98 @@ class TestQuotasAndEdges(_Tmp):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _SymmetryProxy:
+    """The module ``hwave.initial.symmetry`` as the enumerator sees it, with
+    some functions replaced."""
+
+    def __init__(self, module, **override):
+        self._module, self._override = module, override
+
+    def __getattr__(self, name):
+        if name in self._override:
+            return self._override[name]
+        return getattr(self._module, name)
+
+
+class _Tagged:
+    """A stand-in for ``O(R)`` that carries the ``O(k)`` it came from."""
+
+    def __init__(self, O):
+        self.O = O
+
+
+def _search_recomputing_tr(o1, o2, problem, su2, tr, *, plain_translations):
+    """The map search with time reversal computed separately for the maps
+    (b) and (b+c), as before the search computed it once."""
+    from hwave.initial import symmetry as s
+    tol = s._map_tol(o1, o2)
+    taus = s._translations(problem)
+    if plain_translations:
+        for tau in taus:
+            if s._close(s._translate(o1, problem, tau), o2, tol):
+                return "translation"
+    tr_on = s._tr_ok(problem, tr)
+    su2_on = s._su2_ok(problem, su2)
+    if tr_on:
+        o1t = s._time_reverse_r(o1, problem)
+        for tau in taus:
+            if s._close(s._translate(o1t, problem, tau), o2, tol):
+                return "time_reversal"
+    if su2_on:
+        norb = problem.norb
+        for tau in taus:
+            if s._close(s._rotated_fit(s._translate(o1, problem, tau), o2, norb), o2, tol):
+                return "spin_rotation"
+        if tr_on:
+            o1t = s._time_reverse_r(o1, problem)
+            for tau in taus:
+                if s._close(s._rotated_fit(s._translate(o1t, problem, tau), o2, norb), o2,
+                            tol):
+                    return s.TR_SPIN_ROTATION
+    return None
+
+
+class TestDedupFastPath(_Tmp):
+    def test_fast_path_keeps_the_candidate_set(self):
+        """Deduplication transforms each pattern to real space once and the
+        map search time-reverses it once. The candidate set (runs, rows and
+        their order) equals the one of the public per-pair functions, which
+        transform both patterns on every call."""
+        from unittest import mock
+        from hwave.initial import symmetry
+        from hwave.initial.enumerate import candidate_states
+        cases = ((self.square(L=8), [(2, 2, 1), (4, 4, 1), (4, 2, 1)]),
+                 (initial_fixtures.triangular(self.dest(), 6, U=4.0, T=0.1,
+                                              subshape=(3, 3, 1)), [(3, 3, 1), (2, 2, 1)]),
+                 (self.square(L=8, T=0.0), [(2, 2, 1), (8, 2, 1)]))
+        calls = []
+        to_r, inv_r = symmetry._to_r, symmetry._map_invariants_r
+
+        def slow_inv(O, o, problem, su2):
+            # what the public map_invariants does: transform O again
+            calls.append(1)
+            return inv_r(O, to_r(O, problem), problem, su2)
+
+        def slow_find(a, b, problem, su2, tr):
+            # what the public find_map does: transform both patterns again
+            return _search_recomputing_tr(to_r(a.O, problem), to_r(b.O, problem), problem,
+                                          su2, tr, plain_translations=True)
+
+        merged = 0
+        for toml, subs in cases:
+            kw = dict(subshapes=subs, n_random=2, max_candidates=8)
+            fast = candidate_states(toml, **kw)
+            with mock.patch("hwave.initial.enumerate.symmetry",
+                            _SymmetryProxy(symmetry, _to_r=lambda O, problem: _Tagged(O),
+                                           _map_invariants_r=slow_inv,
+                                           _find_map_r=slow_find)):
+                slow = candidate_states(toml, **kw)
+            self.assertEqual([r.run_id for r in fast.runs], [r.run_id for r in slow.runs])
+            self.assertEqual(json.dumps(fast.to_json(), sort_keys=True, default=str),
+                             json.dumps(slow.to_json(), sort_keys=True, default=str))
+            merged += sum(1 for r in fast.to_json()["rows"]
+                          if str(r.get("not_tried_reason") or "").startswith("duplicate of"))
+        self.assertGreater(len(calls), 0)       # the slow path ran
+        self.assertGreater(merged, 0)           # and deduplication merged runs

@@ -1,5 +1,5 @@
 """Spin-rotation and time-reversal checks, and the maps that deduplicate
-candidate patterns (design section 5, step 6).
+candidate patterns.
 
 Two candidates are merged only under a map that has been VERIFIED on the
 model: a check of the solver's own Hartree-Fock map, not a reading of the
@@ -56,7 +56,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-#: the relative tolerance of the spin-rotation check (design section 5 step 6)
+#: the relative tolerance of the spin-rotation check
 SU2_TOL = 1e-12
 
 #: the relative tolerance of the time-reversal check
@@ -66,10 +66,10 @@ TR_TOL = 1e-12
 MAP_TOL = 1e-10
 
 #: above this many Hartree-Fock applications (``4 N_probe``) the generator
-#: check is replaced by the random regression (design section 4.4)
+#: check is replaced by the random regression
 MAX_HF_APPLICATIONS = 20000
 
-#: the warning of a failed S_z check in 2Sz mode (design section 5 step 6)
+#: the warning of a failed S_z check in 2Sz mode
 SZ_WARNING = "the interaction tables break spin conservation about z"
 
 _STATUS_SO = "not applicable (spin-orbital)"
@@ -226,8 +226,8 @@ def _table_slots(problem):
 
 
 def table_probes(problem):
-    """The complete Hermitian probe basis of the table support (design
-    section 5 step 6): for each slot ``(r, i, j)`` read by a two-body table
+    """The complete Hermitian probe basis of the table support: for each
+    slot ``(r, i, j)`` read by a two-body table
     and each spin pair ``(s, t)``, the stored Green functions ``E + E^dag``
     and ``i (E - E^dag)``, ``E`` the unit at ``G[r, s, i, t, j]`` and
     ``E^dag`` its partner at ``G[-r, t, j, s, i]`` (zero probes dropped,
@@ -344,7 +344,8 @@ def _only(problem, name):
 
 
 def _sz_check(problem, h0, rng_seed, max_hf_applications):
-    """The S_z-only check of a fixed-2Sz problem (ruling R9).
+    """The S_z-only check of a fixed-2Sz problem, on the Hartree-Fock map of
+    the raw interaction tables (before the 2Sz block mask).
 
     The block mask of 2Sz mode removes every spin-transverse output, and the
     H-wave tables that break S_z (PairLift) write only such outputs, so the
@@ -374,8 +375,7 @@ def _sz_check(problem, h0, rng_seed, max_hf_applications):
 
 
 def su2_check(problem, *, rng_seed=364, max_hf_applications=MAX_HF_APPLICATIONS):
-    """The spin-rotation equivariance check of ``problem`` (design section 5
-    step 6).
+    """The spin-rotation equivariance check of ``problem``.
 
     Normal mode with free S_z: the generator identity ``Sigma'[i[S_mu^T,
     e]] = -i[S_mu, Sigma'[e]]`` on every probe of :func:`table_probes`,
@@ -553,7 +553,7 @@ def _from_components(c0, cv, norb):
 
 
 def _rotated_fit(o1, o2, norb):
-    """``U O1 U^dag`` for the proper rotation that best maps the spin part of
+    """``U o1 U^dag`` for the proper rotation that best maps the spin part of
     ``o1`` onto that of ``o2`` (Kabsch); the caller checks the fit."""
     c1 = _spin_components(o1, norb)
     c2 = _spin_components(o2, norb)
@@ -596,8 +596,9 @@ def _search(o1, o2, problem, su2, tr, *, plain_translations):
                 return "translation"
     tr_on = _tr_ok(problem, tr)
     su2_on = _su2_ok(problem, su2)
+    # time reversal of o1, computed once for the maps (b) and (b+c)
+    o1t = _time_reverse_r(o1, problem) if tr_on else None
     if tr_on:
-        o1t = _time_reverse_r(o1, problem)
         for tau in taus:
             if _close(_translate(o1t, problem, tau), o2, tol):
                 return "time_reversal"
@@ -607,19 +608,18 @@ def _search(o1, o2, problem, su2, tr, *, plain_translations):
             if _close(_rotated_fit(_translate(o1, problem, tau), o2, norb), o2, tol):
                 return "spin_rotation"
         if tr_on:
-            o1t = _time_reverse_r(o1, problem)
             for tau in taus:
                 if _close(_rotated_fit(_translate(o1t, problem, tau), o2, norb), o2, tol):
                     return TR_SPIN_ROTATION
     return None
 
 
-def find_map(O1, O2, *, problem, su2, tr) -> Optional[
+def find_map(Oa, Ob, *, problem, su2, tr) -> Optional[
         Literal["translation", "time_reversal", "spin_rotation",
                 "time_reversal+spin_rotation"]]:
-    """The verified map taking pattern ``O1`` to ``O2``, or ``None``.
+    """The verified map taking pattern ``Oa`` to ``Ob``, or ``None``.
 
-    Tried in this order, each entrywise to ``MAP_TOL * max(||O1||, ||O2||)``
+    Tried in this order, each entrywise to ``MAP_TOL * max(||Oa||, ||Ob||)``
     on ``O(R)``, and each possibly followed by a lattice translation of the
     cell: (a) ``"translation"``, a translation alone (the identity
     included); (b) ``"time_reversal"``, only when ``tr.invariant`` (and
@@ -629,11 +629,16 @@ def find_map(O1, O2, *, problem, su2, tr) -> Optional[
     both are verified. The reason names every symmetry the merge relies on
     besides translations.
 
-    ``O1``, ``O2``: Hamiltonian-convention ``O(k)`` ``(nvol, nd, nd)`` of
+    ``Oa``, ``Ob``: Hamiltonian-convention ``O(k)`` ``(nvol, nd, nd)`` of
     ``problem``'s folded cell. Raises ``ValueError`` for another shape.
     """
-    return _search(_to_r(O1, problem), _to_r(O2, problem), problem, su2, tr,
-                   plain_translations=True)
+    return _find_map_r(_to_r(Oa, problem), _to_r(Ob, problem), problem, su2, tr)
+
+
+def _find_map_r(oa_r, ob_r, problem, su2, tr):
+    """:func:`find_map` on the patterns in real space, ``O(R)`` of
+    :func:`_to_r` (for a caller that keeps ``O(R)`` of each pattern)."""
+    return _search(oa_r, ob_r, problem, su2, tr, plain_translations=True)
 
 
 def _channel_norms(o_r, problem):
@@ -673,7 +678,11 @@ def map_invariants(O, *, problem, su2=None) -> Tuple[np.ndarray, ...]:
 
     A zero pattern gives zeros. Two patterns whose invariants differ are
     related by no map; equal invariants decide nothing."""
-    o = _to_r(O, problem)
+    return _map_invariants_r(O, _to_r(O, problem), problem, su2)
+
+
+def _map_invariants_r(O, o, problem, su2):
+    """:func:`map_invariants` with ``o = _to_r(O, problem)`` given."""
     spectrum = np.sort(np.linalg.eigvalsh(np.asarray(O, dtype=np.complex128)).ravel())
     n2 = float(np.vdot(o, o).real)
     taus = _translations(problem)
@@ -693,6 +702,6 @@ def sign_map_verified(O, *, problem, su2, tr) -> bool:
     to ``-O``: time reversal, a global spin rotation, or both, each possibly
     followed by a translation (the maps (b) and (c) of :func:`find_map`, so
     the two functions agree). A translation alone does not count: at q not
-    equivalent to -q it is a phase shift (design section 5 step 6)."""
+    equivalent to -q it is a phase shift."""
     o = _to_r(O, problem)
     return _search(o, -o, problem, su2, tr, plain_translations=False) is not None

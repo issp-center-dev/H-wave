@@ -6,7 +6,12 @@
 modules to the package; this test scans every one of them.
 """
 import ast
+import importlib
+import io
 import os
+import pydoc
+import re
+import tokenize
 import unittest
 
 _PKG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -111,3 +116,63 @@ class TestImportBoundary(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+#: references to documents that are not part of the package (design
+#: sections, decision or ruling numbers, plan or task names): a reader of
+#: ``help()`` cannot resolve them, so no docstring, comment or string of
+#: ``hwave.initial`` may contain one
+INTERNAL_REFERENCE = re.compile(
+    r"design sections?|owner decision|owner[- ]approved|\bruling\b|\bplan calls?\b|"
+    r"\bO[0-9]\b|\bQ[0-9]\b|\bR(?:[0-9]|10)\b|\bPR \d|spec V\d|\bsections? \d|§|"
+    r"\bstage 0\b|\bI1\.\d+|\btask I\d")
+
+
+def internal_references(path):
+    """``(line, text)`` of every match of :data:`INTERNAL_REFERENCE` in the
+    strings and comments of the module at ``path``."""
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    hits = []
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type in (tokenize.STRING, tokenize.COMMENT):
+            for i, line in enumerate(tok.string.splitlines()):
+                if INTERNAL_REFERENCE.search(line):
+                    hits.append((tok.start[0] + i, line.strip()))
+    return hits
+
+
+class TestNoInternalReferences(unittest.TestCase):
+    def test_sources_have_no_internal_references(self):
+        hits = []
+        for name in sorted(os.listdir(_PKG)):
+            if name.endswith(".py"):
+                hits += ["{}:{}: {}".format(name, n, t)
+                         for n, t in internal_references(os.path.join(_PKG, name))]
+        self.assertEqual(hits, [])
+
+    def test_help_has_no_internal_references(self):
+        mods = ["hwave.initial"] + ["hwave.initial." + n[:-3] for n in sorted(os.listdir(_PKG))
+                                    if n.endswith(".py") and not n.startswith("_")]
+        self.assertGreaterEqual(len(mods), 13)
+        hits = []
+        for m in mods:
+            text = pydoc.render_doc(importlib.import_module(m), renderer=pydoc.plaintext)
+            hits += ["{}: {}".format(m, ln.strip()) for ln in text.splitlines()
+                     if INTERNAL_REFERENCE.search(ln)]
+        self.assertEqual(hits, [])
+
+    def test_pattern_catches_the_old_forms(self):
+        for text in ("(design section 5.1)", "owner decision O8", "(O7)", "ruling R8",
+                     "(owner-approved)", "plan call", "spec V2", "the PR 1a reader",
+                     "section 8.2", "stage 0 pending", "(Q1)", "§6.3"):
+            self.assertRegex(text, INTERNAL_REFERENCE)
+        for text in ("O(k)", "Oa", "R -> q.R", "O_k", "Q_TIE", "2Sz", "R0x"):
+            self.assertNotRegex(text, INTERNAL_REFERENCE)
+
+
+class TestPackageNamespace(unittest.TestCase):
+    def test_dir_lists_the_lazy_exports(self):
+        import hwave.initial as pkg
+        for name in pkg.__all__:
+            self.assertIn(name, dir(pkg))

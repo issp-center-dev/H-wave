@@ -1,5 +1,5 @@
-"""The candidate enumerator (design sections 5, 5.1, 5.2, 5.3, 8.1):
-reserved and baseline candidates, the runs they give on each ``SubShape``,
+"""The candidate enumerator: reserved and baseline candidates, the runs
+they give on each ``SubShape``,
 deduplication under verified maps, and the per-``SubShape`` quotas.
 
 :func:`candidate_states` is the entry point. Its steps, each a public
@@ -11,15 +11,15 @@ function:
    random patterns assigned round-robin over the ``SubShape`` list
    (``seed = base_seed + i``, regenerated as ``default_rng(seed)``).
 2. :func:`baseline_candidates`: per ``SubShape`` B, the site-summed spin and
-   charge patterns of design section 5.3 at every q commensurate with B.
-   The large tier has these only (owner decision Q1); orbital patterns
+   charge patterns at every q commensurate with B (see **Order** below).
+   The large tier has these only; orbital patterns
    come with the small and medium tiers.
-3. :func:`expand_runs`: the cross-evaluation scope of section 8.1. User
+3. :func:`expand_runs`: which candidate runs on which ``SubShape``. User
    and literature candidates are evaluated on every B, para and ferro run
    once on every B, a random or generated candidate only on the B it was
    written for (its PatternSpec ``subshape``). A pair whose q is not
    commensurate with B is a not-tried row with its cell proposal.
-4. The response checks of section 5.2 (only para when the model has no
+4. The response checks (only para when the model has no
    interacting orbital or every mu-group is empty or full; the block check;
    the constraint modes), before any seeding.
 5. :func:`deduplicate`: per evaluated B, under the maps of
@@ -30,7 +30,7 @@ function:
 
 **Order.** Runs and rows are listed per ``SubShape`` (in the order given),
 and within one in the order para, ferro, random, user and literature
-(as given), baseline. The baseline order (design section 5.3) is
+(as given), baseline. The baseline order is
 round-robin over q by sign-pattern rank: for rank r = 0, 1, ... (the r-th
 representative eta of :func:`sign_patterns` in each (q, channel)), every
 commensurate q in q-order (by increasing order n, so Gamma first and the
@@ -48,41 +48,43 @@ before the sign-pattern cap (it takes no slot) and listed in the
 ``skipped_patterns`` of the SubShape's ``cells`` record with that reason
 (:data:`UNIFORM_CHARGE_REASON`).
 
-**Sign patterns and +-O** (plan calls). The site sign patterns eta run over
+**Sign patterns and +-O.** The site sign patterns eta run over
 the interacting sites of the primitive cell (site groups with at least one
 interacting orbital; a site without one carries no pattern). At q = -q (q
 = 0 included) the -O row of every pattern is listed. Whether a map merges
 eta and -eta is decided on the first non-zero pattern of the (q, channel)
 from :func:`hwave.initial.symmetry.find_map` (O to -O, translations
-included, design section 5 step 6): for a site-summed pattern the answer
+included): for a site-summed pattern the answer
 does not depend on eta (a translation multiplies the whole pattern by
 ``e^{iq.R}``, time reversal and a spin rotation act on its sigma part).
 When merged, the -O rows are still listed and :func:`deduplicate` turns
 them into duplicate rows; they do not count toward ``max_site_patterns``.
 When not merged, eta and -eta are a consecutive pair of
 :func:`sign_patterns` (``both_signs=True``) and both count. At q not
-equal to -q the second phase row replaces the -O row (design section
-5.1); its sign map is :func:`hwave.initial.symmetry.sign_map_verified`.
+equal to -q the second phase row replaces the -O row; its sign map is
+:func:`hwave.initial.symmetry.sign_map_verified`.
 No map is assumed: SU(2) and time reversal are the numeric checks of
 :mod:`hwave.initial.symmetry`.
 
-**Names.** Candidates are named by their pattern (owner decision O8):
+**Names.** Candidates are named by their seeding pattern, not by the state
+it induces:
 ``Candidate.label`` is :func:`hwave.initial.labels.pattern_label` and the
 id slug is built from its ASCII form. The sign pattern is passed as a
 tuple, so a lattice name such as "Néel" is never derived.
 
-**Cell notes** (plan call, parked from the cells task). The
+**Cell notes.** The
 ``rotated_note`` of :func:`hwave.initial.cells.propose` (a smaller
 non-diagonal cell exists) is shown only on a not-representable row, as
 part of its proposal (``proposal_note``). A representable row, Néel on a
 2x2 cell included, carries no note: the run is possible as it is.
 
-**Indices.** Every public orbital index is physical (ruling R8); in
+**Indices.** Every public orbital index is a physical orbital index (the
+convention of :mod:`hwave.results`); in
 spin-orbital mode the patterns are realised on the interleaved layout by
 :func:`hwave.initial.patterns.realise`.
 
 **T_hint** never enters: it is computed for the ``hint`` record of the
-model only (design section 6.4 "Scope").
+model only, and never changes the candidate set or the seeds.
 """
 import dataclasses
 import itertools
@@ -119,14 +121,14 @@ RESERVED_FAMILIES = ("para", "ferro", "random")
 EXEMPT_FAMILIES = ("user", "literature")
 #: families counted by the quotas
 GENERATED_FAMILIES = ("baseline", "orbital", "instability")
-#: the precedence of the families (design section 5.1)
+#: the precedence of the families
 PRECEDENCE = ("user", "literature", "para", "ferro", "random", "baseline", "orbital",
               "instability")
 
-#: the note of a model without interacting orbitals (design section 5.2)
+#: the note of a model without interacting orbitals
 NC_ZERO_NOTE = ("n_c = 0: no orbital takes part in an interaction, so UHF is "
                 "single-shot; only para is written")
-#: the note of an empty or full model (design section 5.2)
+#: the note of an empty or full model
 EMPTY_FULL_NOTE = ("every mu-group is empty or full (Ncond = 0 or Ncond = Nstate): "
                    "only para is written; every pattern row is degenerate with para")
 #: why the all-+ charge pattern at q = 0 is not emitted
@@ -159,8 +161,8 @@ def _check_int(name, v, low):
 
 @dataclass(frozen=True)
 class Limits:
-    """The caps of one enumeration (design section 5.1; owner-approved
-    defaults). The ``**limits`` keywords of :func:`candidate_states` are
+    """The caps of one enumeration, with their defaults. The ``**limits``
+    keywords of :func:`candidate_states` are
     exactly these field names (:meth:`from_keywords`).
 
     ``top_k`` (eigenvectors per q, hint tiers), ``max_candidates`` (the
@@ -223,7 +225,7 @@ class Limits:
 def sign_patterns(n_sites: int, *, cap: int = 16,
                   both_signs: bool = False) -> Iterator[Tuple[int, ...]]:
     """The site sign patterns eta over ``n_sites`` sites, lazily, in a fixed
-    order (plan call).
+    order.
 
     Every class ``{eta, -eta}`` is represented by the pattern with
     ``eta[0] = +1``; the representatives are complete (all ``2^(n_sites -
@@ -298,8 +300,8 @@ def _spin_axes(su2, problem):
 
 def _named(family, spec, facts, subshape, *, eta, spiral, rank, phase_index, neg, taken,
            amplitude, sources, patterns=None):
-    """The candidate of ``spec``, named by its pattern (owner decision O8),
-    and its realised ``O(k)`` on ``subshape``."""
+    """The candidate of ``spec``, named by its seeding pattern, and its
+    realised ``O(k)`` on ``subshape``."""
     O = realise(spec, facts, subshape)
     lab = labels.pattern_label(O, facts, q=spec.q, eta=eta, phase=spec.phase,
                                sign=spec.sign, spiral=spiral)
@@ -412,8 +414,8 @@ def skipped_patterns(facts, subshape) -> list:
 
 def baseline_candidates(facts, subshape, *, su2, tr, limits=None, tier="large",
                         taken=None, patterns=None) -> List[Candidate]:
-    """The baseline candidates of the cell ``subshape`` (design section
-    5.3): for every q commensurate with it, the site-summed spin patterns
+    """The baseline candidates of the cell ``subshape``: for every q
+    commensurate with it, the site-summed spin patterns
     (z, x, y; z alone under a passed SU(2) check or with 2Sz fixed; plus
     one coplanar spiral per sign pattern at q not equal to -q under a
     passed SU(2) check) and the site-summed charge patterns (traceless
@@ -424,7 +426,7 @@ def baseline_candidates(facts, subshape, *, su2, tr, limits=None, tier="large",
     is ``subshape`` (a generated row runs only on its own cell). ``su2``,
     ``tr``: the checks of :mod:`hwave.initial.symmetry`. ``limits``:
     :class:`Limits` (``max_site_patterns``, ``amplitude``). ``tier``: the
-    large tier has spin and charge only (owner decision Q1); orbital
+    large tier has spin and charge only; orbital
     patterns (``family = "orbital"``) arrive with the small and medium
     tiers (``NotImplementedError``). ``taken``: the ids already used
     (:func:`make_candidate_id`). ``patterns``: an optional dict that
@@ -463,7 +465,7 @@ def _para(taken):
 
 def reserved_candidates(facts, subshapes, *, su2, tr, n_random=4, base_seed=0,
                         amplitude=DEFAULT_AMPLITUDE, taken=None) -> List[Candidate]:
-    """The reserved candidates (design section 5.1): para, ferro and random.
+    """The reserved candidates: para, ferro and random.
 
     * para and ferro are pattern-level: PatternSpec ``subshape = [1, 1, 1]``
       and q = 0, one :class:`Candidate` each, run on every ``SubShape``
@@ -600,7 +602,7 @@ def _own_cell_only(cand):
 def expand_runs(cands, subshapes, *, cellshape,
                 max_denominator: int = cells.MAX_DENOMINATOR):
     """The runs of ``cands`` on ``subshapes`` and one row per evaluated
-    pair (design section 8.1), in the order ``SubShape`` by ``SubShape``,
+    pair, in the order ``SubShape`` by ``SubShape``,
     candidates in the given order.
 
     User and literature candidates are evaluated on every B; para and
@@ -676,7 +678,7 @@ def _only_para(problem):
 
 
 def _response_checks(runs, rows, facts, *, nc_zero, only_para, cache):
-    """Design section 5.2 before any seeding: with ``nc_zero`` or
+    """The response checks, before any seeding: with ``nc_zero`` or
     ``only_para`` every non-para run is a no-response row; otherwise a
     pattern outside the solver blocks is refused and a constraint mode is
     a no-response row."""
@@ -752,8 +754,8 @@ def _candidates_by_invariants(kept, inv, i):
 
 
 def deduplicate(runs, *, facts, su2, tr, cache=None):
-    """Merge runs that a verified map takes into one another (design
-    section 5 step 6), per evaluated ``SubShape``.
+    """Merge runs that a verified map takes into one another, per evaluated
+    ``SubShape``.
 
     ``facts``: a mapping ``SubShape -> ModelFacts`` loaded on that cell
     (the map's problem: a translation is a translation of that cell).
@@ -765,7 +767,7 @@ def deduplicate(runs, *, facts, su2, tr, cache=None):
     and the kept run's row ``sources`` gain the duplicate's sources and
     ``"merged <run_id> (<map>)"`` (the frozen ``Candidate.sources`` is not
     changed). Reserved runs are never removed, and neither are user and
-    literature runs (design section 5.1: "never removed"): such a run that
+    literature runs: such a run that
     matches a kept one stays a run, and its row is only marked,
     ``duplicate_of = "<run_id> (<map>)"`` (``None`` otherwise), the kept
     row's ``sources`` gaining ``"equivalent <run_id> (<map>)"``. ``cache``:
@@ -784,15 +786,18 @@ def deduplicate(runs, *, facts, su2, tr, cache=None):
         idx = sorted(idx, key=lambda i: (runs[i].candidate.family not in RESERVED_FAMILIES, i))
         kept = []
         inv = {}
+        # O(R) of each run, transformed once: the invariants and every map
+        # search of the run read the same array
+        o_r = {}
         for i in idx:
             run = runs[i]
             O = _realised(run, facts, cache)
-            inv[i] = symmetry.map_invariants(O, problem=f.problem, su2=su2)
+            o_r[i] = symmetry._to_r(O, f.problem)
+            inv[i] = symmetry._map_invariants_r(O, o_r[i], f.problem, su2)
             rows[i] = _row(run, f.cellshape)
             target = None
             for j in _candidates_by_invariants(kept, inv, i):
-                m = symmetry.find_map(_realised(runs[j], facts, cache), O, problem=f.problem,
-                                      su2=su2, tr=tr)
+                m = symmetry._find_map_r(o_r[j], o_r[i], f.problem, su2, tr)
                 if m is not None:
                     target = (j, m)
                     break
@@ -816,7 +821,7 @@ def deduplicate(runs, *, facts, su2, tr, cache=None):
 
 
 def apply_quotas(runs, rows, limits):
-    """The per-``SubShape`` quotas of design section 5.1.
+    """The per-``SubShape`` quotas.
 
     Only generated runs are counted: baseline and orbital together (the
     baseline quota) and instability. Per B, instability is first capped at
@@ -973,7 +978,7 @@ def _model_record(base, su2, tr, hint, warnings):
 
 def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=None,
                      extra=(), orbital_site=None, **limits) -> CandidateSet:
-    """The candidate set of a UHFk input (design section 5).
+    """The candidate set of a UHFk input.
 
     Parameters
     ----------
@@ -982,8 +987,9 @@ def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=
         the input builder is not supported yet).
     subshapes : list of three-int sequences, optional
         The candidate ``SubShape`` list; default the input's ``SubShape``.
-        Without either, ``ValueError`` with the design section 5 step 2
-        warning. Each must divide ``CellShape``; a duplicate is refused.
+        Without either, ``ValueError`` with the warning
+        :data:`hwave.initial.facts.NO_SUBSHAPE_WARNING`. Each must divide
+        ``CellShape``; a duplicate is refused.
     tier : ``"auto"``, ``"large"``, ``"medium"`` or ``"small"``
         In this release ``"auto"`` resolves to ``"large"``; ``"small"`` and
         ``"medium"`` raise ``NotImplementedError``.

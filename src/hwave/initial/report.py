@@ -1,9 +1,8 @@
-"""The coverage report and the ranking (design sections 8.2, 8.3 and the
-summary template of section 12).
+"""The coverage report, the ranking and the summary.
 
 * :func:`coverage_document` turns a :class:`CandidateSet` into the
   ``coverage.json`` document (``schema_version = 4``), with every key of
-  design section 8.2, and checks it with :func:`validate_coverage`.
+  the schema, and checks it with :func:`validate_coverage`.
 * :func:`rank` ranks the collected rows on the free energy per primitive
   cell, ``FreeEnergy_Total / (Lx Ly Lz)`` (the UHFk free energy; not
   ``Energy_Total``, the internal energy), in one list per comparable group.
@@ -18,12 +17,12 @@ among the candidates tried.
 
 **Row fields.** A row of the document has every key of :data:`ROW_FIELDS`:
 the enumerator's fields (including ``pattern_label``, ``proposal_note``,
-``duplicate_of`` and ``amplitude_requested``), the seed fields of design
-section 7 (:data:`SEED_FIELDS`) and the post-run fields
+``duplicate_of`` and ``amplitude_requested``), the seed fields
+(:data:`SEED_FIELDS`) and the post-run fields
 (:data:`POST_RUN_FIELDS`); a key the row does not carry is null.
 
-**Null rules** (:func:`validate_coverage`). The seed fields follow the
-table of design section 7: para (tried) may set ``seed_base``, ``shell``,
+**Null rules** (:func:`validate_coverage`). The seed fields follow these
+rules: para (tried) may set ``seed_base``, ``shell``,
 ``moments_h0`` and ``h_used = 0`` only; "no response (degenerate with
 para)" ``seed_base``, ``shell``, ``moments_h0``, ``m0``, ``m_inf``; "no
 response (constraint)" ``seed_base``, ``m0``; a writer refusal after
@@ -58,18 +57,16 @@ __all__ = [
     "orbital_centres", "summary_text",
 ]
 
-#: ``coverage.json`` schema version. 4 is the value of the design (the
-#: heading of section 8.2, "coverage.json (schema_version = 4)"), not a plan
-#: choice: do not reset it to 1.
+#: ``coverage.json`` schema version. The first published version is 4 on
+#: purpose: do not reset it to 1.
 SCHEMA_VERSION = 4
 
-#: the fixed sentence of design section 8.2, verbatim
+#: the fixed sentence of every report, verbatim
 FIXED_SENTENCE = ("The selected state is the lowest free energy among the candidates "
                   "tried. It is not a proof of the ground state.")
 
-#: the structural exclusions of design section 8.2 (v1); the wording of the
-#: design, with its internal section and decision references replaced by
-#: plain words (they reach coverage.json and every summary)
+#: the structural exclusions: the kinds of state no candidate of this
+#: version covers (they reach coverage.json and every summary)
 STRUCTURAL_EXCLUSIONS = (
     "multi-q superpositions (double-Q, triple-Q, vortex crystals)",
     "sliding-phase variants beyond the two kept phases, including an Umklapp phase "
@@ -92,24 +89,24 @@ CHOSEN_BY = ("auto", "user", "auto (interim rule)")
 INTERIM_TIER_RULE = ("auto resolves to the large tier (no cost model in this release; "
                      "the small and medium tiers arrive later)")
 
-#: the share of the host memory a tier may plan for (owner-approved)
+#: the share of the host memory a tier may plan for
 BUDGET_FRACTION = 0.25
 
 #: near-degeneracy: |dF| per site (per cell when the grouping is ambiguous)
-#: below this, in input energy units (owner-approved)
+#: below this, in input energy units
 DEGENERACY_TOL = 1e-4
 
-#: the post-run statuses (design section 8.2)
+#: the post-run statuses
 STATUSES = ("converged", "not_converged", "convergence_unverified", "failed", "not_run",
             "seed_unverified")
 
 PHASE_MARKERS = ("pre_run", "post_run")
 
-#: the seed fields of design section 7
+#: the seed fields of a row
 SEED_FIELDS = ("seed_base", "shell", "moments_h0", "m0", "m_inf", "m_target", "m_used",
                "h_hi", "h_used", "amplitude_requested", "amplitude_used", "cap_reason")
 
-#: the post-run fields (design section 8.2, filled by collect)
+#: the post-run fields (filled by collect)
 POST_RUN_FIELDS = ("run_dir", "status", "exit_code", "error_summary", "wall_time_s",
                    "iterations", "rest", "scf_residual", "scf_eps_tol", "scf_note",
                    "energy_total", "free_energy_total", "free_energy_per_cell",
@@ -142,7 +139,7 @@ _HINT_KEYS = ("status", "skip_reason", "T_hint", "rule", "W0", "W_act", "W_all",
               "D", "W_act_groups", "W_source", "q_status", "L_min", "t_hint_rule",
               "t_hint_source", "effect", "para_status", "para_free_energy",
               "para_residual", "gamma_self_adjoint", "method", "q_set")
-#: null in a skipped hint record (design section 8.2)
+#: null in a skipped hint record
 _HINT_SKIPPED_NULL = ("para_free_energy", "para_residual", "gamma_self_adjoint", "method")
 _TIER_KEYS = ("name", "chosen_by", "estimate", "budget", "constants")
 _LIMIT_KEYS = ("top_k", "max_candidates", "quota_instability", "precedence",
@@ -253,7 +250,7 @@ def _full_row(row, phase_marker):
 
 def coverage_document(cset, *, phase_marker: Literal["pre_run", "post_run"],
                       tier_chosen_by: str = "auto (interim rule)", ranking=None) -> dict:
-    """The ``coverage.json`` document of ``cset`` (design section 8.2).
+    """The ``coverage.json`` document of ``cset``.
 
     ``phase_marker``: ``"pre_run"`` (prepare) or ``"post_run"`` (collect;
     the rows then carry the post-run fields). ``tier_chosen_by``: one of
@@ -263,7 +260,8 @@ def coverage_document(cset, *, phase_marker: Literal["pre_run", "post_run"],
 
     The hint record moves from ``model["hint"]`` to the top-level
     ``hint``; ``limits`` gains ``T_hint`` (value, rule and constants), the
-    label thresholds (owner decision O8), ``degeneracy_tol``, ``site_tol``,
+    label thresholds (:data:`hwave.initial.labels.THRESHOLDS`),
+    ``degeneracy_tol``, ``site_tol``,
     ``quota_boundary`` (:func:`quota_boundary`), the structural exclusions
     and the fixed sentence. The document is checked by
     :func:`validate_coverage` before it is returned (``ValueError``)."""
@@ -314,7 +312,7 @@ def _missing(obj, keys, where, errs):
 
 
 def _allowed_seed(row):
-    """The seed fields ``row`` may set (design section 7 table)."""
+    """The seed fields ``row`` may set (the null rules of the module text)."""
     if row.get("tried"):
         if row.get("family") == "para" or row.get("channel") == "para":
             return _PARA_SEED
@@ -409,7 +407,7 @@ def _check_hint(hint, errs):
 
 
 def validate_coverage(doc) -> None:
-    """Check a ``coverage.json`` document: every key of design section 8.2
+    """Check a ``coverage.json`` document: every key of the schema
     present, ``schema_version = 4``, the null rules of the module text,
     ``tier.chosen_by`` in :data:`CHOSEN_BY`, the structural exclusions and
     the fixed sentence verbatim. ``ValueError`` listing every problem."""
@@ -495,7 +493,7 @@ def _row_T(row, f):
 
 
 def energy_fields(row, *, facts) -> dict:
-    """The ranking key of a collected row (design section 8.3):
+    """The ranking key of a collected row:
     ``free_energy_per_cell = FreeEnergy_Total / (Lx Ly Lz)`` with ``L`` the
     row's ``cellshape``; at T = 0 ``Energy_Total`` when the free energy is
     absent (an older H-wave); at T > 0 then no key (``refused`` names the
@@ -584,7 +582,7 @@ class RankList:
 
 @dataclasses.dataclass(frozen=True)
 class Ranking:
-    """The ranking of design section 8.3. ``lists``: the converged rows, one
+    """The ranking of the collected rows. ``lists``: the converged rows, one
     list per (T, Ncond per cell, CellShape, 2Sz), the model's group first.
     ``flagged_unverified``: the ``convergence_unverified`` rows on the same
     key. ``unranked``: every other tried row (``not_converged``,
@@ -792,7 +790,7 @@ def unranked_reason(row) -> str:
 
 
 def rank(rows, *, facts, degeneracy_tol: float = DEGENERACY_TOL) -> Ranking:
-    """Rank the collected rows (design section 8.3).
+    """Rank the collected rows.
 
     Only ``converged`` rows enter a ranking list, ordered by
     :func:`energy_fields` ``free_energy_per_cell`` (ties by run id). Rows
@@ -911,8 +909,8 @@ def _op_json(op) -> dict:
 
 def order_parameter_records(run_or_toml, *, site_groups, orbital_centres,
                             base_dir=None) -> dict:
-    """The post-run order parameters of one UHFk run (design section 8.2,
-    "M(Q), dn(Q), per orbital"), read twice with
+    """The post-run order parameters of one UHFk run (the spin and charge
+    amplitudes M(Q) and dn(Q), per orbital), read twice with
     :func:`hwave.results.read_uhfk_order_parameters`:
 
     * ``per_orbital``: ``site_of_orbital`` the identity, each physical
@@ -1028,7 +1026,7 @@ def _rank_rows(lst):
 
 
 def summary_text(doc, ranking=None) -> str:
-    """The summary of design section 12: the model and cost line; the table
+    """The summary text: the model and cost line; the table
     (id, label, F per cell, dF per site, status, final label); the flags;
     the structural exclusions; the fixed sentence (always the last line).
     ``ranking``: a :class:`Ranking` (post-run); without one the tried rows
