@@ -43,6 +43,12 @@ List of error messages
 
   **mode :** UHFk (read_input_k)
 
+- ``read_input_k:`` *file* ``: row`` *i s j t* ``appears twice with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
+
+  **description :** the ``initial_uhf`` file *file* repeats the row *i s j t* with values that differ by more than :math:`10^{-10}`.
+
+  **mode :** UHFk (read_input_k)
+
 - ``Get_param: key must be mod or ham or output.``
 
   **description :** unsupported keyword is given to ``get_param()``.
@@ -64,6 +70,12 @@ List of error messages
 - ``range check for`` *type* ``failed.``
 
   **description :** the value of *type* is not appropriate.
+
+  **mode :** UHFk
+
+- ``initial_uhf: rows (`` *i s j t* ``) and (`` *i' s j' t* ``) give the same element G[...](d=[...]) with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
+
+  **description :** two rows of ``initial_uhf`` map to the same element of the initial Green function (for example, the sites ``j`` and ``j'`` are the same after the displacement is taken modulo ``CellShape``) and their values differ by more than :math:`10^{-10}`.
 
   **mode :** UHFk
 

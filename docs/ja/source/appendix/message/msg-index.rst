@@ -43,6 +43,12 @@
 
   **モード :** UHFk (read_input_k)
 
+- ``read_input_k:`` *file* ``: row`` *i s j t* ``appears twice with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
+
+  **説明 :** ``initial_uhf``\ のファイル *file* で行 *i s j t* が繰り返され、その値の差が\ :math:`10^{-10}`\ を超えている
+
+  **モード :** UHFk (read_input_k)
+
 - ``Get_param: key must be mod or ham or output.``
 
   **説明 :** ``get_param()``\ の引数が不正
@@ -64,6 +70,12 @@
 - ``range check for`` *type* ``failed.``
 
   **説明 :** *type* の値が範囲外
+
+  **モード :** UHFk
+
+- ``initial_uhf: rows (`` *i s j t* ``) and (`` *i' s j' t* ``) give the same element G[...](d=[...]) with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
+
+  **説明 :** ``initial_uhf``\ の 2 つの行が初期グリーン関数の同じ要素を与え (たとえば変位を\ ``CellShape``\ を法として取ると\ ``j``\ と\ ``j'``\ が同じサイトになる)、その値の差が\ :math:`10^{-10}`\ を超えている
 
   **モード :** UHFk
 

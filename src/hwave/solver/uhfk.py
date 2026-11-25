@@ -10,6 +10,7 @@ from . import hartree_fock
 from . import spin_orbital
 from . import hamiltonian_k
 from ..qlmsio import wan90
+from ..qlmsio.read_input_k import DUPLICATE_ROW_TOL
 
 logger = logging.getLogger("qlms").getChild("uhfk")
 
@@ -1055,20 +1056,43 @@ class UHFk(solver_base):
             site = _pack_site(ix,iy,iz)
             tbl[idx] = (site, a)
 
-        green_uhf = np.zeros((lvol,lvol,ns,norb,ns,norb),dtype=np.complex128)
+        # Primitive-cell translation invariance makes the origin row sufficient
+        # for this initial guess, so only rows whose site i is in the origin
+        # cell are used; the others are counted and reported (#372).
+        # Sublattice-ordered states need green_sublattice input instead: a
+        # single origin row cannot preserve their site dependence.
+        green_uhf = np.zeros((lvol,ns,norb,ns,norb),dtype=np.complex128)
+        placed = {}
+        n_unused = 0
         for (i,s,j,t),v in info.items():
             isite, a = tbl[i]
             _, b = tbl[j]
+            if isite != 0:
+                n_unused += 1
+                continue
             ix,iy,iz,_ = geom["site2vec"][i]
             jx,jy,jz,_ = geom["site2vec"][j]
             # G(d) = <c^dag(R+d)c(R)>, with the same sign as _save_greenone.
-            jsite = _pack_site((ix-jx) % lx, (iy-jy) % ly, (iz-jz) % lz)
-            green_uhf[isite,jsite,s,a,t,b] = v
+            d = ((ix-jx) % lx, (iy-jy) % ly, (iz-jz) % lz)
+            elem = (_pack_site(*d),s,a,t,b)
+            if elem in placed:
+                (i0,j0), v0 = placed[elem]
+                if abs(v - v0) > DUPLICATE_ROW_TOL:
+                    logger.error(
+                        "initial_uhf: rows ({} {} {} {}) and ({} {} {} {}) give the "
+                        "same element G[s={}, a={}; t={}, b={}](d={}) with different "
+                        "values {} and {} (tolerance {:g})".format(
+                            i0, s, j0, t, i, s, j, t, s, a, t, b, list(d), v0, v,
+                            DUPLICATE_ROW_TOL))
+                    exit(1)
+            placed[elem] = ((i,j), v)
+            green_uhf[elem] = v
 
-        # Primitive-cell translation invariance makes the origin row sufficient
-        # for this initial guess. Sublattice-ordered states need green_sublattice
-        # input instead: a single origin row cannot preserve their site dependence.
-        return green_uhf[0]
+        if n_unused > 0:
+            logger.info("initial_uhf: {} row(s) with site i outside the origin "
+                        "cell were not used (translation invariance: only rows "
+                        "with i in cell 0 0 0 are read)".format(n_unused))
+        return green_uhf
 
     @do_profile
     def _make_ham_trans(self):
@@ -1212,6 +1236,7 @@ class UHFk(solver_base):
         # conservation, so a fixed 2Sz is ill-defined: reject them.
         if not self.sz_free and not self.enable_spin_orbital and ns == 2:
             self._check_spin_flip_with_fixed_sz(trans_conn, norb)
+            self._warn_sz_breaking_interactions()
             spin_diag = np.zeros((nd, nd), dtype=bool)
             spin_diag[:norb, :norb] = True
             spin_diag[norb:, norb:] = True
@@ -1317,6 +1342,31 @@ class UHFk(solver_base):
                         "{} mu-group(s) with Nconds={}".format(
                             len(blocks), block_desc,
                             len(group_nconds), group_nconds))
+
+    def _warn_sz_breaking_interactions(self):
+        """Name the S_z-breaking interaction terms a fixed 2Sz ignores.
+
+        With 2Sz fixed, the spin-diagonal mask in :meth:`_detect_blocks`
+        keeps the up and down sectors in separate blocks, and
+        :meth:`_make_ham` zeroes every cross-block element of the
+        mean-field Hamiltonian. A term that changes S_z (PairLift) writes
+        only such spin-off-diagonal elements, so it drops out of the
+        calculation. Running on is kept, so that inputs that run today
+        still run; this logs one WARNING per run (``_detect_blocks`` runs
+        once per ``solve``). The test reads the raw spin tables
+        (:func:`hartree_fock.sz_breaking_types`), so it costs one pass
+        over at most seven ``(2, 2, 2, 2)`` tables and leaves the
+        numerics untouched.
+        """
+        dropped = hartree_fock.sz_breaking_types(self.inter_table,
+                                                 self.spin_table)
+        if dropped:
+            logger.warning(
+                "2Sz-fixed mode: the interaction term(s) {} do not conserve "
+                "S_z and are ignored under a fixed 2Sz (the spin-block "
+                "structure removes every spin-off-diagonal element they "
+                "contribute). Omit 2Sz (Sz-free mode) to include them."
+                .format(", ".join(dropped)))
 
     def _so_to_virtual_green(self, G_so):
         """Spin-orbital Green function ``(nvol, 1, nd, 1, nd)`` (interleaved
