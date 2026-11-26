@@ -118,6 +118,16 @@ def run(*, input_dict: Optional[dict] = None, input_file: Optional[str] = None):
     fmt = "%(asctime)s %(levelname)s %(name)s: %(message)s"
     logging.basicConfig(level=logging.INFO, format=fmt)
 
+    # [file.input.interaction] keys are case-insensitive: rewrite them to the
+    # canonical spelling once, here, so that no reader or solver sees the
+    # user's spelling (a lower-case 'geometry' crashed UHFk); two keys that
+    # differ only in case raise ValueError. A shallow copy: the caller's
+    # input_dict keeps its own interaction mapping.
+    if "interaction" in info_inputfile:
+        info_inputfile = dict(info_inputfile)
+        info_inputfile["interaction"] = qlmsio.keys.canonicalize_interaction_keys(
+            info_inputfile["interaction"])
+
     # Validate calculation mode
     if "mode" not in info_mode:
         logger.error("mode is not defined in [mode].")

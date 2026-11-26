@@ -17,8 +17,16 @@ import os
 import re
 from requests.structures import CaseInsensitiveDict
 from . import wan90
+from . import keys
 
 logger = logging.getLogger("qlms").getChild("read_input")
+
+#: Two rows of an ``initial_uhf`` file that give the same Green-function
+#: element must agree to this absolute tolerance on the complex value
+#: (``abs(v1 - v2) <= 1e-10``); equal rows are accepted, others refused.
+#: Used for repeated ``(i, s, j, t)`` rows here and for distinct rows that
+#: map to the same element in ``UHFk._initial_green_uhf``.
+DUPLICATE_ROW_TOL = 1.0e-10
 
 
 class QLMSkInput():
@@ -62,7 +70,7 @@ class QLMSkInput():
         Read Green's function indices from file
     """
 
-    valid_namelist = [s.lower() for s in ["path_to_input", "Geometry", "Transfer", "Coulomb", "CoulombIntra", "CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop", "Extern"]]
+    valid_namelist = [s.lower() for s in keys.KSPACE_KEYS]
 
     def __init__(self, info_inputfile, solver_type="UHFk"):
         logger.debug(">>> QLMSkInput init")
@@ -95,8 +103,13 @@ class QLMSkInput():
 
         # file.input.interaction -- normalized ONCE so every lookup
         # (path_to_input here, validation and dispatch below) shares the
-        # same case-insensitive semantics
-        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
+        # same case-insensitive semantics, and the tables are stored under
+        # the CANONICAL key: solvers iterate ham_param and compare keys
+        # with the canonical spelling (a lower-case 'geometry' crashed
+        # UHFk._check_cellsize). Two keys differing only in case raise
+        # ValueError.
+        files = CaseInsensitiveDict(keys.canonicalize_interaction_keys(
+            info_inputfile.get("interaction", {})))
         interaction_file_dir = files.get("path_to_input", "")
 
         # check if keyword is valid
@@ -153,9 +166,7 @@ class QLMSkInput():
                     from hwave.solver.declarations import (
                         validate_hermitian_closure,
                         validate_no_onsite_same_orbital_inter)
-                    canonical = ("CoulombIntra" if k.lower() == "coulombintra"
-                                 else k)
-                    validate_hermitian_closure(canonical, tbl, source=f)
+                    validate_hermitian_closure(k, tbl, source=f)
                     validate_no_onsite_same_orbital_inter(k, tbl, source=f)
                 self.ham_param[k] = tbl
 
@@ -236,9 +247,22 @@ class QLMSkInput():
                 value = float(_data[-1])
                 info[list] = value
         elif value_type == "complex":
+            # every repeat is compared with the FIRST value of its row, so
+            # small differences cannot drift past the tolerance; the last
+            # value is kept, as before
+            first = {}
             for _data in data:
                 list = tuple([int(i) for i in _data[:-2]])
                 value = float(_data[-2]) + 1j * float(_data[-1])
+                if list not in first:
+                    first[list] = value
+                elif abs(first[list] - value) > DUPLICATE_ROW_TOL:
+                    logger.error(
+                        "read_input_k: {}: row {} appears twice with different "
+                        "values {} and {} (tolerance {:g})".format(
+                            file_name, " ".join(str(i) for i in list),
+                            first[list], value, DUPLICATE_ROW_TOL))
+                    exit(1)
                 info[list] = value
         return info
 
