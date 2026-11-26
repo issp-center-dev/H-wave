@@ -1410,6 +1410,7 @@ The keys ``chi0q_init``, ``trans_mod``, ``green_init`` and ``sigma_init`` (FLEX 
 
 This section describes the relation of the interaction types and geometry information
 to the definition files.
+The keys of this section are case-insensitive (``geometry`` is read as ``Geometry``); giving one key twice with different spellings is an error.
 
 - ``path_to_input``
 
