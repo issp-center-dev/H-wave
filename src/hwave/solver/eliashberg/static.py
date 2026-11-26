@@ -1620,6 +1620,24 @@ def _solve_so_bond_static(input_dict, *, so_run, cfg, epsilon_k, eli_param, norb
 
 
 
+def _canonicalize_interaction_table(input_dict):
+    """``input_dict`` with its ``[file.input.interaction]`` keys in their
+    canonical spelling (they are case-insensitive), so that every reader of
+    the table below sees one spelling. The ``input_dict -> file -> input``
+    spine is shallow-copied: the caller's dictionaries are not rewritten.
+    Two keys that differ only in case raise ValueError."""
+    from hwave.qlmsio.keys import canonicalize_interaction_keys
+    fin = (input_dict.get("file") or {}).get("input")
+    if not (isinstance(fin, dict) and "interaction" in fin):
+        return input_dict
+    fin = dict(fin)
+    fin["interaction"] = canonicalize_interaction_keys(fin["interaction"])
+    out = dict(input_dict)
+    out["file"] = dict(input_dict["file"])
+    out["file"]["input"] = fin
+    return out
+
+
 def calc_eliashberg(input_dict):
     """Main calculation orchestration for linearized Eliashberg equation.
 
@@ -1650,6 +1668,7 @@ def calc_eliashberg(input_dict):
     # spin-orbital gap equation; every combination it does not support is
     # refused here, before any file is read (check_so_config), and after the
     # interaction files are read (check_so_supported, _read_model).
+    input_dict = _canonicalize_interaction_table(input_dict)
     spin_orbital_mode = _resolve_spin_orbital_flag(input_dict)
     if spin_orbital_mode:
         from hwave.solver import so_pairing
