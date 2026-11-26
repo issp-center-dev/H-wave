@@ -188,6 +188,35 @@ def build_interaction_tables(param_ham, norb, shape):
     return InteractionTables(inter_table, spin_table, tuple(discarded))
 
 
+def sz_breaking_types(inter_table, spin_table):
+    """The interaction types whose mean-field terms change S_z.
+
+    Read from the raw tables of :func:`build_interaction_tables`, before
+    any block mask. :func:`accumulate_hf` adds, for a nonzero spin-table
+    entry ``spin[p, q, r, w]``, a Hartree term to ``H^{p w}`` driven by
+    ``G^{q r}`` and a Fock term to ``H^{p r}`` driven by ``G^{q w}`` (the
+    PairHop terms use the same index pairs through the conjugated G). Both
+    conserve S_z exactly when the two spin labels written first carry the
+    same total S_z as the two written last, ``p + q == r + w`` with the
+    labels 0 (up) and 1 (down). An entry with ``p + q != r + w`` maps a
+    Green function onto a spin-off-diagonal element that a spin-diagonal
+    (fixed-2Sz) state cannot sustain, and the 2Sz block mask of UHFk
+    removes it (today only PairLift: ``spin[0, 0, 1, 1]``).
+
+    Returns the names, in :data:`HF_TYPE_ORDER`, of the types with a
+    nonzero coefficient table and such a spin entry.
+    """
+    found = []
+    for name in HF_TYPE_ORDER:
+        table = inter_table.get(name)
+        if table is None or not np.any(table != 0):
+            continue
+        p, q, r, w = np.nonzero(spin_table[name])
+        if np.any(p + q != r + w):
+            found.append(name)
+    return found
+
+
 def accumulate_hf(out, rho_so_r, inter_table, spin_table, shape, *,
                   include_fock, debug=None):
     """Add the Hartree (+ Fock) mean-field terms of every type onto ``out``
