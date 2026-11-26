@@ -743,24 +743,32 @@ class TestCollect(_Base):
         self.assertIn("output/scf_status.dat", r["error_summary"])
 
     def test_collect_final_label_carries_q(self):
-        # U = 8 at half filling: the para seed falls into the Neel state, the
-        # ferro seed stays ferro; the names must tell them apart
+        # U = 8 at half filling: the Neel seed (spin z at q = (1/2, 1/2))
+        # converges to the Neel state, the ferro seed stays ferro; the names
+        # must tell them apart. The para seed is not used: it is exactly
+        # spin-symmetric (G_up = G_dn, no up-down block), a subspace the
+        # Hartree-Fock map preserves, so whether it ever reaches the Neel
+        # state depends on round-off alone (measured: macOS Accelerate in
+        # 35 iterations; Linux OpenBLAS stays spin-symmetric and stalls at a
+        # residual of about 1e-2 until IterationMax).
         src = self.model(U=8.0, param={"IterationMax": 2000, "EPS": 8})
         work = self.path("WORK")
-        self.prepare(src, work)
+        self.prepare(src, work, max_candidates=None)
         ids = self.run_ids(work)
-        for i in ids:
+        neel_id = [i for i in ids if i.startswith("baseline-q1_2_1_2_0-spin-z-")]
+        ferro_id = [i for i in ids if i.startswith("ferro-")]
+        self.assertEqual((len(neel_id), len(ferro_id)), (1, 1), ids)
+        for i in neel_id + ferro_id:
             self.run_hwave(os.path.join(work, i))
         rows = self.collect(work)[0]
-        para = rows[self.para(ids)]
-        ferro = rows[[i for i in ids if i.startswith("ferro-")][0]]
-        self.assertEqual((para["status"], ferro["status"]), ("converged", "converged"))
-        self.assertLess(para["free_energy_per_cell"], ferro["free_energy_per_cell"] - 0.1)
-        self.assertIn("q=(1/2,1/2,0)", para["final_label"])
+        neel, ferro = rows[neel_id[0]], rows[ferro_id[0]]
+        self.assertEqual((neel["status"], ferro["status"]), ("converged", "converged"))
+        self.assertLess(neel["free_energy_per_cell"], ferro["free_energy_per_cell"] - 0.1)
+        self.assertIn("q=(1/2,1/2,0)", neel["final_label"])
         self.assertIn("q=(0,0,0)", ferro["final_label"])
-        self.assertNotEqual(para["final_label"], ferro["final_label"])
+        self.assertNotEqual(neel["final_label"], ferro["final_label"])
         # q follows the on-site spin channel it belongs to, never a bond one
-        for r in (para, ferro):
+        for r in (neel, ferro):
             self.assertRegex(r["final_label"], r"^spin-z \S+-orbital q=\(", r["final_label"])
             self.assertNotRegex(r["final_label"], r"bond-[a-z-]+ q=", r["final_label"])
 

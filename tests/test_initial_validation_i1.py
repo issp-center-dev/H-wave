@@ -21,10 +21,19 @@ and V3 (i), each through ``prepare`` (and, for V1, ``hwave`` and
     the mesh, and the para seed records it; T_hint = 0.25; the lowest
     converged row's final label is Neel, every row whose final label is
     para or ferro lies above it by more than 1e-3, and statuses, final
-    labels and free energies per site equal the reference. The para row is
-    judged by its final label only: the solver's first T = 0 fill may break
-    the symmetry of the seed. A row the reference records as not converged
-    is not compared (an exactly spin-symmetric seed, see the test).
+    labels and free energies per site of every spin-polarized seed equal
+    the reference. A row seeded by a pattern without a spin component (the
+    para row and the charge rows) is not compared with the reference: its
+    field cannot break the spin symmetry, the Hartree-Fock map preserves
+    the spin-symmetric subspace, so whether such a run leaves it (and where
+    it ends) depends on round-off in the numpy and BLAS build. Measured: on
+    macOS such rows reach the Neel state (one stalls under numpy 2.4); on
+    Linux OpenBLAS they stay spin-symmetric and stall until IterationMax.
+    Even the seed is not reproducible there: two charge seeds stop at an h
+    on a level crossing at the Fermi level, where the T = 0 shell is open
+    on one build and closed on another (|G_up - G_dn| of the seed 1e-16,
+    1e-8 or 2e-2 by build). Such rows still enter the lowest-row
+    assertions when they converge.
 
   Tolerances: the moment to 1e-6 (the stated V1a tolerance); free energies
   per site to 1e-6, per row against the same row of the reference. EPS =
@@ -90,6 +99,12 @@ def is_neel(label):
 def is_ferro(label):
     """A final label of a uniform (q = 0 only) spin state."""
     return label_qs(label) == ["0,0,0"] and "spin-" in label
+
+
+#: the channels of a pattern without a spin component: their field cannot
+#: break the spin symmetry, so a run from such a seed leaves the
+#: spin-symmetric subspace only through round-off (see the module docstring)
+SPINLESS_CHANNELS = ("para", "charge")
 
 
 def _tried(cov):
@@ -211,18 +226,20 @@ class TestV1(_Tmp):
         # statuses, final labels and energies against the frozen reference
         got = {r["run_id"]: r for r in _tried(cov)}
         self.assertEqual(sorted(got), sorted(ref["rows"]))
+        symmetric = {rid for rid, r in got.items() if r["channel"] in SPINLESS_CHANNELS}
+        # the para row and the three charge rows
+        self.assertEqual(sorted(symmetric), sorted(
+            rid for rid in got if rid.startswith(PARA) or "-charge-" in rid))
+        self.assertEqual(len(symmetric), 4)
+        compared = 0
         for rid, want in ref["rows"].items():
             r = got[rid]
-            if want["status"] != "converged":
-                # an exactly spin-symmetric seed (the q = (1/2, 1/2) charge row)
-                # leaves the spin-symmetric subspace only through round-off,
-                # which depends on the numpy and BLAS build: measured, it stalls
-                # at a residual of about 4e-4 until IterationMax with numpy 2.4
-                # and reaches the Neel state in about 240 iterations with numpy
-                # 1.26. Its status is not compared; the lowest-row assertions
-                # above hold either way.
+            if rid in symmetric:
+                # round-off decides whether it leaves the spin-symmetric
+                # subspace (see the module docstring): not compared
                 self.assertIn(r["status"], ("converged", "not_converged"), rid)
                 continue
+            compared += 1
             self.assertEqual(r["status"], want["status"], rid)
             self.assertEqual(r["final_label"], want["final_label"], rid)
             if want["free_energy_per_site"] is None:
@@ -231,6 +248,7 @@ class TestV1(_Tmp):
                 self.assertAlmostEqual(r["free_energy_per_site"],
                                        want["free_energy_per_site"], delta=ENERGY_TOL,
                                        msg=rid)
+        self.assertEqual(compared, 8)
 
 
 #: the 120-degree spiral at K on its own 3 x 3 cell (a literature row)
