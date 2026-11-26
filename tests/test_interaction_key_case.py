@@ -118,6 +118,19 @@ def _rpa_config(mode="RPA"):
     }
 
 
+#: numpy 1.x runs of the SAME canonical input already differ in the last
+#: bits from run to run (observed with numpy 1.26.4 on macOS arm64: up to
+#: 8.9e-16 in an RPA chiq of magnitude 1.3, and up to 3.7e-13 after the
+#: three FLEX iterations), so byte identity of the npz arrays is only
+#: asserted on numpy 2, where repeated runs are bitwise reproducible; numpy
+#: 1.x gets a 1e-10 relative noise allowance, far below the change a
+#: dropped or misread interaction table makes. Text outputs are always
+#: compared byte for byte, and test_reader_tables_identical checks the
+#: solver input bit for bit on every numpy.
+_NUMPY1_RTOL = 1e-10
+_NUMPY2 = int(np.__version__.split(".")[0]) >= 2
+
+
 def _read_outputs(out_dir):
     """Every output file: text files as bytes, npz files as their arrays'
     (dtype, shape, bytes) -- the zip container itself carries timestamps."""
@@ -154,9 +167,27 @@ class _CaseMixin:
         for label, spell in (("lower", _lower), ("mixed", _mixed)):
             with self.subTest(spelling=label):
                 got = self._run(_respell(cfg, spell), label)
-                self.assertEqual(sorted(got), sorted(ref))
-                for name in ref:
-                    self.assertEqual(got[name], ref[name], name)
+                self._assert_same_outputs(got, ref)
+
+    def _assert_same_outputs(self, got, ref):
+        self.assertEqual(sorted(got), sorted(ref))
+        for name in ref:
+            if isinstance(ref[name], bytes) or _NUMPY2:
+                self.assertEqual(got[name], ref[name], name)
+                continue
+            self.assertEqual(sorted(got[name]), sorted(ref[name]), name)
+            for key, (dtype, shape, raw) in ref[name].items():
+                gdtype, gshape, graw = got[name][key]
+                self.assertEqual((gdtype, gshape), (dtype, shape), name)
+                a = np.frombuffer(raw, dtype=dtype)
+                b = np.frombuffer(graw, dtype=dtype)
+                if a.dtype.kind in "fc":
+                    scale = max(1.0, float(np.max(np.abs(a)))) if a.size else 1.0
+                    np.testing.assert_allclose(b, a, rtol=0,
+                                               atol=_NUMPY1_RTOL * scale,
+                                               err_msg=name + ":" + key)
+                else:
+                    np.testing.assert_array_equal(b, a, err_msg=name + ":" + key)
 
     def _check_duplicate_refused(self, cfg, key):
         cfg = copy.deepcopy(cfg)
@@ -180,7 +211,23 @@ class TestUHFkInteractionKeyCase(_CaseMixin, unittest.TestCase):
         ref = self._run(cfg, "canonical")
         inter = cfg["file"]["input"]["interaction"]
         inter["geometry"] = inter.pop("Geometry")
-        self.assertEqual(self._run(cfg, "geometry"), ref)
+        self._assert_same_outputs(self._run(cfg, "geometry"), ref)
+
+    def test_reader_tables_identical(self):
+        # the solvers receive the same tables, bit for bit and in the same
+        # order, whatever the spelling
+        from hwave.qlmsio.read_input_k import QLMSkInput
+
+        def tables(cfg):
+            ham = QLMSkInput(cfg["file"]["input"]).get_param("ham")
+            return [(k, repr(v)) for k, v in ham.items()]
+
+        ref = tables(_uhfk_config())
+        self.assertEqual([k for k, _ in ref],
+                         [k for k in _uhfk_config()["file"]["input"]["interaction"]
+                          if k != "path_to_input"])
+        for spell in (_lower, _mixed):
+            self.assertEqual(tables(_respell(_uhfk_config(), spell)), ref)
 
     def test_duplicate_spellings_refused(self):
         for key in ("Geometry", "Transfer", "CoulombIntra", "PairLift"):
