@@ -59,6 +59,13 @@ TOML file itself. Options:
   ``--max-candidates N`` (generated rows per ``SubShape``, default 32),
   ``--orbital-site FILE`` (a JSON list with one site label per physical
   orbital), ``--tier`` (``auto`` resolves to ``large`` in this release).
+  At ``T = 0`` the seed field can reach the requested amplitude exactly
+  where two levels cross at the Fermi level. The seed is then taken at
+  that crossing, with the crossing levels filled uniformly when that meets
+  the request, or else with the occupation just past the crossing.
+  ``amplitude_used`` in ``coverage.json`` can therefore exceed the request.
+  On a spin-symmetric model, a pattern without a spin component (para,
+  charge, orbital) gives a seed with identical spin-up and spin-down parts.
 
 ``prepare`` writes into WORK:
 

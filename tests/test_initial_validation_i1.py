@@ -23,17 +23,22 @@ and V3 (i), each through ``prepare`` (and, for V1, ``hwave`` and
     para or ferro lies above it by more than 1e-3, and statuses, final
     labels and free energies per site of every spin-polarized seed equal
     the reference. A row seeded by a pattern without a spin component (the
-    para row and the charge rows) is not compared with the reference: its
-    field cannot break the spin symmetry, the Hartree-Fock map preserves
-    the spin-symmetric subspace, so whether such a run leaves it (and where
-    it ends) depends on round-off in the numpy and BLAS build. Measured: on
-    macOS such rows reach the Neel state (one stalls under numpy 2.4); on
-    Linux OpenBLAS they stay spin-symmetric and stall until IterationMax.
-    Even the seed is not reproducible there: two charge seeds stop at an h
-    on a level crossing at the Fermi level, where the T = 0 shell is open
-    on one build and closed on another (|G_up - G_dn| of the seed 1e-16,
-    1e-8 or 2e-2 by build). Such rows still enter the lowest-row
-    assertions when they converge.
+    para row and the charge rows) has a deterministic seed: its initial
+    state has G_up == G_dn bit for bit and no up-down block, and the two
+    C4-partner charge seeds (q = (0, 1/2) and (1/2, 0)), whose target lies
+    in the jump of a level crossing at the Fermi level near h = 2^(3/4),
+    stop at the same h with the same m to 1e-12. Their runs are not
+    compared with the reference: the field cannot break the spin symmetry,
+    the Hartree-Fock map preserves the spin-symmetric subspace, and UHFk
+    leaves it only through its own round-off (the eigenbasis eigh picks
+    inside each spin-degenerate pair and the T = 0 tie order), so whether
+    and when such a run leaves it depends on the numpy and BLAS build.
+    Measured with the deterministic seeds: on macOS (numpy 2.4 and 1.26)
+    the para and the two charge rows reach the Neel state in 51 to 78
+    iterations and the q = (1/2, 1/2) charge row does not converge in
+    IterationMax; on Linux OpenBLAS (numpy 1.26) all four reach the Neel
+    state, after 60 to 267 iterations. Such rows still enter the
+    lowest-row assertions when they converge.
 
   Tolerances: the moment to 1e-6 (the stated V1a tolerance); free energies
   per site to 1e-6, per row against the same row of the reference. EPS =
@@ -231,12 +236,30 @@ class TestV1(_Tmp):
         self.assertEqual(sorted(symmetric), sorted(
             rid for rid in got if rid.startswith(PARA) or "-charge-" in rid))
         self.assertEqual(len(symmetric), 4)
+        # their seeds are spin-symmetric bit for bit
+        for rid in symmetric:
+            with np.load(os.path.join(self.path("v1b_work"), got[rid]["run_dir"],
+                                      "initial.npz")) as z:
+                for key in ("green", "green_sublattice"):
+                    g = z[key]
+                    self.assertTrue(np.array_equal(g[:, 0, :, 0, :], g[:, 1, :, 1, :]),
+                                    (rid, key))
+                    self.assertFalse(np.any(g[:, 0, :, 1, :]) or np.any(g[:, 1, :, 0, :]),
+                                     (rid, key))
+        # the C4 partners stop at the same crossing h
+        partners = [got[rid] for rid in sorted(symmetric)
+                    if "-charge-q-0-1-2-0-" in rid or "-charge-q-1-2-0-0-" in rid]
+        self.assertEqual(len(partners), 2)
+        self.assertEqual(partners[0]["h_used"], partners[1]["h_used"])
+        self.assertLess(abs(partners[0]["h_used"] - 2 ** 0.75), 1e-6)
+        self.assertAlmostEqual(partners[0]["m_used"], partners[1]["m_used"], delta=1e-12)
         compared = 0
         for rid, want in ref["rows"].items():
             r = got[rid]
             if rid in symmetric:
-                # round-off decides whether it leaves the spin-symmetric
-                # subspace (see the module docstring): not compared
+                # UHFk's round-off decides whether it leaves the
+                # spin-symmetric subspace (see the module docstring): not
+                # compared
                 self.assertIn(r["status"], ("converged", "not_converged"), rid)
                 continue
             compared += 1

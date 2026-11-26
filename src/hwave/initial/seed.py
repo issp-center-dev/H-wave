@@ -5,12 +5,30 @@ A candidate with the pattern ``O`` (the Hamiltonian-convention ``O(k)`` of
 the candidate cell, :func:`hwave.initial.patterns.realise`) is seeded by
 the density of ``H_base - h O``:
 
-* ``G(h) = green_function(H_base - h O, T_run, blocks, fill="uniform")``,
-  the stored Green function, with the solver's own blocks and mu-groups,
-  so ``Ncond`` and ``2Sz`` are exact; ``rho(h) = G(h)^T``. At T = 0 the
-  levels within ``shell_tol = 1e-10 * max(1, W0, h ||O||_op)`` of the Fermi
-  level of a group form its shell and are filled uniformly, so a
-  symmetric pattern keeps its symmetry.
+* ``G(h)``: the stored Green function of ``H_base - h O`` with the
+  solver's own blocks and mu-groups, so ``Ncond`` and ``2Sz`` are exact;
+  ``rho(h) = G(h)^T``. At T > 0 it is the solver's fill
+  (``green_function``). At T = 0 the levels of a group are sorted and
+  joined into a chain wherever two neighbours lie within ``shell_tol =
+  1e-7 * max(1, W0, h ||O||_op)``; when the chain at the Fermi cut (the
+  ``n_group``-th and the next level) holds both, that chain is the open
+  shell and is filled uniformly, ``(n_group - n_below) / g_shell`` per
+  level. The result is a projector onto whole near-degenerate
+  subspaces: it does not depend on the eigenbasis inside the shell or on
+  the order of its levels, and a symmetric pattern keeps its symmetry.
+  The tolerance is far above the rounding of the eigenvalues (about
+  ``1e-16 * max(1, W0, h ||O||_op)``), so shell membership cannot change
+  with the numpy or BLAS build except at an h that lands within rounding
+  of a chain edge by accident; it also bounds the eigenvector error a near
+  degeneracy can bring into G by about ``1e-9``.
+* **Spin symmetry.** When ``H_base - h O`` is spin-symmetric (both spin
+  blocks equal and no spin-off-diagonal entry, to ``1e-12`` of its norm;
+  normal mode, or spin-orbital mode through its interleaved index) and
+  the mu-groups map onto groups of the same electron number under the
+  spin flip, G is replaced by its spin-flip average with the
+  spin-off-diagonal entries set to zero, so ``G_up == G_dn`` holds bit
+  for bit on every platform (a charge or orbital pattern on a
+  spin-symmetric base, and the para seed).
 * ``m(h) = Re tr[O rho(h)] = Re sum_ab O_ab G_ab(h)`` per primitive cell
   (summed over k and bond slots); ``Re tr[O G]`` would be ``<O^T>``,
   which reverses every imaginary part.
@@ -24,6 +42,21 @@ the density of ``H_base - h O``:
   max(W(H_base), 1e-3)`` (W the all-band span) up to ``2^40 W_floor``, then
   bisection to ``|Delta m - Delta m*| <= 1e-3 (m_inf - m(0))`` or 60 steps
   (then the smallest h found with ``Delta m >= Delta m*``).
+* **Level crossings (T = 0).** ``m(h)`` jumps where two levels cross at
+  the Fermi level. An h > 0 whose Fermi cut lies inside an open shell is
+  a crossing point; there three robust values are computed: ``m_below``
+  and ``m_above``, the one-sided limits ``h -> h_c -/+`` (the shell's
+  electrons in the eigenvectors of O projected onto the shell, smallest
+  or largest first, ties again filled uniformly), and ``m_crossing``, the
+  uniform shell fill. A target above ``m_above`` (or below ``m_below``)
+  moves the search right (left); a target inside the jump ends it at this
+  h: the uniform shell fill when ``m_crossing`` meets the target within
+  the bisection tolerance, else the ``h_c+`` fill (the smallest h with
+  ``Delta m >= Delta m*``). The result never depends on the order or the
+  basis ``eigh`` returns inside a degenerate shell, and the search never
+  converges onto the edge of a shell (where round-off would decide the
+  membership). ``meta["crossing"]`` records ``h``, the three values and
+  the fill used.
 
 Before any seeding O is checked against the solver blocks (a component
 outside them is refused, naming it), then against the constraint modes
@@ -46,6 +79,7 @@ logger = logging.getLogger("qlms").getChild("initial").getChild("seed")
 
 __all__ = [
     "SEED_BASES", "BLOCK_RTOL", "NO_RESPONSE_TOL", "W_FLOOR_MIN", "SHELL_RTOL",
+    "SPIN_SYMMETRY_RTOL",
     "BISECTION_RTOL", "BISECTION_STEPS", "CAP_DOUBLINGS", "N_RTOL", "CAP_REASON",
     "DEGENERATE_REASON", "CONSTRAINT_REASON", "BLOCK_REASON", "SeedResult",
     "block_check", "m_value", "m_inf", "constraint_mode", "w_floor", "op_norm",
@@ -61,8 +95,13 @@ BLOCK_RTOL = 1e-10
 NO_RESPONSE_TOL = 1e-6
 #: the floor of ``W_floor`` (input energy units)
 W_FLOOR_MIN = 1e-3
-#: the T = 0 shell tolerance, relative to ``max(1, W0, h ||O||_op)``
-SHELL_RTOL = 1e-10
+#: the T = 0 shell tolerance (the largest gap inside a shell), relative to
+#: ``max(1, W0, h ||O||_op)``; ``* max(1, ||O||_op)`` the tie tolerance of
+#: the eigenvalues of O on a crossing shell
+SHELL_RTOL = 1e-7
+#: ``H_base - h O`` is spin-symmetric when its spin-flip difference and its
+#: spin-off-diagonal part are each at most this times ``max(1, ||H||_F)``
+SPIN_SYMMETRY_RTOL = 1e-12
 #: the bisection stops at ``|Delta m - Delta m*| <=`` this times
 #: ``m_inf - m(0)``
 BISECTION_RTOL = 1e-3
@@ -106,7 +145,9 @@ class SeedResult:
     succeeded). A failure inside the bisection, where the kept h already
     meets the target, sets no ``cap_reason``. ``meta`` (tried rows):
     ``{"n_residual", "mu_refined"}`` of the written G (:func:`density_at`),
-    plus ``"mu_search_failed_at"`` after any such failure.
+    plus ``"mu_search_failed_at"`` after any such failure and
+    ``"crossing"`` (``{"h", "m_below", "m_crossing", "m_above", "fill"}``)
+    when the seed stops at a T = 0 level crossing (module docstring).
 
     Set fields per state: seeded: all (``cap_reason`` only at the cap);
     para: ``G``, ``seed_base``, ``shell``, ``moments_h0``, ``h_used = 0``;
@@ -315,8 +356,10 @@ def _count_tol(problem):
 def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta=False):
     """``(G(h), FillInfo)``: the stored Green function of ``H_base - h O``
     on the cell of ``facts.problem`` with the solver's blocks, mu rule
-    and Fermi cut, uniform shell fill at T = 0 with ``shell_tol = 1e-10 *
-    max(1, W0, h ||O||_op)`` (``o_norm`` may pass ``||O||_op``).
+    and Fermi cut; at T = 0 the uniform fill of the open shell (the chain
+    rule of the module docstring, ``shell_tol = 1e-7 * max(1, W0, h
+    ||O||_op)``; ``o_norm`` may pass ``||O||_op``). A spin-symmetric
+    Hamiltonian gives a spin-flip-averaged G (module docstring).
 
     **Electron number at T > 0.** The solver finds mu by
     ``scipy.optimize.bisect`` with its default tolerances, ``xtol = 2e-12``
@@ -342,15 +385,16 @@ def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta
     ``(G, FillInfo, meta)``, ``meta = {"n_residual": float, "mu_refined":
     bool}`` (the largest group-count error of the returned G)."""
     p = facts.problem
-    base = np.asarray(base_ham_k)
-    h = float(h)
-    if O_k is None or h == 0.0:
-        ham, scale = base, 0.0
-    else:
-        o = _as_pattern(O_k, p.nvol, p.nd)
-        ham = base - h * o
-        scale = h * (op_norm(o) if o_norm is None else float(o_norm))
-    tol = SHELL_RTOL * max(1.0, float(W0), scale)
+    ham, scale = _seed_ham(p, base_ham_k, O_k, h, o_norm)
+    tol = _shell_tol(W0, scale)
+
+    if T_run == 0:
+        G, info = _t0_fill(p, ham, tol)
+        G = _spin_symmetrized(G, ham, p)
+        residual = _count_residual(G, p)
+        if return_meta:
+            return G, info, {"n_residual": residual, "mu_refined": False}
+        return G, info
 
     def fill(hk):
         try:
@@ -361,15 +405,15 @@ def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta
             # only the mu search: the solver's MuNotConvergedError, or the
             # plain RuntimeError scipy's newton raises; any other subclass
             # (NotImplementedError, RecursionError, ...) is not a mu failure
-            if T_run > 0 and (isinstance(exc, initial_facade.MuNotConvergedError)
-                              or type(exc) is RuntimeError):
+            if (isinstance(exc, initial_facade.MuNotConvergedError)
+                    or type(exc) is RuntimeError):
                 raise MuSearchFailed(h, exc) from exc
             raise
 
     G, info = fill(ham)
     residual = _count_residual(G, p)
     refined = False
-    if T_run > 0 and residual > _count_tol(p):
+    if residual > _count_tol(p):
         shift = np.zeros(p.nd)
         for blk, g in zip(p.blocks.block_info, p.blocks.block_to_group):
             shift[np.asarray(blk, dtype=int)] = info.mu[int(g)]
@@ -385,9 +429,209 @@ def density_at(facts, base_ham_k, O_k, h, *, T_run, W0, o_norm=None, return_meta
             logger.warning(
                 "field seeding: the electron count of the seed is off by %.3g at h = "
                 "%.6g after refining mu (tolerance %.3g)", residual, h, _count_tol(p))
+    G = _spin_symmetrized(G, ham, p)
+    residual = _count_residual(G, p)
     if return_meta:
         return G, info, {"n_residual": residual, "mu_refined": refined}
     return G, info
+
+
+def _seed_ham(p, base_ham_k, O_k, h, o_norm):
+    """``(H_base - h O, h ||O||_op)``."""
+    base = np.asarray(base_ham_k)
+    h = float(h)
+    if O_k is None or h == 0.0:
+        return base, 0.0
+    o = _as_pattern(O_k, p.nvol, p.nd)
+    return base - h * o, h * (op_norm(o) if o_norm is None else float(o_norm))
+
+
+def _shell_tol(W0, scale):
+    return SHELL_RTOL * max(1.0, float(W0), float(scale))
+
+
+def _cut_chain(vals, n, link):
+    """``(lo, hi)``, inclusive, of the chain of the ascending ``vals``
+    (neighbours within ``link``) that holds both ``vals[n - 1]`` and
+    ``vals[n]``; ``None`` when that gap exceeds ``link`` or ``n`` leaves
+    no cut (``n <= 0`` or ``n >= len(vals)``)."""
+    size = len(vals)
+    if n <= 0 or n >= size or vals[n] - vals[n - 1] > link:
+        return None
+    breaks = np.diff(vals) > link             # breaks[i]: between i and i + 1
+    left = np.flatnonzero(breaks[:n - 1])
+    right = np.flatnonzero(breaks[n:])
+    lo = int(left[-1]) + 1 if left.size else 0
+    hi = n + int(right[0]) if right.size else size - 1
+    return lo, hi
+
+
+def _zero_t_mu(sorted_w, n):
+    """The solver's T = 0 mu: the midpoint of the HOMO-LUMO gap."""
+    if n <= 0:
+        return float(sorted_w[0])
+    if n >= sorted_w.size:
+        return float(sorted_w[-1])
+    return 0.5 * (float(sorted_w[n - 1]) + float(sorted_w[n]))
+
+
+def _group_label(p, blist):
+    """``"up"``/``"down"`` for a group of pure-spin blocks of a normal-mode
+    problem with more than one group, else ``"all"`` (as the solver
+    labels it)."""
+    if p.ns != 2 or len(p.blocks.group_nconds) < 2:
+        return "all"
+    idx = np.concatenate([np.asarray(p.blocks.block_info[b], dtype=int) for b in blist])
+    if np.all(idx < p.norb):
+        return "up"
+    if np.all(idx >= p.norb):
+        return "down"
+    return "all"
+
+
+def _fill_ordered(vals, n, link):
+    """Occupations of the ascending-preferred ``vals``: the ``n`` lowest,
+    a chain straddling the cut filled uniformly. ``(occ, record)``,
+    ``record`` ``(g_shell, f)`` or ``None`` (closed)."""
+    order = np.sort(vals)
+    occ = np.zeros(vals.size)
+    cut = _cut_chain(order, n, link)
+    if cut is None:
+        if n > 0:
+            occ[vals <= order[min(n, vals.size) - 1]] = 1.0
+        return occ, None
+    lo, hi = cut
+    f = (n - lo) / (hi - lo + 1)
+    occ[vals < order[lo]] = 1.0
+    occ[(vals >= order[lo]) & (vals <= order[hi])] = f
+    return occ, (hi - lo + 1, f)
+
+
+def _t0_fill(p, ham, tol, O_dir=None, o_tol=None):
+    """``(G, FillInfo)`` at T = 0: per mu-group the ``n_group`` lowest
+    levels, an open shell (:func:`_cut_chain` at ``tol``) filled uniformly.
+    With ``O_dir`` (``+O`` or ``-O``) the open shell's electrons go instead
+    to the eigenvectors of ``O_dir`` projected onto the shell, largest
+    first (ties within ``o_tol`` uniformly): the limit ``h -> h_c +`` (or
+    ``-``) of a crossing at the Fermi level. Levels closer than ``tol``
+    count as degenerate, so at an avoided crossing narrower than ``tol``
+    this is the density just past the avoided-crossing window (an h
+    within about ``tol / ||O||_op`` of the given one). The shell records
+    are those of the Hamiltonian shell (its degeneracy and uniform fill)
+    whichever fill is used. Basis- and order-independent inside every
+    degenerate subspace."""
+    blocks = p.blocks.block_info
+    ws, vs = initial_facade.diag_blocks(ham, blocks)
+    vs = list(vs)
+    ngroup = len(p.blocks.group_nconds)
+    groups = [[] for _ in range(ngroup)]
+    for b, g in enumerate(p.blocks.block_to_group):
+        groups[int(g)].append(b)
+    dists = [None] * len(blocks)
+    mus, shells = [], []
+    for g, blist in enumerate(groups):
+        n = int(round(float(p.blocks.group_nconds[g])))
+        all_w = np.concatenate([ws[b].ravel() for b in blist])
+        sw = np.sort(all_w)
+        mus.append(_zero_t_mu(sw, n))
+        label = _group_label(p, blist)
+        occ, rec = _fill_ordered(all_w, n, tol)
+        if rec is not None and O_dir is not None:
+            # the record stays that of the Hamiltonian shell
+            occ, _ = _one_sided(p, ws, vs, blist, all_w, occ, n, O_dir, o_tol)
+        shells.append(initial_facade.ShellRecord(label, rec is not None,
+                                                 None if rec is None else int(rec[0]),
+                                                 None if rec is None else float(rec[1])))
+        off = 0
+        for b in blist:
+            size = ws[b].size
+            dists[b] = occ[off:off + size].reshape(ws[b].shape)
+            off += size
+    G = initial_facade.assemble_green(vs, dists, blocks, shape=tuple(p.shape), ns=p.ns,
+                                      norb=p.norb)
+    return G, initial_facade.FillInfo(mu=tuple(mus), shell=tuple(shells))
+
+
+def _one_sided(p, ws, vs, blist, all_w, occ_uniform, n, O_dir, o_tol):
+    """The open shell of one group refilled by ``O_dir`` (:func:`_t0_fill`):
+    ``vs`` of the shell's levels is replaced in place by the eigenvectors
+    of ``O_dir`` on the shell at each k (``M = V^dag O V``, the expectation
+    ``sum_ab O_ab conj(v_a) v_b`` of the convention of :func:`m_value`)."""
+    full = occ_uniform == 1.0
+    shell = (occ_uniform > 0.0) & ~full
+    n_shell = n - int(np.count_nonzero(full))
+    mu_all, slots = [], []
+    off = 0
+    for b in blist:
+        idx = np.asarray(p.blocks.block_info[b], dtype=int)
+        nvol, nb = ws[b].shape
+        mask = shell[off:off + ws[b].size].reshape(nvol, nb)
+        v = np.array(vs[b], copy=True)
+        for k in np.flatnonzero(mask.any(axis=1)):
+            cols = np.flatnonzero(mask[k])
+            vc = v[k][:, cols]
+            ok = O_dir[k][np.ix_(idx, idx)]
+            m = vc.conj().T @ ok @ vc
+            lam, u = np.linalg.eigh(0.5 * (m + m.conj().T))
+            v[k][:, cols] = vc @ u
+            mu_all.append(lam)
+            slots.extend(off + k * nb + cols)
+        vs[b] = v
+        off += ws[b].size
+    lam = np.concatenate(mu_all)
+    sub, rec = _fill_ordered(-lam, n_shell, o_tol)
+    occ = np.where(full, 1.0, 0.0)
+    occ[np.asarray(slots, dtype=int)] = sub
+    return occ, rec
+
+
+def _spin_flip(p):
+    """``(perm, off)`` of the spin flip on the solver index (normal mode
+    ``s * norb + a``; spin-orbital mode the interleaved folded index, spin
+    ``j % 2``) and the spin-off-diagonal mask; ``None`` when there is no
+    spin index, or the mu-groups do not map onto groups of the same
+    electron number."""
+    nd = p.nd
+    j = np.arange(nd)
+    if p.ns == 2:
+        perm = (j + p.norb) % nd
+        spin = j // p.norb
+    elif p.enable_spin_orbital:
+        perm = j ^ 1
+        spin = j % 2
+    else:
+        return None
+    members = {}
+    for blk, g in zip(p.blocks.block_info, p.blocks.block_to_group):
+        members.setdefault(int(g), set()).update(int(x) for x in blk)
+    nconds = [float(x) for x in p.blocks.group_nconds]
+    lookup = {frozenset(s): g for g, s in members.items()}
+    for g, s in members.items():
+        image = lookup.get(frozenset(int(perm[x]) for x in s))
+        if image is None or nconds[image] != nconds[g]:
+            return None
+    return perm, spin[:, None] != spin[None, :]
+
+
+def _spin_symmetrized(G, ham, p):
+    """``G`` averaged over the spin flip with its spin-off-diagonal entries
+    zero, when ``ham`` is spin-symmetric (:data:`SPIN_SYMMETRY_RTOL`) and
+    the mu-groups allow it (:func:`_spin_flip`); else ``G`` unchanged.
+    Partners hold the same sum, so ``G_up == G_dn`` bit for bit."""
+    flip = _spin_flip(p)
+    if flip is None:
+        return G
+    perm, off = flip
+    hk = np.asarray(ham)
+    bound = SPIN_SYMMETRY_RTOL * max(1.0, float(np.linalg.norm(hk)))
+    if (float(np.linalg.norm(hk - hk[:, perm][:, :, perm])) > bound
+            or float(np.linalg.norm(hk[:, off])) > bound):
+        return G
+    shape = np.shape(G)
+    g = np.asarray(G).reshape(p.nvol, p.nd, p.nd)
+    out = 0.5 * (g + g[:, perm][:, :, perm])
+    out[:, off] = 0.0
+    return out.reshape(shape)
 
 
 def _sites(facts):
@@ -520,27 +764,64 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
     tol = BISECTION_RTOL * dm_sat
     o_norm = op_norm(o)
 
+    o_tol = SHELL_RTOL * max(1.0, o_norm)
+
     def evaluate(h):
         G, info, meta = density_at(facts, base, o, h, T_run=T_run, W0=W0, o_norm=o_norm,
                                    return_meta=True)
         return m_value(o, G, problem=p) - m0, G, (info, meta)
+
+    def one_sided(h, sign):
+        ham, scale = _seed_ham(p, base, o, h, o_norm)
+        G, info = _t0_fill(p, ham, _shell_tol(W0, scale), O_dir=sign * o, o_tol=o_tol)
+        G = _spin_symmetrized(G, ham, p)
+        meta = {"n_residual": _count_residual(G, p), "mu_refined": False}
+        return m_value(o, G, problem=p) - m0, G, (info, meta)
+
+    def classify(h):
+        """``(d, point, crossing)``: the value the search compares, the
+        point ``(d, G, (info, meta))`` kept for h and, when the target lies
+        in the jump of a level crossing at this h, its record (the point is
+        then final)."""
+        point = evaluate(h)
+        if T_run > 0 or not any(r.open_shell for r in point[2][0].shell):
+            return point[0], point, None
+        below, above = one_sided(h, -1.0), one_sided(h, 1.0)
+        if above[0] - below[0] <= tol:              # a degenerate shell, no jump
+            return point[0], point, None
+        if target > above[0] + tol:
+            return above[0], above, None
+        if target < below[0] - tol:
+            return point[0], point, None
+        use_uniform = point[0] >= target - tol
+        use = point if use_uniform else above
+        record = {"h": float(h), "m_below": m0 + below[0], "m_crossing": m0 + point[0],
+                  "m_above": m0 + above[0], "fill": "uniform" if use_uniform else "above"}
+        logger.info("field seeding: the target lies in the jump of a level crossing at "
+                    "the Fermi level at h = %.17g (m below %.6g, at the crossing %.6g, "
+                    "above %.6g); the seed takes the %s fill", h, record["m_below"],
+                    record["m_crossing"], record["m_above"],
+                    "uniform shell" if use_uniform else "h -> h_c+")
+        return use[0], use, record
 
     h = w_floor(base)
     h_lo = 0.0
     found = None
     last = None                       # the last successful doubling point
     failed_at = None
+    crossing = None
     for j in range(CAP_DOUBLINGS + 1):
         try:
-            d, G, info = evaluate(h)
+            d, point, rec = classify(h)
         except MuSearchFailed as exc:
             if last is None:
                 raise
             failed_at = exc.h
             break
-        last = (h, d, G, info)
-        if d >= target:
+        last = (h,) + point
+        if rec is not None or d >= target:
             found = last
+            crossing = rec
             break
         if j == CAP_DOUBLINGS:
             break
@@ -555,26 +836,28 @@ def seed_pattern(facts, base_ham_k, O_k, *, T_run, W0, amplitude=0.5,
     else:
         h_hi = found[0]
         h_used, d_used, G_used, info_used = found
-        if abs(d_used - target) > tol:
+        if crossing is None and abs(d_used - target) > tol:
             a, b = h_lo, h_hi
             for _ in range(BISECTION_STEPS):
                 mid = 0.5 * (a + b)
                 try:
-                    d, G, info = evaluate(mid)
+                    d, point, rec = classify(mid)
                 except MuSearchFailed as exc:
                     # the kept point already meets the target: no cap, the
                     # failure is recorded in meta only
                     failed_at = exc.h
                     break
-                if abs(d - target) <= tol:
-                    h_used, d_used, G_used, info_used = mid, d, G, info
+                if rec is not None or abs(d - target) <= tol:
+                    h_used, (d_used, G_used, info_used), crossing = mid, point, rec
                     break
                 if d >= target:
                     b = mid
-                    h_used, d_used, G_used, info_used = mid, d, G, info
+                    h_used, (d_used, G_used, info_used) = mid, point
                 else:
                     a = mid
     meta = dict(info_used[1])
+    if crossing is not None:
+        meta["crossing"] = crossing
     if failed_at is not None:
         meta["mu_search_failed_at"] = failed_at
         if d_used < target:

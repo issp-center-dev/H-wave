@@ -310,26 +310,25 @@ class TestSearch(_Tmp):
         self.assertGreater(res.m_used - res.m0, 0.1)
 
     def test_shell_tolerance(self):
-        """``shell_tol = 1e-10 * max(1, W0, h ||O||_op)``: the h term keeps
+        """``shell_tol = 1e-7 * max(1, W0, h ||O||_op)``: the h term keeps
         the tolerance above the rounding of ``H_base - h O`` at large h."""
         from hwave.initial import patterns, seed
-        from hwave.solver import initial_facade
         f = self.chain(4, (2, 1, 1), ncond=4, T=0.0)
         p = f.problem
         O = patterns.realise(_spec([_e(c0=1.0)], ("1/2", "0", "0"), (2, 1, 1)), f, (2, 1, 1))
         seen = []
-        real = initial_facade.green_function
+        real = seed._t0_fill
 
-        def spy(*a, **k):
-            seen.append(k["shell_tol"])
-            return real(*a, **k)
+        def spy(p_, ham, tol, **k):
+            seen.append(tol)
+            return real(p_, ham, tol, **k)
 
-        with mock.patch.object(initial_facade, "green_function", spy):
+        with mock.patch.object(seed, "_t0_fill", spy):
             for h, W0 in ((0.0, 0.5), (0.0, 3.0), (2.0, 3.0), (1e4, 3.0)):
                 seed.density_at(f, p.ham_trans_k, O, h, T_run=0.0, W0=W0)
         op = seed.op_norm(O)
         self.assertAlmostEqual(op, 1 / math.sqrt(2), delta=1e-14)
-        want = [1e-10, 3e-10, 3e-10, 1e-10 * 1e4 * op]
+        want = [1e-7, 3e-7, 3e-7, 1e-7 * 1e4 * op]
         np.testing.assert_allclose(seen, want, rtol=1e-14)
 
     def test_cap_doublings_takes_effect(self):
@@ -727,6 +726,259 @@ class TestMoments(_Tmp):
         m = seed.moments_of(res.G, f)
         self.assertGreater(m["spin"][1][2], para.moments_h0["spin"][1][2] + 0.05)
         self.assertAlmostEqual(m["spin"][0][2], 0.0, delta=1e-10)
+
+
+
+# --------------------------------------------------------------------------
+# T = 0 level crossings and spin symmetry
+# --------------------------------------------------------------------------
+
+def _spin_blocks(G):
+    """``(G_up, G_dn, G_updn, G_dnup)`` of a normal-mode stored G."""
+    return G[:, 0, :, 0, :], G[:, 1, :, 1, :], G[:, 0, :, 1, :], G[:, 1, :, 0, :]
+
+
+def _rotating_diag(rng, *, noise=1e-15, cluster=1e-12):
+    """A stand-in for ``initial_facade.diag_blocks`` that returns the
+    eigen-decomposition another numpy or BLAS build may return:
+    eigenvalues with a relative error ``noise`` and, inside every cluster
+    of eigenvalues within ``cluster`` of each other at a k (degenerate to
+    rounding), the eigenvectors mixed by a random unitary (another
+    eigenbasis and order of the degenerate levels)."""
+    from hwave.solver import initial_facade
+    real = initial_facade.diag_blocks
+
+    def diag(ham, blocks):
+        ws, vs = real(ham, blocks)
+        out_w, out_v = [], []
+        for w, v in zip(ws, vs):
+            w = w * (1.0 + noise * rng.standard_normal(w.shape))
+            v = np.array(v, copy=True)
+            for k in range(w.shape[0]):
+                order = np.argsort(w[k], kind="stable")
+                w[k], v[k] = w[k][order], v[k][:, order]
+                start = 0
+                for i in range(1, w.shape[1] + 1):
+                    if i == w.shape[1] or w[k][i] - w[k][i - 1] > cluster:
+                        n = i - start
+                        if n > 1:
+                            z = rng.standard_normal((n, n)) + 1j * rng.standard_normal((n, n))
+                            q, r = np.linalg.qr(z)
+                            q = q * (np.diag(r) / np.abs(np.diag(r)))
+                            v[k][:, start:i] = v[k][:, start:i] @ q
+                        start = i
+            out_w.append(w)
+            out_v.append(v)
+        return out_w, out_v
+    return diag
+
+
+class TestCrossing(_Tmp):
+    """The V1b model (16 x 16, U = 4, half filling, SubShape 2 x 2, T = 0):
+    the charge patterns at q = (0, 1/2) and (1/2, 0) reach their target in
+    the jump of a level crossing at the Fermi level, near h = 2^(3/4)."""
+
+    def v1b(self, transfer=None):
+        from hwave.initial import facts
+        toml = initial_fixtures.write_input(
+            self.dest(), cellshape=(16, 16, 1),
+            transfer=initial_fixtures.square_transfer() if transfer is None else transfer,
+            interactions={"CoulombIntra": {((0, 0, 0), 0, 0): 4.0}},
+            param={"Ncond": 256, "T": 0.0, "SubShape": [2, 2, 1]})
+        return facts.model_facts(toml)
+
+    def charge(self, q):
+        return _spec([_e(c0=1.0)], q, (2, 2, 1))
+
+    def test_c4_partners_and_spin_symmetry(self):
+        """Both C4 partners stop at the same crossing h with the h -> h_c+
+        fill (the uniform fill there is below the target), G_up == G_dn bit
+        for bit and no spin-off-diagonal entry."""
+        f = self.v1b()
+        out = [self.seed(f, self.charge(q))[0]
+               for q in (("0", "1/2", "0"), ("1/2", "0", "0"))]
+        a, b = out
+        self.assertEqual(a.shell, b.shell)
+        self.assertEqual(a.h_used, b.h_used)
+        self.assertAlmostEqual(a.m_used, b.m_used, delta=1e-12)
+        self.assertGreater(a.amplitude_used, a.amplitude_requested)
+        for res in out:
+            self.assertTrue(res.tried)
+            up, dn, ud, du = _spin_blocks(res.G)
+            self.assertTrue(np.array_equal(up, dn))
+            self.assertFalse(np.any(ud) or np.any(du))
+            self.assertLess(abs(res.h_used - 2 ** 0.75), 1e-6)
+            # the Hamiltonian shell at the crossing, whichever fill is used
+            rec = res.shell["h_used"][0]
+            self.assertTrue(rec["open_shell"])
+            self.assertAlmostEqual(rec["shell_fill"] * rec["shell_degeneracy"],
+                                   round(rec["shell_fill"] * rec["shell_degeneracy"]),
+                                   delta=1e-12)
+            cross = res.meta["crossing"]
+            self.assertEqual(cross["fill"], "above")
+            self.assertEqual(cross["h"], res.h_used)
+            self.assertLess(cross["m_below"], cross["m_crossing"])
+            self.assertLess(cross["m_crossing"], res.m_target)
+            self.assertAlmostEqual(cross["m_above"], res.m_used, delta=1e-15)
+
+    def test_crossing_basis_and_rounding_independent(self):
+        """Another eigenbasis and order inside every degenerate subspace,
+        with eigenvalues perturbed at the rounding level (as another numpy
+        or BLAS build gives them), leaves the seed unchanged: the same h,
+        the same shell records, m to 1e-12 and G to 1e-9 (the eigenvector
+        error bound of the module docstring), and G_up == G_dn still bit
+        for bit."""
+        from hwave.solver import initial_facade
+        f = self.v1b()
+        spec = self.charge(("0", "1/2", "0"))
+        ref, _ = self.seed(f, spec)
+        for seed_value in (1, 2):
+            rng = np.random.default_rng(seed_value)
+            with mock.patch.object(initial_facade, "diag_blocks", _rotating_diag(rng)):
+                res, _ = self.seed(f, spec)
+            up, dn, ud, du = _spin_blocks(res.G)
+            self.assertTrue(np.array_equal(up, dn))
+            self.assertFalse(np.any(ud) or np.any(du))
+            self.assertEqual(res.h_used, ref.h_used)
+            self.assertEqual(res.shell, ref.shell)
+            self.assertAlmostEqual(res.m_used, ref.m_used, delta=1e-12)
+            self.assertLess(float(np.max(np.abs(res.G - ref.G))), 1e-9)
+            self.assertEqual(res.meta["crossing"]["fill"], "above")
+
+    def test_above_fill_is_the_limit_past_the_crossing(self):
+        """The h -> h_c+ fill is the density of ``H_base - h O`` just past
+        the crossing: against the plain fill at ``h_used + delta`` (a
+        closed shell for delta far above the shell tolerance) the
+        difference shrinks linearly with delta."""
+        from hwave.initial import hints, patterns, seed
+        f = self.v1b()
+        p = f.problem
+        spec = self.charge(("0", "1/2", "0"))
+        res, O = self.seed(f, spec)
+        W0 = hints.t_hint_bare(p).W0
+        errs = []
+        for delta in (1e-4, 1e-5):
+            G, info = seed.density_at(f, p.ham_trans_k, O, res.h_used + delta, T_run=0.0,
+                                      W0=W0)
+            self.assertFalse(info.shell[0].open_shell)
+            errs.append(float(np.max(np.abs(G - res.G))))
+        self.assertLess(errs[0], 1e-2)
+        self.assertLess(errs[1], 0.2 * errs[0])
+
+    def test_avoided_crossing_below_tolerance(self):
+        """Two flat orbital levels +-1 with a coupling eps = 1e-9 (an
+        avoided crossing at h = 1 whose gap 2 eps lies below the shell
+        tolerance) and the orbital field ``-h (n_0 - n_1)``, amplitude 0.75
+        (above the uniform value at the crossing): the seed is
+        the density just past the avoided-crossing window, i.e. the
+        closed-shell density of ``H_base - h' O`` at an h' within ten shell
+        tolerances of h_used, to the size of eps over that distance."""
+        from hwave.initial import hints, seed
+        eps = 1e-9
+        t = {((0, 0, 0), 0, 0): 1.0, ((0, 0, 0), 1, 1): -1.0,
+             ((0, 0, 0), 0, 1): eps, ((0, 0, 0), 1, 0): eps}
+        f = self.chain(2, (1, 1, 1), ncond=4, T=0.0, norb=2, transfer=t, U=0.0,
+                       centers=[(0, 0, 0), (0.5, 0, 0)])
+        p = f.problem
+        res, O = self.seed(f, _spec([_e(0, c0=1.0), _e(1, c0=-1.0)], ("0", "0", "0"),
+                                    (1, 1, 1)), amplitude=0.75)
+        self.assertTrue(res.tried)
+        cross = res.meta["crossing"]
+        self.assertEqual(cross["fill"], "above")
+        self.assertLess(abs(res.h_used * seed.op_norm(O) - 1.0), 1e-6)
+        W0 = hints.t_hint_bare(p).W0
+        step = 10 * seed._shell_tol(W0, res.h_used * seed.op_norm(O)) / seed.op_norm(O)
+        G, info = seed.density_at(f, p.ham_trans_k, O, res.h_used + step, T_run=0.0, W0=W0)
+        self.assertFalse(info.shell[0].open_shell)
+        self.assertLess(float(np.max(np.abs(G - res.G))), 1e-3)
+
+    def test_crossing_reordered_input(self):
+        """The Transfer and the interaction written in the reverse order
+        give the same seed (h exactly, G to 1e-12)."""
+        spec = self.charge(("1/2", "0", "0"))
+        ref, _ = self.seed(self.v1b(), spec)
+        t = initial_fixtures.square_transfer()
+        rev = {k: t[k] for k in reversed(list(t))}
+        res, _ = self.seed(self.v1b(transfer=rev), spec)
+        self.assertEqual(res.h_used, ref.h_used)
+        self.assertEqual(res.shell, ref.shell)
+        self.assertLess(float(np.max(np.abs(res.G - ref.G))), 1e-12)
+
+    def test_uniform_fill_at_the_crossing(self):
+        """A target that the uniform shell fill at the crossing meets ends
+        the search there with that fill: the open shell is recorded and
+        m_used is the crossing value (amplitude chosen inside [m_below,
+        m_crossing])."""
+        f = self.v1b()
+        spec = self.charge(("0", "1/2", "0"))
+        first, _ = self.seed(f, spec)
+        cross = first.meta["crossing"]
+        dm_sat = first.m_inf - first.m0
+        amp = 0.5 * (cross["m_below"] + cross["m_crossing"]) - first.m0
+        res, _ = self.seed(f, spec, amplitude=amp / dm_sat)
+        rec = res.meta["crossing"]
+        self.assertEqual(rec["fill"], "uniform")
+        self.assertAlmostEqual(res.m_used, rec["m_crossing"], delta=1e-15)
+        self.assertGreaterEqual(res.m_used, res.m_target - 1e-3 * dm_sat)
+        self.assertTrue(res.shell["h_used"][0]["open_shell"])
+        up, dn, _, _ = _spin_blocks(res.G)
+        self.assertTrue(np.array_equal(up, dn))
+
+
+class TestSpinSymmetry(_Tmp):
+    """A pattern without a spin component on a spin-symmetric base gives
+    G_up == G_dn bit for bit (normal and spin-orbital mode, T = 0 and
+    T > 0, Sz free and 2Sz fixed); a spin-dependent base does not."""
+
+    def orbital_chain(self, **kw):
+        t = {((1, 0, 0), a, a): -1.0 for a in range(2)}
+        t.update({((-1, 0, 0), a, a): -1.0 for a in range(2)})
+        t[((0, 0, 0), 0, 1)] = -0.3
+        t[((0, 0, 0), 1, 0)] = -0.3
+        return self.chain(8, (2, 1, 1), norb=2, transfer=t, **kw)
+
+    def test_orbital_and_charge_bitwise(self):
+        orbital = _spec([_e(0, c0=1.0), _e(1, c0=-1.0)], ("1/2", "0", "0"), (2, 1, 1))
+        charge = _spec([_e(0, c0=1.0), _e(1, c0=1.0)], ("1/2", "0", "0"), (2, 1, 1))
+        from hwave.solver import initial_facade, uhfk_fill
+        rng = np.random.default_rng(7)
+        # another eigenbasis inside every degenerate subspace (spin pairs
+        # included), with eigenvalues perturbed at the rounding level
+        diag = _rotating_diag(rng)
+        for kw in ({"T": 0.0}, {"T": 0.05}, {"T": 0.0, "two_sz": 0}):
+            f = self.orbital_chain(**kw)
+            for spec in (None, orbital, charge):
+                with self.subTest(kw=kw, spec=None if spec is None else spec.entries), \
+                        mock.patch.object(initial_facade, "diag_blocks", diag), \
+                        mock.patch.object(uhfk_fill, "diag_blocks", diag):
+                    res, _ = self.seed(f, spec)
+                    self.assertTrue(res.tried)
+                    up, dn, ud, du = _spin_blocks(res.G)
+                    self.assertTrue(np.array_equal(up, dn))
+                    self.assertFalse(np.any(ud) or np.any(du))
+
+    def test_spin_orbital_bitwise(self):
+        t = {((1, 0, 0), s, s): -1.0 for s in range(2)}
+        t.update({((-1, 0, 0), s, s): -1.0 for s in range(2)})
+        f = self.chain(8, (2, 1, 1), norb=2, ncond=8, T=0.0, transfer=t, so=True)
+        res, _ = self.seed(f, _spec([_e(0, c0=1.0)], ("1/2", "0", "0"), (2, 1, 1)))
+        self.assertTrue(res.tried)
+        g = res.G[:, 0, :, 0, :]
+        self.assertTrue(np.array_equal(g[:, 0::2, 0::2], g[:, 1::2, 1::2]))
+        self.assertFalse(np.any(g[:, 0::2, 1::2]) or np.any(g[:, 1::2, 0::2]))
+
+    def test_spin_dependent_base_untouched(self):
+        """A Zeeman term in the base (T > 0, so it moves the occupations):
+        the seed keeps its spin polarisation."""
+        entries = {((1, 0, 0), 0, 0, s, s): -1.0 for s in range(2)}
+        entries[((0, 0, 0), 0, 0, 0, 0)] = -0.25
+        entries[((0, 0, 0), 0, 0, 1, 1)] = 0.25
+        text = initial_fixtures.spin_transfer_text(1, entries)
+        f = self.chain(8, (2, 1, 1), T=0.1, extra={"transfer.dat": text})
+        res, _ = self.seed(f, _spec([_e(c0=1.0)], ("1/2", "0", "0"), (2, 1, 1)))
+        up, dn, _, _ = _spin_blocks(res.G)
+        self.assertGreater(float(np.max(np.abs(np.diagonal(up - dn, axis1=1, axis2=2)))),
+                           1e-3)
 
 
 if __name__ == "__main__":
