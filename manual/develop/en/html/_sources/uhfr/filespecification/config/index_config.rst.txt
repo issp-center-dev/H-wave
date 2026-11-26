@@ -299,6 +299,8 @@ while the latter on output files, as described below.
 ``file.input.interaction`` section
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+The keys of this section are case-insensitive (``trans`` is treated as ``Trans``); giving the same key more than once with different capitalization is an error.
+
 - ``Trans``
 
   **Type :**
