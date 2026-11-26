@@ -43,6 +43,12 @@ List of error messages
 
   **mode :** UHFk (read_input_k)
 
+- ``read_input_k:`` *file*\ ``: row`` *i s j t* ``appears twice with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
+
+  **description :** the ``initial_uhf`` file *file* repeats the row *i s j t* with values that differ by more than :math:`10^{-10}`. Keep one value for the row.
+
+  **mode :** UHFk (read_input_k)
+
 - ``Get_param: key must be mod or ham or output.``
 
   **description :** unsupported keyword is given to ``get_param()``.
@@ -64,6 +70,12 @@ List of error messages
 - ``range check for`` *type* ``failed.``
 
   **description :** the value of *type* is not appropriate.
+
+  **mode :** UHFk
+
+- ``initial_uhf: rows (``\ *i s j t*\ ``) and (``\ *i' s j' t*\ ``) give the same element G[...](d=[...]) with different values`` *v1* ``and`` *v2* ``(tolerance 1e-10)``
+
+  **description :** two rows of ``initial_uhf`` map to the same element of the initial Green function (for example, the sites ``j`` and ``j'`` are the same after the displacement is taken modulo ``CellShape``) and their values differ by more than :math:`10^{-10}`; ``d`` is that displacement. Check that ``geometry_uhf`` and ``CellShape`` match the file, and keep one value for the element.
 
   **mode :** UHFk
 
@@ -342,6 +354,12 @@ List of error messages
   **description :** ``mode`` parameter is not valid.
 
   **mode :** RPA [warning]
+
+- ``2Sz-fixed mode: the interaction term(s)`` *terms* ``do not conserve S_z and are ignored under a fixed 2Sz`` ...
+
+  **description :** with ``2Sz`` fixed, the interaction terms *terms* (``PairLift``) contribute only spin-off-diagonal elements of the mean-field Hamiltonian, which the spin-block structure removes; the run continues without them. Omit ``2Sz`` (or set ``2Sz = "free"``) to include them.
+
+  **mode :** UHFk [warning]
 
 - ``FATAL: 2Sz=`` *value* ``. 2Sz should be even for calculating fij``
 

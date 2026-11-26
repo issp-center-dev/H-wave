@@ -20,6 +20,13 @@ from . import wan90
 
 logger = logging.getLogger("qlms").getChild("read_input")
 
+#: Two rows of an ``initial_uhf`` file that give the same Green-function
+#: element must agree to this absolute tolerance on the complex value
+#: (``abs(v1 - v2) <= 1e-10``); equal rows are accepted, others refused.
+#: Used for repeated ``(i, s, j, t)`` rows here and for distinct rows that
+#: map to the same element in ``UHFk._initial_green_uhf``.
+DUPLICATE_ROW_TOL = 1.0e-10
+
 
 class QLMSkInput():
     """Input file reader for k-space calculations.
@@ -236,9 +243,22 @@ class QLMSkInput():
                 value = float(_data[-1])
                 info[list] = value
         elif value_type == "complex":
+            # every repeat is compared with the FIRST value of its row, so
+            # small differences cannot drift past the tolerance; the last
+            # value is kept, as before
+            first = {}
             for _data in data:
                 list = tuple([int(i) for i in _data[:-2]])
                 value = float(_data[-2]) + 1j * float(_data[-1])
+                if list not in first:
+                    first[list] = value
+                elif abs(first[list] - value) > DUPLICATE_ROW_TOL:
+                    logger.error(
+                        "read_input_k: {}: row {} appears twice with different "
+                        "values {} and {} (tolerance {:g})".format(
+                            file_name, " ".join(str(i) for i in list),
+                            first[list], value, DUPLICATE_ROW_TOL))
+                    exit(1)
                 info[list] = value
         return info
 
