@@ -267,7 +267,10 @@ def calc_dos(
         print("Lx, Ly, Lz, norb: ", Lx, Ly, Lz, norb)
         print("Lxsub, Lysub, Lzsub, norb: ", Lxsub, Lysub, Lzsub, norb)
 
-    input_info_dict = input_dict["file"]["input"]["interaction"]
+    # the interaction keys are case-insensitive ('geometry' == 'Geometry')
+    from hwave.qlmsio.keys import canonicalize_interaction_keys
+    input_info_dict = canonicalize_interaction_keys(
+        input_dict["file"]["input"]["interaction"])
     file_name = os.path.join(
         input_info_dict["path_to_input"], input_info_dict["Geometry"]
     )

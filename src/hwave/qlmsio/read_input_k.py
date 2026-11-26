@@ -17,6 +17,7 @@ import os
 import re
 from requests.structures import CaseInsensitiveDict
 from . import wan90
+from . import keys
 
 logger = logging.getLogger("qlms").getChild("read_input")
 
@@ -62,7 +63,7 @@ class QLMSkInput():
         Read Green's function indices from file
     """
 
-    valid_namelist = [s.lower() for s in ["path_to_input", "Geometry", "Transfer", "Coulomb", "CoulombIntra", "CoulombInter", "Hund", "Ising", "PairLift", "Exchange", "PairHop", "Extern"]]
+    valid_namelist = [s.lower() for s in keys.KSPACE_KEYS]
 
     def __init__(self, info_inputfile, solver_type="UHFk"):
         logger.debug(">>> QLMSkInput init")
@@ -95,8 +96,13 @@ class QLMSkInput():
 
         # file.input.interaction -- normalized ONCE so every lookup
         # (path_to_input here, validation and dispatch below) shares the
-        # same case-insensitive semantics
-        files = CaseInsensitiveDict(info_inputfile.get("interaction", {}))
+        # same case-insensitive semantics, and the tables are stored under
+        # the CANONICAL key: solvers iterate ham_param and compare keys
+        # with the canonical spelling (a lower-case 'geometry' crashed
+        # UHFk._check_cellsize). Two keys differing only in case raise
+        # ValueError.
+        files = CaseInsensitiveDict(keys.canonicalize_interaction_keys(
+            info_inputfile.get("interaction", {})))
         interaction_file_dir = files.get("path_to_input", "")
 
         # check if keyword is valid
@@ -153,9 +159,7 @@ class QLMSkInput():
                     from hwave.solver.declarations import (
                         validate_hermitian_closure,
                         validate_no_onsite_same_orbital_inter)
-                    canonical = ("CoulombIntra" if k.lower() == "coulombintra"
-                                 else k)
-                    validate_hermitian_closure(canonical, tbl, source=f)
+                    validate_hermitian_closure(k, tbl, source=f)
                     validate_no_onsite_same_orbital_inter(k, tbl, source=f)
                 self.ham_param[k] = tbl
 
