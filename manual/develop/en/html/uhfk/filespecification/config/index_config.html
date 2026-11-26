@@ -173,6 +173,21 @@ This parameter specifies how the number of electrons calculated from the <code c
 </ul>
 </div></blockquote>
 </li>
+<li><p><code class="docutils literal notranslate"><span class="pre">2Sz</span></code></p>
+<p><strong>Type :</strong>
+Integer, or the string <code class="docutils literal notranslate"><span class="pre">&quot;free&quot;</span></code> (default: not set, which is the same as <code class="docutils literal notranslate"><span class="pre">&quot;free&quot;</span></code>)</p>
+<p><strong>Description :</strong>
+Twice the <span class="math notranslate nohighlight">\(z\)</span> component of the total spin, when it is fixed.
+The up and down spin sectors are then solved separately, with
+<code class="docutils literal notranslate"><span class="pre">(Ncond</span> <span class="pre">+</span> <span class="pre">2Sz)/2</span></code> and <code class="docutils literal notranslate"><span class="pre">(Ncond</span> <span class="pre">-</span> <span class="pre">2Sz)/2</span></code> electrons, and the spin-off-diagonal
+elements of the mean-field Hamiltonian are not used.
+If this parameter is not given, or it is set to <code class="docutils literal notranslate"><span class="pre">&quot;free&quot;</span></code>, the spin space is not separated.
+<code class="docutils literal notranslate"><span class="pre">2Sz</span></code> must have the same parity as <code class="docutils literal notranslate"><span class="pre">Ncond</span></code>, and it cannot be combined with
+<code class="docutils literal notranslate"><span class="pre">enable_spin_orbital</span> <span class="pre">=</span> <span class="pre">true</span></code>. One-body spin-flip terms in <code class="docutils literal notranslate"><span class="pre">Transfer</span></code> are an error
+with a fixed <code class="docutils literal notranslate"><span class="pre">2Sz</span></code>. Interaction terms that do not conserve <span class="math notranslate nohighlight">\(S_z\)</span> (<code class="docutils literal notranslate"><span class="pre">PairLift</span></code>)
+contribute only spin-off-diagonal elements, so a fixed <code class="docutils literal notranslate"><span class="pre">2Sz</span></code> ignores them: the run
+continues and logs one warning that names them. Omit <code class="docutils literal notranslate"><span class="pre">2Sz</span></code> (or set <code class="docutils literal notranslate"><span class="pre">2Sz</span> <span class="pre">=</span> <span class="pre">&quot;free&quot;</span></code>) to include them.</p>
+</li>
 <li><p><code class="docutils literal notranslate"><span class="pre">IterationMax</span></code></p>
 <p><strong>Type :</strong>
 Integer (default value is 20000)</p>
@@ -333,6 +348,12 @@ A row with site <code class="docutils literal notranslate"><span class="pre">i</
 By translation invariance only rows whose site <code class="docutils literal notranslate"><span class="pre">i</span></code> lies in the cell <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">0</span> <span class="pre">0</span></code> are used;
 elements without such a row start from zero, so a complete initial state needs every
 <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">s,</span> <span class="pre">j,</span> <span class="pre">t)</span></code> with <code class="docutils literal notranslate"><span class="pre">i</span></code> in the cell <code class="docutils literal notranslate"><span class="pre">0</span> <span class="pre">0</span> <span class="pre">0</span></code> and <code class="docutils literal notranslate"><span class="pre">j</span></code> over all sites.
+The other rows are not used; the number of distinct <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">s,</span> <span class="pre">j,</span> <span class="pre">t)</span></code> among them is reported in one INFO line of the log.
+Rows that give the same element (a repeated <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">s,</span> <span class="pre">j,</span> <span class="pre">t)</span></code>, or two sites <code class="docutils literal notranslate"><span class="pre">j</span></code> that coincide
+after the displacement is taken modulo <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>) must agree with the first such row to <span class="math notranslate nohighlight">\(10^{-10}\)</span> (absolute difference of the complex values);
+rows within this tolerance are accepted (the last one is used), and different values stop the run with an error that names
+the element and both values. A repeated <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">s,</span> <span class="pre">j,</span> <span class="pre">t)</span></code> is checked when the file is read,
+for every row, including the rows that are not used.
 <code class="docutils literal notranslate"><span class="pre">geometry_uhf</span></code> in <code class="docutils literal notranslate"><span class="pre">file.input</span></code> is required. It cannot be specified together with <code class="docutils literal notranslate"><span class="pre">initial</span></code>.
 This input requires <code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>; otherwise the run stops with an error.
 Give sublattice-ordered states through <code class="docutils literal notranslate"><span class="pre">initial</span></code> (<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>) instead.

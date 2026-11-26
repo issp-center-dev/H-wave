@@ -134,6 +134,23 @@ that has no effect under the current settings.
     - ``strict``:  if the value is not an integer value, the program terminates with error.
     - ``exact``:  if the value is not an integer value, a warning message will be shown and the value is rounded to an integer as ``round``.
 
+- ``2Sz``
+
+  **Type :**
+  Integer, or the string ``"free"`` (default: not set, which is the same as ``"free"``)
+
+  **Description :**
+  Twice the :math:`z` component of the total spin, when it is fixed.
+  The up and down spin sectors are then solved separately, with
+  ``(Ncond + 2Sz)/2`` and ``(Ncond - 2Sz)/2`` electrons, and the spin-off-diagonal
+  elements of the mean-field Hamiltonian are not used.
+  If this parameter is not given, or it is set to ``"free"``, the spin space is not separated.
+  ``2Sz`` must have the same parity as ``Ncond``, and it cannot be combined with
+  ``enable_spin_orbital = true``. One-body spin-flip terms in ``Transfer`` are an error
+  with a fixed ``2Sz``. Interaction terms that do not conserve :math:`S_z` (``PairLift``)
+  contribute only spin-off-diagonal elements, so a fixed ``2Sz`` ignores them: the run
+  continues and logs one warning that names them. Omit ``2Sz`` (or set ``2Sz = "free"``) to include them.
+
 - ``IterationMax``
 
   **Type :**
@@ -328,6 +345,12 @@ and the latter on the output files (such as locations to store).
   By translation invariance only rows whose site ``i`` lies in the cell ``0 0 0`` are used;
   elements without such a row start from zero, so a complete initial state needs every
   ``(i, s, j, t)`` with ``i`` in the cell ``0 0 0`` and ``j`` over all sites.
+  The other rows are not used; the number of distinct ``(i, s, j, t)`` among them is reported in one INFO line of the log.
+  Rows that give the same element (a repeated ``(i, s, j, t)``, or two sites ``j`` that coincide
+  after the displacement is taken modulo ``CellShape``) must agree with the first such row to :math:`10^{-10}` (absolute difference of the complex values);
+  rows within this tolerance are accepted (the last one is used), and different values stop the run with an error that names
+  the element and both values. A repeated ``(i, s, j, t)`` is checked when the file is read,
+  for every row, including the rows that are not used.
   ``geometry_uhf`` in ``file.input`` is required. It cannot be specified together with ``initial``.
   This input requires ``SubShape = [1, 1, 1]``; otherwise the run stops with an error.
   Give sublattice-ordered states through ``initial`` (``green.npz``) instead.
