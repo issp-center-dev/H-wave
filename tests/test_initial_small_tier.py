@@ -577,6 +577,29 @@ class TestInstabilityRows(_Tmp):
                         got = summary(self.cset(toml, max_candidates=64))
                     self.assertEqual(got, plain)
 
+    def test_growth_memo_several_subshapes(self):
+        """The instability budget grows on one cell while another cell keeps
+        its realisations: the ids stay unique and the candidate set equals
+        the one without the realisation memo (SubShapes 4x4 then 2x2)."""
+        from hwave.initial import enumerate as en
+        toml = _bond_model(self.dest())
+        orig = en.instability_candidates
+
+        def run(memo_on):
+            def ic(*a, **k):
+                if not memo_on:
+                    k["memo"] = None
+                return orig(*a, **k)
+            with mock.patch.object(en, "instability_candidates", ic):
+                c = self.cset(toml, subshapes=[(4, 4, 1), (2, 2, 1)], max_candidates=64)
+            return [(r["run_id"], r["tried"], r["not_tried_reason"], r["rank"])
+                    for r in c.rows]
+
+        with_memo = run(True)
+        ids = [r[0] for r in with_memo]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertEqual(with_memo, run(False))
+
     def test_degenerate_clusters(self):
         from hwave.initial.hints import degenerate_clusters
         self.assertEqual(degenerate_clusters([1.0, 2.0, 2.0 + 1e-12, 1.0 - 1e-13, 0.5]),

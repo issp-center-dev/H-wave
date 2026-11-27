@@ -1127,9 +1127,12 @@ def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, tak
     the rest of a degenerate set included. Every other pair is listed,
     not realised (:class:`InstabilityCandidates`); a pair no B holds is
     listed as unrepresentable. Eigenvalues only order the rows: no row is
-    removed for its eigenvalue. ``memo``: an optional dict ``(SubShape,
-    rank) -> realised candidates`` kept between calls with a larger
-    ``budget`` and the same ``taken`` start, so a pair is realised once."""
+    removed for its eigenvalue. ``memo``: an optional dict kept between
+    calls with a larger ``budget`` and the same ``taken`` start: per
+    ``SubShape`` the ids taken at the start of that cell and its realised
+    candidates by pair rank, so a pair is realised once; the memo of a
+    cell is dropped when the ids taken before it differ (an earlier cell
+    realised more), since its ids would no longer be unique."""
     pairs = eigenpairs if isinstance(eigenpairs, tuple) else hint_pairs(eigenpairs)
     subshapes = [tuple(int(x) for x in B) for B in subshapes]
     taken = set() if taken is None else taken
@@ -1144,6 +1147,18 @@ def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, tak
         count = 0
         last = None
         realised[B] = 0
+        # the memo of this cell holds the ids taken from the set as it was at
+        # the start of the cell; when another cell has taken other ids since
+        # (its budget grew), every realisation of this cell is redone
+        if memo is not None:
+            start = frozenset(taken)
+            mine_memo = memo.get(B)
+            if mine_memo is None or mine_memo[0] != start:
+                mine_memo = (start, {})
+                memo[B] = mine_memo
+            cell_memo = mine_memo[1]
+        else:
+            cell_memo = None
         for i, h in enumerate(mine):
             take = (count < limits.quota_instability if n is None else i < n)
             if not take and last is not None and (h.q, h.group) == last:
@@ -1151,9 +1166,9 @@ def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, tak
             reason = QUOTA_INSTABILITY
             if take:
                 realised[B] += 1
-                key = (B, h.rank)
-                if memo is not None and key in memo:
-                    rows = memo[key]
+                key = h.rank
+                if cell_memo is not None and key in cell_memo:
+                    rows = cell_memo[key]
                     if rows is not None:
                         taken.update(c.candidate_id for c in rows)
                 else:
@@ -1165,8 +1180,8 @@ def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, tak
                         # the field vanishes on this cell (realise refuses a
                         # zero pattern): listed as giving no response
                         rows = None
-                    if memo is not None:
-                        memo[key] = rows
+                    if cell_memo is not None:
+                        cell_memo[key] = rows
                 if rows is None:
                     reason = _NO_RESPONSE
                 else:
