@@ -395,7 +395,8 @@ class ParaResult:
     energy per cell of the para-check start (``None`` without the check).
     ``warnings``: messages for the report. ``input_sha256``: of the model
     the reference belongs to; ``model``: its ``cellshape``, ``norb_orig``,
-    ``ncond``, ``two_sz``, ``iflag_fock`` and ``spin_orbital`` (the TOML
+    ``ncond``, ``two_sz``, ``iflag_fock``, ``spin_orbital`` and
+    ``ene_cutoff`` (the TOML
     settings the input files do not fix).
     """
     status: Literal["converged", "not_converged", "skipped"]
@@ -436,7 +437,7 @@ def model_key(facts):
     return MappingProxyType({
         "cellshape": tuple(int(n) for n in p.cellshape), "norb_orig": int(p.norb_orig),
         "ncond": p.ncond, "two_sz": p.two_sz, "iflag_fock": bool(p.iflag_fock),
-        "spin_orbital": bool(p.enable_spin_orbital)})
+        "spin_orbital": bool(p.enable_spin_orbital), "ene_cutoff": float(p.ene_cutoff)})
 
 
 def _primitive_facts(facts):
@@ -628,8 +629,8 @@ def para_from_work(facts, work_dir) -> Optional[ParaResult]:
     function (it was skipped or failed). ``ValueError`` when the record
     belongs to another model: other input files (the input digest), or
     other settings of the TOML that the files do not fix (``CellShape``,
-    ``Ncond``, ``2Sz``, ``flag_fock``, the orbital count, spin-orbital
-    mode: :func:`model_key`). Both are checked before anything is read, a
+    ``Ncond``, ``2Sz``, ``flag_fock``, ``ene_cutoff``, the orbital count,
+    spin-orbital mode: :func:`model_key`). Both are checked before anything is read, a
     record without a Green function included."""
     from types import SimpleNamespace
     root = os.path.abspath(os.fspath(work_dir))

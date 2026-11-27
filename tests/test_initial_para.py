@@ -710,6 +710,7 @@ class TestParaFromWork(_Tmp):
         "two_sz": ("Ncond = 16", "Ncond = 16\n2Sz = 0"),
         "iflag_fock": ('mode = "UHFk"', 'mode = "UHFk"\nflag_fock = false'),
         "cellshape": ("CellShape = [4, 4, 1]", "CellShape = [6, 4, 1]"),
+        "ene_cutoff": ("Ncond = 16", "Ncond = 16\nene_cutoff = 50.0"),
     }
 
     def variant(self, src, key):
@@ -727,7 +728,7 @@ class TestParaFromWork(_Tmp):
         return toml
 
     def test_other_model_refused(self):
-        """Ncond, 2Sz, flag_fock or CellShape changed with the same input
+        """Ncond, 2Sz, flag_fock, CellShape or ene_cutoff changed with the same input
         files: para_from_work refuses with the differing setting named, for
         a record with a Green function and for a skipped one; the same model
         is reused through candidate_states(para=...)."""
