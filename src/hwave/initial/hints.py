@@ -1300,7 +1300,10 @@ def vertex_self_adjoint(Gamma) -> Tuple[bool, float]:
 
 def _check_bands(bands, P, who):
     """``ValueError`` unless ``bands`` live on the mesh and index space of
-    the pair space ``P`` (the primitive cell, its mode)."""
+    the pair space ``P`` (the primitive cell, its mode). The block structure
+    is checked by the facade: a label of ``P`` joining two blocks of the
+    bands (bands of a fixed 2Sz against a pair space without it) is
+    refused there."""
     if not isinstance(bands, initial_facade.Bands):
         raise ValueError("{}: bands must be a Bands (initial_facade.bands_of), got {!r}"
                          .format(who, type(bands).__name__))

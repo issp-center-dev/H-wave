@@ -456,6 +456,46 @@ class TestDegenerateAndZeroT(_Base):
                 fa.apply_lindhard(b, q, P.labels, np.ones(P.size))
 
 
+    def test_zero_t_open_shell_off_labels(self):
+        """T = 0 with an open shell only on an orbital outside the labels
+        (orbital 1 does not interact and has its own block): the response on
+        the labels is finite and equals that of a small T."""
+        from hwave.initial import hints
+        from hwave.solver import initial_facade as fa
+        toml = initial_fixtures.two_orbital(self.dest(), 6, delta=10.0, U=(1.0, 0.0),
+                                            T=0.0, ncond=15, subshape=(1, 1, 1))
+        f = _facts(toml)
+        p = f.problem
+        P = hints.pair_space(f)
+        self.assertTrue(np.all(P.labels[:, 0] == 0) and np.all(P.labels[:, 2] == 0))
+        H = np.asarray(p.ham_trans_k)
+        b0 = _bands(p, H, T=0.0)
+        b1 = _bands(p, H, T=1e-3)
+        lab1 = np.array(P.labels[P.labels[:, 1] == P.labels[:, 3]])
+        lab1[:, 0] = lab1[:, 2] = 1
+        for q in ((Fraction(1, 3), 0, 0), (Fraction(2, 3), 0, 0)):
+            np.testing.assert_allclose(fa.static_lindhard(b0, q, P.labels),
+                                       fa.static_lindhard(b1, q, P.labels), atol=1e-12)
+            with self.assertRaisesRegex(ValueError, "open Fermi shell"):
+                fa.static_lindhard(b0, q, lab1)
+
+    def test_zero_t_nearly_open_shell(self):
+        """At T = 0 a pair split by less than LINDHARD_ZERO_T_GAP with
+        different occupations is refused (nan), not given 1/|split|; a wider
+        split keeps the difference quotient."""
+        from hwave.solver import initial_facade as fa
+        for d in (2e-10, 1e-8, 0.5 * fa.LINDHARD_ZERO_T_GAP):
+            k = fa._lindhard_kernel(np.array([0.0]), np.array([1.0]), np.array([d]),
+                                    np.array([0.0]), 0.0)
+            self.assertTrue(np.isnan(k[0]))
+        k = fa._lindhard_kernel(np.array([0.0]), np.array([1.0]), np.array([1e-3]),
+                                np.array([0.0]), 0.0)
+        self.assertAlmostEqual(float(k[0]), 1e3, delta=1e-9)
+        k = fa._lindhard_kernel(np.array([0.0]), np.array([1.0]), np.array([1e-8]),
+                                np.array([1.0]), 0.0)
+        self.assertEqual(float(k[0]), 0.0)
+
+
 class TestArguments(_Base):
 
     def test_refusals(self):
@@ -545,6 +585,20 @@ class TestPairSpaceWrappers(_Base):
         b3 = _bands(so, np.asarray(so.ham_trans_k))
         with self.assertRaisesRegex(ValueError, "bands"):
             hints.lindhard(b3, (0, 0, 0), P)
+
+    def test_other_block_structure_refused(self):
+        """Bands of a fixed 2Sz (spin blocks) against a pair space built
+        without it (spin-flip labels): refused, not silently zero."""
+        from hwave.initial import hints
+        types = ("CoulombIntra", "CoulombInter")
+        f, p, P, H = self.model(self.golden(cellshape=(6, 3, 1), types=types))
+        self.assertTrue(np.any(P.labels[:, 1] != P.labels[:, 3]))
+        p2 = _facts(self.golden(cellshape=(6, 3, 1), types=types, two_sz=2)).problem
+        b2 = _bands(p2, np.asarray(p2.ham_trans_k))
+        for fn in (lambda: hints.lindhard(b2, (0, 0, 0), P),
+                   lambda: hints.lindhard_apply(b2, (0, 0, 0), P, np.ones(P.size))):
+            with self.assertRaisesRegex(ValueError, "block structure"):
+                fn()
 
 
 if __name__ == "__main__":

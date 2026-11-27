@@ -68,7 +68,8 @@ __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "hf_potential", "green_function", "referenced_input_files",
            "primitive_h0_k", "to_k", "interleaved_index", "fold_layout",
            "unfold_layout", "diag_blocks", "assemble_green", "Bands", "bands_of",
-           "fold_hamiltonian_k", "LINDHARD_DEGENERACY_TOL", "static_lindhard",
+           "fold_hamiltonian_k", "LINDHARD_DEGENERACY_TOL", "LINDHARD_ZERO_T_GAP",
+           "static_lindhard",
            "apply_lindhard", "ParaRun", "run_para", "PARA_EPS_MIN", "discard_profile_statistics"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
@@ -693,9 +694,18 @@ def fold_hamiltonian_k(H_k, *, cellshape, subshape, norb_orig, ns):
 #: ``|eps_a - eps_b|`` below which a pair of levels takes the derivative
 #: limit ``-f'`` in :func:`static_lindhard` (an absolute energy)
 LINDHARD_DEGENERACY_TOL = 1e-10
-#: the Lindhard functions work on chunks of k points holding at most this
-#: many complex entries per array
+#: at T = 0, a pair of levels of one block closer than this (an absolute
+#: energy) with different occupations is refused like an open Fermi shell:
+#: its weight 1/|eps_a - eps_b| would exceed 1e6 and grow without bound as
+#: the splitting goes to zero
+LINDHARD_ZERO_T_GAP = 1e-6
+#: :func:`apply_lindhard` works on chunks of k points holding at most this
+#: many complex entries per array (its memory stays independent of |P|^2)
 _LINDHARD_CHUNK_ENTRIES = 2 ** 17
+#: :func:`static_lindhard` builds its factor ``W`` on chunks of k points of
+#: at most this many complex entries (16 MB) per array; a chunk holds
+#: ``W``, ``F W`` and their reshaped copies at once
+_LINDHARD_DENSE_CHUNK_ENTRIES = 2 ** 20
 
 
 def _lindhard_kernel(ea, oa, eb, ob, T):
@@ -706,8 +716,10 @@ def _lindhard_kernel(ea, oa, eb, ob, T):
     ``(oa (1 - oa) + ob (1 - ob)) / (2 T)`` (``-f'(eps - mu) = f (1 - f) /
     T`` of each level, averaged), at T = 0 zero when both occupations are
     the same 0 or 1 and ``nan`` otherwise (a degenerate pair at the Fermi
-    level: the response is unbounded). Nonnegative for levels of one
-    mu-group (the occupations fall with the energy)."""
+    level: the response is unbounded). At T = 0 a pair closer than
+    :data:`LINDHARD_ZERO_T_GAP` with different occupations is also ``nan``
+    (a nearly open shell). Nonnegative for levels of one mu-group (the
+    occupations fall with the energy)."""
     ea, oa, eb, ob = np.broadcast_arrays(*(np.asarray(x, dtype=float)
                                            for x in (ea, oa, eb, ob)))
     d = ea - eb
@@ -719,6 +731,7 @@ def _lindhard_kernel(ea, oa, eb, ob, T):
     else:
         closed = (oa == ob) & ((oa == 0.0) | (oa == 1.0))
         lim = np.where(closed, 0.0, np.nan)
+        out = np.where((np.abs(d) < LINDHARD_ZERO_T_GAP) & (oa != ob), np.nan, out)
     return np.where(deg, lim, out)
 
 
@@ -775,6 +788,16 @@ def _lindhard_setup(bands, q, labels, who):
         alpha, beta = interleaved_index(a, s), interleaved_index(b, t)
     else:
         alpha, beta = s * norb + a, t * norb + b
+    alpha = np.asarray(alpha, dtype=np.int64)
+    beta = np.asarray(beta, dtype=np.int64)
+    iblk = _index_blocks(bands)
+    cross = iblk[alpha] != iblk[beta]
+    if np.any(cross):
+        m = int(np.nonzero(cross)[0][0])
+        raise ValueError("{}: label {} joins two solver blocks of the bands; the bands "
+                         "have another block structure than the labels (for example a "
+                         "fixed 2Sz against labels built without it): use the bands of the "
+                         "same model".format(who, [int(v) for v in labels[m]]))
     shape = tuple(int(n) for n in bands.kgrid)
     nk = int(np.prod(shape))
     mq = _q_mesh(q, shape, who)
@@ -786,14 +809,33 @@ def _lindhard_setup(bands, q, labels, who):
                          occ[:, None, :], float(bands.T))
     blk = np.asarray(bands.band_block)
     F[:, blk[:, None] != blk[None, :]] = 0.0
-    if np.isnan(F).any():
-        k = int(np.nonzero(np.isnan(F).any(axis=(1, 2)))[0][0])
-        raise ValueError("{}: the bands at T = 0 have an open Fermi shell (degenerate "
-                         "levels of one block with different occupations at k index {} and "
-                         "k + q); the static response is unbounded there: use T > 0 "
-                         "(T_hint)".format(who, list(kidx[k])))
-    return (np.asarray(alpha, dtype=np.int64), np.asarray(beta, dtype=np.int64),
-            labels[:, 4:7], kq_idx, kq, F)
+    flagged = np.argwhere(np.isnan(F))
+    vec = bands.vec_k
+    for i0 in range(0, flagged.shape[0], 256):
+        fk, fl, fm = flagged[i0:i0 + 256].T
+        # the weight of the pair on the labels: sum_m |v_alpha,l(k+q)|^2 |v_beta,m(k)|^2
+        w = np.sum(np.abs(vec[kq[fk], :, fl][:, alpha]) ** 2
+                   * np.abs(vec[fk, :, fm][:, beta]) ** 2, axis=1)
+        hit = w > 1e-20
+        if np.any(hit):
+            k = int(fk[np.nonzero(hit)[0][0]])
+            raise ValueError("{}: the bands at T = 0 have an open Fermi shell on the labels "
+                             "(levels of one block within {:g} of each other with different "
+                             "occupations at k index {} and k + q); the static response is "
+                             "unbounded there: use T > 0 (T_hint)".format(
+                                 who, LINDHARD_ZERO_T_GAP, list(kidx[k])))
+        F[fk, fl, fm] = 0.0
+    return alpha, beta, labels[:, 4:7], kq_idx, kq, F
+
+
+def _index_blocks(bands):
+    """The solver block of each index of the bands' index space (from the
+    support of the embedded eigenvectors; ``-1`` for an index no band
+    holds)."""
+    weight = np.sum(np.abs(np.asarray(bands.vec_k)) ** 2, axis=0)      # (nd, nb)
+    blk = np.asarray(bands.band_block)
+    out = blk[np.argmax(weight, axis=1)]
+    return np.where(weight.max(axis=1) > 0, out, -1)
 
 
 def _lindhard_phases(kq_idx, r, shape):
@@ -835,10 +877,13 @@ def static_lindhard(bands, q, labels):
     ``occ_k`` and, for ``|eps_l - eps_l'| <``
     :data:`LINDHARD_DEGENERACY_TOL`, the derivative limit ``-f'(eps -
     mu_group) = f (1 - f) / T``. Bands of different solver blocks do not
-    pair. At ``T = 0`` a degenerate pair contributes zero when both levels
-    are filled or both empty; a degenerate pair of one block with
-    different occupations (an open Fermi shell) is refused
-    (``ValueError``): the response is unbounded.
+    pair, and a label whose two legs lie in different blocks of the bands
+    is refused (``ValueError``). At ``T = 0`` a degenerate pair contributes
+    zero when both levels are filled or both empty; a pair of one block
+    closer than :data:`LINDHARD_ZERO_T_GAP` with different occupations (an
+    open or nearly open Fermi shell) is refused (``ValueError``) when it
+    has weight on the labels: the response is unbounded. Such a pair on
+    orbitals outside the labels does not matter.
 
     Cost ``O(N_k nb^2 |P|^2)``; :func:`apply_lindhard` gives the product
     with a vector without forming the matrix.
@@ -851,7 +896,7 @@ def static_lindhard(bands, q, labels):
     chi = np.zeros((npair, npair), dtype=np.complex128)
     if npair == 0:
         return chi
-    chunk = max(1, _LINDHARD_CHUNK_ENTRIES * 8 // max(1, npair * nb * nb))
+    chunk = max(1, _LINDHARD_DENSE_CHUNK_ENTRIES // max(1, npair * nb * nb))
     for k0 in range(0, nk, chunk):
         ks = np.arange(k0, min(nk, k0 + chunk))
         ph = _lindhard_phases(kq_idx[ks], r, shape)                 # (c, P)
@@ -877,6 +922,9 @@ def apply_lindhard(bands, q, labels, v):
     ``O(N_k (nb^3 + |P|))`` time, and memory ``O(N_k nb^2)`` plus chunks of
     k bounded independently of ``|P|^2``."""
     import scipy.sparse
+    # the setup (F, the label maps) is rebuilt at every call; a per-q cache
+    # for the repeated products of an iterative eigensolver is left to the
+    # medium tier
     alpha, beta, r, kq_idx, kq, F = _lindhard_setup(bands, q, labels, "apply_lindhard")
     shape = tuple(int(n) for n in bands.kgrid)
     vec = bands.vec_k
