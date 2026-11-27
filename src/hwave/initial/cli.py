@@ -438,8 +438,8 @@ def stage_run_dir(run_dir, doc, *, source_dir, overrides, source_name=None) -> S
     set to ``"energy.dat"``. The written TOML is re-parsed and checked by
     the solver's input reader. ``source_name`` (the original file name)
     goes into the header comment. ``initial = "initial.npz"`` is always
-    written; the caller writes that file (a stage-0 caller must write its
-    starting npz there too). Output names that would overwrite
+    written; the caller writes that file (for the preliminary paramagnetic
+    run, its starting npz). Output names that would overwrite
     ``input.toml``, ``initial.npz``, ``hwave.log`` or ``inputs/`` are
     refused.
 
@@ -991,6 +991,7 @@ def _stage0_outcome(work, e, base, thint):
     status file decides; without one, ``hwave.log`` (none and no output:
     not run yet)."""
     from hwave.initial import hints
+    from hwave.initial.writer import check_green
     from hwave.results import (ResultsError, UnsupportedLayoutError, open_run, read_energy,
                                read_scf_status, read_uhfk_green)
     rd = work / e["run_dir"]
@@ -1027,6 +1028,10 @@ def _stage0_outcome(work, e, base, thint):
             return failed("its outputs exist but {} does not, so the convergence cannot be "
                           "verified".format(RUN_LOG))
         verdict, residual, summary = _log_verdict(log, eps_tol)
+        if verdict != "failed" and not _log_ended(log):
+            # no status file and no final line of the solver: still running,
+            # or stopped from outside; not decided here
+            return _Stage0Outcome("pending")
         if verdict == "failed" or summary is not None:
             return failed(summary or "the run did not converge")
         converged = verdict == "converged"
@@ -1038,7 +1043,13 @@ def _stage0_outcome(work, e, base, thint):
         free = read_energy(run).free_total
         if free is None:
             raise UnsupportedLayoutError("no FreeEnergy_Total in the energy output")
-        para = hints.para_from_green(base, thint, np.asarray(g.green), free_energy=free,
+        G = np.asarray(g.green)
+        try:
+            check_green(G, base.problem, what="{}: green".format(g.source))
+        except ValueError as exc:
+            return failed("the output green is not a state of this input ({}); it is not "
+                          "used as the para reference".format(exc))
+        para = hints.para_from_green(base, thint, G, free_energy=free,
                                      converged=converged, iterations=iterations,
                                      scf_residual=residual, eps=eps,
                                      iteration_max=iteration_max)
@@ -1180,7 +1191,8 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
     files = [p for p in (extra_path, site_path) if p is not None]
     record = {"command": command, "input": _input_record(toml, base.input_sha256, files)}
     from hwave.initial.hints import t_hint_bare
-    thint = t_hint_bare(base.problem, t_user=t_hint)
+    # the hint temperature of the preliminary paramagnetic run (only then)
+    thint = t_hint_bare(base.problem, t_user=t_hint) if stage0 else None
     reentry, stage0_record = None, None
 
     if work.exists() and not work.is_dir():
@@ -1198,6 +1210,8 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
                              "it".format(work, "; ".join(diff)))
         if old.get("stage") == STAGE_PENDING:
             # the preliminary paramagnetic run: classified before anything else
+            if thint is None:
+                thint = t_hint_bare(base.problem, t_user=t_hint)
             reentry = _stage0_reentry(work, old, base, thint)
             if reentry is None:
                 _print_stage0(work, [e["run_dir"] for e in old["stage0"]["runs"]], stdout)
@@ -1385,6 +1399,17 @@ def _log_verdict(log_path, eps_tol):
         if m:
             return "not_converged", _float(m.group(1).rstrip(",")), None
     return "not_converged", None, "{} has no convergence message".format(RUN_LOG)
+
+
+def _log_ended(log_path):
+    """Whether ``hwave.log`` holds a final line of the solver (its
+    convergence message, success or failure, or an error)."""
+    with open(log_path, encoding="utf-8", errors="replace") as f:
+        for ln in f:
+            if _SUCCEEDED.search(ln) or _FAILED.search(ln) or _ERROR_LINE.match(ln) \
+                    or ln.startswith("Traceback (most recent call"):
+                return True
+    return False
 
 
 def _seed_problem(entry, run_dir, run_toml):

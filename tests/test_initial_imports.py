@@ -122,7 +122,7 @@ class TestImportBoundary(unittest.TestCase):
 INTERNAL_REFERENCE = re.compile(
     r"design sections?|owner decision|owner[- ]approved|\bruling\b|\bplan calls?\b|"
     r"\bO[0-9]\b|\bQ[0-9]\b|\bR(?:[0-9]|10)\b|\bPR \d|spec V\d|\bsections? \d|§|"
-    r"\bstage 0\b|\bI1\.\d+|\btask I\d")
+    r"\bstage[ _-]0\b|\bI1\.\d+|\btask I\d")
 
 
 def internal_references(path):
@@ -162,9 +162,11 @@ class TestNoInternalReferences(unittest.TestCase):
     def test_pattern_catches_the_old_forms(self):
         for text in ("(design section 5.1)", "owner decision O8", "(O7)", "ruling R8",
                      "(owner-approved)", "plan call", "spec V2", "the PR 1a reader",
-                     "section 8.2", "stage 0 pending", "(Q1)", "§6.3"):
+                     "section 8.2", "stage 0 pending", "(Q1)", "§6.3",
+                     "a stage-0 caller", "stage_0 run"):
             self.assertRegex(text, INTERNAL_REFERENCE)
-        for text in ("O(k)", "Oa", "R -> q.R", "O_k", "Q_TIE", "2Sz", "R0x"):
+        for text in ("O(k)", "Oa", "R -> q.R", "O_k", "Q_TIE", "2Sz", "R0x",
+                     "stage0_para", "--stage0", "stage0_commands.txt"):
             self.assertNotRegex(text, INTERNAL_REFERENCE)
 
 

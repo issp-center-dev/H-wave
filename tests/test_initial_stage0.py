@@ -297,8 +297,16 @@ class TestStage0Runs(_Stage0):
         variant("green_missing", lambda w: os.remove(
             os.path.join(w, "stage0_para", "output", "green.npz")))
         variant("log_only", lambda w: os.remove(self.status_path(w)))
-        variant("log_no_message", lambda w: (os.remove(self.status_path(w)), open(
-            os.path.join(w, "stage0_para", "hwave.log"), "w").close()))
+        def scaled_green(w):
+            path = os.path.join(w, "stage0_para", "output", "green.npz")
+            with np.load(path, allow_pickle=False) as d:
+                members = {k: d[k] for k in d.files}
+            members["green"] = members["green"] * 1.5
+            np.savez(path, **members)
+        variant("green_scaled", scaled_green)
+        variant("log_ended_badly", lambda w: (os.remove(self.status_path(w)), open(
+            os.path.join(w, "stage0_para", "hwave.log"), "a").write(
+                "2026-01-01 00:00:00 ERROR qlms: the solver stopped\n")))
         variant("outputs_without_log", lambda w: (
             os.remove(self.status_path(w)),
             os.remove(os.path.join(w, "stage0_para", "hwave.log"))))
@@ -308,7 +316,8 @@ class TestStage0Runs(_Stage0):
                 "unreadable_status": ("skipped", "unreadable"),
                 "green_missing": ("skipped", "cannot be read"),
                 "log_only": ("computed", None),
-                "log_no_message": ("skipped", "no convergence message"),
+                "green_scaled": ("skipped", "not a state of this input"),
+                "log_ended_badly": ("skipped", "solver error"),
                 "outputs_without_log": ("skipped", "hwave.log")}
         for name, w in cases.items():
             with self.subTest(case=name):
@@ -330,6 +339,42 @@ class TestStage0Runs(_Stage0):
                 rows = [r for r in self.coverage(w)["rows"] if r["tried"]]
                 self.assertEqual({r["seed_base"] for r in rows},
                                  {"para_hf" if status == "computed" else "bare"})
+
+    @heavy
+    def test_stage0_states_not_finished(self):
+        """No status file and no final line of the solver in hwave.log (a run
+        still in progress): not finished, exit 3, nothing changes; once its
+        final line is there, it is decided."""
+        src = self.src()
+        work = self.path("WORK")
+        self.assertEqual(self.prep(src, work, para_check=True)[0], 3)
+        self.run_stage0(work)
+        # stage0_para finished; stage0_para_check is "still running": a
+        # partial log, no outputs
+        rd = os.path.join(work, "stage0_para_check")
+        shutil.rmtree(os.path.join(rd, "output"))
+        with open(os.path.join(rd, "hwave.log")) as f:
+            head = [ln for ln in f.read().splitlines()
+                    if "calculation succeeded" not in ln and "calculation failed" not in ln]
+        with open(os.path.join(rd, "hwave.log"), "w") as f:
+            f.write("\n".join(head[:5]) + "\n")
+        snap = self.tree(work)
+        rc, out = self.prep(src, work, para_check=True)
+        self.assertEqual(rc, 3, out)
+        self.assertIn(PENDING_TEXT, out)
+        self.assertEqual(self.tree(work), snap)
+        # the same with outputs present but no final line
+        w2 = self.path("W2")
+        shutil.copytree(work, w2)
+        os.remove(self.status_path(w2))
+        with open(os.path.join(w2, "stage0_para", "hwave.log"), "w") as f:
+            f.write("2026-01-01 00:00:00 INFO qlms: step 1\n")
+        self.assertEqual(self.prep(src, w2, para_check=True)[0], 3)
+        # the run finishes: decided, exit 0
+        self.run_stage0(work, ["stage0_para_check"])
+        rc, out = self.prep(src, work, para_check=True)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.coverage(work)["hint"]["status"], "computed")
 
     @heavy
     def test_stage0_para_check_split(self):

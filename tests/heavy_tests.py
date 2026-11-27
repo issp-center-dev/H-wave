@@ -346,6 +346,9 @@ HEAVY_TESTS = (
     ("test_initial_stage0", "TestStage0Runs", "test_stage0_states",
      "prepare --stage0, one hwave subprocess, then the same prepare on eight "
      "copies of WORK; 1.3 s on macOS, about 4 s on the Linux CI runners"),
+    ("test_initial_stage0", "TestStage0Runs", "test_stage0_states_not_finished",
+     "prepare --stage0 --para-check, three hwave subprocesses and three "
+     "re-entries; about 2 s on macOS, about 5 s on the Linux CI runners"),
     ("test_initial_stage0", "TestStage0Runs", "test_stage0_work_relocatable",
      "prepare --stage0, a move of WORK, bash stage0_commands.txt and "
      "commands.txt, collect; 2.3 s on macOS, about 6 s on the Linux CI runners"),
