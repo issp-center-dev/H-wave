@@ -501,5 +501,95 @@ class TestVertexArguments(_Base):
         np.testing.assert_array_equal(hints.vertex(fB, q, PB), hints.vertex(f1, q, P1))
 
 
+_SU2_TABLES = {"CoulombIntra": {((0, 0, 0), 0, 0): 2.0, ((0, 0, 0), 1, 1): 1.0},
+               "CoulombInter": {((1, 0, 0), 0, 0): 0.4, ((0, 0, 0), 0, 1): 0.6},
+               "PairHop": {((0, 0, 0), 0, 1): 0.2}}
+
+
+class TestSu2Context(_Base):
+    """A spin-rotation result passed in is used only where it holds."""
+
+    def test_fallback_to_one_sector(self):
+        from unittest import mock
+        from hwave.initial import hints
+        # an orbital slot with an up-up label and no down-down partner
+        labels = np.array([[0, 0, 0, 0, 0, 0, 0], [0, 1, 0, 1, 0, 0, 0],
+                           [0, 0, 1, 0, 0, 0, 0]], dtype=np.int64)
+        self.assertIsNone(hints._su2_sectors(labels))
+        self.assertIsNotNone(hints._su2_sectors(labels[:2]))
+        f = _facts(self.golden(cellshape=(4, 4, 1), tables=_SU2_TABLES))
+        with mock.patch.object(hints, "_su2_sectors", return_value=None):
+            with self.assertLogs("qlms.initial.hints", level="WARNING") as cm:
+                P = hints.pair_space(f, su2=_passed_su2())
+        self.assertEqual(P.sectors, (hints.SECTOR_FULL,))
+        self.assertIsNone(P.sector_basis[0])
+        self.assertIn("one sector is kept", P.sector_note)
+        self.assertTrue(any("one sector is kept" in m for m in cm.output))
+        self.assertEqual(P.su2_status, "passed")
+
+    def test_passed_result_kept_where_it_holds(self):
+        from hwave.initial import hints
+        f = _facts(self.golden(cellshape=(4, 4, 1), tables=_SU2_TABLES))
+        P = hints.pair_space(f, su2=_passed_su2())
+        self.assertEqual(P.sectors, (hints.SECTOR_CHARGE, hints.SECTOR_SZ))
+        self.assertIsNone(P.sector_note)
+
+    def test_foreign_passed_result_rechecked(self):
+        from hwave.initial import hints
+        for kw in ({"two_sz": 0}, {"fock": False}, {"spin_orbital": True}):
+            with self.subTest(**kw):
+                f = _facts(self.golden(cellshape=(4, 4, 1), tables=_SU2_TABLES, **kw))
+                with self.assertLogs("qlms.initial.hints", level="WARNING") as cm:
+                    P = hints.pair_space(f, su2=_passed_su2())
+                self.assertTrue(any("run again" in m for m in cm.output))
+                self.assertEqual(P.sectors, (hints.SECTOR_FULL,))
+                self.assertNotEqual(P.su2_status, "passed")
+
+
+class TestForeignLabels(_Base):
+
+    def test_same_mesh_other_tables_refused(self):
+        from hwave.initial import hints
+        fa = _facts(self.golden(types=("CoulombIntra",)))
+        fb = _facts(self.golden())
+        Pa = hints.pair_space(fa, su2=_failed_su2())
+        for fn in (hints.vertex, hints.vertex_sparse):
+            with self.subTest(fn=fn.__name__):
+                with self.assertRaisesRegex(ValueError, "exactly the slots"):
+                    fn(fb, (0, 0, 0), Pa)
+        Pb = hints.pair_space(fb, su2=_failed_su2())
+        with self.assertRaisesRegex(ValueError, "exactly the slots"):
+            hints.vertex(fa, (0, 0, 0), Pb)
+
+
+class TestComplexCouplings(_Base):
+    """Complex coefficients are refused for every two-body type but PairHop,
+    with or without the Fock term."""
+
+    def test_complex_refused(self):
+        for name in ("CoulombInter", "Hund", "Ising", "Exchange", "PairLift"):
+            for fock in (True, False):
+                with self.subTest(name=name, fock=fock):
+                    toml = self.golden(tables={name: {((1, 0, 0), 0, 1): 0.2 + 0.1j}},
+                                       fock=fock)
+                    with self.assertRaisesRegex(
+                            ValueError, r"{} has the complex coefficient .* at R = "
+                                        r"\((1|-1), 0, 0\), orbitals \((1, 2|2, 1)\)".format(name)):
+                        _facts(toml)
+                    # the same table with a real coefficient is accepted
+                    _facts(self.golden(tables={name: {((1, 0, 0), 0, 1): 0.2}}, fock=fock))
+
+    def test_complex_pairhop_accepted(self):
+        from hwave.initial import hints
+        for fock in (True, False):
+            with self.subTest(fock=fock):
+                f = _facts(self.golden(tables={"PairHop": {((1, 0, 0), 0, 1): 0.2 + 0.1j}},
+                                       fock=fock))
+                P = hints.pair_space(f, su2=_failed_su2())
+                ok, res = hints.vertex_self_adjoint(
+                    hints.vertex(f, (Fraction(1, 3), Fraction(1, 3), 0), P))
+                self.assertTrue(ok, msg=str(res))
+
+
 if __name__ == "__main__":
     unittest.main()

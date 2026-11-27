@@ -884,10 +884,6 @@ def _sector_index(P, sector):
     return P.sectors.index(sector)
 
 
-def _primitive_problem(facts):
-    return _primitive_facts(facts).problem
-
-
 def _grid_dims(problem):
     """``(nvol, 2, n, 2, n)``: the slot grid ``(r, s, a, t, b)`` of the
     primitive cell (``n`` physical orbitals)."""
@@ -1085,7 +1081,10 @@ def pair_space(facts, *, su2=None) -> PairSpace:
 
     ``su2``: the :class:`~hwave.initial.symmetry.Su2Result` of the model
     (computed on the primitive cell when ``None``). When its status is
-    ``"passed"`` the pair space carries the charge and ``S^z`` sectors.
+    ``"passed"`` the pair space carries the charge and ``S^z`` sectors. A
+    given ``"passed"`` result is re-checked cheaply on this model (normal
+    mode, free S_z, ``H0`` and the map with this Fock flag, 3 generic G x 3
+    rotations); when it does not hold, the full check is run again.
     """
     from hwave.initial import symmetry
     facts1 = _primitive_facts(facts)
@@ -1095,6 +1094,11 @@ def pair_space(facts, *, su2=None) -> PairSpace:
     labels = _labels_of(p, flat)
     labels.flags.writeable = False
     if su2 is None:
+        su2 = symmetry.su2_check(p)
+    elif su2.status == "passed" and not _su2_holds(p):
+        logger.warning("pair_space: the given spin-rotation result says passed, but it "
+                       "does not hold for this model (its Sz mode, spin-orbital mode or "
+                       "Fock setting); the check is run again")
         su2 = symmetry.su2_check(p)
     status = su2.status
     sectors, bases, slabels, note = (SECTOR_FULL,), (None,), (None,), None
@@ -1111,6 +1115,32 @@ def pair_space(facts, *, su2=None) -> PairSpace:
                      norb_phys=int(p.tables.norb_phys), include_fock=bool(p.iflag_fock),
                      spin_orbital=bool(p.enable_spin_orbital), su2_status=status,
                      sector_note=note)
+
+
+def _su2_holds(p):
+    """A cheap re-check of a passed spin-rotation result on ``p``: normal
+    mode with a free S_z, ``[S, H0] = 0`` and the Hartree-Fock map (with
+    ``p``'s Fock flag and blocks) equivariant under 3 generic G x 3 random
+    rotations."""
+    from hwave.initial import symmetry
+    if p.enable_spin_orbital or not p.sz_free:
+        return False
+    if symmetry._h0_commutator(p, (0, 1, 2)) > symmetry.SU2_TOL:
+        return False
+    return symmetry._random_residual(p, (0, 1, 2), 364) <= symmetry.SU2_TOL
+
+
+def _check_labels(P, problem, facts1):
+    """``ValueError`` unless ``P`` holds exactly the slots of this model's
+    Hartree-Fock map (a pair space of another model on the same mesh)."""
+    out, inp, _coef, _rid, _kind = _kept_terms(problem, facts1)
+    want = np.unique(np.concatenate([out, inp]))
+    have = np.sort(_flat_of(P, P.labels))
+    if want.shape != have.shape or not np.array_equal(want, have):
+        raise ValueError("vertex: the pair space does not hold exactly the slots of the "
+                         "Hartree-Fock map of this model ({} labels, the model has {}); "
+                         "build it with pair_space(facts) of this model".format(
+                             have.size, want.size))
 
 
 def _check_pair_space(P, problem):
@@ -1177,8 +1207,10 @@ def vertex(facts, q, P, *, sector=None) -> np.ndarray:
     many q passes primitive-cell facts. ``sector``: one of ``P.sectors``; the block
     ``U^dag Gamma U`` of that sector's basis (``None``: the full space).
     """
-    p = _primitive_problem(facts)
+    facts1 = _primitive_facts(facts)
+    p = facts1.problem
     _check_pair_space(P, p)
+    _check_labels(P, p, facts1)
     k = _sector_index(P, sector)
     ph = _phases(p.shape, q)
     dims = _grid_dims(p)
@@ -1214,6 +1246,7 @@ def vertex_sparse(facts, q, P, *, sector=None):
     facts1 = _primitive_facts(facts)
     p = facts1.problem
     _check_pair_space(P, p)
+    _check_labels(P, p, facts1)
     k = _sector_index(P, sector)
     ph = _phases(p.shape, q)
     out, inp, coef, rid, kind = _kept_terms(p, facts1)

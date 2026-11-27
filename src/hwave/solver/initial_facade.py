@@ -60,7 +60,7 @@ from .uhfk_fill import (FillInfo, MuNotConvergedError, ShellRecord, assemble_gre
                         diag_blocks, fill_occupations)
 
 __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
-           "MuNotConvergedError", "TWO_BODY_TYPES", "load_problem",
+           "MuNotConvergedError", "TWO_BODY_TYPES", "REAL_TWO_BODY_TYPES", "load_problem",
            "solver_blocks", "hf_tables", "accumulate_hf_projected",
            "hf_potential", "green_function", "referenced_input_files",
            "primitive_h0_k", "to_k", "interleaved_index", "fold_layout",
@@ -84,6 +84,35 @@ _INPUT_KEYS = ("path_to_input", "interaction", "initial", "initial_uhf",
 #: base.scf_status_file_name, UHFk.save_results)
 _OUTPUT_KEYS = ("path_to_output", "energy", "eigen", "green", "onebodyg",
                 "initial", "rpa", "export_hamiltonian", "scf_status")
+
+
+#: the two-body tables whose coefficients must be real. For them UHFk's
+#: Hartree-Fock potential uses one coefficient ``J_ab(r)`` for both members
+#: of a Hermitian pair of terms, so a complex coefficient gives a potential
+#: that is not the mean field of the documented Hamiltonian (with or
+#: without the Fock term) and a vertex that is not Hermitian. PairHop is
+#: complex-safe and is not listed; CoulombIntra is on-site and real by its
+#: Hermitian closure.
+REAL_TWO_BODY_TYPES = ("Coulomb", "CoulombInter", "Hund", "Ising", "Exchange", "PairLift")
+
+
+def _refuse_complex_couplings(toml_path, param_ham):
+    """``ValueError`` naming the first complex coefficient of a table of
+    :data:`REAL_TWO_BODY_TYPES` (term, bond and 1-based orbitals)."""
+    for name in REAL_TWO_BODY_TYPES:
+        table = param_ham.get(name)
+        if not table:
+            continue
+        for (irvec, orbvec), v in table.items():
+            if complex(v).imag != 0:
+                raise ValueError(
+                    "{}: {} has the complex coefficient {} at R = {}, orbitals ({}, {}) "
+                    "(1-based). hwave.initial accepts complex coefficients only for "
+                    "PairHop: for {} the solver's mean-field potential is not that of "
+                    "the documented Hamiltonian when the coefficient is complex. Use "
+                    "real coefficients.".format(
+                        toml_path, name, complex(v), tuple(int(r) for r in irvec),
+                        int(orbvec[0]) + 1, int(orbvec[1]) + 1, name))
 
 
 # eq=False: the fields hold arrays (identity comparison and hash)
@@ -393,9 +422,12 @@ def load_problem(toml_path, *, subshape=None):
     Raises
     ------
     ValueError
-        A non-UHFk mode, a refused key, or an input the solver refuses.
+        A non-UHFk mode, a refused key, an input the solver refuses, or a
+        complex coefficient in a table of :data:`REAL_TWO_BODY_TYPES`.
     """
     solver, _, input_files = _build_solver(toml_path, subshape=subshape)
+    _refuse_complex_couplings(toml_path, solver.param_ham_orig if solver.has_sublattice
+                              else solver.param_ham)
     # every container of the problem is a read-only copy (arrays included),
     # so no consumer can change the model another call sees
     param_ham_orig = _deep_frozen(
