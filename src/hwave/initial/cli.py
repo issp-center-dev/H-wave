@@ -752,6 +752,14 @@ def _check_para_entry(manifest, work):
     return entry
 
 
+def _uses_para(cset):
+    """Whether the rows of ``cset`` were seeded on a para reference, or its
+    hints were computed from one (the small tier)."""
+    hint = (cset.model or {}).get("hint") or {}
+    return hint.get("status") == "computed" or any(
+        r.get("seed_base") == "para_hf" for r in cset.rows)
+
+
 def _collect_para(cache, facts):
     """The para reference of the WORK being collected (``cache["para_dir"]``
     set by :func:`collect`), rebuilt once."""
@@ -1271,6 +1279,11 @@ def collect(work, *, stdout=None, stderr=None) -> int:
     model = _thaw_json(cset.model)
     rows, warnings, facts_cache, para_cache = [], [], {}, {}
     para_entry = _check_para_entry(manifest, work)
+    if para_entry is None and _uses_para(cset):
+        raise ValueError("{}: the candidate set was prepared on a paramagnetic Hartree-Fock "
+                         "reference (seed base para_hf), but the manifest names no para "
+                         "reference file; the labels cannot be computed against it. Repeat "
+                         "prepare into a new directory".format(work / MANIFEST))
     if para_entry is not None:
         para_cache["para_dir"] = work / para_entry["dir"]
     for r in cset.rows:
@@ -1372,9 +1385,11 @@ def build_parser():
     pp.add_argument("--tier", choices=("auto", "large", "medium", "small"),
                     help="the enumeration tier: large (spin and charge patterns), small "
                          "(adds orbital patterns and instability hints from a paramagnetic "
-                         "Hartree-Fock run); auto chooses small when its memory estimate "
-                         "fits a quarter of the host memory, else large; medium arrives in "
-                         "a later release")
+                         "Hartree-Fock run); auto chooses small when the pair space |P| <= "
+                         "400, the k points N_q <= 4096 and N_q*|P|^3 <= 1e11 (fixed limits, "
+                         "the same on every host), else large; the host memory never "
+                         "chooses, it only refuses a small tier whose memory estimate does "
+                         "not fit; medium arrives in a later release")
     pp.add_argument("--extra-candidates", metavar="FILE.json",
                     help="a JSON list of {family: user|literature, pattern, label, "
                          "citation}; the pattern follows patternspec.schema.json")

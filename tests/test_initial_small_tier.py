@@ -27,6 +27,7 @@ from unittest import mock
 import numpy as np
 
 from tests import initial_fixtures
+from tests.heavy_tests import heavy
 
 
 def _facts(toml, subshape=None):
@@ -511,6 +512,77 @@ class TestInstabilityRows(_Tmp):
                             self.assertEqual((e.cx, e.cy), (0, 0))
                 self.assertFalse([r for r in c.rows if r["channel"] == "spin-spiral"])
 
+    def test_large_tier_fixed_sz_coverage(self):
+        """The large tier with a fixed 2Sz gives a valid coverage document:
+        the spin-rotation record has null max_residual and method (the S_z
+        check is in sz_residual)."""
+        from hwave.initial.report import coverage_document
+        toml = initial_fixtures.square(self.dest(), 4, U=2.0, T=0.2, subshape=(2, 2, 1),
+                                       two_sz=0)
+        c = self.cset(toml, tier="large")
+        doc = coverage_document(c, phase_marker="pre_run")
+        su2 = doc["model"]["su2"]
+        self.assertEqual(su2["status"], "not applicable (2Sz fixed)")
+        self.assertIsNone(su2["method"])
+        self.assertIsNone(su2["max_residual"])
+        self.assertIsNotNone(su2["sz_residual"])
+
+    def test_rank_and_ids_independent_of_eigensolver(self):
+        """Eigenvalues equal by symmetry (q and -q, lattice images, the
+        charge and S^z bond pairs at q = 0, two equivalent orbitals) are
+        ordered by their degenerate set and the tie keys, not by round-off:
+        random phases on every eigenvector of the eigensolver leave the
+        ids, ranks, tried set and patterns unchanged."""
+        def orb(dest):
+            t = {}
+            for a in range(2):
+                t[((1, 0, 0), a, a)] = -1.0
+                t[((-1, 0, 0), a, a)] = -1.0
+            t[((0, 0, 0), 0, 1)] = -0.3
+            t[((0, 0, 0), 1, 0)] = -0.3
+            return initial_fixtures.write_input(
+                dest, cellshape=(8, 1, 1), norb=2, transfer=t,
+                interactions={"CoulombIntra": {((0, 0, 0), a, a): 0.5 for a in range(2)},
+                              "CoulombInter": {((0, 0, 0), 0, 1): 1.5,
+                                               ((0, 0, 0), 1, 0): 1.5}},
+                param={"Ncond": 8, "T": 0.2, "SubShape": [4, 1, 1], "IterationMax": 3000})
+
+        def summary(c):
+            cand = {x.candidate_id: x for x in c.candidates}
+            out = []
+            for r in c.rows:
+                p = cand[r["candidate_id"]].pattern
+                ent = [(e.orb_a, e.orb_b, e.r) + tuple(
+                    round(v, 8) + 0.0 for z in (e.c0, e.cx, e.cy, e.cz)
+                    for v in (complex(z).real, complex(z).imag)) for e in p.entries]
+                out.append((r["run_id"], r["tried"], r["not_tried_reason"], r["rank"],
+                            None if p.phase is None else round(p.phase, 8) + 0.0, ent))
+            return out
+
+        eigh = np.linalg.eigh
+        for name, toml in (("bond", _bond_model(self.dest())), ("orbital", orb(self.dest()))):
+            with self.subTest(model=name):
+                plain = summary(self.cset(toml, max_candidates=64))
+                for seed in (3, 11):
+                    rng = np.random.default_rng(seed)
+
+                    def phased(a, *args, **kw):
+                        w, v = eigh(a, *args, **kw)
+                        if np.iscomplexobj(v):
+                            v = v * np.exp(1j * rng.uniform(0, 2 * np.pi, v.shape[-1]))
+                        else:
+                            v = v * rng.choice([-1.0, 1.0], v.shape[-1])
+                        return w, v
+                    with mock.patch.object(np.linalg, "eigh", phased):
+                        got = summary(self.cset(toml, max_candidates=64))
+                    self.assertEqual(got, plain)
+
+    def test_degenerate_clusters(self):
+        from hwave.initial.hints import degenerate_clusters
+        self.assertEqual(degenerate_clusters([1.0, 2.0, 2.0 + 1e-12, 1.0 - 1e-13, 0.5]),
+                         [1, 0, 0, 1, 2])
+        self.assertEqual(degenerate_clusters([]), [])
+
     def test_para_not_converged_skips_hints(self):
         """IterationMax = 1: the para step does not converge (the Fock term
         of V renormalises the bonds), so the hints are skipped with its
@@ -652,6 +724,7 @@ class TestCliPara(_Tmp):
             rc = cli.main([str(a) for a in argv])
         return rc, out.getvalue(), err.getvalue()
 
+    @heavy
     def test_prepare_small_para_reference(self):
         """prepare --tier small --para-check keeps the para reference in
         WORK/para_hf (SHA-256 in the manifest), seeds on it, labels against
@@ -692,8 +765,14 @@ class TestCliPara(_Tmp):
         with _np.load(os.path.join(work, para_row["run_id"], "initial.npz")) as d:
             G = _np.array(d["green_sublattice"])
         self.assertIn("bond-charge", cli._state_label(G, f, {}))
-        # run the para candidate only, then collect: its final label is para
+        # run the para candidate only, move WORK and delete the sources, then
+        # collect: the moved para reference gives the final label para
         run_solver(os.path.join(work, para_row["run_id"], "input.toml"))
+        moved = os.path.join(self.tmp, "moved", "WORK")
+        os.makedirs(os.path.dirname(moved))
+        shutil.move(work, moved)
+        shutil.rmtree(src)
+        work = moved
         rc, out, err = self.main("collect", work)
         self.assertEqual(rc, 0, err)
         with open(os.path.join(work, "coverage.json")) as f:
@@ -701,12 +780,34 @@ class TestCliPara(_Tmp):
         row, = [r for r in post["rows"] if r["run_id"] == para_row["run_id"]]
         self.assertEqual(row["status"], "converged")
         self.assertEqual(row["final_label"], "para")
-        # the para reference is part of the checked state of WORK
-        with open(os.path.join(work, "para_hf", "green.npz"), "ab") as f:
-            f.write(b"\0")
+        # the para reference is part of the checked state of WORK: a changed
+        # green or record, or a manifest without the para entry, is refused
+        man_path = os.path.join(work, "manifest.json")
+        for name in ("green.npz", "para_hf.json", None):
+            with self.subTest(changed=name):
+                keep = {}
+                targets = [man_path] if name is None else [
+                    os.path.join(work, "para_hf", name)]
+                for t in targets:
+                    with open(t, "rb") as f:
+                        keep[t] = f.read()
+                if name is None:
+                    with open(man_path) as f:
+                        m = json.load(f)
+                    m["para"] = None
+                    with open(man_path, "w") as f:
+                        json.dump(m, f)
+                else:
+                    with open(targets[0], "ab") as f:
+                        f.write(b"\0" if name.endswith(".npz") else b" ")
+                rc, out, err = self.main("collect", work)
+                self.assertEqual(rc, 1)
+                self.assertIn("para_hf/" + name if name else "no para reference", err)
+                for t, data in keep.items():
+                    with open(t, "wb") as f:
+                        f.write(data)
         rc, out, err = self.main("collect", work)
-        self.assertEqual(rc, 1)
-        self.assertIn("para_hf/green.npz", err)
+        self.assertEqual(rc, 0, err)
 
     def test_para_check_with_large_refused(self):
         src = os.path.dirname(initial_fixtures.square(self.dest(), 4, U=2.0, T=0.2,

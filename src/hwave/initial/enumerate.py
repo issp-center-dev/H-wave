@@ -949,8 +949,9 @@ class HintPair:
 
     ``q`` (reduced Fractions), ``index`` (its place among the pairs of its
     q, merged over the sectors: the ``r<rank>`` of the candidate id),
-    ``rank`` (its place among every pair of every q, by descending
-    ``lam``; ties by q order, increasing order n then lexicographic, then
+    ``rank`` (its place among every pair of every q: by descending
+    degenerate set of ``lam`` (:func:`hwave.initial.hints.degenerate_clusters`),
+    inside a set by q order, increasing order n then lexicographic, then
     ``index``; recorded as the row's ``rank``), ``lam`` and ``lam_imag``
     (the eigenvalue), ``sector``, ``group`` (its degenerate set within
     q), ``amplitude`` (the conjugate field ``O = Gamma x`` as PatternSpec
@@ -979,7 +980,12 @@ def hint_pairs(eigenpairs) -> Tuple[HintPair, ...]:
                 res.pairs, res.lambda_imag, res.sectors, res.groups, res.amplitudes)):
             flat.append((qf, i, float(lam), float(lim), sec, int(grp), tuple(amp),
                          not res.gamma_self_adjoint))
-    flat.sort(key=lambda t: (-t[2], cells.order(t[0]), t[0], t[1]))
+    # degenerate sets across q first (lambda(q) = lambda(-q) and lattice
+    # images are equal by symmetry), then q order and the index at q, so
+    # round-off never decides the rank
+    cluster = hints_mod.degenerate_clusters([t[2] for t in flat])
+    key = {id(t): c for t, c in zip(flat, cluster)}
+    flat.sort(key=lambda t: (key[id(t)], cells.order(t[0]), t[0], t[1]))
     return tuple(HintPair(q=t[0], index=t[1], rank=k, lam=t[2], lam_imag=t[3],
                           sector=t[4], group=t[5], amplitude=t[6], general_solve=t[7])
                  for k, t in enumerate(flat))
@@ -1095,7 +1101,7 @@ def _listed(facts, h, subshape, taken, limits):
 
 
 def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, taken=None,
-                           patterns=None, budget=None) -> InstabilityCandidates:
+                           patterns=None, budget=None, memo=None) -> InstabilityCandidates:
     """The instability rows of the hint eigenpairs on the ``SubShape``
     list.
 
@@ -1121,7 +1127,9 @@ def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, tak
     the rest of a degenerate set included. Every other pair is listed,
     not realised (:class:`InstabilityCandidates`); a pair no B holds is
     listed as unrepresentable. Eigenvalues only order the rows: no row is
-    removed for its eigenvalue."""
+    removed for its eigenvalue. ``memo``: an optional dict ``(SubShape,
+    rank) -> realised candidates`` kept between calls with a larger
+    ``budget`` and the same ``taken`` start, so a pair is realised once."""
     pairs = eigenpairs if isinstance(eigenpairs, tuple) else hint_pairs(eigenpairs)
     subshapes = [tuple(int(x) for x in B) for B in subshapes]
     taken = set() if taken is None else taken
@@ -1143,12 +1151,23 @@ def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, tak
             reason = QUOTA_INSTABILITY
             if take:
                 realised[B] += 1
-                try:
-                    rows = _instability_rows(f, B, h, su2=su2, tr=tr, limits=limits,
-                                             taken=taken, patterns=patterns)
-                except ValueError:
-                    # the field vanishes on this cell (realise refuses a zero
-                    # pattern): listed as giving no response
+                key = (B, h.rank)
+                if memo is not None and key in memo:
+                    rows = memo[key]
+                    if rows is not None:
+                        taken.update(c.candidate_id for c in rows)
+                else:
+                    try:
+                        rows = tuple(_instability_rows(f, B, h, su2=su2, tr=tr,
+                                                       limits=limits, taken=taken,
+                                                       patterns=patterns))
+                    except ValueError:
+                        # the field vanishes on this cell (realise refuses a
+                        # zero pattern): listed as giving no response
+                        rows = None
+                    if memo is not None:
+                        memo[key] = rows
+                if rows is None:
                     reason = _NO_RESPONSE
                 else:
                     for c in rows:
@@ -1375,15 +1394,32 @@ PARA_CHECK_LARGE_WARNING = ("the para check is not run: the large tier has no "
                             "paramagnetic Hartree-Fock step")
 
 
-def _pipeline(cands, subshapes, base, facts, lim, cache, *, su2, tr):
-    """Runs and rows of ``cands``: :func:`expand_runs`, the response checks,
-    :func:`deduplicate` and :func:`apply_quotas`."""
+def _stage(cands, subshapes, base, facts, lim, cache):
+    """Runs and rows of ``cands`` after :func:`expand_runs` and the response
+    checks."""
     runs, rows = expand_runs(cands, subshapes, cellshape=base.cellshape,
                              max_denominator=lim.max_denominator)
-    runs, rows = _response_checks(runs, rows, facts, nc_zero=base.n_c == 0,
-                                  only_para=_only_para(base.problem), cache=cache)
+    return _response_checks(runs, rows, facts, nc_zero=base.n_c == 0,
+                            only_para=_only_para(base.problem), cache=cache)
+
+
+def _merge_by_subshape(first, second, subshapes):
+    """Runs (or rows) of two stages in the order of :func:`expand_runs`:
+    SubShape by SubShape, the first stage before the second."""
+    def B_of(x):
+        return tuple(x.subshape) if isinstance(x, CandidateRun) else tuple(x["subshape"])
+    out = []
+    for B in subshapes:
+        out.extend(x for x in first if B_of(x) == B)
+        out.extend(x for x in second if B_of(x) == B)
+    return out
+
+
+def _finish_stage(runs, rows, facts, lim, cache, *, su2, tr):
+    """:func:`deduplicate` and :func:`apply_quotas` of staged runs."""
     kept, dup_rows = deduplicate(runs, facts=facts, su2=su2, tr=tr, cache=cache)
     index = {r["run_id"]: i for i, r in enumerate(rows)}
+    rows = list(rows)
     for r in dup_rows:
         rows[index[r["run_id"]]] = r
     return apply_quotas(kept, rows, lim)
@@ -1531,12 +1567,20 @@ def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=
 
     inst = InstabilityCandidates((), (), MappingProxyType({}))
     budget = None
+    # the other rows are staged once; a larger budget realises the new pairs
+    # only (memo) and repeats deduplication and the quotas
+    base_runs, base_rows = _stage(cands, subshapes, base, facts, lim, cache)
+    memo = {}
     while True:
         if pairs:
             inst = instability_candidates(facts, pairs, subshapes, lim, su2=su2, tr=tr,
-                                          taken=set(taken), patterns=cache, budget=budget)
-        runs, rows = _pipeline(cands + list(inst.runnable), subshapes, base, facts, lim,
-                               cache, su2=su2, tr=tr)
+                                          taken=set(taken), patterns=cache, budget=budget,
+                                          memo=memo)
+        i_runs, i_rows = _stage(list(inst.runnable), subshapes, base, facts, lim, cache)
+        runs, rows = _finish_stage(
+            _merge_by_subshape(base_runs, i_runs, subshapes),
+            _merge_by_subshape(base_rows, i_rows, subshapes), facts, lim, cache,
+            su2=su2, tr=tr)
         grow = {}
         for B in subshapes:
             done = inst.realised.get(B, 0)

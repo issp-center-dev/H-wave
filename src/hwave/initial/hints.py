@@ -114,7 +114,7 @@ __all__ = ["THint", "t_hint_bare", "W_FLOOR_ACT", "T_HINT_REL_FLOOR",
            "PairSpace", "pair_space", "vertex", "vertex_sparse", "vertex_self_adjoint",
            "SECTOR_FULL", "SECTOR_CHARGE", "SECTOR_SZ", "VERTEX_SELF_ADJOINT_TOL",
            "lindhard", "lindhard_apply", "SolveResult", "solve_small", "amplitude_entries",
-           "hint_eigenpairs", "vertex_fields", "HINT_METHOD", "REAL_TOL", "Q_OK", "Q_FEW",
+           "hint_eigenpairs", "vertex_fields", "degenerate_clusters", "HINT_METHOD", "REAL_TOL", "Q_OK", "Q_FEW",
            "Q_NONE", "Q_FAILED", "GENERAL_SOLVE_SOURCE"]
 
 #: the floor of ``W0`` in input energy units (a single flat level)
@@ -1426,7 +1426,7 @@ DEGENERACY_RTOL = 1e-8
 RESIDUAL_TOL = 1e-8
 #: an amplitude entry (or coefficient) below this fraction of the largest
 #: modulus of ``O = Gamma x`` is round-off and set to zero
-AMPLITUDE_ZERO_RTOL = 1e-12
+AMPLITUDE_ZERO_RTOL = 1e-9
 
 Q_OK = "ok"
 Q_FEW = "fewer than top_k positive eigenvalues"
@@ -1448,7 +1448,9 @@ class SolveResult:
     """The eigenpairs of ``K(q) = -chi0(q) Gamma(q)`` at one q.
 
     ``pairs``: ``(lambda, x)`` with ``lambda > 0`` in descending order
-    (ties: sector order, then the index within the sector), ``x`` the
+    of their degenerate sets (:func:`degenerate_clusters`; inside a set by
+    sector order, then the index within the sector, never by round-off of
+    lambda), ``x`` the
     density shape in the coordinates of its sector (``||x||_2 = 1``),
     after the merge of the sectors and ``top_k`` (a degenerate set
     crossing the cutoff is kept whole; a degenerate set within one
@@ -1480,6 +1482,23 @@ class SolveResult:
     warnings: Tuple[str, ...] = ()
     amplitudes: Tuple[Tuple, ...] = ()
     x_full: Tuple[np.ndarray, ...] = ()
+
+
+def degenerate_clusters(values):
+    """The degenerate set of each value: the values sorted descending are cut
+    where two neighbours differ by more than ``DEGENERACY_RTOL * max(1,
+    |lambda|)``; set 0 holds the largest values. Returns one integer per
+    value, in the given order."""
+    vals = [float(v) for v in values]
+    order = sorted(range(len(vals)), key=lambda i: -vals[i])
+    out = [0] * len(vals)
+    gid, prev = 0, None
+    for i in order:
+        if prev is not None and abs(prev - vals[i]) > DEGENERACY_RTOL * max(1.0, abs(prev)):
+            gid += 1
+        out[i] = gid
+        prev = vals[i]
+    return out
 
 
 def _as_sectors(chi0, Gamma):
@@ -1610,14 +1629,14 @@ def solve_small(chi0, Gamma, *, top_k=3, chi_bound=None) -> SolveResult:
             failures.append(fail if len(chis) == 1 else "{}: {}".format(s, fail))
         for j, (lam, lim, x, f) in enumerate(pairs):
             found.append((lam, si, j, lim, x, f, s))
-    found.sort(key=lambda t: (-t[0], t[1], t[2]))
+    # degenerate sets first (eigenvalues within DEGENERACY_RTOL), then the
+    # tie keys inside each set (sector order, index), so that round-off of
+    # eigenvalues equal by symmetry never decides the order
+    cluster = degenerate_clusters([t[0] for t in found])
+    order = sorted(range(len(found)), key=lambda i: (cluster[i], found[i][1], found[i][2]))
+    found = [found[i] for i in order]
+    groups = [cluster[i] for i in order]
     n_pos = len(found)
-    # degenerate sets in merged order
-    groups, gid = [], 0
-    for i, t in enumerate(found):
-        if i and abs(found[i - 1][0] - t[0]) > DEGENERACY_RTOL * max(1.0, abs(found[i - 1][0])):
-            gid += 1
-        groups.append(gid)
     keep = min(top_k, n_pos)
     while keep < n_pos and keep > 0 and groups[keep] == groups[keep - 1]:
         keep += 1

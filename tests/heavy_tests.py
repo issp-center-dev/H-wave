@@ -331,6 +331,10 @@ HEAVY_TESTS = (
     ("test_initial_cli", "TestPrepare", "test_work_relocatable",
      "prepare, move WORK, bash commands.txt, collect twice; 1.7 s on macOS, "
      "about 5 s on the Linux CI runners"),
+    # --- tests/test_initial_small_tier.py -- the para reference of WORK ---
+    ("test_initial_small_tier", "TestCliPara", "test_prepare_small_para_reference",
+     "prepare --tier small --para-check, one UHFk run, a move of WORK and five "
+     "collects; 2.7 s on macOS, about 7 s on the Linux CI runners"),
     # --- tests/test_initial_validation_i1.py -- V1a, V1b, V3 (i) --------
     ("test_initial_validation_i1", "TestPrepareValidation", "test_v3i_cli_proposed_cell",
      "prepare on a 16 x 2 cell of a 64 x 32 lattice (enumeration and deduplication "
