@@ -404,8 +404,14 @@ def _check_hint(hint, errs):
                 errs.append("hint.{}: null when the hint is skipped".format(k))
         if hint["q_set"] != []:
             errs.append("hint.q_set: [] when the hint is skipped")
-    elif hint["skip_reason"] is not None:
-        errs.append("hint.skip_reason: null when the hint is computed")
+    else:
+        if hint["skip_reason"] is not None:
+            errs.append("hint.skip_reason: null when the hint is computed")
+        if hint["para_status"] != "converged":
+            errs.append("hint.para_status: 'converged' when the hint is computed")
+        for k in ("gamma_self_adjoint", "method"):
+            if hint[k] is None:
+                errs.append("hint.{}: set when the hint is computed".format(k))
 
 
 def validate_coverage(doc) -> None:

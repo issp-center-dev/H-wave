@@ -80,7 +80,8 @@ INITIAL_STATE_SCHEMA = 1
 PROVENANCE_KEYS = tuple(sorted((
     "initial_state_schema", "run_id", "candidate_id", "label", "q", "phase", "sign",
     "subshape", "cellshape", "norb_orig", "spin_orbital", "index_convention", "two_sz",
-    "ncond", "seed", "h_used", "seed_base", "hwave_version", "input_sha256")))
+    "ncond", "seed", "h_used", "seed_base", "seed_base_para_T", "seed_base_para_digest",
+    "hwave_version", "input_sha256")))
 
 #: the convention markers, in the solver's string form (UHFk._save_green)
 CONVENTION_MEMBERS = {"green_convention": "green_slot_first",
@@ -367,22 +368,44 @@ def _run_of(candidate_or_run, subshape):
                     .format(candidate_or_run))
 
 
-def _check_para(para, facts):
+#: relative tolerance of the para temperature check
+_PARA_T_RTOL = 1e-12
+
+
+def _hint_T(facts, t_hint):
+    """The ``T_hint`` this run's hint uses: ``t_hint`` (a user value) or
+    the rule of :func:`hwave.initial.hints.t_hint_bare`."""
+    from hwave.initial.hints import t_hint_bare
+    return float(t_hint_bare(facts.problem, t_user=t_hint).T_hint)
+
+
+def _check_para(para, facts, t_hint=None):
     """``para`` must be a :class:`~hwave.initial.hints.ParaResult` of the
-    model of ``facts``."""
-    from hwave.initial.hints import ParaResult, model_key
+    model of ``facts``, computed at the ``T_hint`` this run's hint uses
+    (``t_hint``, or the rule)."""
+    from hwave.initial.hints import ParaResult, input_digest, model_key
     if not isinstance(para, ParaResult):
         raise TypeError("para: a ParaResult (hwave.initial.hints.para_hf), got {!r}"
                         .format(type(para).__name__))
-    if para.input_sha256 is not None and dict(para.input_sha256) != dict(facts.input_sha256):
+    want_digest = input_digest(facts.input_sha256)
+    got_digest = None if para.input_sha256 is None else input_digest(para.input_sha256)
+    if got_digest != want_digest:
         raise ValueError("para: the para reference was computed for other input files "
-                         "(input_sha256 differs)")
+                         "(input digest {} of the para record, {} of this input)"
+                         .format(got_digest, want_digest))
     if para.model is not None:
         want = dict(model_key(facts))
         diff = sorted(k for k in want if dict(para.model).get(k) != want[k])
         if diff:
             raise ValueError("para: the para reference was computed for another model "
                              "({} differ)".format(", ".join(diff)))
+    T = _hint_T(facts, t_hint)
+    if not abs(float(para.T) - T) <= _PARA_T_RTOL * max(1.0, abs(T)):
+        raise ValueError("para: the para reference was computed at T_hint = {:.12g}, but "
+                         "the hint of this input uses T_hint = {:.12g}{}; compute it again "
+                         "at that T (or pass the T_hint it was computed with as t_hint=)"
+                         .format(float(para.T), T, "" if t_hint is None
+                                 else " (t_hint given)"))
     if para.status == "converged":
         p = facts.problem
         nd0 = p.ns * p.norb_orig
@@ -392,7 +415,7 @@ def _check_para(para, facts):
                              "{}".format(tuple(np.shape(para.H_para_k)), want))
 
 
-def _seed(facts, run, para):
+def _seed(facts, run, para, t_hint=None):
     """The seed of ``run`` on the cell of ``facts``;
     a :class:`SeedResult` whose ``tried`` may be false. With a converged
     para reference ``para`` the base Hamiltonian is its ``H_para_k`` folded
@@ -402,7 +425,9 @@ def _seed(facts, run, para):
     from hwave.initial.patterns import realise
     from hwave.initial.seed import seed_pattern
     if para is not None:
-        _check_para(para, facts)
+        _check_para(para, facts, t_hint)
+    elif t_hint is not None:
+        _hint_T(facts, t_hint)                     # the same check of the value
     cand = run.candidate
     spec = cand.pattern
     B = tuple(run.subshape)
@@ -421,8 +446,10 @@ def _seed(facts, run, para):
                         amplitude=cand.amplitude_requested, seed_base=seed_base)
 
 
-def _provenance(facts, run, res):
+def _provenance(facts, run, res, para=None):
     import hwave
+    from hwave.initial.hints import input_digest
+    on_para = res.seed_base == "para_hf"
     cand = run.candidate
     spec = cand.pattern
     p = facts.problem
@@ -436,13 +463,15 @@ def _provenance(facts, run, res):
         "index_convention": _INDEX_CONVENTION[bool(p.enable_spin_orbital)],
         "two_sz": p.two_sz, "ncond": p.ncond, "seed": spec.seed,
         "h_used": res.h_used, "seed_base": res.seed_base,
+        "seed_base_para_T": float(para.T) if on_para else None,
+        "seed_base_para_digest": input_digest(para.input_sha256) if on_para else None,
         "hwave_version": hwave.__version__,
         "input_sha256": dict(facts.input_sha256),
     }
 
 
 def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
-                  site_map=None, uhfr_toml=None, para=None) -> pathlib.Path:
+                  site_map=None, uhfr_toml=None, para=None, t_hint=None) -> pathlib.Path:
     """Seed one candidate and write its initial-state file.
 
     Parameters
@@ -472,7 +501,16 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
         when converged the seed is built on its Hamiltonian folded to the
         cell (``seed_base = "para_hf"``); ``None`` or a reference that is
         not converged seeds on the bare ``H0`` (``seed_base = "bare"``).
-        No para step runs here.
+        No para step runs here. It must belong to this input (the same
+        input files, ``Ncond``, ``2Sz``, Fock flag, ``CellShape`` and mode)
+        and to the ``T_hint`` of its hint, else ``ValueError``; the para
+        T and the input digest of the para record are written to the
+        provenance (``seed_base_para_T``, ``seed_base_para_digest``; null
+        for a bare seed).
+    t_hint : float, optional
+        The user ``T_hint`` (``--t-hint``) the hint of this run uses, when
+        one was given; otherwise the rule of
+        :func:`hwave.initial.hints.t_hint_bare`.
 
     Returns
     -------
@@ -494,7 +532,7 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
     toml = _toml_of(input_dir_or_model)
     run = _run_of(candidate_or_run, subshape)
     if site_map is None:
-        path, res, _ = seed_and_write(toml, run, out=out, para=para)
+        path, res, _ = seed_and_write(toml, run, out=out, para=para, t_hint=t_hint)
         if path is None:
             raise InitialStateError("{}: refused: {}".format(run.run_id, res.not_tried_reason))
         return path
@@ -504,7 +542,7 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
         raise InitialStateError(SO_UHFR_REFUSAL)
     cells = _check_site_map(site_map, facts)
     _check_uhfr_input(uhfr_toml, facts, len(cells))
-    res = _seed(facts, run, para)
+    res = _seed(facts, run, para, t_hint)
     if not res.tried:
         raise InitialStateError("{}: refused: {}".format(run.run_id, res.not_tried_reason))
     G = np.array(res.G, dtype=np.complex128)
@@ -514,7 +552,7 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
     return out
 
 
-def seed_and_write(toml, run, *, out, para=None):
+def seed_and_write(toml, run, *, out, para=None, t_hint=None):
     """Seed the :class:`CandidateRun` ``run`` on the UHFk input ``toml``
     and write its npz to ``out``, as :func:`initial_state` does, returning
     what the coverage rows record as well.
@@ -529,12 +567,12 @@ def seed_and_write(toml, run, *, out, para=None):
     from hwave.initial.facts import model_facts
     facts = model_facts(toml, subshape=tuple(run.subshape))
     p = facts.problem
-    res = _seed(facts, run, para)
+    res = _seed(facts, run, para, t_hint)
     if not res.tried:
         return None, res, facts
     G = np.array(res.G, dtype=np.complex128)
     check_green(G, p, what="the seed of {}".format(run.run_id))
-    members = {k: _encode(v) for k, v in _provenance(facts, run, res).items()}
+    members = {k: _encode(v) for k, v in _provenance(facts, run, res, para).items()}
     for k, v in CONVENTION_MEMBERS.items():
         members[k] = np.array(v)
     if int(np.prod(p.subshape)) > 1:
@@ -736,6 +774,19 @@ def _check_provenance(members, problem, config_path, path):
         if got is None or got.shape != () or str(got[()]) != value:
             raise InitialStateError("{}: {}: {!r} expected, got {}".format(
                 path, key, value, None if got is None else repr(str(got[()]))))
+    base = prov["seed_base"]
+    pT, pdig = prov["seed_base_para_T"], prov["seed_base_para_digest"]
+    if base == "para_hf":
+        if isinstance(pT, bool) or not isinstance(pT, numbers.Real) \
+                or not math.isfinite(float(pT)) or float(pT) < 0.0 \
+                or not isinstance(pdig, str) or len(pdig) != 64:
+            raise InitialStateError(
+                "{}: seed_base_para_T, seed_base_para_digest: a para_hf seed records the "
+                "para T (a number) and the input digest of the para record (SHA-256), got "
+                "{} and {}".format(path, json.dumps(pT), json.dumps(pdig)))
+    elif pT is not None or pdig is not None:
+        raise InitialStateError("{}: seed_base_para_T, seed_base_para_digest: null for "
+                                "seed_base {}".format(path, json.dumps(base)))
     warnings = []
     sha = prov["input_sha256"]
     if not isinstance(sha, dict) or not all(isinstance(v, str) for v in sha.values()):

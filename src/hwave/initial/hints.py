@@ -89,7 +89,7 @@ logger = logging.getLogger("qlms").getChild("initial").getChild("hints")
 
 __all__ = ["THint", "t_hint_bare", "W_FLOOR_ACT", "T_HINT_REL_FLOOR",
            "STRUCTURAL_AXIS_MAX", "WIDE_WINDOW_FACTOR", "group_bands",
-           "ParaResult", "para_hf", "para_from_green", "fold_para", "hint_record", "model_key",
+           "ParaResult", "para_hf", "para_from_green", "fold_para", "hint_record", "model_key", "input_digest",
            "PARA_RESIDUAL_TOL", "PARA_CHECK_TOL", "PARA_SYMMETRY_TOL"]
 
 #: the floor of ``W0`` in input energy units (a single flat level)
@@ -313,6 +313,9 @@ PARA_CHECK_WARNING = (
     "the uniform orbital occupation reach free energies per cell {:.12g} and {:.12g} "
     "(difference {:.3g} > {:.0e}); the lower ({}) is kept: the other start is a "
     "metastable (orbital-ordered) state")
+PARA_CHECK_SWITCHED_WARNING = (
+    "para check: the run from the free density did not give a paramagnetic state "
+    "({}); the run from the uniform orbital occupation is kept")
 PARA_CHECK_FAILED_WARNING = (
     "para check: the run from the uniform orbital occupation did not give a "
     "paramagnetic state ({}); the run from the free density is kept")
@@ -357,7 +360,8 @@ class ParaResult:
     model, or ``"sectors"`` with a fixed 2Sz). ``iterations``,
     ``scf_residual``: the SCF record; ``eps``: the ``EPS`` exponent of the
     run (the input's, raised to at least
-    :data:`initial_facade.PARA_EPS_MIN`). ``free_energy_check``: the free
+    :data:`initial_facade.PARA_EPS_MIN`), ``iteration_max`` its
+    ``IterationMax`` (the input's). ``free_energy_check``: the free
     energy per cell of the para-check start (``None`` without the check).
     ``warnings``: messages for the report. ``input_sha256``: of the model
     the reference belongs to; ``model``: its ``cellshape``, ``norb_orig``,
@@ -383,6 +387,16 @@ class ParaResult:
     input_sha256: Optional[Mapping] = None
     model: Optional[Mapping] = None
     eps: Optional[int] = None
+    iteration_max: Optional[int] = None
+
+
+def input_digest(input_sha256):
+    """The SHA-256 of the canonical JSON (sorted keys, no whitespace) of an
+    ``input_sha256`` mapping: one string naming the input files of a model
+    (the para record and the seed provenance carry it)."""
+    import hashlib
+    text = json.dumps(dict(input_sha256), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def model_key(facts):
@@ -501,7 +515,8 @@ def _start_uniform(p):
 
 
 def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=None,
-                    scf_residual=None, eps=None, warnings=()) -> ParaResult:
+                    scf_residual=None, eps=None, iteration_max=None,
+                    warnings=()) -> ParaResult:
     """The :class:`ParaResult` of a para Green function ``G_para`` of the
     primitive cell (from :func:`para_hf`, or read back from the green file
     of a paramagnetic run of the input at ``thint.T_hint``).
@@ -509,7 +524,8 @@ def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=
     ``H_para_k = H0 + Sigma'[G_para]``, the bands, the symmetry residual
     and the polarisation are rebuilt from ``G_para``; ``free_energy`` is
     that run's ``FreeEnergy_Total``, ``converged`` its SCF status and
-    ``eps`` its ``EPS`` exponent."""
+    ``eps`` and ``iteration_max`` its ``EPS`` exponent and
+    ``IterationMax``."""
     facts1 = _primitive_facts(facts)
     p = facts1.problem
     G = np.array(G_para, dtype=np.complex128)
@@ -531,9 +547,13 @@ def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=
     if not converged:
         status = "not_converged"
         reason = ("the paramagnetic Hartree-Fock run did not converge at T_hint = {:.6g} "
-                  "({} iterations, residual {})".format(
+                  "({} iterations, residual {}; EPS = {}, IterationMax = {}: the para "
+                  "run converges to EPS >= 12, so it may need a larger IterationMax "
+                  "than the input's)".format(
                       T, iterations, "unknown" if scf_residual is None
-                      else "{:.3g}".format(scf_residual)))
+                      else "{:.3g}".format(scf_residual),
+                      "unknown" if eps is None else eps,
+                      "unknown" if iteration_max is None else iteration_max))
     elif residual > PARA_RESIDUAL_TOL:
         status = "not_converged"
         worst = max(parts, key=parts.get)
@@ -548,7 +568,8 @@ def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=
         residual_parts=MappingProxyType(dict(parts)), checked=checked,
         iterations=iterations, scf_residual=scf_residual,
         input_sha256=MappingProxyType(dict(facts.input_sha256)), model=model_key(facts),
-        eps=None if eps is None else int(eps))
+        eps=None if eps is None else int(eps),
+        iteration_max=None if iteration_max is None else int(iteration_max))
 
 
 def _skipped(facts, thint, reason, warnings=()):
@@ -565,7 +586,8 @@ def _one_run(facts1, thint, start, work_dir):
                                   work_dir=work_dir)
     res = para_from_green(facts1, thint, run.G, free_energy=run.free_energy,
                           converged=run.converged, iterations=run.iterations,
-                          scf_residual=run.residual, eps=run.eps)
+                          scf_residual=run.residual, eps=run.eps,
+                          iteration_max=run.iteration_max)
     return run, res
 
 
@@ -577,10 +599,12 @@ def _record(res, selected, work_dir):
         "residual_parts": None if res.residual_parts is None else dict(res.residual_parts),
         "checked": list(res.checked), "iterations": res.iterations,
         "scf_residual": res.scf_residual, "eps": res.eps,
+        "iteration_max": res.iteration_max,
         "free_energy_check": res.free_energy_check,
         "polarisation": None if res.polarisation is None else dict(res.polarisation),
         "selected_start": selected, "warnings": list(res.warnings),
         "input_sha256": dict(res.input_sha256 or {}),
+        "input_digest": None if res.input_sha256 is None else input_digest(res.input_sha256),
         "model": None if res.model is None else
         {k: (list(v) if isinstance(v, tuple) else v) for k, v in res.model.items()},
     }
@@ -609,34 +633,41 @@ def para_hf(facts, thint, *, para_check=False, work_dir=None) -> ParaResult:
     ``work_dir``: the directory of the runs (``main/``, and ``check/`` with
     the check), kept; the selected run's Green function is copied to
     ``work_dir/green.npz`` and the result recorded in
-    ``work_dir/para_hf.json``. Without it the runs use a temporary
+    ``work_dir/para_hf.json`` (also for a skipped step, then without a
+    green file and with ``selected_start = null``). Without it the runs use a temporary
     directory that is removed.
 
     A model without an interacting orbital, or a run the solver refuses,
     gives ``status = "skipped"`` with the reason (no exception).
     """
+    root = None if work_dir is None else os.path.abspath(os.fspath(work_dir))
+    if root is not None:
+        os.makedirs(root, exist_ok=True)
     if facts.n_c == 0:
-        return _skipped(facts, thint, "no interacting orbital (n_c = 0)")
+        res = _skipped(facts, thint, "no interacting orbital (n_c = 0)")
+        if root is not None:
+            _record(res, None, root)
+        return res
     facts1 = _primitive_facts(facts)
     tmp = None
-    if work_dir is None:
+    if root is None:
         tmp = tempfile.mkdtemp(prefix="hwave-para-")
-        root = tmp
-    else:
-        root = os.path.abspath(os.fspath(work_dir))
-        os.makedirs(root, exist_ok=True)
+    base = root if tmp is None else tmp
     try:
         try:
             run, res = _one_run(facts1, thint, _start_free(facts1, thint),
-                                os.path.join(root, "main"))
+                                os.path.join(base, "main"))
         except (ValueError, initial_facade.MuNotConvergedError) as exc:
-            return _skipped(facts, thint, "the paramagnetic Hartree-Fock run failed: "
-                            "{}".format(exc))
+            res = _skipped(facts, thint, "the paramagnetic Hartree-Fock run failed: "
+                           "{}".format(exc))
+            if root is not None:
+                _record(res, None, root)
+            return res
         selected = "main"
         if para_check:
-            res, run, selected = _check(facts1, thint, res, run, root)
+            res, run, selected = _check(facts1, thint, res, run, base)
         res = dataclasses.replace(res, input_sha256=MappingProxyType(dict(facts.input_sha256)))
-        if work_dir is not None:
+        if root is not None:
             shutil.copyfile(os.path.join(run.work_dir, "green.npz"),
                             os.path.join(root, "green.npz"))
             _record(res, selected, root)
@@ -662,7 +693,10 @@ def _check(facts1, thint, res, run, root):
                 run, "main")
     if res.status != "converged":
         # the check start reached a valid reference where the free start did not
-        return dataclasses.replace(res2, free_energy_check=res2.free_energy_per_cell), \
+        msg = PARA_CHECK_SWITCHED_WARNING.format(res.skip_reason)
+        logger.warning(msg)
+        return dataclasses.replace(res2, warnings=res2.warnings + (msg,),
+                                   free_energy_check=res2.free_energy_per_cell), \
             run2, "check"
     f1, f2 = res.free_energy_per_cell, res2.free_energy_per_cell
     keep, krun, sel = (res2, run2, "check") if f2 < f1 else (res, run, "main")
@@ -688,22 +722,30 @@ def fold_para(H_para_k, facts, subshape):
         norb_orig=p.norb_orig, ns=p.ns)
 
 
-def hint_record(thint, para=None, *, skip_reason=None):
+#: the vertex fields of a computed hint record
+_VERTEX_FIELDS = ("gamma_self_adjoint", "method", "q_status", "q_set")
+
+
+def hint_record(thint, para=None, *, skip_reason=None, vertex=None):
     """The ``hint`` record of ``coverage.json`` for the hint temperature
     ``thint`` and the para reference ``para`` (``None``: no para step).
 
-    The record is skipped with ``skip_reason`` when it is given, with
-    ``para.skip_reason`` when the para reference is not converged, and when
-    there is neither a reason nor a para reference ``skip_reason`` must be
-    given. A skipped record has every numeric para field null (its
-    ``para_status`` is kept); the vertex fields (``gamma_self_adjoint``,
-    ``method``, ``q_status``, ``q_set``) are left empty for the eigen-solve
-    to fill."""
+    The record is skipped with ``skip_reason`` when it is given, or with
+    ``para.skip_reason`` when the para reference is not converged; a record
+    without a para reference needs ``skip_reason``. A skipped record has
+    every numeric para field null (its ``para_status`` is kept) and empty
+    vertex fields. A computed record (a converged para and no skip reason)
+    needs ``vertex``, the mapping of the eigen-solve's
+    ``gamma_self_adjoint``, ``method``, ``q_status`` and ``q_set``
+    (``ValueError`` otherwise)."""
     if skip_reason is None and para is None:
         raise ValueError("hint_record: a record without a para reference needs skip_reason")
     if skip_reason is None and para.status != "converged":
         skip_reason = para.skip_reason
     skipped = skip_reason is not None
+    if not skipped and vertex is None:
+        raise ValueError("hint_record: a computed record needs the vertex fields "
+                         "({})".format(", ".join(_VERTEX_FIELDS)))
     out = {
         "status": "skipped" if skipped else "computed", "skip_reason": skip_reason,
         "T_hint": thint.T_hint, "rule": thint.rule, "W0": thint.W0, "W_act": thint.W_act,
@@ -721,6 +763,11 @@ def hint_record(thint, para=None, *, skip_reason=None):
         out["para_residual"] = para.residual
         out["para_polarisation"] = _plain(dict(para.polarisation))
         out["para_eps"] = para.eps
+        missing = [k for k in _VERTEX_FIELDS if k not in vertex]
+        if missing:
+            raise ValueError("hint_record: vertex lacks {}".format(", ".join(missing)))
+        for k in _VERTEX_FIELDS:
+            out[k] = _plain(vertex[k])
     return out
 
 

@@ -658,7 +658,8 @@ class ParaRun:
     mu-group of the last step. ``work_dir``: the directory the run wrote
     its results to (``energy.dat``, ``green.npz``, ``scf_status.dat``, and
     the start Green function ``start.npz``). ``eps``: the ``EPS`` exponent
-    the run used (:data:`PARA_EPS_MIN` or the input's, whichever is larger).
+    the run used (:data:`PARA_EPS_MIN` or the input's, whichever is larger);
+    ``iteration_max``: its ``IterationMax`` (the input's).
     """
     G: np.ndarray
     H_k: np.ndarray
@@ -669,6 +670,7 @@ class ParaRun:
     mu: Tuple[float, ...]
     work_dir: pathlib.Path
     eps: int
+    iteration_max: int
 
 
 #: the smallest ``EPS`` exponent of :func:`run_para` (SCF residual below
@@ -680,9 +682,16 @@ PARA_EPS_MIN = 12
 def _input_eps(toml_path):
     """The ``[mode.param] EPS`` exponent of the input (case-insensitive, the
     solvers' default when absent)."""
+    import math
+    import numbers
     from .base import PARAM_DEFAULTS, ParamDict
     param = ParamDict(_read_config(toml_path)["mode"].get("param", {}) or {})
-    return param.get("EPS", PARAM_DEFAULTS["EPS"])
+    eps = param.get("EPS", PARAM_DEFAULTS["EPS"])
+    if isinstance(eps, bool) or not isinstance(eps, numbers.Real) \
+            or not math.isfinite(float(eps)):
+        raise ValueError("{}: [mode.param] EPS = {!r} is not a finite number"
+                         .format(toml_path, eps))
+    return eps
 
 
 def run_para(toml_path, *, T, start_G, work_dir):
@@ -746,7 +755,8 @@ def run_para(toml_path, *, T, start_G, work_dir):
     return ParaRun(G=_read_only(G), H_k=_read_only(H_k), free_energy=float(np.real(free)),
                    residual=float(rest), converged=bool(solver.scf_converged),
                    iterations=int(solver.scf_iterations),
-                   mu=tuple(float(m) for m in mu), work_dir=work_dir, eps=eps)
+                   mu=tuple(float(m) for m in mu), work_dir=work_dir, eps=eps,
+                   iteration_max=int(solver.param_mod["IterationMax"]))
 
 
 #: the ``[file.input]`` keys that name an initial state, not a model input

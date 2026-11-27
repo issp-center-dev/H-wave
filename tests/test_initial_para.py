@@ -7,6 +7,7 @@ They start from a spin-symmetric (or sector-uniform) density, so the tests
 never rely on a symmetric start breaking a symmetry: a converged state
 stays in the symmetric subspace, up to rounding.
 """
+import dataclasses
 import logging
 import os
 import shutil
@@ -56,6 +57,22 @@ def _metastable(dest, *, iteration_max=500):
     the state with the electron in orbital 1 is lower by 0.5 per site."""
     return initial_fixtures.two_orbital(dest, 4, delta=0.5, t=0.1, U=(4.0, 0.0), V=3.0,
                                         T=0.02, param={"IterationMax": iteration_max})
+
+
+def _so_pairhop(dest, ph):
+    """The spin-orbital chain of :func:`initial_fixtures.so_chain` (TR
+    invariant H0, SOC 0.3) with a bond PairHop ``ph`` along x (Fock on);
+    a complex ``ph`` breaks time reversal of the Hartree-Fock map only."""
+    transfer = {}
+    for s in range(2):
+        transfer[((1, 0, 0), s, s)] = -1.0 + 0.3j * (1 - 2 * s)
+        transfer[((-1, 0, 0), s, s)] = -1.0 - 0.3j * (1 - 2 * s)
+    inter = {"CoulombIntra": {((0, 0, 0), 0, 0): 2.0},
+             "PairHop": {((1, 0, 0), 0, 0): ph, ((-1, 0, 0), 0, 0): np.conj(ph)}}
+    return initial_fixtures.write_input(
+        dest, cellshape=(6, 1, 1), norb=2, transfer=transfer, interactions=inter,
+        centers=[(0.0, 0.0, 0.0)] * 2, mode={"enable_spin_orbital": True},
+        param={"Ncond": 4, "T": 0.1, "IterationMax": 1000})
 
 
 def _neel():
@@ -329,7 +346,8 @@ class TestParaHF(_Tmp):
         # S_z per site (N_up - N_down) / (2 N_cell), recorded, not a residual
         self.assertAlmostEqual(para.polarisation["spin"][0][2], 2 / 72, places=8)
         self.assertEqual(list(para.polarisation["allowed"]), ["sectors"])
-        rec = hint_record(t_hint_bare(f.problem), para)
+        rec = hint_record(t_hint_bare(f.problem), para, vertex={
+            "gamma_self_adjoint": True, "method": "dense", "q_status": {}, "q_set": []})
         self.assertEqual(rec["para_status"], "converged")
         self.assertEqual(rec["para_polarisation"]["sector_counts"], list(counts))
         errs = []
@@ -386,7 +404,8 @@ class TestParaHF(_Tmp):
                 self.assertEqual(para.eps, want)
                 self.assertLessEqual(abs(para.free_energy_check - para.free_energy_per_cell),
                                      1e-8)
-                self.assertEqual(hint_record(t_hint_bare(f.problem), para)["para_eps"], want)
+                self.assertEqual(hint_record(t_hint_bare(f.problem), para,
+                                             skip_reason="x")["para_eps"], None)
 
     def test_failure_falls_back_to_bare(self):
         from hwave.initial import report
@@ -467,14 +486,26 @@ class TestParaHF(_Tmp):
         from hwave.initial.hints import hint_record, t_hint_bare
         f, para = self.para(_square_v(self.dest()))
         th = t_hint_bare(f.problem)
-        for rec in (hint_record(th, para), hint_record(th, para, skip_reason="large tier"),
+        vertex = {"gamma_self_adjoint": True, "method": "dense", "q_status": {"0,0,0": "ok"},
+                  "q_set": ["0,0,0"]}
+        for rec in (hint_record(th, para, vertex=vertex),
+                    hint_record(th, para, skip_reason="large tier"),
                     hint_record(th, skip_reason="large tier")):
             self.assertEqual(set(rec), set(report._HINT_KEYS))
             errs = []
             report._check_hint(rec, errs)
             self.assertEqual(errs, [])
-        rec = hint_record(th, para)
+        rec = hint_record(th, para, vertex=vertex)
         self.assertEqual(rec["status"], "computed")
+        self.assertEqual(rec["q_set"], ["0,0,0"])
+        self.assertEqual(rec["para_eps"], 12)
+        # a computed record never goes out without the vertex fields
+        with self.assertRaises(ValueError):
+            hint_record(th, para)
+        bad = dict(rec, method=None)
+        errs = []
+        report._check_hint(bad, errs)
+        self.assertTrue(any("hint.method" in e for e in errs), errs)
         self.assertEqual(rec["para_free_energy"], para.free_energy_per_cell)
         self.assertEqual(rec["para_residual"], para.residual)
         self.assertEqual(rec["para_polarisation"]["allowed"], [])
@@ -528,6 +559,181 @@ class TestWriterPara(_Tmp):
         with self.assertRaises(TypeError):
             initial_state(other, self._neel(), out=os.path.join(self.tmp, "x.npz"),
                           para="para")
+
+
+class TestMapSymmetry(_Tmp):
+    """The map leg of the residual rule: a symmetry enters only when H0 AND
+    the Hartree-Fock map keep it."""
+
+    def test_complex_pairhop_takes_tr_out_of_the_residual(self):
+        from hwave.initial import symmetry
+        cases = {"real": 0.4, "complex": 0.4 + 0.3j}
+        out = {}
+        for name, ph in cases.items():
+            f, para = self.para(_so_pairhop(self.dest(), ph))
+            tr = symmetry.tr_check(f.problem)
+            self.assertLessEqual(tr.h0_residual, 1e-14)      # H0 is TR invariant
+            out[name] = (tr, para)
+        tr, para = out["real"]
+        self.assertTrue(tr.invariant)
+        self.assertEqual(para.status, "converged", para.skip_reason)
+        self.assertEqual(para.checked, ("time reversal",))
+        self.assertLessEqual(para.residual, 1e-8)
+        tr, para = out["complex"]
+        self.assertFalse(tr.invariant)
+        self.assertGreater(tr.hf_residual, 1e-3)              # the map breaks TR
+        self.assertEqual(para.status, "converged", para.skip_reason)
+        self.assertEqual(para.checked, ())
+        self.assertNotIn("time reversal", para.residual_parts)
+        self.assertGreater(para.polarisation["time_reversal_odd"], 1e-4)
+        self.assertEqual(len(para.polarisation["allowed"]), 1)
+
+    def test_axis_projection(self):
+        from hwave.initial import symmetry
+        p = self.facts(initial_fixtures.square(self.dest(), 4, U=1.0,
+                                               subshape=(1, 1, 1))).problem
+        g = _hermitian_green(p, 3)
+        for mu in range(3):
+            with self.subTest(axis=mu):
+                P = symmetry.axis_projection(g, mu, p.norb)
+                np.testing.assert_allclose(symmetry.axis_projection(P, mu, p.norb), P,
+                                           atol=1e-15)                    # idempotent
+                Q = g - P
+                np.testing.assert_allclose(symmetry.axis_projection(Q, mu, p.norb), 0,
+                                           atol=1e-15)                    # complement
+                # P is invariant under the rotations about mu, Q is not
+                axis = np.eye(3)[mu]
+                u = symmetry.spin_rotation(axis, 0.7, p.norb)
+                np.testing.assert_allclose(symmetry.rotate_green(P, u), P, atol=1e-13)
+                self.assertGreater(float(np.max(np.abs(symmetry.rotate_green(Q, u) - Q))),
+                                   1e-3)
+        # a spin-free G is in every axis subspace
+        spin_free = symmetry.axis_projection(symmetry.axis_projection(g, 0, p.norb), 2,
+                                             p.norb)
+        for mu in range(3):
+            np.testing.assert_allclose(symmetry.axis_projection(spin_free, mu, p.norb),
+                                       spin_free, atol=1e-15)
+
+    def test_hf_axis_residuals(self):
+        from hwave.initial import symmetry
+        p = self.facts(initial_fixtures.square(self.dest(), 4, U=1.0,
+                                               subshape=(1, 1, 1))).problem
+        self.assertEqual(symmetry.hf_axis_residuals(p), (0.0, 0.0, 0.0))
+        # a map that rotates every output about z keeps only the z subspace
+        u = symmetry.spin_rotation((0.0, 0.0, 1.0), 0.9, p.norb)
+        nd = p.nd
+
+        def rotating(problem):
+            def sigma(green):
+                m = np.asarray(green).reshape(problem.nvol, nd, nd)
+                return u @ m @ u.conj().T
+            return sigma
+        with mock.patch.object(symmetry, "_sigma_map", rotating):
+            res = symmetry.hf_axis_residuals(p)
+        self.assertGreater(res[0], 1e-2)
+        self.assertGreater(res[1], 1e-2)
+        self.assertLessEqual(res[2], 1e-14)
+        with self.assertRaises(ValueError):
+            symmetry.hf_axis_residuals(self.facts(initial_fixtures.so_chain(
+                self.dest(), 6, U=1.0)).problem)
+
+
+class TestParaRecord(_Tmp):
+
+    def test_check_side_switch_warns(self):
+        from hwave.initial import hints
+        real = hints._one_run
+        calls = []
+
+        def first_fails(facts1, thint, start, work_dir):
+            run, res = real(facts1, thint, start, work_dir)
+            calls.append(work_dir)
+            if len(calls) == 1:
+                res = dataclasses.replace(res, status="not_converged",
+                                          skip_reason="forced failure")
+            return run, res
+        toml = _square_v(self.dest(), param={"EPS": 12})
+        with mock.patch.object(hints, "_one_run", first_fails), \
+                self.assertLogs("qlms.initial.hints", level="WARNING") as cm:
+            f, para = self.para(toml, para_check=True)
+        self.assertEqual(para.status, "converged")
+        self.assertEqual(len(para.warnings), 1)
+        self.assertIn("forced failure", para.warnings[0])
+        self.assertIn("uniform orbital occupation is kept", cm.output[0])
+
+    def test_record_written_when_skipped(self):
+        import json
+        from hwave.solver import initial_facade
+        wd = os.path.join(self.tmp, "skip0")
+        f, para = self.para(initial_fixtures.square(self.dest(), 4, U=0.0, T=0.1),
+                            work_dir=wd)
+        with open(os.path.join(wd, "para_hf.json")) as fh:
+            rec = json.load(fh)
+        self.assertEqual(rec["status"], "skipped")
+        self.assertIsNone(rec["selected_start"])
+        self.assertFalse(os.path.exists(os.path.join(wd, "green.npz")))
+        wd = os.path.join(self.tmp, "skip1")
+        with mock.patch.object(initial_facade, "run_para",
+                               side_effect=ValueError("refused for the test")):
+            f, para = self.para(_square_v(self.dest()), work_dir=wd)
+        self.assertEqual(para.status, "skipped")
+        with open(os.path.join(wd, "para_hf.json")) as fh:
+            rec = json.load(fh)
+        self.assertIn("refused for the test", rec["skip_reason"])
+        self.assertEqual(rec["input_digest"], __import__(
+            "hwave.initial.hints", fromlist=["x"]).input_digest(f.input_sha256))
+
+    def test_non_numeric_eps_is_a_value_error(self):
+        from hwave.solver import initial_facade as fa
+        toml = _square_v(self.dest())
+        with open(toml) as fh:
+            text = fh.read()
+        with open(toml, "w") as fh:
+            fh.write(text.replace("EPS = 8", 'EPS = "8"'))
+        with self.assertRaisesRegex(ValueError, "EPS"):
+            fa._input_eps(toml)
+
+    def test_not_converged_reason_names_eps_and_iteration_max(self):
+        f, para = self.para(_square_v(self.dest(), param={"IterationMax": 3}))
+        self.assertEqual(para.status, "not_converged")
+        self.assertIn("EPS = 12", para.skip_reason)
+        self.assertIn("IterationMax = 3", para.skip_reason)
+        self.assertEqual(para.iteration_max, 3)
+
+
+class TestParaProvenance(_Tmp):
+
+    def test_para_T_and_digest_in_provenance(self):
+        import json
+        from hwave.initial.hints import input_digest
+        from hwave.initial.writer import check_initial_state, initial_state
+        toml = _square_v(self.dest(), subshape=(2, 2, 1))
+        f, para = self.para(toml)
+        out = os.path.join(os.path.dirname(toml), "initial.npz")
+        initial_state(toml, _neel(), out=out, para=para)
+        with np.load(out, allow_pickle=False) as data:
+            self.assertEqual(json.loads(str(data["seed_base_para_T"][()])), para.T)
+            self.assertEqual(json.loads(str(data["seed_base_para_digest"][()])),
+                             input_digest(f.input_sha256))
+        self.assertTrue(check_initial_state(toml, out, require_provenance=True).verified)
+        bare = os.path.join(os.path.dirname(toml), "bare.npz")
+        initial_state(toml, _neel(), out=bare)
+        with np.load(bare, allow_pickle=False) as data:
+            self.assertIsNone(json.loads(str(data["seed_base_para_T"][()])))
+            self.assertIsNone(json.loads(str(data["seed_base_para_digest"][()])))
+
+    def test_para_of_another_T_refused(self):
+        from hwave.initial.writer import initial_state
+        f, para = self.para(_square_v(self.dest(), T=0.1))
+        hot = _square_v(self.dest(), T=0.3, subshape=(2, 2, 1))
+        out = os.path.join(self.tmp, "x.npz")
+        with self.assertRaisesRegex(ValueError, r"T_hint = 0\.1.*T_hint = 0\.3"):
+            initial_state(hot, _neel(), out=out, para=para)
+        self.assertFalse(os.path.exists(out))
+        # the run whose hint was computed at a user T_hint = 0.1 takes it
+        initial_state(hot, _neel(), out=out, para=para, t_hint=0.1)
+        with np.load(out, allow_pickle=False) as data:
+            self.assertEqual(str(data["seed_base"][()]), '"para_hf"')
 
 
 if __name__ == "__main__":
