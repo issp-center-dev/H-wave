@@ -355,7 +355,9 @@ class ParaResult:
     time-reversal-odd entry, spin-orbital mode; ``"allowed"``: the spin
     axes along which a polarisation is allowed by the symmetries of the
     model, or ``"sectors"`` with a fixed 2Sz). ``iterations``,
-    ``scf_residual``: the SCF record. ``free_energy_check``: the free
+    ``scf_residual``: the SCF record; ``eps``: the ``EPS`` exponent of the
+    run (the input's, raised to at least
+    :data:`initial_facade.PARA_EPS_MIN`). ``free_energy_check``: the free
     energy per cell of the para-check start (``None`` without the check).
     ``warnings``: messages for the report. ``input_sha256``: of the model
     the reference belongs to; ``model``: its ``cellshape``, ``norb_orig``,
@@ -380,6 +382,7 @@ class ParaResult:
     free_energy_check: Optional[float] = None
     input_sha256: Optional[Mapping] = None
     model: Optional[Mapping] = None
+    eps: Optional[int] = None
 
 
 def model_key(facts):
@@ -498,14 +501,15 @@ def _start_uniform(p):
 
 
 def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=None,
-                    scf_residual=None, warnings=()) -> ParaResult:
+                    scf_residual=None, eps=None, warnings=()) -> ParaResult:
     """The :class:`ParaResult` of a para Green function ``G_para`` of the
     primitive cell (from :func:`para_hf`, or read back from the green file
     of a paramagnetic run of the input at ``thint.T_hint``).
 
     ``H_para_k = H0 + Sigma'[G_para]``, the bands, the symmetry residual
     and the polarisation are rebuilt from ``G_para``; ``free_energy`` is
-    that run's ``FreeEnergy_Total`` and ``converged`` its SCF status."""
+    that run's ``FreeEnergy_Total``, ``converged`` its SCF status and
+    ``eps`` its ``EPS`` exponent."""
     facts1 = _primitive_facts(facts)
     p = facts1.problem
     G = np.array(G_para, dtype=np.complex128)
@@ -543,7 +547,8 @@ def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=
         warnings=tuple(warnings), T=T, free_energy_per_cell=f_cell,
         residual_parts=MappingProxyType(dict(parts)), checked=checked,
         iterations=iterations, scf_residual=scf_residual,
-        input_sha256=MappingProxyType(dict(facts.input_sha256)), model=model_key(facts))
+        input_sha256=MappingProxyType(dict(facts.input_sha256)), model=model_key(facts),
+        eps=None if eps is None else int(eps))
 
 
 def _skipped(facts, thint, reason, warnings=()):
@@ -560,7 +565,7 @@ def _one_run(facts1, thint, start, work_dir):
                                   work_dir=work_dir)
     res = para_from_green(facts1, thint, run.G, free_energy=run.free_energy,
                           converged=run.converged, iterations=run.iterations,
-                          scf_residual=run.residual)
+                          scf_residual=run.residual, eps=run.eps)
     return run, res
 
 
@@ -571,7 +576,8 @@ def _record(res, selected, work_dir):
         "residual": res.residual,
         "residual_parts": None if res.residual_parts is None else dict(res.residual_parts),
         "checked": list(res.checked), "iterations": res.iterations,
-        "scf_residual": res.scf_residual, "free_energy_check": res.free_energy_check,
+        "scf_residual": res.scf_residual, "eps": res.eps,
+        "free_energy_check": res.free_energy_check,
         "polarisation": None if res.polarisation is None else dict(res.polarisation),
         "selected_start": selected, "warnings": list(res.warnings),
         "input_sha256": dict(res.input_sha256 or {}),
@@ -707,12 +713,14 @@ def hint_record(thint, para=None, *, skip_reason=None):
         "t_hint_source": thint.t_hint_source, "effect": thint.effect,
         "para_status": None if para is None else para.status,
         "para_free_energy": None, "para_residual": None, "para_polarisation": None,
+        "para_eps": None,
         "gamma_self_adjoint": None, "method": None, "q_set": [],
     }
     if not skipped:
         out["para_free_energy"] = para.free_energy_per_cell
         out["para_residual"] = para.residual
         out["para_polarisation"] = _plain(dict(para.polarisation))
+        out["para_eps"] = para.eps
     return out
 
 

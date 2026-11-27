@@ -65,7 +65,7 @@ __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "hf_potential", "green_function", "referenced_input_files",
            "primitive_h0_k", "to_k", "interleaved_index", "fold_layout",
            "unfold_layout", "diag_blocks", "assemble_green", "Bands", "bands_of",
-           "fold_hamiltonian_k", "ParaRun", "run_para", "discard_profile_statistics"]
+           "fold_hamiltonian_k", "ParaRun", "run_para", "PARA_EPS_MIN", "discard_profile_statistics"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
 #: and the combined ``Coulomb`` table, uhfk.py ``_check_interaction``)
@@ -657,7 +657,8 @@ class ParaRun:
     solver's convergence record. ``mu``: one chemical potential per
     mu-group of the last step. ``work_dir``: the directory the run wrote
     its results to (``energy.dat``, ``green.npz``, ``scf_status.dat``, and
-    the start Green function ``start.npz``).
+    the start Green function ``start.npz``). ``eps``: the ``EPS`` exponent
+    the run used (:data:`PARA_EPS_MIN` or the input's, whichever is larger).
     """
     G: np.ndarray
     H_k: np.ndarray
@@ -667,14 +668,31 @@ class ParaRun:
     iterations: int
     mu: Tuple[float, ...]
     work_dir: pathlib.Path
+    eps: int
+
+
+#: the smallest ``EPS`` exponent of :func:`run_para` (SCF residual below
+#: 1e-12): the para free energies are compared to 1e-8 per cell, which a
+#: looser SCF does not resolve
+PARA_EPS_MIN = 12
+
+
+def _input_eps(toml_path):
+    """The ``[mode.param] EPS`` exponent of the input (case-insensitive, the
+    solvers' default when absent)."""
+    from .base import PARAM_DEFAULTS, ParamDict
+    param = ParamDict(_read_config(toml_path)["mode"].get("param", {}) or {})
+    return param.get("EPS", PARAM_DEFAULTS["EPS"])
 
 
 def run_para(toml_path, *, T, start_G, work_dir):
     """Run UHFk for the input ``toml_path`` on its primitive cell.
 
     The problem is loaded as :func:`load_problem` loads it, with ``SubShape
-    = [1, 1, 1]`` (whatever the input's ``SubShape``) and the temperature
-    ``T``; ``IterationMax``, ``EPS``, ``Mix`` and every other parameter are
+    = [1, 1, 1]`` (whatever the input's ``SubShape``), the temperature
+    ``T`` and the convergence exponent ``EPS = max(EPS_input,
+    PARA_EPS_MIN)`` (an internal reference run, converged tighter than the
+    candidate runs); ``IterationMax``, ``Mix`` and every other parameter are
     the input's. The start Green function ``start_G`` (stored layout of
     the primitive cell, ``(prod(CellShape), ns, norb_orig, ns,
     norb_orig)``) is written to ``work_dir/start.npz`` and read by the
@@ -697,8 +715,10 @@ def run_para(toml_path, *, T, start_G, work_dir):
         raise ValueError("run_para: T must be a finite number >= 0, got {!r}".format(T))
     work_dir = pathlib.Path(os.path.abspath(os.fspath(work_dir)))
     work_dir.mkdir(parents=True, exist_ok=True)
-    solver, _, _ = _build_solver(toml_path, subshape=(1, 1, 1), param={"T": T},
-                                 prologue=False)
+    eps_in = _input_eps(toml_path)
+    eps = int(eps_in) if eps_in >= PARA_EPS_MIN else PARA_EPS_MIN
+    solver, _, _ = _build_solver(toml_path, subshape=(1, 1, 1),
+                                 param={"T": T, "EPS": eps}, prologue=False)
     want = (solver.nvol, solver.ns, solver.norb, solver.ns, solver.norb)
     start_G = np.asarray(start_G, dtype=np.complex128)
     if start_G.shape != want:
@@ -726,7 +746,7 @@ def run_para(toml_path, *, T, start_G, work_dir):
     return ParaRun(G=_read_only(G), H_k=_read_only(H_k), free_energy=float(np.real(free)),
                    residual=float(rest), converged=bool(solver.scf_converged),
                    iterations=int(solver.scf_iterations),
-                   mu=tuple(float(m) for m in mu), work_dir=work_dir)
+                   mu=tuple(float(m) for m in mu), work_dir=work_dir, eps=eps)
 
 
 #: the ``[file.input]`` keys that name an initial state, not a model input

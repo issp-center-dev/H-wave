@@ -244,6 +244,17 @@ class TestFold(_Tmp):
 
 class TestRunPara(_Tmp):
 
+    def test_input_eps_above_the_minimum_is_kept(self):
+        from hwave.solver import initial_facade as fa
+        toml = _square_v(self.dest(), param={"EPS": 13})
+        self.assertEqual(fa._input_eps(toml), 13)
+        p1 = self.facts(toml, subshape=(1, 1, 1)).problem
+        start = fa.green_function(p1.ham_trans_k, 0.1, p1.blocks, shape=p1.shape,
+                                  ns=p1.ns, norb=p1.norb)
+        with mock.patch.object(fa, "_build_solver", wraps=fa._build_solver) as bs:
+            fa.run_para(toml, T=0.1, start_G=start, work_dir=os.path.join(self.tmp, "r"))
+        self.assertEqual(bs.call_args.kwargs["param"]["EPS"], 13)
+
     def test_run_para_drives_the_solver_on_the_primitive_cell(self):
         from hwave.solver import initial_facade as fa
         toml = _square_v(self.dest(), subshape=(2, 2, 1))
@@ -254,7 +265,8 @@ class TestRunPara(_Tmp):
         run = fa.run_para(toml, T=0.1, start_G=start, work_dir=wd)
         self.assertTrue(run.converged)
         self.assertGreater(run.iterations, 0)
-        self.assertLess(run.residual, 1e-8)
+        self.assertEqual(run.eps, 12)                     # the input has EPS = 8
+        self.assertLess(run.residual, 1e-12)
         self.assertEqual(run.G.shape, (36, 2, 1, 2, 1))
         for name in ("start.npz", "green.npz", "energy.dat", "scf_status.dat"):
             self.assertTrue(os.path.isfile(os.path.join(wd, name)), name)
@@ -360,13 +372,21 @@ class TestParaHF(_Tmp):
         self.assertGreater(g1[1] + g1[3], 0.9)
 
     def test_para_check_agrees_without_warning(self):
-        # the check compares free energies to 1e-8 per cell: the SCF must be
-        # converged well below that (EPS = 12)
-        toml = _square_v(self.dest(), param={"EPS": 12})
-        f, para = self.para(toml, para_check=True)
-        self.assertEqual(para.status, "converged")
-        self.assertEqual(para.warnings, ())
-        self.assertAlmostEqual(para.free_energy_check, para.free_energy_per_cell, places=7)
+        """An input with EPS = 8 (whose two starts differed by ~7e-8 per cell
+        at that tolerance) or the default 6 gives no para-check warning: the
+        para runs use EPS = max(EPS_input, 12)."""
+        from hwave.initial.hints import hint_record, t_hint_bare
+        for eps, want in ((8, 12), (6, 12)):
+            with self.subTest(EPS=eps):
+                toml = _square_v(self.dest(), param={"EPS": eps})
+                with self.assertNoLogs("qlms.initial.hints", level="WARNING"):
+                    f, para = self.para(toml, para_check=True)
+                self.assertEqual(para.status, "converged")
+                self.assertEqual(para.warnings, ())
+                self.assertEqual(para.eps, want)
+                self.assertLessEqual(abs(para.free_energy_check - para.free_energy_per_cell),
+                                     1e-8)
+                self.assertEqual(hint_record(t_hint_bare(f.problem), para)["para_eps"], want)
 
     def test_failure_falls_back_to_bare(self):
         from hwave.initial import report
@@ -436,6 +456,7 @@ class TestParaHF(_Tmp):
             rec = json.load(fh)
         self.assertEqual(rec["status"], "converged")
         self.assertEqual(rec["selected_start"], "check")
+        self.assertEqual(rec["eps"], 12)
         self.assertAlmostEqual(rec["free_energy_per_cell"], para.free_energy_per_cell)
         self.assertEqual(rec["input_sha256"], dict(f.input_sha256))
         self.assertTrue(os.path.isdir(os.path.join(wd, "main")))
