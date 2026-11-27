@@ -1009,8 +1009,10 @@ class InstabilityCandidates:
     runnable: Tuple[Candidate, ...]
     listed: Tuple[Tuple[Candidate, Tuple[int, int, int], str], ...]
     hint_of: Mapping
-    realised: Mapping = MappingProxyType({})
-    held: Mapping = MappingProxyType({})
+    # default_factory: a mapping proxy is unhashable before Python 3.12, and
+    # dataclasses refuse an unhashable default there
+    realised: Mapping = dataclasses.field(default_factory=lambda: MappingProxyType({}))
+    held: Mapping = dataclasses.field(default_factory=lambda: MappingProxyType({}))
 
 
 def _site_of(facts):
