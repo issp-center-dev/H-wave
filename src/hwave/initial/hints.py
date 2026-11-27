@@ -68,6 +68,13 @@ Otherwise the hints are skipped with the reason and the seeds use the bare
 ``H0``. :func:`para_from_green` rebuilds a reference from a saved para
 Green function; :func:`hint_record` writes the ``hint`` record of the
 coverage report.
+
+**The vertex.** :func:`pair_space` lists the slots the solver's
+Hartree-Fock map reads and writes (:class:`PairSpace`, with its label
+coordinates), :func:`vertex` and :func:`vertex_sparse` give the Jacobian
+``Gamma(q) = dSigma'/drho`` of that map on them (dense for the small tier,
+CSR for the medium tier), and :func:`vertex_self_adjoint` checks that it is
+Hermitian.
 """
 import dataclasses
 import json
@@ -90,7 +97,9 @@ logger = logging.getLogger("qlms").getChild("initial").getChild("hints")
 __all__ = ["THint", "t_hint_bare", "W_FLOOR_ACT", "T_HINT_REL_FLOOR",
            "STRUCTURAL_AXIS_MAX", "WIDE_WINDOW_FACTOR", "group_bands",
            "ParaResult", "para_hf", "para_from_green", "fold_para", "hint_record", "model_key", "input_digest",
-           "PARA_RESIDUAL_TOL", "PARA_CHECK_TOL", "PARA_SYMMETRY_TOL"]
+           "PARA_RESIDUAL_TOL", "PARA_CHECK_TOL", "PARA_SYMMETRY_TOL",
+           "PairSpace", "pair_space", "vertex", "vertex_sparse", "vertex_self_adjoint",
+           "SECTOR_FULL", "SECTOR_CHARGE", "SECTOR_SZ", "VERTEX_SELF_ADJOINT_TOL"]
 
 #: the floor of ``W0`` in input energy units (a single flat level)
 W_FLOOR_ACT = 1e-3
@@ -779,3 +788,475 @@ def _plain(obj):
     if isinstance(obj, np.generic):
         return obj.item()
     return obj
+
+
+# ---------------------------------------------------------------------------
+# The Hartree-Fock vertex on the pair space
+# ---------------------------------------------------------------------------
+
+#: the one sector of a pair space without a passed spin-rotation check
+SECTOR_FULL = "full"
+#: the charge and S^z sectors of a pair space with a passed spin-rotation check
+SECTOR_CHARGE = "charge"
+SECTOR_SZ = "S^z"
+#: the relative tolerance of :func:`vertex_self_adjoint`
+VERTEX_SELF_ADJOINT_TOL = 1e-12
+#: the dense vertex is built in batches of columns of at most this many
+#: slot-grid entries in total
+_VERTEX_BATCH_ENTRIES = 2 ** 21
+#: the Hartree-loop types of the solver's kernel, in its order (PairHop last)
+_HF_LOOP = ("CoulombIntra", "CoulombInter", "Hund", "Ising", "PairLift", "Exchange")
+
+
+# eq=False: the fields hold arrays
+@dataclass(frozen=True, eq=False)
+class PairSpace:
+    """The pair space ``P`` of the Hartree-Fock vertex of a model.
+
+    **Coordinates.** A label ``m = (a, s, b, t, r)`` is the matrix slot of a
+    lattice one-body operator ``sum_R O_m c^dag_{as}(R + r) c_{bt}(R)``
+    (``a``, ``b`` physical orbitals of the primitive cell, 0-based; ``s``,
+    ``t`` the spins, 0 = up, explicit in every mode, the spin-orbital index
+    ``2*a + s`` included; ``r`` the bond in primitive cells). Its Green
+    function slot is ``G_m = <c^dag_{as}(r) c_{bt}(0)> = G[r, s, a, t, b]``
+    of the stored layout, and ``<O> = sum_m O_m G_m`` per cell. A density
+    vector ``x`` on ``P`` holds rho-components (``rho = G^T``: ``x_m =
+    G_mbar = conj(G_m)`` for a Hermitian state, ``mbar = (b, t, a, s, -r)``);
+    the vertex output and the conjugate field ``O = Gamma x`` hold
+    potential components ``Sigma'_m``, the coefficient of the operator at
+    ``m``. A q-modulated vector carries ``e^{iq.R}`` at the anchor ``R``,
+    the cell of the annihilation operator. With these coordinates the
+    vertex is Hermitian in the plain product ``sum_m conj(u_m) v_m``.
+
+    ``labels``: ``(|P|, 7)`` int64 ``(a, s, b, t, rx, ry, rz)``, sorted by
+    the slot ``(r, s, a, t, b)`` of the stored layout (``r`` as the FFT
+    index of the k-mesh); ``r`` is the representative with ``-N/2 < r_i <=
+    N/2``. ``P`` holds every slot the solver's Hartree-Fock map reads or
+    writes (the Hartree terms always; the Fock terms and the second
+    PairHop contraction with the model's Fock flag), restricted to the
+    interacting orbitals and to slots inside one solver block.
+
+    ``sectors``: ``("full",)``, or ``("charge", "S^z")`` when the
+    spin-rotation check passed (normal mode, free S_z): the vertex is then
+    block diagonal in the basis ``(e_up,up +- e_dn,dn)/sqrt 2`` of each
+    orbital slot and the spin-flip labels, and by the spin rotations the
+    ``S^x`` and ``S^y`` blocks have the nonzero spectrum of the ``S^z``
+    block, so only charge and ``S^z`` are kept. ``sector_basis``: per sector the
+    ``(|P|, d)`` CSR matrix of orthonormal columns (``None`` for the full
+    space); ``sector_labels``: per sector ``(d, 6)`` int64 ``(a, mu, b, rx,
+    ry, rz)`` with ``mu = 0`` (charge) or ``3`` (S^z), or ``None`` for the
+    full space (its labels are ``labels``).
+
+    ``shape``: the k-mesh (``CellShape``), ``norb_phys``, ``include_fock``
+    (the model's Fock flag), ``spin_orbital``, ``su2_status`` (the status
+    of the spin-rotation check used) and ``sector_note`` (why a passed
+    check still gave one sector, else ``None``).
+    """
+    labels: np.ndarray
+    sectors: Tuple[str, ...]
+    sector_basis: Tuple[Optional[object], ...]
+    sector_labels: Tuple[Optional[np.ndarray], ...]
+    shape: Tuple[int, int, int]
+    norb_phys: int
+    include_fock: bool
+    spin_orbital: bool
+    su2_status: str
+    sector_note: Optional[str] = None
+
+    @property
+    def size(self):
+        """``|P|``."""
+        return int(self.labels.shape[0])
+
+    def sector_dim(self, sector):
+        """The dimension of ``sector``."""
+        k = _sector_index(self, sector)
+        basis = self.sector_basis[k]
+        return self.size if basis is None else int(basis.shape[1])
+
+
+def _sector_index(P, sector):
+    if sector is None:
+        return None
+    if sector not in P.sectors:
+        raise ValueError("pair space: unknown sector {!r}; the sectors are {}"
+                         .format(sector, ", ".join(P.sectors)))
+    return P.sectors.index(sector)
+
+
+def _primitive_problem(facts):
+    return _primitive_facts(facts).problem
+
+
+def _grid_dims(problem):
+    """``(nvol, 2, n, 2, n)``: the slot grid ``(r, s, a, t, b)`` of the
+    primitive cell (``n`` physical orbitals)."""
+    n = int(problem.tables.norb_phys)
+    return (int(problem.nvol), 2, n, 2, n)
+
+
+def _neg_r(shape):
+    nx, ny, nz = shape
+    ix, iy, iz = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
+    return (((-iz) % nz) + nz * (((-iy) % ny) + ny * ((-ix) % nx))).ravel()
+
+
+def _r_vectors(shape):
+    """The centred bond vector of each flat r index, ``(nvol, 3)``."""
+    nx, ny, nz = shape
+    idx = np.stack(np.unravel_index(np.arange(nx * ny * nz), shape), axis=1)
+    n = np.array(shape)
+    return np.where(idx <= n // 2, idx, idx - n).astype(np.int64)
+
+
+def _phases(shape, q):
+    """``e^{2 pi i q.r}`` for every flat r index (q on the mesh of
+    ``shape``, reduced exactly before the exponential)."""
+    from hwave.initial.cells import to_qfrac
+    qf = to_qfrac(q)
+    m = []
+    for i, (x, n) in enumerate(zip(qf, shape)):
+        y = x * int(n)
+        if y.denominator != 1:
+            raise ValueError("vertex: q = {} is not on the k-mesh {} (component {} "
+                             "times {} is not an integer)".format(
+                                 ",".join(str(v) for v in qf), list(shape), i, n))
+        m.append(int(y))
+    L = int(np.lcm.reduce([int(n) for n in shape]))
+    idx = np.stack(np.unravel_index(np.arange(int(np.prod(shape))), shape), axis=1)
+    num = sum(m[i] * idx[:, i] * (L // int(shape[i])) for i in range(3)) % L
+    return np.exp(2j * np.pi * num / L)
+
+
+def _nd_index(problem, a, s):
+    """The solver index of physical orbital ``a``, spin ``s`` (arrays)."""
+    if problem.enable_spin_orbital:
+        return initial_facade.interleaved_index(a, s)
+    return s * problem.norb + a
+
+
+def _vertex_terms(problem):
+    """The terms of the vertex, in the order of the solver's kernel (types
+    in its order; per type the Hartree, then the Fock terms; per term the
+    table entries in C order, then the spin entries): ``(out, inp, coef,
+    rid, kind)``, the slot-grid flat indices of the output and the input
+    label, the coefficient without its phase, the flat r of the table entry
+    and the phase kind (``+1``: ``e^{+iq.r}``, ``0``: none, ``-1``:
+    ``e^{-iq.r}``). Every term has a nonzero coefficient."""
+    tables = problem.tables
+    dims = _grid_dims(problem)
+    nvol, n = dims[0], dims[2]
+    neg = _neg_r(problem.shape)
+    fock = bool(problem.iflag_fock)
+    parts = []
+
+    def add(r, J, w, out, inp, kind):
+        # entries x spin entries, entry-major
+        ne, ns_ = r.size, w.size
+        if ne == 0 or ns_ == 0:
+            return
+        parts.append((np.ravel_multi_index(out, dims).reshape(ne * ns_),
+                      np.ravel_multi_index(inp, dims).reshape(ne * ns_),
+                      (J[:, None] * w[None, :]).reshape(ne * ns_),
+                      np.repeat(r, ns_), np.full(ne * ns_, kind, dtype=np.int8)))
+
+    def entries(name):
+        tab = tables.inter_table.get(name)
+        if tab is None:
+            return None
+        jab = np.asarray(tab).reshape(nvol, n, n)
+        r, a, b = np.nonzero(jab)
+        spin = np.asarray(tables.spin_table[name])
+        sp = np.argwhere(spin != 0)
+        w = spin[tuple(sp.T)].astype(np.complex128)
+        return r, a, b, jab[r, a, b].astype(np.complex128), sp, w
+
+    for name in _HF_LOOP:
+        e = entries(name)
+        if e is None:
+            continue
+        r, a, b, J, sp, w = e
+        R, A, B = r[:, None], a[:, None], b[:, None]
+        Z = np.zeros_like(R)
+        p0, p1, p2, p3 = (sp[:, i][None, :] for i in range(4))
+        # Hartree: Sigma'^{st}_{aa}(0) += J_ab(r) spin[s,u,v,t] rho(b v, b u; 0),
+        # b sits at +r from a: e^{+iq.r}
+        add(r, J, w, (Z, p0, A, p3, A), (Z, p2, B, p1, B), 1)
+        if fock:
+            # Fock: Sigma'(a s, b t; -r) -= J_ab(r) spin[s,u,t,v] rho(a v, b u; -r)
+            add(r, -J, w, (neg[R], p0, A, p2, B), (neg[R], p3, A, p1, B), 0)
+    e = entries("PairHop")
+    if e is not None:
+        r, a, b, J, sp, w = e
+        R, A, B = r[:, None], a[:, None], b[:, None]
+        p0, p1, p2, p3 = (sp[:, i][None, :] for i in range(4))
+        # the conjugated read conj(G[r, v,b, u,a]) is the linear read
+        # rho(b v, a u; +r), anchored r cells away from the output: e^{-iq.r}
+        add(r, J, w, (neg[R], p0, A, p3, B), (R, p2, B, p1, A), -1)
+        if fock:
+            add(r, -J, w, (neg[R], p0, A, p2, B), (R, p3, B, p1, A), -1)
+    if not parts:
+        empty = np.zeros(0, dtype=np.int64)
+        return (empty, empty, np.zeros(0, dtype=np.complex128), empty,
+                np.zeros(0, dtype=np.int8))
+    return tuple(np.concatenate([p[i] for p in parts]) for i in range(5))
+
+
+def _allowed_slots(problem, facts1, flat):
+    """Whether each slot-grid flat index is inside one solver block and on
+    interacting orbitals."""
+    dims = _grid_dims(problem)
+    _r, s, a, t, b = np.unravel_index(flat, dims)
+    block_of = np.full(problem.nd, -1, dtype=np.int64)
+    for k, blk in enumerate(problem.blocks.block_info):
+        block_of[np.asarray(blk, dtype=np.int64)] = k
+    ic = np.zeros(dims[2], dtype=bool)
+    ic[list(facts1.interacting_orbitals)] = True
+    i = np.asarray(_nd_index(problem, a, s), dtype=np.int64)
+    j = np.asarray(_nd_index(problem, b, t), dtype=np.int64)
+    return (block_of[i] == block_of[j]) & ic[a] & ic[b]
+
+
+def _kept_terms(problem, facts1):
+    out, inp, coef, rid, kind = _vertex_terms(problem)
+    keep = _allowed_slots(problem, facts1, out) & _allowed_slots(problem, facts1, inp)
+    return out[keep], inp[keep], coef[keep], rid[keep], kind[keep]
+
+
+def _labels_of(problem, flat):
+    dims = _grid_dims(problem)
+    r, s, a, t, b = np.unravel_index(flat, dims)
+    rv = _r_vectors(problem.shape)[r]
+    return np.column_stack([a, s, b, t, rv]).astype(np.int64)
+
+
+def _flat_of(P, labels):
+    """The slot-grid flat index of each label row (r taken modulo the mesh)."""
+    labels = np.asarray(labels, dtype=np.int64)
+    n = int(P.norb_phys)
+    nvol = int(np.prod(P.shape))
+    rr = tuple(labels[:, 4 + i] % int(P.shape[i]) for i in range(3))
+    rid = np.ravel_multi_index(rr, P.shape)
+    return np.ravel_multi_index((rid, labels[:, 1], labels[:, 0], labels[:, 3], labels[:, 2]),
+                                (nvol, 2, n, 2, n))
+
+
+def _su2_sectors(labels):
+    """``(bases, sector_labels)`` of the charge and S^z sectors, or ``None``
+    when an orbital slot carries only one spin-diagonal label."""
+    import scipy.sparse
+    diag = labels[:, 1] == labels[:, 3]
+    pos = {}
+    for k in np.nonzero(diag)[0]:
+        key = (int(labels[k, 0]), int(labels[k, 2])) + tuple(int(v) for v in labels[k, 4:])
+        pos.setdefault(key, {})[int(labels[k, 1])] = int(k)
+    slots = sorted(pos, key=lambda key: min(pos[key].values()))
+    if any(len(pos[key]) != 2 for key in slots):
+        return None
+    d = len(slots)
+    rows = np.array([[pos[key][0], pos[key][1]] for key in slots], dtype=np.int64).reshape(d, 2)
+    cols = np.repeat(np.arange(d), 2)
+    h = 1.0 / math.sqrt(2.0)
+    bases, slabels = [], []
+    for mu, sign in ((0, 1.0), (3, -1.0)):
+        data = np.tile(np.array([h, sign * h], dtype=np.complex128), d)
+        bases.append(scipy.sparse.csr_array((data, (rows.reshape(-1), cols)),
+                                            shape=(labels.shape[0], d)))
+        sl = np.array([[key[0], mu, key[1], key[2], key[3], key[4]] for key in slots],
+                      dtype=np.int64).reshape(d, 6)
+        sl.flags.writeable = False
+        slabels.append(sl)
+    return tuple(bases), tuple(slabels)
+
+
+def pair_space(facts, *, su2=None) -> PairSpace:
+    """The pair space of the Hartree-Fock vertex of the model of ``facts``
+    (:class:`PairSpace`), on its primitive cell.
+
+    ``P`` is the support of the solver's Hartree-Fock map in the label
+    coordinates of :class:`PairSpace`: every slot a Hartree, Fock or
+    PairHop term of a nonzero table entry reads or writes, with the model's
+    Fock flag (without Fock: the on-site orbital-diagonal Hartree slots
+    and the PairHop slots), on the interacting orbitals, and inside one
+    solver block (so the 2Sz block mask and the blocks that separate
+    orbitals without a connecting Transfer remove what the solver
+    removes). The tables are reverse-closed, so the slots read and the
+    slots written are the same set.
+
+    ``su2``: the :class:`~hwave.initial.symmetry.Su2Result` of the model
+    (computed on the primitive cell when ``None``). When its status is
+    ``"passed"`` the pair space carries the charge and ``S^z`` sectors.
+    """
+    from hwave.initial import symmetry
+    facts1 = _primitive_facts(facts)
+    p = facts1.problem
+    out, inp, _coef, _rid, _kind = _kept_terms(p, facts1)
+    flat = np.unique(np.concatenate([out, inp]))
+    labels = _labels_of(p, flat)
+    labels.flags.writeable = False
+    if su2 is None:
+        su2 = symmetry.su2_check(p)
+    status = su2.status
+    sectors, bases, slabels, note = (SECTOR_FULL,), (None,), (None,), None
+    if status == "passed":
+        split = _su2_sectors(labels)
+        if split is None:
+            note = ("the spin-rotation check passed, but an orbital slot of the pair "
+                    "space has only one spin-diagonal label; one sector is kept")
+            logger.warning(note)
+        else:
+            sectors, bases, slabels = (SECTOR_CHARGE, SECTOR_SZ), split[0], split[1]
+    return PairSpace(labels=labels, sectors=sectors, sector_basis=bases,
+                     sector_labels=slabels, shape=tuple(int(v) for v in p.shape),
+                     norb_phys=int(p.tables.norb_phys), include_fock=bool(p.iflag_fock),
+                     spin_orbital=bool(p.enable_spin_orbital), su2_status=status,
+                     sector_note=note)
+
+
+def _check_pair_space(P, problem):
+    if not isinstance(P, PairSpace):
+        raise ValueError("vertex: P must be a PairSpace, got {!r}".format(type(P).__name__))
+    if (tuple(P.shape) != tuple(int(v) for v in problem.shape)
+            or P.norb_phys != int(problem.tables.norb_phys)
+            or P.include_fock != bool(problem.iflag_fock)
+            or P.spin_orbital != bool(problem.enable_spin_orbital)):
+        raise ValueError("vertex: the pair space belongs to another model (mesh {}, {} "
+                         "physical orbitals); build it with pair_space(facts) of this "
+                         "model".format(list(P.shape), P.norb_phys))
+
+
+def _apply_vertex(problem, ph, x):
+    """The vertex on a batch of slot-grid vectors ``x`` ``(c, nvol, 2, n, 2,
+    n)`` (rho-components; ``ph`` the phases ``e^{iq.r}``): the solver's
+    kernel written on the slot grid, with the conjugated PairHop read
+    replaced by its linear read. No block projection (the caller restricts
+    to the pair space)."""
+    tables = problem.tables
+    nvol, _, n = _grid_dims(problem)[:3]
+    neg = _neg_r(problem.shape)
+    fock = bool(problem.iflag_fock)
+    out = np.zeros_like(x)
+    diag = np.arange(n)
+    for name in _HF_LOOP:
+        tab = tables.inter_table.get(name)
+        if tab is None:
+            continue
+        J = np.asarray(tab).reshape(nvol, n, n)
+        spin = np.asarray(tables.spin_table[name])
+        xb = x[:, 0][:, :, diag, :, diag]            # (n, c, v, u): rho(b v, b u; 0)
+        hh = np.einsum("rab,r,suvt,bcvu->csta", J, ph, spin, xb, optimize=True)
+        out[:, 0][:, :, diag, :, diag] += np.moveaxis(hh, 3, 0)
+        if fock:
+            f = np.einsum("rab,sutv,crvaub->crsatb", J, spin, x[:, neg], optimize=True)
+            out -= f[:, neg]
+    tab = tables.inter_table.get("PairHop")
+    if tab is not None:
+        J = np.asarray(tab).reshape(nvol, n, n)
+        spin = np.asarray(tables.spin_table["PairHop"])
+        phc = np.conj(ph)
+        h = np.einsum("rab,r,suvt,crvbua->crsatb", J, phc, spin, x, optimize=True)
+        if fock:
+            h = h - np.einsum("rab,r,sutv,crvbua->crsatb", J, phc, spin, x, optimize=True)
+        out += h[:, neg]
+    return out
+
+
+def vertex(facts, q, P, *, sector=None) -> np.ndarray:
+    """The Hartree-Fock vertex ``Gamma(q) = dSigma'/drho`` on the pair space
+    ``P`` (:func:`pair_space` of the same model), dense ``(|P|, |P|)``
+    complex128 (the small tier).
+
+    ``Gamma`` is the complex-linear extension of the solver's real-linear
+    map (``hf_potential`` with the model's Fock flag and blocks) in the
+    coordinates of :class:`PairSpace`: the PairHop read ``conj(G[r, v, b,
+    u, a])`` is replaced by the linear read ``G[-r, u, a, v, b]`` (equal on
+    Hermitian G). It does not depend on the para state: the map is linear.
+    ``q`` (three rationals, reduced lattice units) must be on the k-mesh of
+    the primitive cell (``ValueError`` otherwise). Facts of a folded cell
+    are reloaded on the primitive cell at every call, so a caller with
+    many q passes primitive-cell facts. ``sector``: one of ``P.sectors``; the block
+    ``U^dag Gamma U`` of that sector's basis (``None``: the full space).
+    """
+    p = _primitive_problem(facts)
+    _check_pair_space(P, p)
+    k = _sector_index(P, sector)
+    ph = _phases(p.shape, q)
+    dims = _grid_dims(p)
+    gsize = int(np.prod(dims))
+    flat = _flat_of(P, P.labels)
+    npair = flat.size
+    gamma = np.zeros((npair, npair), dtype=np.complex128)
+    batch = max(1, _VERTEX_BATCH_ENTRIES // gsize)
+    for c0 in range(0, npair, batch):
+        cols = np.arange(c0, min(npair, c0 + batch))
+        x = np.zeros((cols.size, gsize), dtype=np.complex128)
+        x[np.arange(cols.size), flat[cols]] = 1.0
+        y = _apply_vertex(p, ph, x.reshape((cols.size,) + dims)).reshape(cols.size, gsize)
+        gamma[:, cols] = y[:, flat].T
+    if k is None or P.sector_basis[k] is None:
+        return gamma
+    u = P.sector_basis[k].toarray()
+    return u.conj().T @ gamma @ u
+
+
+def vertex_sparse(facts, q, P, *, sector=None):
+    """The vertex of :func:`vertex` as a ``scipy.sparse.csr_array``
+    (complex128), assembled entry by entry from the interaction tables
+    without a dense ``|P|^2`` array (the medium tier; its ``nnz`` feeds the
+    cost model).
+
+    The entries are added in the order of the solver's kernel (types,
+    Hartree then Fock, table entries, spin entries), duplicates are summed
+    (``sum_duplicates``) and the indices sorted; an entry whose terms
+    cancel stays stored, so ``nnz`` does not depend on q. ``sector`` as in
+    :func:`vertex` (``U^dag Gamma U`` in sparse arithmetic)."""
+    import scipy.sparse
+    facts1 = _primitive_facts(facts)
+    p = facts1.problem
+    _check_pair_space(P, p)
+    k = _sector_index(P, sector)
+    ph = _phases(p.shape, q)
+    out, inp, coef, rid, kind = _kept_terms(p, facts1)
+    flat = _flat_of(P, P.labels)
+    order = np.argsort(flat, kind="stable")
+    sflat = flat[order]
+    row = np.searchsorted(sflat, out)
+    col = np.searchsorted(sflat, inp)
+    npair = flat.size
+    ok = (row < npair) & (col < npair)
+    ok[ok] &= (sflat[row[ok]] == out[ok]) & (sflat[col[ok]] == inp[ok])
+    if not np.all(ok):
+        raise ValueError("vertex_sparse: the pair space does not hold every slot of the "
+                         "Hartree-Fock map of this model; build it with pair_space(facts)")
+    phase = np.where(kind == 1, ph[rid], np.where(kind == -1, np.conj(ph[rid]), 1.0))
+    data = coef * phase
+    g = scipy.sparse.coo_array((data, (order[row], order[col])), shape=(npair, npair))
+    g = scipy.sparse.csr_array(g)
+    g.sum_duplicates()
+    g.sort_indices()
+    if k is None or P.sector_basis[k] is None:
+        return g
+    u = P.sector_basis[k]
+    g = scipy.sparse.csr_array(u.conj().T @ g @ u)
+    g.sum_duplicates()
+    g.sort_indices()
+    return g
+
+
+def vertex_self_adjoint(Gamma) -> Tuple[bool, float]:
+    """``(ok, residual)``: ``residual = ||Gamma - Gamma^dag||_F / max(1,
+    ||Gamma||_F)`` and ``ok`` when it is at most
+    :data:`VERTEX_SELF_ADJOINT_TOL` (dense or sparse ``Gamma``). A failure
+    is a convention or implementation defect, not a property of a model."""
+    import scipy.sparse
+    if scipy.sparse.issparse(Gamma):
+        g = scipy.sparse.csr_array(Gamma)
+        diff = g - g.conj().T
+        dn = float(np.sqrt(np.sum(np.abs(diff.data) ** 2))) if diff.nnz else 0.0
+        gn = float(np.sqrt(np.sum(np.abs(g.data) ** 2))) if g.nnz else 0.0
+    else:
+        g = np.asarray(Gamma)
+        dn = float(np.linalg.norm(g - g.conj().T))
+        gn = float(np.linalg.norm(g))
+    res = dn / max(1.0, gn)
+    return res <= VERTEX_SELF_ADJOINT_TOL, res

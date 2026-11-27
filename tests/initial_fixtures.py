@@ -212,3 +212,89 @@ def so_chain(dest, L, *, U=0.0, T=0.0, soc=0.0, ncond=None, param=None):
     return write_input(dest, cellshape=(L, 1, 1), norb=2, transfer=transfer,
                        interactions=inter, param=p, mode={"enable_spin_orbital": True},
                        centers=[(0.0, 0.0, 0.0)] * 2)
+
+
+#: one coupling table per two-body type on two orbitals (0-based), bonds
+#: in x and y and on-site inter-orbital entries; PairHop is complex. The
+#: tables reach every Hartree, Fock and PairHop slot form of the solver.
+#: One direction of each pair is listed; :func:`hermitian_closed` adds the
+#: partner ``(-R, b, a): conj(v)`` the reader requires.
+GOLDEN_TABLES = {
+    "CoulombIntra": {((0, 0, 0), 0, 0): 2.0, ((0, 0, 0), 1, 1): 1.5},
+    "CoulombInter": {((0, 0, 0), 0, 1): 0.7, ((1, 0, 0), 0, 0): 0.3,
+                     ((1, 0, 0), 0, 1): 0.2, ((0, 1, 0), 1, 1): 0.25,
+                     ((1, 1, 0), 1, 0): 0.15},
+    "Hund": {((0, 0, 0), 0, 1): 0.3, ((1, 0, 0), 0, 1): 0.1},
+    "Ising": {((0, 0, 0), 0, 1): 0.2, ((0, 1, 0), 0, 0): 0.05},
+    "PairLift": {((0, 0, 0), 0, 1): 0.1},
+    "Exchange": {((0, 0, 0), 0, 1): 0.25, ((1, 0, 0), 0, 0): 0.07},
+    "PairHop": {((0, 0, 0), 0, 1): 0.15 + 0.05j, ((2, 0, 0), 1, 0): 0.04 - 0.03j},
+}
+
+
+def hermitian_closed(rows):
+    """``rows`` ``{(R, a, b): v}`` with every partner ``(-R, b, a): conj(v)``
+    added (an entry that is its own partner is kept once)."""
+    out = dict(rows)
+    for (r, a, b), v in rows.items():
+        key = (tuple(-x for x in r), b, a)
+        if key not in out:
+            out[key] = complex(v).conjugate()
+    return out
+
+
+def golden_transfer(*, inter_orbital=True):
+    """Two orbitals on a square lattice: hoppings 1 (orbital 0) and 0.8
+    (orbital 1) along x and y, levels -0.2 and +0.2, and (with
+    ``inter_orbital``) an on-site mixing 0.1 and a complex x-bond mixing
+    ``0.2 + 0.1i``, Hermitian-closed."""
+    out = {}
+    for a, t in ((0, 1.0), (1, 0.8)):
+        for r in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)):
+            out[(r, a, a)] = -t
+    out[((0, 0, 0), 0, 0)] = -0.2
+    out[((0, 0, 0), 1, 1)] = 0.2
+    if inter_orbital:
+        out[((0, 0, 0), 0, 1)] = 0.1
+        out[((0, 0, 0), 1, 0)] = 0.1
+        out[((1, 0, 0), 0, 1)] = 0.2 + 0.1j
+        out[((-1, 0, 0), 1, 0)] = 0.2 - 0.1j
+    return out
+
+
+def golden(dest, *, cellshape=(6, 3, 1), types=None, fock=True, two_sz=None,
+           spin_orbital=False, inter_orbital=True, tables=None, T=0.1, param=None):
+    """Two orbitals on a ``cellshape`` square lattice (:func:`golden_transfer`)
+    with the two-body tables ``types`` of :data:`GOLDEN_TABLES` (all by
+    default; ``tables`` replaces them), ``SubShape = [1, 1, 1]`` unless
+    ``param`` sets it. ``spin_orbital``: the same model in
+    spin-orbital mode (Geometry norb = 4, spin-orbitals ``2a + s``) with an
+    extra spin-orbit x-bond hopping ``0.05i sigma^z`` between the orbitals."""
+    if tables is None:
+        names = tuple(GOLDEN_TABLES) if types is None else tuple(types)
+        tables = {name: GOLDEN_TABLES[name] for name in names}
+    tables = {name: hermitian_closed(rows) for name, rows in tables.items()}
+    transfer = golden_transfer(inter_orbital=inter_orbital)
+    norb, centers, mode = 2, [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0)], {}
+    if spin_orbital:
+        so = {}
+        for (r, a, b), v in transfer.items():
+            for s in range(2):
+                so[(r, 2 * a + s, 2 * b + s)] = v
+        if inter_orbital:
+            for s in range(2):
+                sz = 1 - 2 * s
+                so[((1, 0, 0), 2 * 0 + s, 2 * 1 + s)] += 0.05j * sz
+                so[((-1, 0, 0), 2 * 1 + s, 2 * 0 + s)] -= 0.05j * sz
+        transfer, norb = so, 4
+        centers = [(0.0, 0.0, 0.0)] * 2 + [(0.5, 0.0, 0.0)] * 2
+        mode["enable_spin_orbital"] = True
+    if not fock:
+        mode["flag_fock"] = False
+    nvol = cellshape[0] * cellshape[1] * cellshape[2]
+    p = {"Ncond": nvol, "T": T, "SubShape": [1, 1, 1]}
+    if two_sz is not None:
+        p["2Sz"] = two_sz
+    p.update(param or {})
+    return write_input(dest, cellshape=cellshape, norb=norb, transfer=transfer,
+                       centers=centers, interactions=tables, param=p, mode=mode or None)
