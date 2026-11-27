@@ -15,7 +15,7 @@
     <script src="../_static/translations.js?v=4755f45a"></script>
     <link rel="index" title="索引" href="../genindex.html" />
     <link rel="search" title="検索" href="../search.html" />
-    <link rel="next" title="3. 実空間UHF(UHFr)" href="../uhfr/uhfr-index.html" />
+    <link rel="next" title="2.1. 初期状態の候補（プレビュー）" href="initial_states.html" />
     <link rel="prev" title="1. H-waveとは？" href="../about/index.html" />
    
   <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
@@ -84,6 +84,16 @@ GPU実行時は cuFFT に切り替わります。</p>
 この計算で書かれたものではない、または未知の形式である場合には、推測せずに
 ヒントつきのエラーを送出します。関数と結果の型の説明は docstring
 （例: <code class="docutils literal notranslate"><span class="pre">help(hr)</span></code>）を参照してください。</p>
+</div></blockquote>
+</li>
+<li><p>初期状態の候補（プレビュー）</p>
+<blockquote>
+<div><p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">hwave.initial</span></code> は UHFk の入力に対して初期状態の候補を用意して
+候補ごとに実行ディレクトリを作り、 <code class="docutils literal notranslate"><span class="pre">hwave</span></code> の実行後に結果を集めて順位を
+付けます（ <code class="docutils literal notranslate"><span class="pre">prepare</span></code>, <code class="docutils literal notranslate"><span class="pre">check</span></code>, <code class="docutils literal notranslate"><span class="pre">collect</span></code>。 <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">hwave.initial</span>
+<span class="pre">--help</span></code> を参照）。完全な説明ができるまではプレビュー版です。詳しくは
+<a class="reference internal" href="initial_states.html"><span class="doc">初期状態の候補（プレビュー）</span></a> を参照してください。選ばれる状態は、試した候補の中で
+自由エネルギーが最も低いものであり、基底状態であることの証明ではありません。</p>
 </div></blockquote>
 </li>
 <li><p>Official Page</p>
@@ -193,6 +203,8 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 </ol>
 </li>
 </ul>
+<div class="toctree-wrapper compound">
+</div>
 </section>
 
 
@@ -219,7 +231,10 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 <h3>ナビゲーション</h3>
 <ul class="current">
 <li class="toctree-l1"><a class="reference internal" href="../about/index.html">1. H-waveとは？</a></li>
-<li class="toctree-l1 current"><a class="current reference internal" href="#">2. 基本的な使用方法</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">2. 基本的な使用方法</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="initial_states.html">2.1. 初期状態の候補（プレビュー）</a></li>
+</ul>
+</li>
 <li class="toctree-l1"><a class="reference internal" href="../uhfr/uhfr-index.html">3. 実空間UHF(UHFr)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../uhfk/uhfk-index.html">4. 波数空間UHF(UHFk)</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../rpa/rpa-index.html">5. 乱雑位相近似 (RPA)</a></li>
@@ -235,7 +250,7 @@ $<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </sp
 <ul>
   <li><a href="../index.html">Documentation overview</a><ul>
       <li>Previous: <a href="../about/index.html" title="前の章へ"><span class="section-number">1. </span>H-waveとは？</a></li>
-      <li>Next: <a href="../uhfr/uhfr-index.html" title="次の章へ"><span class="section-number">3. </span>実空間UHF(UHFr)</a></li>
+      <li>Next: <a href="initial_states.html" title="次の章へ"><span class="section-number">2.1. </span>初期状態の候補（プレビュー）</a></li>
   </ul></li>
 </ul>
 </div>
