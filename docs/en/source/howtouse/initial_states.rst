@@ -12,11 +12,13 @@ directory, and the tool collects the results and ranks them by free energy.
 .. note::
 
    This is a preview. The commands, options and file formats may still
-   change, and this release provides the large tier only. The large tier is
-   the default candidate set: spin and charge patterns at every q the cell
-   can represent, plus the reserved rows ``para``, ``ferro`` and ``random``,
-   which no quota cuts. Later releases add smaller candidate sets chosen
-   from an instability analysis of the paramagnet.
+   change. This release provides two tiers. The large tier is the default
+   candidate set: spin and charge patterns at every q the cell can
+   represent, plus the reserved rows ``para``, ``ferro`` and ``random``,
+   which no quota cuts. The small tier adds orbital patterns and
+   instability rows from a static analysis of the paramagnet (see
+   :ref:`initial_states_small_tier`). A medium tier for larger models, and a
+   tier choice from a calibrated cost model, arrive in a later release.
 
 The selected state is the lowest free energy among the candidates tried. It is
 not a proof of the ground state.
@@ -50,15 +52,31 @@ TOML file itself. Options:
   its orbital indices are physical orbital indices (also in spin-orbital
   mode).
 - ``--t-hint T``: the hint temperature, in the energy units of the input.
-  It is recorded in the report only and never changes the candidate set or
-  the seeds. Default: the input ``T`` when ``T > 0``; at ``T = 0`` a rule
-  from the bands and the k mesh, ``max(W/(2 L), 1e-4 W)``, with ``W`` the
-  energy span of the bands around the Fermi level (at least 1e-3) and ``L``
-  the shortest ``CellShape`` axis longer than 2. The rule used is shown in the summary.
+  The small tier evaluates its hints at this temperature (see
+  :ref:`initial_states_small_tier`); it changes only the instability rows
+  and their order, never the other candidates, and the candidate runs stay
+  at the input ``T``. The large tier only records it. Default: the input
+  ``T`` when ``T > 0``; at ``T = 0`` a rule from the bands and the k mesh,
+  ``max(W/(2 L), 1e-4 W)``, with ``W`` the energy span of the bands around
+  the Fermi level (at least 1e-3) and ``L`` the shortest ``CellShape`` axis
+  longer than 2. The rule used is shown in the summary.
 - ``--amplitude A`` (the requested seed amplitude, in (0, 1), default 0.5),
   ``--max-candidates N`` (generated rows per ``SubShape``, default 32),
   ``--orbital-site FILE`` (a JSON list with one site label per physical
-  orbital), ``--tier`` (``auto`` resolves to ``large`` in this release).
+  orbital).
+- ``--tier auto|large|small``: the candidate set (``medium`` is reserved
+  for a later release). ``auto``, the default, chooses the small tier when
+  the model is small enough (see :ref:`initial_states_auto_tier`), else the
+  large tier.
+- ``--para-check`` (small tier): the preliminary paramagnetic run also
+  starts from the uniform orbital occupation, and the lower free energy is
+  kept (see :ref:`initial_states_small_tier`). Refused with ``--tier
+  large``; with ``auto`` choosing the large tier it is ignored with a
+  warning.
+- ``--stage0`` (small tier): the preliminary paramagnetic run is not run
+  inside ``prepare`` but written as run directories of its own, for a
+  batch system (see :ref:`initial_states_preliminary_run`). Refused when the
+  large tier is given or chosen.
   At ``T = 0`` the seed field can reach the requested amplitude exactly
   where two levels cross at the Fermi level. The seed is then taken at
   that crossing, with the crossing levels filled uniformly when that meets
@@ -102,10 +120,154 @@ Running ``prepare`` again with the same command and inputs on its own WORK
 does nothing; a different command, changed inputs or a non-empty directory
 not written by ``prepare`` are refused, naming the difference.
 
+Complex coefficients are accepted only for ``PairHop``. ``prepare`` refuses
+a complex coefficient of ``CoulombInter``, ``Hund``, ``Ising``,
+``Exchange``, ``PairLift`` or the combined ``Coulomb`` table, naming the
+term, the bond and the orbitals: for these terms the solver's mean-field
+potential with a complex coefficient is not that of the documented
+Hamiltonian, so no candidate built on it would be meaningful.
+
 With a fixed ``2Sz``, the solver keeps only the spin-conserving parts of the
 interaction terms. When an interaction term breaks spin conservation about z
 (for example ``PairLift``), ``prepare`` records a warning naming the terms,
 and the summary shows it.
+
+.. _initial_states_small_tier:
+
+The small tier
+--------------
+
+The small tier adds two families to the large-tier set:
+
+- ``orbital``: the orbital polarisation ``n_a - n_b`` of consecutive
+  interacting orbitals ``a``, ``b`` of a site, uniform and with the site
+  sign patterns, at every q the cell can represent (counted in
+  ``--max-candidates`` like the baseline rows);
+- ``instability``: patterns from a static linear-response analysis of the
+  paramagnet, the hints. They order the instability rows only: no hint
+  removes a candidate of another family.
+
+The hints are computed in four steps.
+
+1. **The preliminary paramagnetic run.** UHFk runs on the primitive cell
+   (``SubShape = [1, 1, 1]``) at the hint temperature ``T_hint``, with the
+   input's ``Ncond``, ``2Sz``, ``flag_fock`` and interaction tables, from the
+   free density of the bare one-body Hamiltonian, with ``EPS`` raised to at
+   least 12 (recorded as ``para_eps``). The result is the reference of the
+   hints only when the run converged and keeps the symmetries of the model
+   within 1e-8: the spin rotations that the one-body Hamiltonian and the
+   interactions both keep, the electron count of each sector with a fixed
+   ``2Sz``, and time reversal in spin-orbital mode when the model has it.
+   Otherwise the hints are skipped with the reason (``hint.skip_reason``)
+   and every seed is built on the bare one-body Hamiltonian. With
+   ``--para-check`` a second run starts from the uniform orbital
+   occupation; the lower free energy is kept, and a difference above 1e-8
+   per cell is reported as a warning (the other start reached a
+   metastable, orbital-ordered state). The reference is kept in
+   ``WORK/para_hf/`` (``green.npz``, ``para_hf.json`` and the runs), so
+   ``collect`` needs no recomputation. The seeds of every family are then
+   built on its Hamiltonian ``H0 + Sigma'`` folded to each cell
+   (``seed_base = "para_hf"``), and the labels of ``prepare`` and
+   ``collect`` are taken relative to it.
+2. **The vertex** ``Gamma(q)``: the derivative of the solver's Hartree-Fock
+   potential with respect to the density, on the one-body slots the solver
+   reads and writes (the pair space ``P``, restricted to the interacting
+   orbitals). It follows the input's ``flag_fock``: the Hartree terms
+   always, the Fock terms only when the runs have them, so bond-order
+   patterns from a ``CoulombInter`` bond appear only with the Fock term.
+3. **The bare susceptibility** ``chi0(q)``: the static Lindhard response of
+   the paramagnetic bands at ``T_hint``, on the same pair space.
+4. **The eigenvalues** ``lambda`` of ``K(q) = -chi0(q) Gamma(q)`` at every q
+   of the ``CellShape`` mesh, the ``top_k = 3`` largest positive ones per q
+   (when the spin-rotation check passes, the charge and ``S^z`` sectors are
+   solved separately and merged before the cut). Each eigenvector ``x``
+   gives an instability row whose seeding pattern is the conjugate field
+   ``O = Gamma x``.
+
+``lambda`` is the static Stoner-type factor of that pattern: at ``lambda >=
+1`` the paramagnet at ``T_hint`` is unstable towards it within Hartree-Fock,
+and a larger ``lambda`` means a stronger tendency. ``lambda < 1`` at
+``T_hint`` is normal and does not mean that the pattern cannot order at the
+input ``T``. Each instability row records ``rank`` (its place in the
+ordering), ``lambda`` and ``lambda_imag`` (0 unless the vertex is not
+Hermitian, which is reported). Rows are ordered by decreasing ``lambda``;
+eigenvalues within a relative 1e-8 of each other form one degenerate set,
+ordered by a fixed rule (q in a fixed order, then the place of the pair at
+its q), and a degenerate set at one q is given a canonical basis, so the
+rows and their ids do not depend on the round-off of the eigensolver. Every hint row is listed; at most ``quota_instability = 12``
+rows per ``SubShape`` run, and the others say why (``quota: instability``,
+or ``unrepresentable`` with the cell that would represent their q).
+
+**The hint temperature smears the hints.** Each transition enters
+``chi0`` with the weight ``(f(e) - f(e'))/(e' - e) <= 1/(4 T_hint)``, so
+structure within about ``T_hint`` of the Fermi level or from energy
+differences below ``T_hint`` (small gaps, imperfect nesting, split van
+Hove peaks) is suppressed: ``lambda`` drops, peaks broaden, the leading q
+can shift and close rows can swap. The summary repeats this sentence with
+the value used.
+
+The hint record of ``coverage.json`` (``hint``) holds the hint temperature
+and its rule, the status of the paramagnetic run (``para_status``,
+``para_free_energy``, ``para_residual``, ``para_polarisation``,
+``para_eps``), whether the vertex is Hermitian, the method, the q set and
+the status of each q (``ok``, ``fewer than top_k positive eigenvalues`` or
+``no positive eigenvalue``).
+
+.. _initial_states_auto_tier:
+
+Choosing the tier
+-----------------
+
+In this release ``--tier auto`` depends on the model only, so an input gets
+the same tier on every host: the small tier when the pair space has
+``|P| <= 400`` slots, the mesh has ``N_q <= 4096`` points and ``N_q |P|^3 <=
+1e11``; otherwise the large tier, with a warning. ``--tier small`` given
+explicitly runs even beyond these limits, with a warning. The host memory
+never chooses the tier: it only refuses a small tier whose memory estimate,
+``16 (|P|^2 + N_q top_k |P| + N_k nb^2 + N_k nb |P|)`` bytes (``N_k`` k points,
+``nb`` bands), exceeds the available memory. The ``tier`` record of
+``coverage.json`` gives the sizes, the estimate and the rule.
+
+.. _initial_states_preliminary_run:
+
+The preliminary paramagnetic run on a batch system
+--------------------------------------------------
+
+The paramagnetic run of the small tier normally runs inside ``prepare``.
+For a large model it can run as a job of its own:
+
+.. code-block:: bash
+
+   $ python -m hwave.initial prepare INPUT_DIR --out WORK --tier small --stage0
+   $ bash WORK/stage0_commands.txt      # exit code 3 above: run this first
+   $ python -m hwave.initial prepare INPUT_DIR --out WORK --tier small --stage0
+
+The first ``prepare`` writes ``WORK/stage0_para/`` (and
+``WORK/stage0_para_check/`` with ``--para-check``), staged like the candidate
+runs (``SubShape = [1, 1, 1]``, ``T = T_hint``, ``EPS`` raised to at least
+12), and ``WORK/stage0_commands.txt``, and exits with code 3. The same
+``prepare`` command then checks those inputs against ``manifest.json`` (a
+changed file is refused, naming it) and reads the run: when it converged it
+becomes the reference and the candidate runs are written; when it ran and
+failed or did not converge, the seeds use the bare one-body Hamiltonian and
+the hints are skipped with that reason; when it has not run yet, or has not
+finished, ``prepare`` prints the commands again, changes nothing and exits
+with code 3. ``--stage0`` is part of the command: a WORK prepared with it
+re-enters only with it.
+
+The initial-state files
+-----------------------
+
+Each ``initial.npz`` holds the Green function UHFk reads, and its
+provenance: the candidate and run ids, the label, q, phase and sign of the
+pattern, ``SubShape``, ``CellShape``, ``Ncond``, ``2Sz``, the field
+strength used (``h_used``), the SHA-256 of the inputs, and the base of the
+seed:
+``seed_base`` is ``"para_hf"`` (the paramagnetic reference of the small
+tier) or ``"bare"``; on the reference it also records the temperature of
+that reference (``seed_base_para_T``) and the digest of its inputs
+(``seed_base_para_digest``). The library writer refuses a reference that
+belongs to another input or another hint temperature.
 
 Running the candidates
 ----------------------
@@ -185,7 +347,8 @@ proposal).
 
 - The families are ``para`` and ``ferro`` (reserved, one run per
   ``SubShape``), ``random``, ``baseline`` (spin and charge patterns at the q
-  vectors the cell can represent), and ``user`` and ``literature`` (from
+  vectors the cell can represent), ``orbital`` and ``instability`` (the
+  small tier), and ``user`` and ``literature`` (from
   ``--extra-candidates``; never cut by a quota).
 - A candidate is named by its seeding pattern, e.g. ``spin-z ferro-orbital
   q=(1/2,1/2,0) φ=0``. The state a run ends in has a ``final_label``,
@@ -211,9 +374,17 @@ cells are finite. No candidate covers: multi-q superpositions (double-Q,
 triple-Q, vortex crystals); sliding-phase variants beyond the two kept
 phases; combinations within a degenerate eigenspace other than the canonical
 basis; rotated cells such as √3 × √3, and cells outside the given
-``SubShape`` list; orbital and bond patterns in the large tier; more than
-one amplitude per candidate; spirals unless the spin-rotation check passes;
-q vectors with a denominator above 16. The summary repeats these limits.
+``SubShape`` list; orbital and bond patterns in the large tier, and bond
+patterns other than the hints; more than one amplitude per candidate;
+spirals unless the spin-rotation check passes; q vectors with a
+denominator above 16. The summary repeats these limits.
+
+The hints describe the paramagnet only, statically and at ``T_hint``. A
+state reached by a first-order transition or at strong coupling may have
+no hint at all; this is why the reserved and baseline rows always run and
+a hint never removes a row. A small ``lambda`` is not evidence against a
+state, and the largest ``lambda`` does not select the result: only the
+free energies of the converged runs do, within the candidates tried.
 
 Only UHFk inputs are supported by the command line. The library function
 ``hwave.initial.initial_state`` also writes a UHFr ``Initial`` file from a
