@@ -64,6 +64,13 @@ TOML file itself. Options:
   ``--max-candidates N`` (generated rows per ``SubShape``, default 32),
   ``--orbital-site FILE`` (a JSON list with one site label per physical
   orbital).
+  At ``T = 0`` the seed field can reach the requested amplitude exactly
+  where two levels cross at the Fermi level. The seed is then taken at
+  that crossing, with the crossing levels filled uniformly when that meets
+  the request, or else with the occupation just past the crossing.
+  ``amplitude_used`` in ``coverage.json`` can therefore exceed the request.
+  On a spin-symmetric model, a pattern without a spin component (para,
+  charge, orbital) gives a seed with identical spin-up and spin-down parts.
 - ``--tier auto|large|small``: the candidate set (``medium`` is reserved
   for a later release). ``auto``, the default, chooses the small tier when
   the model is small enough (see :ref:`initial_states_auto_tier`), else the
@@ -77,13 +84,6 @@ TOML file itself. Options:
   inside ``prepare`` but written as run directories of its own, for a
   batch system (see :ref:`initial_states_preliminary_run`). Refused when the
   large tier is given or chosen.
-  At ``T = 0`` the seed field can reach the requested amplitude exactly
-  where two levels cross at the Fermi level. The seed is then taken at
-  that crossing, with the crossing levels filled uniformly when that meets
-  the request, or else with the occupation just past the crossing.
-  ``amplitude_used`` in ``coverage.json`` can therefore exceed the request.
-  On a spin-symmetric model, a pattern without a spin component (para,
-  charge, orbital) gives a seed with identical spin-up and spin-down parts.
 
 ``prepare`` writes into WORK:
 
@@ -198,11 +198,13 @@ input ``T``. Each instability row records ``rank`` (its place in the
 ordering), ``lambda`` and ``lambda_imag`` (0 unless the vertex is not
 Hermitian, which is reported). Rows are ordered by decreasing ``lambda``;
 eigenvalues within a relative 1e-8 of each other form one degenerate set,
-ordered by a fixed rule (q in a fixed order, then the place of the pair at
-its q), and a degenerate set at one q is given a canonical basis, so the
-rows and their ids do not depend on the round-off of the eigensolver. Every hint row is listed; at most ``quota_instability = 12``
-rows per ``SubShape`` run, and the others say why (``quota: instability``,
-or ``unrepresentable`` with the cell that would represent their q).
+ordered by a fixed rule (q in a fixed order, then the position of the
+eigenvector in that q's eigenvalue order), and a degenerate set at one q
+is given a canonical basis, so the rows and their ids do not depend on the
+round-off of the eigensolver. Every hint row is listed; at most 12 rows
+(``quota_instability``) are run per ``SubShape``, and the others say why
+(``quota: instability``, or ``unrepresentable`` with the cell that would
+represent their q).
 
 **The hint temperature smears the hints.** Each transition enters
 ``chi0`` with the weight ``(f(e) - f(e'))/(e' - e) <= 1/(4 T_hint)``, so
@@ -253,10 +255,12 @@ The first ``prepare`` writes ``WORK/stage0_para/`` (and
 runs (``SubShape = [1, 1, 1]``, ``T = T_hint``, ``EPS`` raised to at least
 12), and ``WORK/stage0_commands.txt``, and exits with code 3. The same
 ``prepare`` command then checks those inputs against ``manifest.json`` (a
-changed file is refused, naming it) and reads the run: when it converged it
-becomes the reference and the candidate runs are written; when it ran and
-failed or did not converge, the seeds use the bare one-body Hamiltonian and
-the hints are skipped with that reason; when it has not run yet, or has not
+changed file is refused, naming it) and reads the run: when it converged
+and keeps the symmetries of the model (step 1 of
+:ref:`initial_states_small_tier`) it becomes the reference and the
+candidate runs are written; when it ran and failed, did not converge or
+broke one of those symmetries, the seeds use the bare one-body Hamiltonian
+and the hints are skipped with that reason; when it has not run yet, or has not
 finished, ``prepare`` prints the commands again, changes nothing and exits
 with code 3. ``--stage0`` is part of the command: a WORK prepared with it
 re-enters only with it.
