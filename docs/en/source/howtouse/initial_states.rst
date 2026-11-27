@@ -176,7 +176,13 @@ The hints are computed in four steps.
    always, the Fock terms only when the runs have them, so bond-order
    patterns from a ``CoulombInter`` bond appear only with the Fock term.
 3. **The bare susceptibility** ``chi0(q)``: the static Lindhard response of
-   the paramagnetic bands at ``T_hint``, on the same pair space.
+   the paramagnetic bands at ``T_hint``, on the same pair space. At
+   ``q = 0`` it is taken at the fixed electron number of each sector (with
+   a fixed ``2Sz`` each spin, otherwise the whole system, non-interacting
+   orbitals included), as in the solver, which refits the chemical
+   potential at every iteration. A uniform change of that number is then
+   no instability (``lambda = 0``); with a fixed ``2Sz`` this includes the
+   uniform ``S^z``.
 4. **The eigenvalues** ``lambda`` of ``K(q) = -chi0(q) Gamma(q)`` at every q
    of the ``CellShape`` mesh, the ``top_k = 3`` largest positive ones per q
    (when the spin-rotation check passes, the charge and ``S^z`` sectors are

@@ -341,6 +341,132 @@ class TestHintEigenpairs(_Tmp):
             hints.amplitude_entries(P, np.zeros(P.size))
 
 
+class TestFixedCountChi0(_Tmp):
+    """The q = 0 response of the hint eigenproblem keeps the electron number
+    of each mu-group, as the solver's fill does (one mu per group)."""
+
+    def fd_density_response(self, para, f, labels, h, eps=1e-5):
+        """``d n / d s`` on the on-site density ``labels`` for ``H_para + s
+        diag(h)`` (``h`` on the same labels), each fill refitting the mu of
+        every group (the solver's fill, :func:`initial_facade.bands_of`)."""
+        from hwave.solver import initial_facade as fa
+        p = f.problem
+        so = p.ns == 1
+        idx = [fa.interleaved_index(a, s) if so else s * p.norb + a
+               for a, s in labels[:, :2].tolist()]
+
+        def dens(sgn):
+            H = np.array(para.H_para_k)
+            for i, v in zip(idx, h):
+                H[:, i, i] += sgn * eps * v
+            b = fa.bands_of(H, p.blocks, para.T, shape=p.shape, ns=p.ns, norb=p.norb,
+                            ene_cutoff=p.ene_cutoff)
+            n = np.sum(np.abs(b.vec_k) ** 2 * b.occ_k[:, None, :], axis=2).mean(axis=0)
+            return n[idx]
+        return (dens(1) - dens(-1)) / (2 * eps)
+
+    def check_canonical(self, toml):
+        from hwave.initial import hints
+        f, para = _para(toml)
+        self.assertEqual(para.status, "converged", para.skip_reason)
+        P = hints.pair_space(f)
+        zero = (Fraction(0),) * 3
+        on = np.nonzero((P.labels[:, 0] == P.labels[:, 2]) & (P.labels[:, 1] == P.labels[:, 3])
+                        & np.all(P.labels[:, 4:] == 0, axis=1))[0]
+        self.assertGreater(on.size, 0)
+        Cfix = hints.hint_chi0(para.bands, zero, P)
+        Cgc = hints.lindhard(para.bands, zero, P)
+        worst_gc = 0.0
+        for j in on:
+            h = (on == j).astype(float)
+            fd = self.fd_density_response(para, f, P.labels[on], h)
+            # delta x = chi0 (-h)
+            np.testing.assert_allclose(fd, -Cfix[np.ix_(on, [j])][:, 0].real, rtol=0,
+                                       atol=1e-6)
+            worst_gc = max(worst_gc, float(np.max(np.abs(fd + Cgc[np.ix_(on, [j])][:, 0].real))))
+        # the oracle tells the two apart
+        self.assertGreater(worst_gc, 1e-3)
+        return f, para, P
+
+    def test_ligand_outside_pair_space(self):
+        """A non-interacting ligand (outside P) shares the mu-group of the
+        interacting orbitals: the q = 0 response on P equals the
+        finite-difference response of the solver's fill (1e-6), the
+        grand-canonical one does not; regular and spin-orbital mode."""
+        for so in (False, True):
+            with self.subTest(spin_orbital=so):
+                toml = initial_fixtures.wannier_like(self.dest(), spin_orbital=so)
+                f, _para_, P = self.check_canonical(toml)
+                self.assertEqual(sorted(set(P.labels[:, 0].tolist())), [0, 1])
+                self.assertEqual(f.problem.norb_phys, 3)
+
+    def test_fixed_sz_uniform_mode(self):
+        """Under a fixed 2Sz both spin groups keep their number: the uniform
+        S^z mode, which the grand-canonical chi0 ranks first of all q, has
+        lambda = 0 and takes no slot at q = 0; with a free Sz it keeps its
+        Stoner value (only the total number is fixed). The response itself
+        matches the solver's fill."""
+        from hwave.initial import cells, hints
+        zero = (Fraction(0),) * 3
+        toml = initial_fixtures.square(self.dest(), 4, U=2.0, T=0.2, ncond=6,
+                                       subshape=(1, 1, 1), two_sz=0,
+                                       param={"IterationMax": 2000})
+        f, para, P = self.check_canonical(toml)
+        self.assertEqual(len(para.bands.mu), 2)
+        q_set = cells.commensurate_q(f.cellshape)
+        eigen = hints.hint_eigenpairs(f, para, P, q_set)
+        lam_gc = {}
+        for q in q_set:
+            qf = cells.to_qfrac(q)
+            K = -hints.lindhard(para.bands, qf, P) @ hints.vertex(f, qf, P)
+            lam_gc[qf] = float(np.max(np.linalg.eigvals(K).real))
+        # before: the uniform S^z mode led every q
+        self.assertEqual(max(lam_gc, key=lam_gc.get), zero)
+        self.assertGreater(lam_gc[zero], max(v for q, v in lam_gc.items() if q != zero) + 0.1)
+        # now: no positive eigenvalue at q = 0, the lead is at q != 0
+        self.assertEqual(eigen[zero].pairs, ())
+        self.assertEqual(eigen[zero].q_status, hints.Q_NONE)
+        best = max((lam, q) for q, r in eigen.items() for lam, _x in r.pairs)
+        self.assertNotEqual(best[1], zero)
+        self.assertAlmostEqual(best[0], max(v for q, v in lam_gc.items() if q != zero),
+                               delta=1e-10)
+        # free Sz on the same model: the uniform S^z keeps its Stoner value
+        free = initial_fixtures.square(self.dest(), 4, U=2.0, T=0.2, ncond=6,
+                                       subshape=(1, 1, 1), param={"IterationMax": 2000})
+        ff, pf = _para(free)
+        Pf = hints.pair_space(ff)
+        ef = hints.hint_eigenpairs(ff, pf, Pf, [zero])[zero]
+        lam_sz = [lam for (lam, _x), s in zip(ef.pairs, ef.sectors) if s == "S^z"]
+        self.assertTrue(lam_sz)
+        self.assertAlmostEqual(lam_sz[0], lam_gc[zero], delta=1e-8)
+
+    def test_nonzero_q_unchanged(self):
+        """At q != 0 the hint chi0 is the Lindhard response bit for bit, and
+        the eigenpairs equal those of the grand-canonical path bit for bit;
+        at q = 0 they differ."""
+        from hwave.initial import cells, hints
+        toml = initial_fixtures.wannier_like(self.dest())
+        f, para = _para(toml)
+        P = hints.pair_space(f)
+        q_set = cells.commensurate_q(f.cellshape)
+        new = hints.hint_eigenpairs(f, para, P, q_set)
+        with mock.patch.object(hints, "hint_chi0", hints.lindhard):
+            old = hints.hint_eigenpairs(f, para, P, q_set)
+        zero = (Fraction(0),) * 3
+        for q in old:
+            if q == zero:
+                continue
+            self.assertTrue(np.array_equal(hints.hint_chi0(para.bands, q, P),
+                                           hints.lindhard(para.bands, q, P)))
+            a, b = new[q], old[q]
+            self.assertEqual([lam for lam, _x in a.pairs], [lam for lam, _x in b.pairs])
+            for (_l1, x1), (_l2, x2) in zip(a.pairs, b.pairs):
+                self.assertTrue(np.array_equal(x1, x2))
+            self.assertEqual(a.amplitudes, b.amplitudes)
+        self.assertNotEqual([lam for lam, _x in new[zero].pairs],
+                            [lam for lam, _x in old[zero].pairs])
+
+
 # ---------------------------------------------------------------------------
 # the enumerator: instability rows, orbital family, tiers
 # ---------------------------------------------------------------------------

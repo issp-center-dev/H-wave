@@ -77,7 +77,11 @@ CSR for the medium tier), and :func:`vertex_self_adjoint` checks that it is
 Hermitian. :func:`lindhard` and :func:`lindhard_apply` give the static
 Lindhard response ``chi0(q)`` of the para bands on the same pair space and
 sectors (dense for the small tier, a matrix-free product for the medium
-tier; one kernel, :func:`hwave.solver.initial_facade.static_lindhard`).
+tier; one kernel, :func:`hwave.solver.initial_facade.static_lindhard`, at
+fixed ``mu``). :func:`hint_chi0` is the response the eigen-solve uses: the
+Lindhard response, at q = 0 with the electron number of each mu-group held
+fixed (the solver refits one ``mu`` per group), so the uniform modes that
+only change a group number have ``lambda = 0``.
 
 **The eigen-solve.** :func:`solve_small` gives the leading eigenpairs of
 ``K(q) = -chi0(q) Gamma(q)`` at one q through the symmetric form ``B =
@@ -114,7 +118,7 @@ __all__ = ["THint", "t_hint_bare", "W_FLOOR_ACT", "T_HINT_REL_FLOOR",
            "PARA_RESIDUAL_TOL", "PARA_CHECK_TOL", "PARA_SYMMETRY_TOL",
            "PairSpace", "pair_space", "vertex", "vertex_sparse", "vertex_self_adjoint",
            "SECTOR_FULL", "SECTOR_CHARGE", "SECTOR_SZ", "VERTEX_SELF_ADJOINT_TOL",
-           "lindhard", "lindhard_apply", "SolveResult", "solve_small", "amplitude_entries",
+           "lindhard", "lindhard_apply", "hint_chi0", "SolveResult", "solve_small", "amplitude_entries",
            "hint_eigenpairs", "vertex_fields", "degenerate_clusters", "HINT_METHOD", "REAL_TOL", "Q_OK", "Q_FEW",
            "Q_NONE", "Q_FAILED", "GENERAL_SOLVE_SOURCE"]
 
@@ -1426,6 +1430,69 @@ def lindhard(bands, q, P, *, sector=None) -> np.ndarray:
     return u.conj().T @ chi @ u
 
 
+def _density_labels(bands):
+    """The on-site density labels ``(a, s, a, s, 0, 0, 0)`` of every
+    physical orbital and spin of the bands (non-interacting orbitals
+    included) and the mu-group of each, ``(labels (n, 7), group (n,))``."""
+    so = int(bands.ns) == 1
+    nphys = int(bands.norb) // 2 if so else int(bands.norb)
+    labels = np.array([(a, s, a, s, 0, 0, 0) for s in range(2) for a in range(nphys)],
+                      dtype=np.int64)
+    a, s = labels[:, 0], labels[:, 1]
+    alpha = np.asarray(initial_facade.interleaved_index(a, s) if so
+                       else s * int(bands.norb) + a, dtype=np.int64)
+    # the band that holds most of each index (the index lies in that band's
+    # block, and the band carries the block's mu-group)
+    weight = np.sum(np.abs(np.asarray(bands.vec_k)) ** 2, axis=0)       # (nd, nb)
+    band = np.argmax(weight[alpha], axis=1)
+    group = np.asarray(bands.band_group)[0, band].astype(np.int64)
+    return labels, group
+
+
+def hint_chi0(bands, q, P) -> np.ndarray:
+    """The response ``chi0(q)`` of the hint eigenproblem on the full pair
+    space ``P`` (dense, Hermitian, positive semidefinite).
+
+    At ``q != 0`` it is :func:`lindhard` (the static Lindhard response at
+    fixed ``mu``), unchanged. At ``q = 0`` the solver's fill keeps the
+    electron number of each mu-group (one ``mu`` per group is refitted at
+    every iteration), so the response the SCF map has is the one at fixed
+    group numbers: the Schur complement
+
+    ``chi0_fix = chi0_PP - chi0_PN chi0_NN^+ chi0_NP``
+
+    with ``N_g`` the number operator of mu-group ``g`` over ALL its
+    orbitals (non-interacting ones, outside ``P``, included) and ``^+`` the
+    inverse on the groups with a nonzero number response (a group with
+    ``chi0_NN = 0``, gapped at ``T_hint``, has ``chi0_PN = 0`` and is left
+    alone). Groups never pair in ``chi0`` (they are different solver
+    blocks), so ``chi0_NN`` is diagonal. A mode that only changes a group
+    number (the uniform charge; with a fixed ``2Sz`` also the uniform
+    ``S^z``) then has ``lambda = 0`` and takes no ``top_k`` slot, and
+    ``lambda >= 1`` keeps its meaning at q = 0: the solver's own map is
+    unstable there."""
+    from hwave.initial.cells import to_qfrac
+    C = lindhard(bands, q, P)
+    if any(x != 0 for x in to_qfrac(q)):
+        return C
+    dlab, group = _density_labels(bands)
+    p = P.size
+    ext = initial_facade.static_lindhard(bands, q, np.concatenate([P.labels, dlab]))
+    groups = sorted(set(int(g) for g in group))
+    Ng = np.zeros((dlab.shape[0], len(groups)))
+    for j, g in enumerate(groups):
+        Ng[group == g, j] = 1.0
+    c_pn = ext[:p, p:] @ Ng                                           # (|P|, n_g)
+    c_nn = np.real(np.diag(Ng.T @ ext[p:, p:] @ Ng))
+    scale = max(1.0, float(np.max(np.abs(np.diag(ext)).real, initial=0.0)))
+    out = C.copy()
+    for j in range(len(groups)):
+        if c_nn[j] <= CHI0_CUTOFF * scale:
+            continue
+        out -= np.outer(c_pn[:, j], c_pn[:, j].conj()) / c_nn[j]
+    return (out + out.conj().T) / 2.0
+
+
 def lindhard_apply(bands, q, P, v, *, sector=None) -> np.ndarray:
     """``chi0(q) v`` of :func:`lindhard` without forming ``chi0``
     (:func:`initial_facade.apply_lindhard`); ``v`` ``(d,)`` or ``(d, c)``,
@@ -1758,8 +1825,10 @@ def hint_eigenpairs(facts, para, P, q_set, *, solve=None, top_k=3) -> dict:
     ``q_set``: q on the k-mesh of the primitive cell (the small tier: the
     whole mesh, :func:`hwave.initial.cells.commensurate_q` of
     ``CellShape``). Per q the vertex (:func:`vertex`, which depends on the
-    model only) and the Lindhard response (:func:`lindhard`) are built on
-    the full pair space once and projected onto each sector of ``P``;
+    model only) and the response of :func:`hint_chi0` (the Lindhard
+    response; at q = 0 with the electron number of each mu-group fixed, as
+    in the solver's fill) are built on the full pair space once and
+    projected onto each sector of ``P``;
     ``solve(chi0, Gamma, top_k=top_k)`` (default :func:`solve_small`)
     receives the mappings ``sector -> dense matrix``. The result gains the
     amplitudes of :func:`amplitude_entries` (the conjugate field ``O =
@@ -1775,7 +1844,7 @@ def hint_eigenpairs(facts, para, P, q_set, *, solve=None, top_k=3) -> dict:
     for q in q_set:
         qf = to_qfrac(q)
         G = vertex(facts1, qf, P)
-        C = lindhard(para.bands, qf, P)
+        C = hint_chi0(para.bands, qf, P)
         chis, gams, bases = {}, {}, {}
         for k, s in enumerate(P.sectors):
             U = P.sector_basis[k]

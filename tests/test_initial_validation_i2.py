@@ -73,8 +73,9 @@
     central differences, step 1e-5, on every slot of the folded cell)
     against ``K(q) = -chi0(q) Gamma(q)`` on the pair space. J holds every q of
     the cell; at q = 0 the fixed electron number removes the uniform density
-    change, so there chi0 is replaced by its projection ``chi0 - chi0 n n^T
-    chi0 / (n^T chi0 n)`` (n the number operator on the pair space). Each fill
+    change, and chi0 is the production one of the hints,
+    ``hints.hint_chi0`` (there the Schur complement over the number operator
+    of each mu-group on all orbitals), not a projection of the test. Each fill
     holds the electron number to the tolerance of its chemical-potential
     bisection, which puts about 1e-7 into J along ``dG/dmu``, enough to move
     the eigenvectors of the small eigenvalues by more than 1e-6 (up to 7e-6
@@ -345,7 +346,8 @@ class TestV4(_Tmp):
     def test_v4_kuroki_sc(self):
         """The S^z and charge eigenvalues at every q equal max eig(chi0 S) and
         max eig(-chi0 C) of hwave_sc's S and C matrices (density-only
-        subcase and the full Kanamori model; 1e-10)."""
+        subcase and the full Kanamori model; 1e-10), with the electron
+        number fixed in the charge channel at q = 0."""
         from hwave.initial import hints
         from hwave.solver import initial_facade as fa
         from hwave.solver.eliashberg.io import _read_interaction_files
@@ -371,8 +373,21 @@ class TestV4(_Tmp):
                     S, C = (np.asarray(m).reshape(9, 9) for m in _build_sc_matrices(
                         inter_k, 3, *(int(x * n) for x, n in zip(q, p.shape))))
                     chi = fa.static_lindhard(para.bands, q, lab)
+                    chi_c = chi
+                    if all(x == 0 for x in q):
+                        # the hints fix the electron number at q = 0 (one
+                        # mu-group, both spins, ligand included). On the
+                        # spin-up labels with chi_up,dn = 0 and n the
+                        # density vector, the Schur complement over
+                        # N = n_up + n_dn is chi - v v^T/(2a) (up-up) and
+                        # -v v^T/(2a) (up-down), v = chi n, a = n chi n: the
+                        # charge combination is chi - v v^T/a, the S^z one
+                        # stays chi
+                        n = (lab[:, 0] == lab[:, 2]).astype(float)
+                        v = chi @ n
+                        chi_c = chi - np.outer(v, n @ chi) / (n @ v)
                     want = {hints.SECTOR_SZ: float(np.linalg.eigvals(chi @ S).real.max()),
-                            hints.SECTOR_CHARGE: float(np.linalg.eigvals(-chi @ C).real.max())}
+                            hints.SECTOR_CHARGE: float(np.linalg.eigvals(-chi_c @ C).real.max())}
                     for sector, value in want.items():
                         got = _sector_leading(eig[q], sector)
                         if got is None:
@@ -813,16 +828,13 @@ class TestV6(_Tmp):
         keep = np.abs(wJ) > 1e-8
         wJ, vJ = wJ[keep], vJ[:, keep]
         self.assertLess(float(np.max(np.abs(wJ.imag))), 1e-6)
-        # K(q) per q of the cell; at q = 0 with the electron number fixed
+        # K(q) per q of the cell with the chi0 of the hint eigenproblem (at
+        # q = 0 the production path fixes the electron number itself)
         P = hints.pair_space(f)
-        dens = ((P.labels[:, 0] == P.labels[:, 2]) & (P.labels[:, 1] == P.labels[:, 3])
-                & np.all(P.labels[:, 4:] == 0, axis=1)).astype(float)
         spectra = []
         for q in cells.commensurate_q(B):
             qf = cells.to_qfrac(q)
-            C = hints.lindhard(para.bands, qf, P)
-            if all(x == 0 for x in qf):
-                C = C - np.outer(C @ dens, dens @ C) / (dens @ C @ dens)
+            C = hints.hint_chi0(para.bands, qf, P)
             K = -C @ hints.vertex(f, qf, P)
             w, v = np.linalg.eig(K)
             nz = np.abs(w) > 1e-8
