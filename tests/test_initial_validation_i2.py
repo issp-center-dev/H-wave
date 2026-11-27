@@ -751,16 +751,32 @@ class TestV6(_Tmp):
         n = N * nd * nd
         J = np.zeros((n, n), dtype=np.complex128)
         step = 1e-5
+        # slot k and its partner kbar (G(r)_ij <-> G(-r)_ji) share the two
+        # Hermitian directions E + E^dag and i(E - E^dag): each derivative is
+        # taken once per pair
+        r_k, i_k, j_k = np.unravel_index(np.arange(n), (N, nd, nd))
+        partner = np.ravel_multi_index((neg[r_k], j_k, i_k), (N, nd, nd))
+
+        def derivative(Hm):
+            return ((scf_map(G0 + step * Hm) - scf_map(G0 - step * Hm)) / (2 * step)).reshape(-1)
+
         for k in range(n):
+            kb = int(partner[k])
+            if kb < k:
+                continue
             E = np.zeros(n, dtype=np.complex128)
             E[k] = 1.0
             E = E.reshape(N, nd, nd)
             Ed = np.conj(np.swapaxes(E[neg], -1, -2))
-            col = 0
-            for c, Hm in ((1.0, (E + Ed) / 2), (1j, (E - Ed) / 2j)):
-                d = (scf_map(G0 + step * Hm) - scf_map(G0 - step * Hm)) / (2 * step)
-                col = col + c * d.reshape(-1)
-            J[:, k] = col
+            d1 = derivative((E + Ed) / 2)
+            if kb == k:
+                # a self-partner slot (r = -r, i = j) is real: E = E^dag
+                J[:, k] = d1
+                continue
+            d2 = derivative((E - Ed) / 2j)
+            # E_k = H1 + i H2 and E_kbar = H1 - i H2
+            J[:, k] = d1 + 1j * d2
+            J[:, kb] = d1 - 1j * d2
         # Every fill holds the electron number to the tolerance of the mu
         # bisection (xtol 2e-12), which enters each column of J as a multiple
         # of u = dG/dmu, about 1e-7 at this step. The exact J keeps N
@@ -817,8 +833,12 @@ class TestV6(_Tmp):
         self.assertGreater(float(np.max(np.abs(wK))), 0.1)
 
         def basis(M):
+            # a set degenerate across q (K(q) and K(-q)) comes back from eig as
+            # any mixture of its q components, so the restriction of such a
+            # set to one q has the rank of that q's part only, up to the
+            # noise of the difference quotients (below 1e-8 relative)
             u, sv, _ = np.linalg.svd(M, full_matrices=False)
-            return u[:, sv > 1e-8 * sv[0]]
+            return u[:, sv > 1e-5 * sv[0]]
 
         # per eigenvalue (degenerate across q: K(q) and K(-q) share their
         # spectrum), the restriction of J's eigenspace to each q spans K(q)'s

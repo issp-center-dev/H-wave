@@ -335,7 +335,7 @@ class TestV2b(_Base):
     def test_v2b_values(self):
         """12x12 triangular, Ncond = 88, T = 0.1, U = 2, one orbital: the
         para-HF bands are the bare bands shifted by U n/2, and chi0 per spin is
-        the mesh mean of F(eps(k+q), eps(k)). Probe values 1e-4; the analytic
+        the mesh mean of F(eps(k+q), eps(k)). Recorded values 1e-4; the analytic
         dispersion 1e-10."""
         from scipy import optimize
         from hwave.initial import hints
