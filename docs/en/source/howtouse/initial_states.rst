@@ -168,8 +168,8 @@ code  meaning
       ``--require-provenance``)
 1     an error, or the check refused the file
 2     an argument error
-3     reserved for a later release (a preliminary paramagnetic run);
-      never returned now
+3     ``prepare --stage0``: a preliminary paramagnetic run is pending; run
+      ``bash WORK/stage0_commands.txt``, then the same ``prepare`` command
 4     ``check --require-provenance``: the file has no provenance
 ====  ======================================================================
 

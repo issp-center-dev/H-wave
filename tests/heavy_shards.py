@@ -46,7 +46,8 @@ MEASUREMENT = (
     "x2.7 projection of its 7.4 s macOS time; test_initial_validation_i1 "
     "(shard 2, 62 s) likewise, x2.7 of its 23 s macOS time; "
     "test_initial_small_tier (shard 3, the then-lightest, 7 s) likewise, x2.7 "
-    "of its 2.7 s macOS time)")
+    "of its 2.7 s macOS time; test_initial_stage0 (shard 3, the then-lightest "
+    "at 541 s, 38 s) likewise, x2.7 of its 14 s macOS time)")
 
 #: Files that must share a shard: they diagonalize identical Hamiltonians,
 #: which ``tests/ed_cache.py`` shares only within one process (the case-M
@@ -96,6 +97,7 @@ SHARDS = (
         "test_so_bond_pairing_oracle",             # 8
         "test_eliashberg_bond_entry",              # 6
         "test_initial_small_tier",                 # 7 (x2.7 of 2.7 s, macOS)
+        "test_initial_stage0",                     # 38 (x2.7 of 14 s, macOS)
     ),
 )
 

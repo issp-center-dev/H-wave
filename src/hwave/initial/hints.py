@@ -109,7 +109,8 @@ logger = logging.getLogger("qlms").getChild("initial").getChild("hints")
 
 __all__ = ["THint", "t_hint_bare", "W_FLOOR_ACT", "T_HINT_REL_FLOOR",
            "STRUCTURAL_AXIS_MAX", "WIDE_WINDOW_FACTOR", "group_bands",
-           "ParaResult", "para_hf", "para_from_green", "para_from_work", "fold_para", "hint_record", "model_key", "input_digest",
+           "ParaResult", "para_hf", "para_from_green", "para_from_work", "para_starts",
+           "para_failed", "choose_para", "write_para_record", "fold_para", "hint_record", "model_key", "input_digest",
            "PARA_RESIDUAL_TOL", "PARA_CHECK_TOL", "PARA_SYMMETRY_TOL",
            "PairSpace", "pair_space", "vertex", "vertex_sparse", "vertex_self_adjoint",
            "SECTOR_FULL", "SECTOR_CHARGE", "SECTOR_SZ", "VERTEX_SELF_ADJOINT_TOL",
@@ -539,6 +540,18 @@ def _start_uniform(p):
     return g.reshape(p.nvol, p.ns, p.norb, p.ns, p.norb)
 
 
+def para_starts(facts, thint):
+    """The two starts of the para step on the primitive cell of the model
+    of ``facts`` at ``thint.T_hint``, stored layout ``(prod(CellShape), ns,
+    norb_orig, ns, norb_orig)``: ``{"main": the free density (the bare-H0
+    fill with the solver's mu-groups), "check": the uniform orbital
+    occupation}``. :func:`para_hf` runs from them, and so does the
+    separately run preliminary paramagnetic run of ``python -m
+    hwave.initial prepare --stage0``."""
+    facts1 = _primitive_facts(facts)
+    return {"main": _start_free(facts1, thint), "check": _start_uniform(facts1.problem)}
+
+
 def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=None,
                     scf_residual=None, eps=None, iteration_max=None,
                     warnings=()) -> ParaResult:
@@ -635,13 +648,21 @@ def para_from_work(facts, work_dir) -> Optional[ParaResult]:
                                free_energy_check=rec.get("free_energy_check"))
 
 
-def _skipped(facts, thint, reason, warnings=()):
-    return ParaResult(status="skipped", G_para=None, H_para_k=None, bands=None,
+def _skipped(facts, thint, reason, warnings=(), status="skipped"):
+    return ParaResult(status=status, G_para=None, H_para_k=None, bands=None,
                       free_energy=None, residual=None, polarisation=None,
                       skip_reason=reason, warnings=tuple(warnings),
                       T=float(thint.T_hint),
                       input_sha256=MappingProxyType(dict(facts.input_sha256)),
                       model=model_key(facts))
+
+
+def para_failed(facts, thint, reason, warnings=()) -> ParaResult:
+    """The :class:`ParaResult` of a para run that ran and failed without a
+    usable Green function (a traceback, an unreadable output): status
+    ``"not_converged"`` with ``reason`` as its skip reason, no Green
+    function; the hints are skipped and the seeds use the bare ``H0``."""
+    return _skipped(facts, thint, reason, warnings, status="not_converged")
 
 
 def _one_run(facts1, thint, start, work_dir):
@@ -654,7 +675,11 @@ def _one_run(facts1, thint, start, work_dir):
     return run, res
 
 
-def _record(res, selected, work_dir):
+def write_para_record(res, selected, work_dir):
+    """Write ``work_dir/para_hf.json``, the record of the para reference
+    ``res`` (:func:`para_from_work` reads it back); ``selected`` names the
+    start whose Green function is ``work_dir/green.npz`` (``"main"`` or
+    ``"check"``), ``None`` when no Green function is kept."""
     out = {
         "status": res.status, "skip_reason": res.skip_reason, "T": res.T,
         "free_energy": res.free_energy, "free_energy_per_cell": res.free_energy_per_cell,
@@ -709,7 +734,7 @@ def para_hf(facts, thint, *, para_check=False, work_dir=None) -> ParaResult:
     if facts.n_c == 0:
         res = _skipped(facts, thint, "no interacting orbital (n_c = 0)")
         if root is not None:
-            _record(res, None, root)
+            write_para_record(res, None, root)
         return res
     facts1 = _primitive_facts(facts)
     tmp = None
@@ -724,7 +749,7 @@ def para_hf(facts, thint, *, para_check=False, work_dir=None) -> ParaResult:
             res = _skipped(facts, thint, "the paramagnetic Hartree-Fock run failed: "
                            "{}".format(exc))
             if root is not None:
-                _record(res, None, root)
+                write_para_record(res, None, root)
             return res
         selected = "main"
         if para_check:
@@ -733,7 +758,7 @@ def para_hf(facts, thint, *, para_check=False, work_dir=None) -> ParaResult:
         if root is not None:
             shutil.copyfile(os.path.join(run.work_dir, "green.npz"),
                             os.path.join(root, "green.npz"))
-            _record(res, selected, root)
+            write_para_record(res, selected, root)
         return res
     finally:
         if tmp is not None:
@@ -745,24 +770,39 @@ def _check(facts1, thint, res, run, root):
     try:
         run2, res2 = _one_run(facts1, thint, _start_uniform(p), os.path.join(root, "check"))
     except (ValueError, initial_facade.MuNotConvergedError) as exc:
-        msg = PARA_CHECK_FAILED_WARNING.format(exc)
+        run2, res2 = None, _skipped(facts1, thint, str(exc))
+    kept, sel = choose_para(res, res2)
+    return kept, (run2 if sel == "check" else run), sel
+
+
+def choose_para(main, check):
+    """``(kept, selected)``: the para reference kept from the two starts of
+    the para check, ``main`` (from the free density) and ``check`` (from
+    the uniform orbital occupation), each a :class:`ParaResult`.
+    ``selected`` is ``"main"`` or ``"check"``.
+
+    When the check start is not converged, ``main`` is kept with the
+    warning :data:`PARA_CHECK_FAILED_WARNING`; when only the check start
+    is converged, it is kept with :data:`PARA_CHECK_SWITCHED_WARNING`;
+    when both are, the lower free energy per cell is kept, with
+    :data:`PARA_CHECK_WARNING` when they differ by more than
+    :data:`PARA_CHECK_TOL`. ``free_energy_check`` records the check
+    start's free energy per cell. When neither is converged ``main`` is
+    kept, not converged (the hints are skipped)."""
+    if check.status != "converged":
+        msg = PARA_CHECK_FAILED_WARNING.format(check.skip_reason)
         logger.warning(msg)
-        return dataclasses.replace(res, warnings=res.warnings + (msg,)), run, "main"
-    if res2.status != "converged":
-        msg = PARA_CHECK_FAILED_WARNING.format(res2.skip_reason)
-        logger.warning(msg)
-        return (dataclasses.replace(res, warnings=res.warnings + (msg,),
-                                    free_energy_check=res2.free_energy_per_cell),
-                run, "main")
-    if res.status != "converged":
+        return (dataclasses.replace(main, warnings=main.warnings + (msg,),
+                                    free_energy_check=check.free_energy_per_cell),
+                "main")
+    if main.status != "converged":
         # the check start reached a valid reference where the free start did not
-        msg = PARA_CHECK_SWITCHED_WARNING.format(res.skip_reason)
+        msg = PARA_CHECK_SWITCHED_WARNING.format(main.skip_reason)
         logger.warning(msg)
-        return dataclasses.replace(res2, warnings=res2.warnings + (msg,),
-                                   free_energy_check=res2.free_energy_per_cell), \
-            run2, "check"
-    f1, f2 = res.free_energy_per_cell, res2.free_energy_per_cell
-    keep, krun, sel = (res2, run2, "check") if f2 < f1 else (res, run, "main")
+        return dataclasses.replace(check, warnings=check.warnings + (msg,),
+                                   free_energy_check=check.free_energy_per_cell), "check"
+    f1, f2 = main.free_energy_per_cell, check.free_energy_per_cell
+    keep, sel = (check, "check") if f2 < f1 else (main, "main")
     warnings = keep.warnings
     if abs(f1 - f2) > PARA_CHECK_TOL:
         msg = PARA_CHECK_WARNING.format(
@@ -770,7 +810,7 @@ def _check(facts1, thint, res, run, root):
             "uniform orbital occupation" if sel == "check" else "free density")
         logger.warning(msg)
         warnings = warnings + (msg,)
-    return dataclasses.replace(keep, warnings=warnings, free_energy_check=f2), krun, sel
+    return dataclasses.replace(keep, warnings=warnings, free_energy_check=f2), sel
 
 
 def fold_para(H_para_k, facts, subshape):

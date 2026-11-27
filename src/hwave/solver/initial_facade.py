@@ -73,7 +73,8 @@ __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "unfold_layout", "diag_blocks", "assemble_green", "Bands", "bands_of",
            "fold_hamiltonian_k", "LINDHARD_DEGENERACY_TOL", "LINDHARD_ZERO_T_GAP",
            "static_lindhard",
-           "apply_lindhard", "ParaRun", "run_para", "PARA_EPS_MIN", "discard_profile_statistics",
+           "apply_lindhard", "ParaRun", "run_para", "PARA_EPS_MIN", "para_eps",
+           "discard_profile_statistics",
            "HostMemory", "available_host_bytes"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
@@ -1016,6 +1017,16 @@ def _input_eps(toml_path):
     return eps
 
 
+def para_eps(toml_path):
+    """The ``EPS`` exponent of the paramagnetic reference run of the input
+    ``toml_path``: ``max(EPS_input, PARA_EPS_MIN)`` (the input's exponent
+    when it is the larger). :func:`run_para` and the separately run
+    preliminary paramagnetic run of ``python -m hwave.initial prepare
+    --stage0`` both use it."""
+    eps_in = _input_eps(toml_path)
+    return int(eps_in) if eps_in >= PARA_EPS_MIN else PARA_EPS_MIN
+
+
 def run_para(toml_path, *, T, start_G, work_dir):
     """Run UHFk for the input ``toml_path`` on its primitive cell.
 
@@ -1046,8 +1057,7 @@ def run_para(toml_path, *, T, start_G, work_dir):
         raise ValueError("run_para: T must be a finite number >= 0, got {!r}".format(T))
     work_dir = pathlib.Path(os.path.abspath(os.fspath(work_dir)))
     work_dir.mkdir(parents=True, exist_ok=True)
-    eps_in = _input_eps(toml_path)
-    eps = int(eps_in) if eps_in >= PARA_EPS_MIN else PARA_EPS_MIN
+    eps = para_eps(toml_path)
     solver, _, _ = _build_solver(toml_path, subshape=(1, 1, 1),
                                  param={"T": T, "EPS": eps}, prologue=False)
     want = (solver.nvol, solver.ns, solver.norb, solver.ns, solver.norb)

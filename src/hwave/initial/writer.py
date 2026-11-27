@@ -70,7 +70,7 @@ __all__ = [
     "NO_PROVENANCE_WARNING", "SO_UHFR_REFUSAL", "HERMITE_TOL", "EIG_TOL",
     "TRACE_RTOL", "initial_state", "check_initial_state", "check_green",
     "solver_initial_path", "initial_key_value", "uhfr_green", "write_uhfr_initial",
-    "seed_and_write",
+    "seed_and_write", "write_start_state",
 ]
 
 #: the provenance schema this module writes and reads
@@ -447,27 +447,50 @@ def _seed(facts, run, para, t_hint=None):
 
 
 def _provenance(facts, run, res, para=None):
-    import hwave
-    from hwave.initial.hints import input_digest
-    on_para = res.seed_base == "para_hf"
     cand = run.candidate
     spec = cand.pattern
+    return _provenance_of(facts, run_id=run.run_id, candidate_id=cand.candidate_id,
+                          label=cand.label, q=None if spec.q is None else list(spec.q),
+                          phase=spec.phase, sign=spec.sign, subshape=list(run.subshape),
+                          seed=spec.seed, h_used=res.h_used, seed_base=res.seed_base,
+                          para=para)
+
+
+def _provenance_of(facts, *, run_id, candidate_id, label, q, phase, sign, subshape, seed,
+                   h_used, seed_base, para=None):
+    import hwave
+    from hwave.initial.hints import input_digest
+    on_para = seed_base == "para_hf"
     p = facts.problem
     return {
         "initial_state_schema": INITIAL_STATE_SCHEMA,
-        "run_id": run.run_id, "candidate_id": cand.candidate_id, "label": cand.label,
-        "q": None if spec.q is None else list(spec.q), "phase": spec.phase,
-        "sign": spec.sign, "subshape": list(run.subshape),
+        "run_id": run_id, "candidate_id": candidate_id, "label": label,
+        "q": q, "phase": phase, "sign": sign, "subshape": subshape,
         "cellshape": list(facts.cellshape), "norb_orig": int(p.norb_orig),
         "spin_orbital": bool(p.enable_spin_orbital),
         "index_convention": _INDEX_CONVENTION[bool(p.enable_spin_orbital)],
-        "two_sz": p.two_sz, "ncond": p.ncond, "seed": spec.seed,
-        "h_used": res.h_used, "seed_base": res.seed_base,
+        "two_sz": p.two_sz, "ncond": p.ncond, "seed": seed,
+        "h_used": h_used, "seed_base": seed_base,
         "seed_base_para_T": float(para.T) if on_para else None,
         "seed_base_para_digest": input_digest(para.input_sha256) if on_para else None,
         "hwave_version": hwave.__version__,
         "input_sha256": dict(facts.input_sha256),
     }
+
+
+def _green_members(G, p, prov):
+    """The npz members of the Green function ``G`` (on the cell of the
+    problem ``p``) with the provenance ``prov``."""
+    members = {k: _encode(v) for k, v in prov.items()}
+    for k, v in CONVENTION_MEMBERS.items():
+        members[k] = np.array(v)
+    if int(np.prod(p.subshape)) > 1:
+        members["green_sublattice"] = G
+        members["green"] = initial_facade.unfold_layout(
+            G, cellshape=p.cellshape, subshape=p.subshape, norb_orig=p.norb_orig, ns=p.ns)
+    else:
+        members["green"] = G
+    return members
 
 
 def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
@@ -572,16 +595,35 @@ def seed_and_write(toml, run, *, out, para=None, t_hint=None):
         return None, res, facts
     G = np.array(res.G, dtype=np.complex128)
     check_green(G, p, what="the seed of {}".format(run.run_id))
-    members = {k: _encode(v) for k, v in _provenance(facts, run, res, para).items()}
-    for k, v in CONVENTION_MEMBERS.items():
-        members[k] = np.array(v)
-    if int(np.prod(p.subshape)) > 1:
-        members["green_sublattice"] = G
-        members["green"] = initial_facade.unfold_layout(
-            G, cellshape=p.cellshape, subshape=p.subshape, norb_orig=p.norb_orig, ns=p.ns)
-    else:
-        members["green"] = G
+    members = _green_members(G, p, _provenance(facts, run, res, para))
     return _write_npz(_abs(out), members), res, facts
+
+
+def write_start_state(toml, G, *, out, candidate_id, label="para") -> pathlib.Path:
+    """Write the Green function ``G`` of the primitive cell as the start
+    of a paramagnetic run of the UHFk input ``toml`` (whose ``SubShape``
+    must be ``[1, 1, 1]``), with provenance, to ``out``.
+
+    The file is an initial-state file as :func:`initial_state` writes it,
+    for the pattern-free candidate ``candidate_id`` (run id
+    ``<candidate_id>-b1x1x1``, ``label``; no q, phase, sign or random seed;
+    ``h_used = 0`` on the bare ``H0``), so it passes
+    :func:`check_initial_state` with ``require_provenance=True``.
+    ``G`` is checked with :func:`check_green` first
+    (:class:`InitialStateError` otherwise). Returns ``out``."""
+    from hwave.initial.facts import model_facts
+    facts = model_facts(_toml_of(toml))
+    p = facts.problem
+    if tuple(int(b) for b in p.subshape) != (1, 1, 1):
+        raise ValueError("{}: a paramagnetic start is written for SubShape [1, 1, 1], the "
+                         "input has {}".format(toml, list(p.subshape)))
+    G = np.array(G, dtype=np.complex128)
+    check_green(G, p, what="the start of {}".format(candidate_id))
+    prov = _provenance_of(facts, run_id="{}-b1x1x1".format(candidate_id),
+                          candidate_id=candidate_id, label=label, q=None, phase=None,
+                          sign=None, subshape=[1, 1, 1], seed=None, h_used=0.0,
+                          seed_base="bare")
+    return _write_npz(_abs(out), _green_members(G, p, prov))
 
 
 # --------------------------------------------------------------------------

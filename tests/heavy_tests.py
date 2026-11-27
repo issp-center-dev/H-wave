@@ -335,6 +335,23 @@ HEAVY_TESTS = (
     ("test_initial_small_tier", "TestCliPara", "test_prepare_small_para_reference",
      "prepare --tier small --para-check, one UHFk run, a move of WORK and five "
      "collects; 2.7 s on macOS, about 7 s on the Linux CI runners"),
+    # --- tests/test_initial_stage0.py -- prepare --stage0 and its re-entry --
+    ("test_initial_stage0", "TestStage0Runs", "test_stage0_para_check_split",
+     "prepare --stage0 --para-check, two hwave subprocesses, the same prepare on "
+     "four copies of WORK; 1.5 s on macOS, about 4 s on the Linux CI runners"),
+    ("test_initial_stage0", "TestStage0Runs", "test_stage0_reentry_proceeds",
+     "prepare --stage0, bash stage0_commands.txt (check and hwave subprocesses), "
+     "the re-entry, an in-process prepare and collect; 2.3 s on macOS, about 6 s "
+     "on the Linux CI runners"),
+    ("test_initial_stage0", "TestStage0Runs", "test_stage0_states",
+     "prepare --stage0, one hwave subprocess, then the same prepare on eight "
+     "copies of WORK; 1.3 s on macOS, about 4 s on the Linux CI runners"),
+    ("test_initial_stage0", "TestStage0Runs", "test_stage0_work_relocatable",
+     "prepare --stage0, a move of WORK, bash stage0_commands.txt and "
+     "commands.txt, collect; 2.3 s on macOS, about 6 s on the Linux CI runners"),
+    ("test_initial_stage0", "TestStage0Staging", "test_stage0_staging_like_runs",
+     "four staging cases, each prepare --stage0 --para-check, bash "
+     "stage0_commands.txt and the re-entry; 6.6 s on macOS"),
     # --- tests/test_initial_validation_i1.py -- V1a, V1b, V3 (i) --------
     ("test_initial_validation_i1", "TestPrepareValidation", "test_v3i_cli_proposed_cell",
      "prepare on a 16 x 2 cell of a 64 x 32 lattice (enumeration and deduplication "
