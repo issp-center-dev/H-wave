@@ -558,9 +558,10 @@ class TestTierRule(_Tmp):
             return en.choose_tier(f, tier, **kw)
 
     def test_interim_auto_rule(self):
-        """auto: small when the estimate fits 0.25 of the memory and the
-        operation cap; large by memory, by the operation cap, and on unknown
-        memory, each with its warning."""
+        """auto depends on the model only: small within the fixed size limits
+        (|P|, N_q, N_q |P|^3), large beyond one of them, the same tier for
+        every host memory, missing included; the host memory only refuses a
+        small tier that does not fit."""
         from hwave.initial import enumerate as en
         from hwave.initial.report import INTERIM_TIER_RULE
         toml = initial_fixtures.square(self.dest(), 8, U=2.0, T=0.2, subshape=(2, 2, 1))
@@ -569,29 +570,36 @@ class TestTierRule(_Tmp):
         self.assertEqual(small.warnings, ())
         pre = small.record["preflight"]
         self.assertEqual(pre["small_bytes"],
-                         en.small_tier_bytes(pre["pair_space"], 64, 64, 2, 3))
-        self.assertEqual(pre["small_bytes"],
                          16 * (4 ** 2 + 64 * 3 * 4 + 64 * 2 ** 2 + 64 * 2 * 4))
         self.assertEqual(small.record["estimate"]["bytes"], pre["small_bytes"])
         self.assertEqual(small.record["rule"], INTERIM_TIER_RULE)
+        self.assertEqual(small.record["constants"]["small_max_pairs"], 400)
+        self.assertEqual(small.record["constants"]["small_max_q"], 4096)
         need = pre["small_bytes"]
-        by_mem = self.choose(toml, nbytes=4 * need - 1)
-        self.assertEqual(by_mem.name, "large")
-        self.assertEqual(by_mem.warnings, (en.SMALL_TIER_LIMIT_WARNING,))
-        self.assertIsNone(by_mem.record["estimate"]["bytes"])
-        self.assertEqual(self.choose(toml, nbytes=4 * need).name, "small")
-        with mock.patch.object(en, "SMALL_TIER_MAX_OPERATIONS", 64 * 4 ** 3 - 1):
-            by_ops = self.choose(toml)
-        self.assertEqual(by_ops.name, "large")
-        self.assertEqual(by_ops.warnings, (en.SMALL_TIER_LIMIT_WARNING,))
-        unknown = self.choose(toml, nbytes=None)
-        self.assertEqual(unknown.name, "large")
-        self.assertEqual(unknown.warnings, (en.UNKNOWN_MEMORY_WARNING,))
-        # explicit tiers: small runs the preflight, large needs none
-        self.assertEqual(self.choose(toml, "small", nbytes=need + 1).name, "small")
-        self.assertTrue(self.choose(toml, "small", nbytes=need + 1).warnings)
-        with self.assertRaisesRegex(ValueError, "exceeds the available host memory"):
-            self.choose(toml, "small", nbytes=need - 1)
+        # the same choice for every host memory, missing included
+        for nbytes in (1 << 40, 4 * need - 1, need, None):
+            with self.subTest(nbytes=nbytes):
+                c = self.choose(toml, nbytes=nbytes)
+                self.assertEqual((c.name, c.warnings), ("small", ()))
+        # beyond a fixed limit: large on every host
+        for name, value in (("SMALL_TIER_MAX_PAIRS", 3), ("SMALL_TIER_MAX_Q", 63),
+                            ("SMALL_TIER_MAX_OPERATIONS", 64 * 4 ** 3 - 1)):
+            for nbytes in (1 << 40, need, None):
+                with self.subTest(limit=name, nbytes=nbytes), \
+                        mock.patch.object(en, name, value):
+                    c = self.choose(toml, nbytes=nbytes)
+                    self.assertEqual((c.name, c.warnings),
+                                     ("large", (en.SMALL_TIER_LIMIT_WARNING,)))
+                    self.assertIsNone(c.record["estimate"]["bytes"])
+        # the host memory only refuses a small tier that does not fit
+        for tier in ("auto", "small"):
+            with self.assertRaisesRegex(ValueError, "exceeds the available host memory"):
+                self.choose(toml, tier, nbytes=need - 1)
+        # explicit tiers
+        with mock.patch.object(en, "SMALL_TIER_MAX_PAIRS", 3):
+            over = self.choose(toml, "small")
+        self.assertEqual(over.name, "small")
+        self.assertTrue(over.warnings)
         self.assertEqual(self.choose(toml, "small", nbytes=None).name, "small")
         large = self.choose(toml, "large")
         self.assertEqual((large.name, large.chosen_by), ("large", "user"))
@@ -608,10 +616,13 @@ class TestTierRule(_Tmp):
         from hwave.solver import initial_facade
         toml = initial_fixtures.square(self.dest(), 4, U=2.0, T=0.2, subshape=(2, 2, 1),
                                        param={"IterationMax": 2000})
-        for nbytes, name in ((1 << 40, "small"), (None, "large")):
+        from hwave.initial import enumerate as en
+        for nbytes, pairs, name in ((1 << 40, 400, "small"), (None, 400, "small"),
+                                    (None, 3, "large")):
             mem = initial_facade.HostMemory(nbytes, "test")
             with mock.patch.object(initial_facade, "available_host_bytes",
-                                   return_value=mem), _quiet():
+                                   return_value=mem), \
+                    mock.patch.object(en, "SMALL_TIER_MAX_PAIRS", pairs), _quiet():
                 c = candidate_states(toml, n_random=0)
             self.assertEqual(c.tier, name)
             doc = coverage_document(c, phase_marker="pre_run")
@@ -624,7 +635,7 @@ class TestTierRule(_Tmp):
                 self.assertEqual(doc["tier"]["estimate"]["bytes"],
                                  doc["tier"]["preflight"]["small_bytes"])
             else:
-                self.assertIn("the available host memory is unknown",
+                self.assertIn("exceeds the preview limits",
                               " ".join(doc["model"]["warnings"]))
 
 

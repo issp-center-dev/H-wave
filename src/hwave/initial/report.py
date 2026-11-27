@@ -87,9 +87,10 @@ CHOSEN_BY = ("auto", "user", "auto (interim rule)")
 
 #: the interim tier rule of this release
 INTERIM_TIER_RULE = (
-    "auto chooses the small tier when its memory estimate 16*(|P|^2 + N_q*top_k*|P| + "
-    "N_k*nb^2 + N_k*nb*|P|) bytes is at most 0.25 of the available host memory and "
-    "N_q*|P|^3 <= 1e11, otherwise the large tier (an interim rule until the calibrated "
+    "auto chooses the small tier when |P| <= 400, N_q <= 4096 and N_q*|P|^3 <= 1e11 "
+    "(fixed limits, the same on every host), otherwise the large tier; the host "
+    "memory only refuses a small tier whose estimate 16*(|P|^2 + N_q*top_k*|P| + "
+    "N_k*nb^2 + N_k*nb*|P|) bytes exceeds it (an interim rule until the calibrated "
     "cost model; the medium tier arrives later)")
 
 #: the share of the host memory a tier may plan for

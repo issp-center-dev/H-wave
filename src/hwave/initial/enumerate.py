@@ -130,7 +130,8 @@ __all__ = [
     "deduplicate", "apply_quotas", "candidate_states", "orbital_pairs",
     "HintPair", "hint_pairs", "InstabilityCandidates", "instability_candidates",
     "QUOTA_INSTABILITY", "TierChoice", "choose_tier", "small_tier_bytes",
-    "SMALL_TIER_MAX_OPERATIONS", "SMALL_TIER_LIMIT_WARNING", "UNKNOWN_MEMORY_WARNING",
+    "SMALL_TIER_MAX_PAIRS", "SMALL_TIER_MAX_Q", "SMALL_TIER_MAX_OPERATIONS",
+    "SMALL_TIER_LIMIT_WARNING",
 ]
 
 #: families outside every quota, never cut, kept first by deduplication
@@ -1176,16 +1177,16 @@ def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, tak
 # the entry point
 # --------------------------------------------------------------------------
 
-#: the interim cap of the small tier on ``N_q |P|^3`` (the dense eigen-solves)
+#: the interim size limits of the small tier (deterministic: the same input
+#: gets the same tier on every host): the pair space, the q points (the
+#: k-mesh of the primitive cell) and ``N_q |P|^3`` (the dense eigen-solves)
+SMALL_TIER_MAX_PAIRS = 400
+SMALL_TIER_MAX_Q = 4096
 SMALL_TIER_MAX_OPERATIONS = 10 ** 11
 #: the warning when the interim rule does not choose the small tier
 SMALL_TIER_LIMIT_WARNING = ("the small tier exceeds the preview limits; the medium tier "
                             "arrives in a later release")
-#: the warning when the host memory is unknown
-UNKNOWN_MEMORY_WARNING = ("the available host memory is unknown, so the small tier is not "
-                          "chosen automatically; the large tier is used (give the tier "
-                          "small explicitly to run it)")
-#: the warning when a small tier given explicitly is over the budget
+#: the warning when a small tier given explicitly is over the size limits
 SMALL_TIER_OVER_BUDGET_WARNING = (
     "the small tier given explicitly exceeds the preview limits ({}); it runs anyway")
 _TIERS_IN = ("auto", "large", "medium", "small")
@@ -1214,18 +1215,19 @@ def choose_tier(base, tier="auto", *, su2=None, limits=None) -> TierChoice:
     """The tier of the model of ``base`` (primitive-cell facts), before any
     para step.
 
-    The interim rule of this release for ``"auto"``: the small tier when
-    its memory estimate (:func:`small_tier_bytes` with ``|P|`` from
-    :func:`hwave.initial.hints.pair_space`, ``N_q = N_k = prod(CellShape)``
-    and ``nb`` the bands of the primitive cell) is at most
-    ``budget_fraction = 0.25`` of
-    ``initial_facade.available_host_bytes()`` and ``N_q |P|^3 <=``
-    :data:`SMALL_TIER_MAX_OPERATIONS`; otherwise the large tier with the
-    warning :data:`SMALL_TIER_LIMIT_WARNING`. Unknown host memory gives the
-    large tier with :data:`UNKNOWN_MEMORY_WARNING`. ``"small"`` given
-    explicitly runs the same preflight: a warning when over the limits, a
-    ``ValueError`` when the estimate exceeds the available memory.
-    ``"large"`` needs no estimate; ``"medium"`` raises
+    The interim rule of this release for ``"auto"`` depends on the model
+    only, so an input gets the same tier on every host: the small tier when
+    ``|P| <=`` :data:`SMALL_TIER_MAX_PAIRS` (400), ``N_q <=``
+    :data:`SMALL_TIER_MAX_Q` (4096) and ``N_q |P|^3 <=``
+    :data:`SMALL_TIER_MAX_OPERATIONS` (1e11), with ``|P|`` from
+    :func:`hwave.initial.hints.pair_space` and ``N_q = prod(CellShape)``;
+    otherwise the large tier with the warning
+    :data:`SMALL_TIER_LIMIT_WARNING`. ``"small"`` given explicitly runs
+    the same size check (a warning when over a limit). The host memory
+    (``initial_facade.available_host_bytes()``) never chooses: it only
+    refuses a small tier whose memory estimate (:func:`small_tier_bytes`)
+    exceeds the available memory (``ValueError``); unknown memory refuses
+    nothing. ``"large"`` needs no estimate; ``"medium"`` raises
     ``NotImplementedError`` (a later release)."""
     from hwave.initial.report import BUDGET_FRACTION, INTERIM_TIER_RULE
     from hwave.solver import initial_facade
@@ -1241,7 +1243,8 @@ def choose_tier(base, tier="auto", *, su2=None, limits=None) -> TierChoice:
         "estimate": {"bytes": None, "seconds": None, "class": None},
         "budget": {"budget_fraction": BUDGET_FRACTION, "bytes": None,
                    "available_bytes": None, "source": None},
-        "constants": {"budget_fraction": BUDGET_FRACTION,
+        "constants": {"small_max_pairs": SMALL_TIER_MAX_PAIRS,
+                      "small_max_q": SMALL_TIER_MAX_Q,
                       "small_max_operations": SMALL_TIER_MAX_OPERATIONS},
         "rule": INTERIM_TIER_RULE if tier == "auto" else None,
         "preflight": None,
@@ -1254,37 +1257,32 @@ def choose_tier(base, tier="auto", *, su2=None, limits=None) -> TierChoice:
     nb = int(p.nd)
     nbytes = small_tier_bytes(n_pair, nk, nk, nb, limits.top_k)
     ops = nk * n_pair ** 3
-    mem = initial_facade.available_host_bytes()
-    budget = None if mem.nbytes is None else int(BUDGET_FRACTION * mem.nbytes)
-    record["budget"].update(bytes=budget, available_bytes=mem.nbytes, source=mem.source)
     over = []
-    if budget is not None and nbytes > budget:
-        over.append("memory estimate {} bytes > {} bytes, {:.0%} of the available host "
-                    "memory".format(nbytes, budget, BUDGET_FRACTION))
+    if n_pair > SMALL_TIER_MAX_PAIRS:
+        over.append("|P| = {} > {}".format(n_pair, SMALL_TIER_MAX_PAIRS))
+    if nk > SMALL_TIER_MAX_Q:
+        over.append("N_q = {} > {}".format(nk, SMALL_TIER_MAX_Q))
     if ops > SMALL_TIER_MAX_OPERATIONS:
         over.append("N_q |P|^3 = {} > {:.0e}".format(ops, SMALL_TIER_MAX_OPERATIONS))
-    pre = {"pair_space": n_pair, "n_q": nk, "n_k": nk, "bands": nb, "top_k": limits.top_k,
-           "small_bytes": nbytes, "small_operations": ops, "over_limits": over}
-    record["preflight"] = pre
+    record["preflight"] = {"pair_space": n_pair, "n_q": nk, "n_k": nk, "bands": nb,
+                           "top_k": limits.top_k, "small_bytes": nbytes,
+                           "small_operations": ops, "over_limits": over}
     warnings = []
-    if tier == "auto":
-        if mem.nbytes is None:
-            name, warnings = "large", [UNKNOWN_MEMORY_WARNING]
-        elif over:
-            name, warnings = "large", [SMALL_TIER_LIMIT_WARNING]
-        else:
-            name = "small"
-    else:
-        if mem.nbytes is not None and nbytes > mem.nbytes:
-            raise ValueError("tier small: the memory estimate {} bytes exceeds the available "
-                             "host memory {} bytes ({}); use the large tier".format(
-                                 nbytes, mem.nbytes, mem.source))
-        name = "small"
-        if over:
-            warnings = [SMALL_TIER_OVER_BUDGET_WARNING.format("; ".join(over))]
-    if name == "small":
-        record["estimate"]["bytes"] = nbytes
-    return TierChoice(name, chosen_by, record, tuple(warnings))
+    if tier == "auto" and over:
+        return TierChoice("large", chosen_by, record, (SMALL_TIER_LIMIT_WARNING,))
+    if tier == "small" and over:
+        warnings = [SMALL_TIER_OVER_BUDGET_WARNING.format("; ".join(over))]
+    mem = initial_facade.available_host_bytes()
+    record["budget"].update(
+        bytes=None if mem.nbytes is None else int(BUDGET_FRACTION * mem.nbytes),
+        available_bytes=mem.nbytes, source=mem.source)
+    if mem.nbytes is not None and nbytes > mem.nbytes:
+        raise ValueError("tier small{}: the memory estimate {} bytes exceeds the available "
+                         "host memory {} bytes ({}); give the large tier".format(
+                             " (chosen by the interim rule)" if tier == "auto" else "",
+                             nbytes, mem.nbytes, mem.source))
+    record["estimate"]["bytes"] = nbytes
+    return TierChoice("small", chosen_by, record, tuple(warnings))
 
 
 def _input_path(obj):
