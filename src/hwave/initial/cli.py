@@ -1089,6 +1089,10 @@ def _keep_stage0_para(work, para, selected):
     when it has one, and the record); returns the directory."""
     from hwave.initial.hints import PARA_GREEN, write_para_record
     root = work / PARA_DIR
+    # Not atomic on purpose: a re-entry that dies between the mkdir below
+    # and the manifest update leaves WORK/para_hf behind, and every later
+    # re-entry is refused here. That fails safe (a refusal, never a mixed
+    # reference), so the directory is not written through a temporary name.
     if root.exists():
         raise ValueError("{}: exists before the preliminary paramagnetic run was read; "
                          "repeat prepare into a new directory".format(root))
@@ -1811,7 +1815,8 @@ def build_parser():
                          "WORK/stage0_para (and WORK/stage0_para_check with --para-check) "
                          "and WORK/stage0_commands.txt and exits with code 3; run bash "
                          "WORK/stage0_commands.txt, then re-run the same prepare command, "
-                         "which writes the candidate runs (refused with the large tier)")
+                         "which writes the candidate runs (refused when the large tier is given "
+                         "or chosen by auto)")
     pc = sub.add_parser(
         "check", help="check an initial-state file against the input that reads it",
         epilog=_epilog(), formatter_class=argparse.RawDescriptionHelpFormatter,

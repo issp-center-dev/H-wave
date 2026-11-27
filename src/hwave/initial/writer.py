@@ -55,6 +55,7 @@ import math
 import numbers
 import os
 import pathlib
+import re
 import secrets
 import zipfile
 from dataclasses import dataclass
@@ -63,6 +64,9 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 
 from hwave.solver import initial_facade
+
+#: a SHA-256 in lowercase hex
+_HEX64 = re.compile("[0-9a-f]{64}")
 
 __all__ = [
     "InitialStateError", "ProvenanceMissingError", "CheckResult",
@@ -821,7 +825,7 @@ def _check_provenance(members, problem, config_path, path):
     if base == "para_hf":
         if isinstance(pT, bool) or not isinstance(pT, numbers.Real) \
                 or not math.isfinite(float(pT)) or float(pT) < 0.0 \
-                or not isinstance(pdig, str) or len(pdig) != 64:
+                or not isinstance(pdig, str) or not _HEX64.fullmatch(pdig):
             raise InitialStateError(
                 "{}: seed_base_para_T, seed_base_para_digest: a para_hf seed records the "
                 "para T (a number) and the input digest of the para record (SHA-256), got "
@@ -835,6 +839,13 @@ def _check_provenance(members, problem, config_path, path):
         raise InitialStateError(
             "{}: input_sha256: an object of SHA-256 strings keyed by TOML key expected, got "
             "{}".format(path, json.dumps(sha)))
+    if base == "para_hf":
+        from hwave.initial.hints import input_digest
+        if pdig != input_digest(sha):
+            raise InitialStateError(
+                "{}: seed_base_para_digest {} is not the digest of the file's own "
+                "input_sha256 ({}): the seed and its para reference belong to different "
+                "inputs".format(path, json.dumps(pdig), input_digest(sha)))
     now = {}
     for key, f in initial_facade.referenced_input_files(config_path).items():
         now[key] = _sha256(f) if f.is_file() else None

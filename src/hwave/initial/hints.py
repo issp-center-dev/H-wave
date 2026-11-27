@@ -626,19 +626,35 @@ def para_from_work(facts, work_dir) -> Optional[ParaResult]:
     bands as the run that wrote it, with the recorded status, skip reason,
     warnings and para-check energy. ``None`` when the step wrote no Green
     function (it was skipped or failed). ``ValueError`` when the record
-    belongs to other input files."""
+    belongs to another model: other input files (the input digest), or
+    other settings of the TOML that the files do not fix (``CellShape``,
+    ``Ncond``, ``2Sz``, ``flag_fock``, the orbital count, spin-orbital
+    mode: :func:`model_key`). Both are checked before anything is read, a
+    record without a Green function included."""
     from types import SimpleNamespace
     root = os.path.abspath(os.fspath(work_dir))
-    with open(os.path.join(root, PARA_RECORD)) as f:
+    path = os.path.join(root, PARA_RECORD)
+    with open(path) as f:
         rec = json.load(f)
+    if rec.get("input_digest") != input_digest(facts.input_sha256):
+        raise ValueError("{}: the para record belongs to other input files (input digest "
+                         "{}, this input {}); rerun prepare into a new directory".format(
+                             path, rec.get("input_digest"), input_digest(facts.input_sha256)))
+    want = _plain_model(model_key(facts))
+    got = rec.get("model")
+    if not isinstance(got, dict):
+        raise ValueError("{}: the para record does not name its model settings; rerun "
+                         "prepare into a new directory".format(path))
+    diff = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
+    if diff:
+        raise ValueError("{}: the para record belongs to another model: {}; rerun prepare "
+                         "into a new directory".format(
+                             path, ", ".join("{} {} (this input {})".format(
+                                 k, json.dumps(got.get(k)), json.dumps(want.get(k)))
+                                 for k in diff)))
     green = os.path.join(root, PARA_GREEN)
     if rec.get("selected_start") is None or not os.path.isfile(green):
         return None
-    if rec.get("input_digest") != input_digest(facts.input_sha256):
-        raise ValueError("{}: the para record belongs to other input files (input digest "
-                         "{}, this input {})".format(os.path.join(root, PARA_RECORD),
-                                                     rec.get("input_digest"),
-                                                     input_digest(facts.input_sha256)))
     with np.load(green, allow_pickle=False) as data:
         G = np.array(data["green"], dtype=np.complex128)
     res = para_from_green(facts, SimpleNamespace(T_hint=float(rec["T"])), G,
@@ -650,6 +666,11 @@ def para_from_work(facts, work_dir) -> Optional[ParaResult]:
                           warnings=tuple(rec.get("warnings") or ()))
     return dataclasses.replace(res, status=rec["status"], skip_reason=rec.get("skip_reason"),
                                free_energy_check=rec.get("free_energy_check"))
+
+
+def _plain_model(model):
+    """:func:`model_key` in its JSON form (tuples as lists)."""
+    return {k: (list(v) if isinstance(v, tuple) else v) for k, v in model.items()}
 
 
 def _skipped(facts, thint, reason, warnings=(), status="skipped"):
@@ -697,8 +718,7 @@ def write_para_record(res, selected, work_dir):
         "selected_start": selected, "warnings": list(res.warnings),
         "input_sha256": dict(res.input_sha256 or {}),
         "input_digest": None if res.input_sha256 is None else input_digest(res.input_sha256),
-        "model": None if res.model is None else
-        {k: (list(v) if isinstance(v, tuple) else v) for k, v in res.model.items()},
+        "model": None if res.model is None else _plain_model(res.model),
     }
     with open(os.path.join(work_dir, "para_hf.json"), "w") as f:
         json.dump(out, f, indent=1, sort_keys=True, allow_nan=True)

@@ -701,6 +701,77 @@ class TestParaRecord(_Tmp):
         self.assertEqual(para.iteration_max, 3)
 
 
+class TestParaFromWork(_Tmp):
+    """A saved para reference is reused only for the model it belongs to:
+    the input files AND the TOML settings they do not fix."""
+
+    VARIANTS = {
+        "ncond": ("Ncond = 16", "Ncond = 14"),
+        "two_sz": ("Ncond = 16", "Ncond = 16\n2Sz = 0"),
+        "iflag_fock": ('mode = "UHFk"', 'mode = "UHFk"\nflag_fock = false'),
+        "cellshape": ("CellShape = [4, 4, 1]", "CellShape = [6, 4, 1]"),
+    }
+
+    def variant(self, src, key):
+        """A copy of the model directory of ``src`` (the same referenced
+        files) with one TOML setting changed."""
+        old, new = self.VARIANTS[key]
+        dst = os.path.join(self.tmp, "variant-" + key)
+        shutil.copytree(os.path.dirname(src), dst)
+        toml = os.path.join(dst, os.path.basename(src))
+        with open(toml) as fh:
+            text = fh.read()
+        self.assertEqual(text.count(old), 1, key)
+        with open(toml, "w") as fh:
+            fh.write(text.replace(old, new))
+        return toml
+
+    def test_other_model_refused(self):
+        """Ncond, 2Sz, flag_fock or CellShape changed with the same input
+        files: para_from_work refuses with the differing setting named, for
+        a record with a Green function and for a skipped one; the same model
+        is reused through candidate_states(para=...)."""
+        from hwave.initial import hints
+        from hwave.initial.enumerate import candidate_states
+        toml = _square_v(self.dest(), L=4, subshape=(1, 1, 1), param={"Ncond": 16})
+        wd = os.path.join(self.tmp, "para")
+        f, para = self.para(toml, work_dir=wd)
+        self.assertEqual(para.status, "converged", para.skip_reason)
+        again = hints.para_from_work(f, wd)
+        self.assertEqual(again.status, "converged")
+        np.testing.assert_array_equal(again.G_para, para.G_para)
+        cs = candidate_states(toml, tier="small", n_random=0, para=again)
+        self.assertEqual(cs.model["hint"]["status"], "computed")
+        skipped = os.path.join(self.tmp, "skipped")
+        os.makedirs(skipped)
+        hints.write_para_record(hints.para_failed(f, hints.t_hint_bare(f.problem),
+                                                  "failed for the test"), None, skipped)
+        self.assertIsNone(hints.para_from_work(f, skipped))
+        for key in self.VARIANTS:
+            with self.subTest(key):
+                other = self.variant(toml, key)
+                fo = self.facts(other)
+                self.assertEqual(fo.input_sha256, f.input_sha256)
+                for work in (wd, skipped):
+                    with self.assertRaisesRegex(ValueError, "another model: .*" + key):
+                        candidate_states(other, tier="small", n_random=0,
+                                         para=hints.para_from_work(fo, work))
+
+    def test_other_input_files_refused(self):
+        """Other referenced files: refused (the input digest), also for a
+        skipped record."""
+        from hwave.initial import hints
+        toml = _square_v(self.dest(), L=4, param={"Ncond": 16})
+        wd = os.path.join(self.tmp, "skipped")
+        os.makedirs(wd)
+        f = self.facts(toml)
+        hints.write_para_record(hints.para_failed(f, hints.t_hint_bare(f.problem), "x"),
+                                None, wd)
+        other = _square_v(self.dest(), L=4, U=3.0, param={"Ncond": 16})
+        with self.assertRaisesRegex(ValueError, "other input files"):
+            hints.para_from_work(self.facts(other), wd)
+
+
 class TestParaProvenance(_Tmp):
 
     def test_para_T_and_digest_in_provenance(self):
@@ -721,6 +792,39 @@ class TestParaProvenance(_Tmp):
         with np.load(bare, allow_pickle=False) as data:
             self.assertIsNone(json.loads(str(data["seed_base_para_T"][()])))
             self.assertIsNone(json.loads(str(data["seed_base_para_digest"][()])))
+
+    def test_para_digest_checked_against_input(self):
+        """require_provenance: a para seed's seed_base_para_digest must be a
+        lowercase SHA-256 and the digest of the file's own input_sha256;
+        either defect is an InitialStateError (not a missing provenance)."""
+        import json
+        from hwave.initial.hints import input_digest
+        from hwave.initial.writer import (InitialStateError, ProvenanceMissingError,
+                                          check_initial_state, initial_state)
+        from tests.test_initial_writer import _load, _save
+        toml = _square_v(self.dest(), subshape=(2, 2, 1))
+        f, para = self.para(toml)
+        out = os.path.join(os.path.dirname(toml), "initial.npz")
+        initial_state(toml, _neel(), out=out, para=para)
+        members = _load(out)
+        good = input_digest(f.input_sha256)
+        self.assertEqual(json.loads(str(members["seed_base_para_digest"][()])), good)
+        other = "0" * 64
+        self.assertNotEqual(other, good)
+        for bad, msg in (("Z" * 64, "SHA-256"), (good.upper(), "SHA-256"),
+                         (other, "not the digest of the file's own input_sha256")):
+            with self.subTest(bad=bad):
+                m = dict(members)
+                m["seed_base_para_digest"] = np.array(json.dumps(bad))
+                path = os.path.join(self.tmp, "bad.npz")
+                _save(path, m)
+                self.assertEqual(json.loads(str(_load(path)["seed_base_para_digest"][()])),
+                                 bad)
+                with self.assertRaises(InitialStateError) as cm:
+                    check_initial_state(toml, path, require_provenance=True)
+                self.assertNotIsInstance(cm.exception, ProvenanceMissingError)
+                self.assertIn(msg, str(cm.exception))
+        self.assertTrue(check_initial_state(toml, out, require_provenance=True).verified)
 
     def test_para_of_another_T_refused(self):
         from hwave.initial.writer import initial_state
