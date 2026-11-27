@@ -53,6 +53,16 @@ Basic usage
   output is missing, was not written by this run, or has an unknown layout. The functions and result
   types are documented in their docstrings, e.g. ``help(hr)``.
 
+- Candidate initial states (preview)
+
+  ``python -m hwave.initial`` prepares a set of candidate initial states for a
+  UHFk input, one run directory each, and after the ``hwave`` runs collects
+  and ranks the results (``prepare``, ``check``, ``collect``; see
+  ``python -m hwave.initial --help``). It is a preview until its full
+  documentation; see :doc:`initial_states`. The selected state is the lowest
+  free energy among the candidates tried. It is not a proof of the ground
+  state.
+
 - Official Page
 
     - `GitHub repository <https://github.com/issp-center-dev/H-wave>`_
@@ -155,3 +165,8 @@ Basic usage
      The standalone converter ``hwave_sigma_split total.npz out.npz ...`` (positional
      arguments, no input file) turns a total-form FLEX self-energy archive into the split
      form that a run with ``flex_hartree_fock = true`` accepts as ``sigma_init``.
+
+.. toctree::
+   :hidden:
+
+   initial_states

@@ -1,0 +1,364 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "H-wave PatternSpec v1",
+  "description": "A seed pattern for hwave.initial: bond-slot entries in the sigma x orbital-pair basis, with q, phase, sign and modulation. O(R) = (e^{i(q.R+phase)} A + e^{-i(q.R+phase)} A^dag)/2 with A the entries. The checks of hwave.initial (validate_patternspec) are the authority; they also refuse what this schema cannot express: two entries with the same (orb_a, orb_b, r); a cos pattern whose coefficients are all zero, or a spiral whose s are all zero; integer-valued floats such as 1.0 where an integer is required (orb_a, orb_b, r, subshape, sign, seed, patternspec_version); non-finite numbers (for example 1e400); a q string with surrounding whitespace or a trailing newline; and, when the caller gives the number of physical orbitals, an orbital index outside 0..norb_phys-1. q strings may be unreduced (\"2/4\"); hwave.initial stores the reduced form (\"1/2\").",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "patternspec_version",
+    "q",
+    "subshape",
+    "phase",
+    "sign",
+    "modulation",
+    "entries"
+  ],
+  "properties": {
+    "patternspec_version": {
+      "const": 1
+    },
+    "q": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/q"
+        }
+      ]
+    },
+    "subshape": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "phase": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "sign": {
+      "enum": [
+        1,
+        -1,
+        null
+      ]
+    },
+    "modulation": {
+      "enum": [
+        "cos",
+        "spiral",
+        "none",
+        "random"
+      ]
+    },
+    "axes": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "enum": [
+              "x",
+              "y",
+              "z"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true
+        }
+      ]
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "seed": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "integer",
+          "minimum": 0
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "modulation": {
+            "const": "cos"
+          }
+        },
+        "required": [
+          "modulation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "q": {
+            "$ref": "#/$defs/q"
+          },
+          "phase": {
+            "type": "number"
+          },
+          "sign": {
+            "enum": [
+              1,
+              -1
+            ]
+          },
+          "axes": {
+            "type": "null"
+          },
+          "seed": {
+            "type": "null"
+          },
+          "entries": {
+            "minItems": 1,
+            "items": {
+              "not": {
+                "required": [
+                  "s"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "modulation": {
+            "const": "spiral"
+          }
+        },
+        "required": [
+          "modulation"
+        ]
+      },
+      "then": {
+        "required": [
+          "axes"
+        ],
+        "properties": {
+          "q": {
+            "$ref": "#/$defs/q"
+          },
+          "phase": {
+            "type": "number"
+          },
+          "sign": {
+            "enum": [
+              1,
+              -1
+            ]
+          },
+          "axes": {
+            "type": "array"
+          },
+          "seed": {
+            "type": "null"
+          },
+          "entries": {
+            "minItems": 1,
+            "items": {
+              "required": [
+                "s"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "c0"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cx"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cy"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cz"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "modulation": {
+            "const": "none"
+          }
+        },
+        "required": [
+          "modulation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "q": {
+            "const": [
+              "0",
+              "0",
+              "0"
+            ]
+          },
+          "phase": {
+            "const": 0
+          },
+          "sign": {
+            "const": 1
+          },
+          "axes": {
+            "type": "null"
+          },
+          "seed": {
+            "type": "null"
+          },
+          "entries": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "modulation": {
+            "const": "random"
+          }
+        },
+        "required": [
+          "modulation"
+        ]
+      },
+      "then": {
+        "required": [
+          "seed"
+        ],
+        "properties": {
+          "q": {
+            "type": "null"
+          },
+          "phase": {
+            "type": "null"
+          },
+          "sign": {
+            "type": "null"
+          },
+          "axes": {
+            "type": "null"
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries": {
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "complex": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "number"
+        }
+      ],
+      "items": false,
+      "minItems": 2,
+      "description": "A complex number written [re, im]."
+    },
+    "orbital": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "A 0-based PHYSICAL orbital index of the primitive cell (also in spin-orbital mode; the spin is in the coefficients)."
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "orb_a",
+        "orb_b",
+        "r"
+      ],
+      "description": "The bond slot multiplying c^dag_{orb_a}(R + r) c_{orb_b}(R). Two entries with the same (orb_a, orb_b, r) are refused (checked by hwave.initial, not expressible here).",
+      "properties": {
+        "orb_a": {
+          "$ref": "#/$defs/orbital"
+        },
+        "orb_b": {
+          "$ref": "#/$defs/orbital"
+        },
+        "r": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "c0": {
+          "$ref": "#/$defs/complex"
+        },
+        "cx": {
+          "$ref": "#/$defs/complex"
+        },
+        "cy": {
+          "$ref": "#/$defs/complex"
+        },
+        "cz": {
+          "$ref": "#/$defs/complex"
+        },
+        "s": {
+          "$ref": "#/$defs/complex"
+        }
+      }
+    },
+    "q": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/qstring"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "qstring": {
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(/[1-9][0-9]*)?$",
+      "description": "An integer or a rational p/q with a nonzero denominator; stored reduced by hwave.initial."
+    }
+  }
+}
