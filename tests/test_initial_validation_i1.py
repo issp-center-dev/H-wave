@@ -132,8 +132,7 @@ PARA, FERRO, NEEL = "para-", "ferro-", "baseline-q1_2_1_2_0-spin-z"
 
 def _pin_tier(argv):
     """``prepare`` argv with ``--tier large`` unless a tier is given: these
-    tests check the large tier (the default tier depends on the host
-    memory)."""
+    tests check the large tier."""
     if argv and argv[0] == "prepare" and "--tier" not in argv and "--help" not in argv:
         return argv + ["--tier", "large"]
     return argv

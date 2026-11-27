@@ -365,6 +365,11 @@ HEAVY_TESTS = (
     ("test_initial_validation_i1", "TestV1", "test_v1b",
      "prepare, 12 UHFk solves on 16 x 16 (one runs to IterationMax = 3000) and "
      "collect at T = 0; 1.1 to 2.9 s on macOS, about 8 s on the Linux CI runners"),
+    # --- tests/test_initial_validation_i2.py -- V4 multi-start ---------
+    ("test_initial_validation_i2", "TestV4", "test_v4_multistart",
+     "prepare in the small tier on two SubShapes (para step, hints, 36 seeds), "
+     "36 UHFk solves of the three-orbital 4 x 4 model and collect; 10.5 s on "
+     "macOS"),
     # --- tests/test_offsite_exchange_ed_longitudinal.py -- #181 Tier 2 ---
     ("test_offsite_exchange_ed_longitudinal",
      "TestOffsiteExchangeLongitudinalControls",

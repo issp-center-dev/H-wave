@@ -33,6 +33,13 @@ records them with the H-wave and numpy versions it was captured with)::
 
     PYTHONPATH=$PWD/src:$PWD python -B tests/initial_reference_capture.py --validation
 
+``--validation-i2`` writes ``tests/initial_ref/v4.json`` and
+``tests/initial_ref/v5.json``, the frozen references of the validation cases
+V4 and V5 of ``tests/test_initial_validation_i2.py`` (models and solver
+settings :data:`V4_MODEL`, :data:`V5_MODEL`, recorded in the files)::
+
+    PYTHONPATH=$PWD/src:$PWD python -B tests/initial_reference_capture.py --validation-i2
+
 They are captured once; a later run that contradicts them is a finding to
 report, not a reason to re-capture.
 """
@@ -418,8 +425,7 @@ def prepare_run_collect(toml_path, work, **prepare_kw):
     document."""
     import io
     from hwave.initial import cli
-    # the frozen references are large-tier runs (the "auto" tier depends on
-    # the host memory)
+    # the V1 references are large-tier runs; the V4 capture passes its tier
     prepare_kw.setdefault("tier", "large")
     rc = cli.prepare(toml_path, work, stdout=io.StringIO(), **prepare_kw)
     if rc != 0:
@@ -573,6 +579,167 @@ def capture_validation(out_dir):
         print("wrote {} with numpy {}".format(path, np.__version__))
 
 
+# ---------------------------------------------------------------------------
+# The I2 validation references (V4, V5)
+# ---------------------------------------------------------------------------
+
+V4_REFERENCE = os.path.join(_REPO, "tests", "initial_ref", "v4.json")
+V5_REFERENCE = os.path.join(_REPO, "tests", "initial_ref", "v5.json")
+
+#: the V4 model (:func:`tests.initial_fixtures.wannier_like`): two interacting
+#: orbitals with Kanamori U, U' = U - 2J, J and a ligand, 4 x 4, T = 0.2,
+#: Ncond = 40, Fock on; its multi-start runs on these cells, small tier
+V4_MODEL = {"U": 4.0, "J": 0.6, "T": 0.2, "L": 4, "ncond": 40}
+V4_SUBSHAPES = ((1, 1, 1), (2, 2, 1))
+
+#: the near-crossing fixture of W_act: a two-orbital chain of 8 sites at T = 0,
+#: a narrow band (hopping 0.1, level 0) holding the Fermi level and a wide band
+#: (hopping 1, level delta) below it; its top reaches the window edge
+#: E_F - D = -0.4 at delta = -2.4, where W_act jumps from 0.4 to 4.6
+W_ACT_CROSSING = -2.4
+W_ACT_DELTAS = (W_ACT_CROSSING - 1e-6, W_ACT_CROSSING, W_ACT_CROSSING + 1e-6)
+
+#: the V5 model (:func:`tests.initial_fixtures.so_two_orbital`): two orbitals,
+#: on-site i lambda sigma^z spin-orbit coupling, U = 3.5 on both, 4 x 4, half
+#: filling, T = 0.2, SubShape 2 x 2; the Neel seeds along x, y and z at
+#: lambda = +V5_SOC, -V5_SOC and 0
+V5_MODEL = {"U": 3.5, "T": 0.2, "L": 4, "tp": 0.3}
+V5_SOC = 0.3
+
+
+def v4_input(dest, **kw):
+    """The V4 input under ``dest`` (``kw`` overrides :data:`V4_MODEL` and
+    passes the other :func:`~tests.initial_fixtures.wannier_like` keywords)."""
+    from tests import initial_fixtures
+    return initial_fixtures.wannier_like(dest, **dict(V4_MODEL, **kw))
+
+
+def w_act_chain(dest, delta):
+    """The near-crossing fixture of :data:`W_ACT_CROSSING` at ``delta``."""
+    from tests import initial_fixtures
+    t = {}
+    for r in ((1, 0, 0), (-1, 0, 0)):
+        t[(r, 0, 0)] = -0.1
+        t[(r, 1, 1)] = -1.0
+    t[((0, 0, 0), 1, 1)] = float(delta)
+    return initial_fixtures.write_input(
+        dest, cellshape=(8, 1, 1), norb=2, transfer=t,
+        interactions={"CoulombIntra": {((0, 0, 0), 0, 0): 1.0}},
+        param={"Ncond": 24, "T": 0.0, "SubShape": [1, 1, 1]})
+
+
+def w_act_record(root):
+    """``[{delta, W_act, T_hint, E_F, D}]`` of the fixture at
+    :data:`W_ACT_DELTAS`."""
+    from hwave.initial import hints
+    from hwave.solver import initial_facade
+    out = []
+    for k, delta in enumerate(W_ACT_DELTAS):
+        p = initial_facade.load_problem(w_act_chain(os.path.join(root, "w{}".format(k)), delta))
+        th = hints.t_hint_bare(p)
+        out.append({"delta": delta, "W_act": th.W_act, "T_hint": th.T_hint,
+                    "E_F": th.E_F[0], "D": th.D[0]})
+    return out
+
+
+def v5_neel_candidate(axis):
+    """The Neel pattern at q = (1/2, 1/2) on 2 x 2 with the spin along
+    ``axis`` on both orbitals, as a user row."""
+    from hwave.initial import Candidate
+    from hwave.initial.patterns import Entry, PatternSpec
+    c = {"c" + axis: 1.0}
+    spec = PatternSpec(q=("1/2", "1/2", "0"), subshape=(2, 2, 1), phase=0.0, sign=1,
+                       modulation="cos",
+                       entries=(Entry(0, 0, (0, 0, 0), **c), Entry(1, 1, (0, 0, 0), **c)))
+    return Candidate.user(pattern=spec, label="Neel " + axis)
+
+
+def v5_run(dest, soc, axis):
+    """Run the V5 model at spin-orbit coupling ``soc`` from the Neel seed
+    along ``axis``; ``{converged, free_energy, staggered}`` (the total free
+    energy and the staggered spin vector of the converged state)."""
+    from tests import initial_fixtures
+    from hwave.initial.writer import initial_state
+    from hwave.results import read_energy, read_scf_status, read_uhfk_order_parameters
+    toml = initial_fixtures.so_two_orbital(dest, soc, finput={"initial": "initial.npz"},
+                                           foutput={"energy": "energy.dat"}, **V5_MODEL)
+    initial_state(toml, v5_neel_candidate(axis), out=os.path.join(dest, "initial.npz"))
+    run_solver(toml)
+    op = read_uhfk_order_parameters(toml)
+    return {"converged": bool(read_scf_status(toml).converged),
+            "free_energy": float(read_energy(toml).free_total),
+            "staggered": [float(np.real(x)) for x in op.staggered]}
+
+
+def v5_soc_key(soc):
+    """The key of a spin-orbit coupling in ``v5.json``."""
+    return "{:g}".format(soc)
+
+
+def v5_energies(root):
+    """:func:`v5_run` for every axis at lambda = +V5_SOC, -V5_SOC and 0:
+    ``{soc key: {axis: record}}``."""
+    out = {}
+    for soc in (V5_SOC, -V5_SOC, 0.0):
+        out[v5_soc_key(soc)] = {
+            axis: v5_run(os.path.join(root, "soc{}_{}".format(v5_soc_key(soc), axis)), soc, axis)
+            for axis in "xyz"}
+    return out
+
+
+def _i2_provenance(description, model, solver):
+    import hwave
+    return {"description": description, "hwave_version": hwave.__version__,
+            "numpy_version": np.__version__,
+            "captured_by": "tests/initial_reference_capture.py --validation-i2",
+            "model": model, "solver": solver}
+
+
+def capture_validation_i2(out_dir):
+    """Write ``v4.json`` and ``v5.json`` under ``out_dir``."""
+    import tempfile
+    root = tempfile.mkdtemp(prefix="initial_capture_i2_")
+    try:
+        cov = prepare_run_collect(v4_input(os.path.join(root, "v4_src")),
+                                  os.path.join(root, "v4_work"), tier="small",
+                                  subshapes=[list(b) for b in V4_SUBSHAPES])
+        rows = _rows_record(cov)
+        for r in cov["rows"]:
+            if r["tried"]:
+                rows[r["run_id"]]["channel"] = r["channel"]
+                rows[r["run_id"]]["family"] = r["family"]
+        conv = {k: v for k, v in rows.items() if v["status"] == "converged"}
+        lowest = min(conv, key=lambda k: conv[k]["free_energy_per_site"])
+        v4 = _i2_provenance(
+            "V4: the multi-start of the small tier on SubShape 1 x 1 and 2 x 2 "
+            "(status, final label, free energy per site, max |m_i|, channel and "
+            "family of every tried row; the lowest converged row) and the W_act "
+            "near-crossing fixture (W_act, T_hint, E_F and D at delta = -2.4 and "
+            "-2.4 +- 1e-6)",
+            dict(V4_MODEL, kanamori="U' = U - 2J; Hund, Exchange, PairHop = J",
+                 subshapes=[list(b) for b in V4_SUBSHAPES], fock=True),
+            {"IterationMax": 3000, "EPS": 10, "Mix": 0.5})
+        v4.update(T_hint=cov["hint"]["T_hint"], lowest_run_id=lowest,
+                  lowest=rows[lowest], rows=rows,
+                  w_act_near_crossing=w_act_record(os.path.join(root, "wact")))
+        v5 = _i2_provenance(
+            "V5: total free energy, convergence and staggered spin vector of the "
+            "runs from the Neel seeds along x, y and z at lambda = +0.3, -0.3 "
+            "and 0",
+            dict(V5_MODEL, soc=V5_SOC, subshape=[2, 2, 1], filling="half"),
+            {"IterationMax": 20000, "EPS": 12, "Mix": 0.5})
+        v5.update(runs=v5_energies(os.path.join(root, "v5")))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(out_dir, exist_ok=True)
+    for name, doc in (("v4.json", v4), ("v5.json", v5)):
+        path = os.path.join(out_dir, name)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=1, sort_keys=True, ensure_ascii=False)
+            f.write("\n")
+        print("wrote {} with numpy {}".format(path, np.__version__))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--facade", action="store_true",
@@ -581,19 +748,24 @@ def main(argv=None):
                         help="write the initial-state writer reference")
     parser.add_argument("--validation", action="store_true",
                         help="write the V1a and V1b validation references")
+    parser.add_argument("--validation-i2", action="store_true",
+                        help="write the V4 and V5 validation references")
     parser.add_argument("--out", default=None,
                         help="output .npz path (--validation: output directory)")
     args = parser.parse_args(argv)
-    if args.facade + args.writer + args.validation != 1:
-        parser.error("pass exactly one of --facade, --writer and --validation")
+    if args.facade + args.writer + args.validation + args.validation_i2 != 1:
+        parser.error("pass exactly one of --facade, --writer, --validation and "
+                     "--validation-i2")
     if _REPO not in sys.path:
         sys.path.insert(0, _REPO)
     if args.facade:
         capture_facade(args.out or FACADE_GOLDEN)
     elif args.writer:
         capture_writer(args.out or WRITER_REFERENCE)
-    else:
+    elif args.validation:
         capture_validation(args.out or os.path.dirname(V1A_REFERENCE))
+    else:
+        capture_validation_i2(args.out or os.path.dirname(V4_REFERENCE))
 
 
 if __name__ == "__main__":

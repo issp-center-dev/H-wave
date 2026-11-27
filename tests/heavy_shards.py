@@ -47,7 +47,9 @@ MEASUREMENT = (
     "(shard 2, 62 s) likewise, x2.7 of its 23 s macOS time; "
     "test_initial_small_tier (shard 3, the then-lightest, 7 s) likewise, x2.7 "
     "of its 2.7 s macOS time; test_initial_stage0 (shard 3, the then-lightest "
-    "at 541 s, 38 s) likewise, x2.7 of its 14 s macOS time)")
+    "at 541 s, 38 s) likewise, x2.7 of its 14 s macOS time; "
+    "test_initial_validation_i2 (shard 2, the then-lightest at 553 s, 28 s) "
+    "likewise, x2.7 of its 10.5 s macOS time)")
 
 #: Files that must share a shard: they diagonalize identical Hamiltonians,
 #: which ``tests/ed_cache.py`` shares only within one process (the case-M
@@ -84,6 +86,7 @@ SHARDS = (
         "test_sc_spin_orbital_bond_full",          # 10 (CI estimate; 6 s on Linux)
         "test_initial_cli",                        # 21 (x2.7 of 7.4 s, macOS)
         "test_initial_validation_i1",              # 62 (x2.7 of 23 s, macOS)
+        "test_initial_validation_i2",              # 28 (x2.7 of 10.5 s, macOS)
     ),
     (
         "test_bond_longitudinal_ed",               # 109 } one item (TOGETHER)
