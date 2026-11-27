@@ -21,6 +21,9 @@ module it imports; it does not import ``hwave.initial``.
   occupations (:class:`Bands`).
 * :func:`fold_hamiltonian_k`: a primitive-cell ``H(k)`` folded onto the
   k-mesh of a ``SubShape``.
+* :func:`static_lindhard`, :func:`apply_lindhard`: the static Lindhard
+  response of :class:`Bands` on pair-space labels, as a dense matrix and
+  as a matrix-free product.
 * :func:`run_para`: a UHFk self-consistent run of an input on the
   primitive cell (``SubShape = [1, 1, 1]``) at a given T from a given
   Green function (:class:`ParaRun`).
@@ -65,7 +68,8 @@ __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "hf_potential", "green_function", "referenced_input_files",
            "primitive_h0_k", "to_k", "interleaved_index", "fold_layout",
            "unfold_layout", "diag_blocks", "assemble_green", "Bands", "bands_of",
-           "fold_hamiltonian_k", "ParaRun", "run_para", "PARA_EPS_MIN", "discard_profile_statistics"]
+           "fold_hamiltonian_k", "LINDHARD_DEGENERACY_TOL", "static_lindhard",
+           "apply_lindhard", "ParaRun", "run_para", "PARA_EPS_MIN", "discard_profile_statistics"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
 #: and the combined ``Coulomb`` table, uhfk.py ``_check_interaction``)
@@ -581,7 +585,11 @@ class Bands:
     the temperature of the occupations. ``mu``: one chemical potential per
     mu-group. ``band_group`` ``(nk, nb)``: the mu-group of each band.
     ``occ_k`` ``(nk, nb)``: the occupation of each band, the solver's fill
-    (:func:`hwave.solver.uhfk_fill.fill_occupations`).
+    (:func:`hwave.solver.uhfk_fill.fill_occupations`). ``band_block``
+    ``(nb,)``: the solver block of each band (its index in
+    ``block_info``). ``ns``, ``norb``: the stored layout of the index space
+    (``nd = ns * norb``; ``ns = 1`` in spin-orbital mode, where the index
+    is ``2*orb + spin``).
 
     The stored Green function of the bands is ``G(k)_ab = sum_l
     conj(vec_k[k, a, l]) occ_k[k, l] vec_k[k, b, l]``, ``G(r)`` its
@@ -596,6 +604,9 @@ class Bands:
     mu: Tuple[float, ...]
     band_group: np.ndarray
     occ_k: np.ndarray
+    band_block: np.ndarray
+    ns: int
+    norb: int
 
 
 def bands_of(H_k, blocks, T, *, shape, ns, norb, ene_cutoff=None):
@@ -631,18 +642,22 @@ def bands_of(H_k, blocks, T, *, shape, ns, norb, ene_cutoff=None):
     occ = np.empty((nvol, nb))
     vec = np.zeros((nvol, nd, nb), dtype=np.complex128)
     group = np.empty((nvol, nb), dtype=int)
+    block = np.empty(nb, dtype=np.int64)
     col = 0
-    for blk, g, w, v, d in zip(blocks.block_info, blocks.block_to_group, ws, vs, dists):
+    for kb, (blk, g, w, v, d) in enumerate(zip(blocks.block_info, blocks.block_to_group,
+                                               ws, vs, dists)):
         n = w.shape[1]
         idx = np.asarray(blk)
         eps[:, col:col + n] = w
         occ[:, col:col + n] = d
         vec[:, idx, col:col + n] = v
         group[:, col:col + n] = int(g)
+        block[col:col + n] = kb
         col += n
     return Bands(eps_k=_read_only(eps), vec_k=_read_only(vec), kgrid=shape, T=float(T),
                  mu=tuple(float(m) for m in mus), band_group=_read_only(group),
-                 occ_k=_read_only(occ))
+                 occ_k=_read_only(occ), band_block=_read_only(block), ns=int(ns),
+                 norb=int(norb))
 
 
 def fold_hamiltonian_k(H_k, *, cellshape, subshape, norb_orig, ns):
@@ -673,6 +688,229 @@ def fold_hamiltonian_k(H_k, *, cellshape, subshape, norb_orig, ns):
     shape = tuple(c // b for c, b in zip(cellshape, subshape))
     nd = sub.shape[1] * sub.shape[2]
     return to_k(sub.reshape(shape + (nd, nd)))
+
+
+#: ``|eps_a - eps_b|`` below which a pair of levels takes the derivative
+#: limit ``-f'`` in :func:`static_lindhard` (an absolute energy)
+LINDHARD_DEGENERACY_TOL = 1e-10
+#: the Lindhard functions work on chunks of k points holding at most this
+#: many complex entries per array
+_LINDHARD_CHUNK_ENTRIES = 2 ** 17
+
+
+def _lindhard_kernel(ea, oa, eb, ob, T):
+    """The static Lindhard weight of a pair of levels with energies ``ea``,
+    ``eb`` and occupations ``oa``, ``ob`` (arrays of one shape):
+    ``(ob - oa) / (ea - eb)``, and where ``|ea - eb| <``
+    :data:`LINDHARD_DEGENERACY_TOL` the derivative limit ``-f'``: at T > 0
+    ``(oa (1 - oa) + ob (1 - ob)) / (2 T)`` (``-f'(eps - mu) = f (1 - f) /
+    T`` of each level, averaged), at T = 0 zero when both occupations are
+    the same 0 or 1 and ``nan`` otherwise (a degenerate pair at the Fermi
+    level: the response is unbounded). Nonnegative for levels of one
+    mu-group (the occupations fall with the energy)."""
+    ea, oa, eb, ob = np.broadcast_arrays(*(np.asarray(x, dtype=float)
+                                           for x in (ea, oa, eb, ob)))
+    d = ea - eb
+    deg = np.abs(d) < LINDHARD_DEGENERACY_TOL
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = np.where(deg, 0.0, (ob - oa) / np.where(deg, 1.0, d))
+    if T > 0:
+        lim = (oa * (1.0 - oa) + ob * (1.0 - ob)) / (2.0 * T)
+    else:
+        closed = (oa == ob) & ((oa == 0.0) | (oa == 1.0))
+        lim = np.where(closed, 0.0, np.nan)
+    return np.where(deg, lim, out)
+
+
+def _q_mesh(q, shape, who):
+    """The mesh index ``(3,)`` of ``q`` (three rationals in reduced lattice
+    units: ints, Fractions, strings such as ``"1/3"``, or floats within
+    1e-9 of the mesh)."""
+    from fractions import Fraction
+    q = tuple(q)
+    if len(q) != 3:
+        raise ValueError("{}: q must have three components, got {!r}".format(who, q))
+    m = []
+    for i, (x, n) in enumerate(zip(q, shape)):
+        if isinstance(x, (float, np.floating)):
+            y = float(x) * n
+            mi = int(round(y))
+            ok = np.isfinite(y) and abs(y - mi) <= 1e-9
+        else:
+            y = Fraction(x) * n
+            ok = y.denominator == 1
+            mi = int(y) if ok else 0
+        if not ok:
+            raise ValueError("{}: q = {} is not on the k-mesh {} (component {} times {} "
+                             "is not an integer)".format(who, ",".join(str(v) for v in q),
+                                                         list(shape), i, n))
+        m.append(mi % int(n))
+    return np.array(m, dtype=np.int64)
+
+
+def _lindhard_setup(bands, q, labels, who):
+    """``(alpha, beta, r, kq_idx, kq, F)``: the solver indices of the two
+    legs of each label, its bond, the mesh index of ``k + q`` per k (and
+    its flat index) and the Lindhard weights ``F[k, l, m]`` (band ``l`` at
+    ``k + q``, band ``m`` at ``k``; zero across solver blocks)."""
+    if not isinstance(bands, Bands):
+        raise ValueError("{}: bands must be a Bands (bands_of), got {!r}"
+                         .format(who, type(bands).__name__))
+    labels = np.asarray(labels)
+    if labels.ndim != 2 or labels.shape[1] != 7 or not np.issubdtype(labels.dtype,
+                                                                       np.integer):
+        raise ValueError("{}: labels must be an int array (|P|, 7) = (a, s, b, t, rx, ry, "
+                         "rz), got {} {}".format(who, labels.dtype, labels.shape))
+    labels = labels.astype(np.int64)
+    ns, norb = int(bands.ns), int(bands.norb)
+    so = ns == 1
+    nphys = norb // 2 if so else norb
+    a, s, b, t = (labels[:, i] for i in range(4))
+    if np.any((a < 0) | (a >= nphys) | (b < 0) | (b >= nphys)):
+        raise ValueError("{}: a label orbital is outside 0..{} (the physical orbitals of "
+                         "the bands)".format(who, nphys - 1))
+    if np.any((s < 0) | (s > 1) | (t < 0) | (t > 1)):
+        raise ValueError("{}: a label spin is not 0 or 1".format(who))
+    if so:
+        alpha, beta = interleaved_index(a, s), interleaved_index(b, t)
+    else:
+        alpha, beta = s * norb + a, t * norb + b
+    shape = tuple(int(n) for n in bands.kgrid)
+    nk = int(np.prod(shape))
+    mq = _q_mesh(q, shape, who)
+    kidx = np.stack(np.unravel_index(np.arange(nk), shape), axis=1)
+    kq_idx = (kidx + mq[None, :]) % np.array(shape)
+    kq = np.ravel_multi_index(tuple(kq_idx.T), shape)
+    eps, occ = bands.eps_k, bands.occ_k
+    F = _lindhard_kernel(eps[kq][:, :, None], occ[kq][:, :, None], eps[:, None, :],
+                         occ[:, None, :], float(bands.T))
+    blk = np.asarray(bands.band_block)
+    F[:, blk[:, None] != blk[None, :]] = 0.0
+    if np.isnan(F).any():
+        k = int(np.nonzero(np.isnan(F).any(axis=(1, 2)))[0][0])
+        raise ValueError("{}: the bands at T = 0 have an open Fermi shell (degenerate "
+                         "levels of one block with different occupations at k index {} and "
+                         "k + q); the static response is unbounded there: use T > 0 "
+                         "(T_hint)".format(who, list(kidx[k])))
+    return (np.asarray(alpha, dtype=np.int64), np.asarray(beta, dtype=np.int64),
+            labels[:, 4:7], kq_idx, kq, F)
+
+
+def _lindhard_phases(kq_idx, r, shape):
+    """``e^{i(k+q).r}`` ``(len(kq_idx), |P|)``, reduced exactly on the mesh
+    before the exponential."""
+    L = int(np.lcm.reduce([int(n) for n in shape]))
+    num = np.zeros((kq_idx.shape[0], r.shape[0]), dtype=np.int64)
+    for i, n in enumerate(shape):
+        num += np.outer(kq_idx[:, i], (r[:, i] % int(n)) * (L // int(n)))
+    return np.exp(2j * np.pi * (num % L) / L)
+
+
+def static_lindhard(bands, q, labels):
+    """The static Lindhard response ``chi0(q)`` on the pair-space labels,
+    dense ``(|P|, |P|)`` complex128, Hermitian and positive semidefinite.
+
+    ``bands``: :class:`Bands` (:func:`bands_of`, the para Hartree-Fock bands
+    of the primitive cell at ``bands.T``). ``labels``: ``(|P|, 7)`` int
+    ``(a, s, b, t, rx, ry, rz)``, ``a``, ``b`` physical orbitals (0-based)
+    and ``s``, ``t`` spins (0 = up) in every mode, ``r`` a bond in
+    primitive cells (any representative modulo the mesh). ``q``: three
+    rationals in reduced lattice units on the k-mesh of the bands.
+
+    **Coordinates.** A label ``m`` is the slot of the one-body operator
+    ``sum_R c^dag_{as}(R + r) c_{bt}(R)``. A density vector holds the
+    rho-components ``x_m = <c^dag_{bt}(R) c_{as}(R + r)>`` (``rho = G^T``),
+    a field the coefficients ``h_m`` of ``delta H = sum_R sum_m h_m e^{iq.R}
+    c^dag_{as}(R + r) c_{bt}(R)``; a q-modulated vector carries ``e^{iq.R}``
+    at the cell of the annihilation operator. To linear order ``delta x =
+    chi0 (-h)``:
+
+    ``chi0[m, n] = (1/N) sum_k sum_{l, l'} w_m(k, l, l') conj(w_n(k, l,
+    l')) F(eps_l(k+q), eps_l'(k))``, ``w_m(k, l, l') = e^{i(k+q).r_m}
+    v_{alpha_m, l}(k+q) conj(v_{beta_m, l'}(k))``
+
+    (``alpha``, ``beta`` the solver indices of ``(a, s)`` and ``(b, t)``,
+    ``v`` the eigenvectors of :class:`Bands`, all bands), with
+    ``F = (f_l' - f_l) / (eps_l - eps_l')`` from the occupations
+    ``occ_k`` and, for ``|eps_l - eps_l'| <``
+    :data:`LINDHARD_DEGENERACY_TOL`, the derivative limit ``-f'(eps -
+    mu_group) = f (1 - f) / T``. Bands of different solver blocks do not
+    pair. At ``T = 0`` a degenerate pair contributes zero when both levels
+    are filled or both empty; a degenerate pair of one block with
+    different occupations (an open Fermi shell) is refused
+    (``ValueError``): the response is unbounded.
+
+    Cost ``O(N_k nb^2 |P|^2)``; :func:`apply_lindhard` gives the product
+    with a vector without forming the matrix.
+    """
+    alpha, beta, r, kq_idx, kq, F = _lindhard_setup(bands, q, labels, "static_lindhard")
+    shape = tuple(int(n) for n in bands.kgrid)
+    vec = bands.vec_k
+    nk, _nd, nb = vec.shape
+    npair = alpha.size
+    chi = np.zeros((npair, npair), dtype=np.complex128)
+    if npair == 0:
+        return chi
+    chunk = max(1, _LINDHARD_CHUNK_ENTRIES * 8 // max(1, npair * nb * nb))
+    for k0 in range(0, nk, chunk):
+        ks = np.arange(k0, min(nk, k0 + chunk))
+        ph = _lindhard_phases(kq_idx[ks], r, shape)                 # (c, P)
+        A = vec[kq[ks]][:, alpha, :]                                # (c, P, nb)
+        B = np.conj(vec[ks][:, beta, :])                            # (c, P, nb)
+        W = ph[:, :, None, None] * A[:, :, :, None] * B[:, :, None, :]
+        Wf = W * F[ks][:, None, :, :]
+        W = np.moveaxis(W, 1, 0).reshape(npair, -1)
+        Wf = np.moveaxis(Wf, 1, 0).reshape(npair, -1)
+        chi += Wf @ W.conj().T
+    chi /= nk
+    return (chi + chi.conj().T) / 2.0
+
+
+def apply_lindhard(bands, q, labels, v):
+    """``chi0(q) v`` of :func:`static_lindhard` without forming ``chi0``:
+    ``v`` ``(|P|,)`` or ``(|P|, c)``, the result of the same shape
+    (complex128).
+
+    Per k: the field matrix ``M(k) = sum_m e^{-i(k+q).r_m} v_m
+    |alpha_m><beta_m|``, its band form ``V(k+q)^dag M(k) V(k)`` times
+    ``F``, back to orbitals, and the label entries times ``e^{i(k+q).r_m}``:
+    ``O(N_k (nb^3 + |P|))`` time, and memory ``O(N_k nb^2)`` plus chunks of
+    k bounded independently of ``|P|^2``."""
+    import scipy.sparse
+    alpha, beta, r, kq_idx, kq, F = _lindhard_setup(bands, q, labels, "apply_lindhard")
+    shape = tuple(int(n) for n in bands.kgrid)
+    vec = bands.vec_k
+    nk, nd, nb = vec.shape
+    npair = alpha.size
+    v = np.asarray(v)
+    if v.ndim not in (1, 2) or v.shape[0] != npair:
+        raise ValueError("apply_lindhard: v must be (|P|,) or (|P|, c) with |P| = {}, got "
+                         "{}".format(npair, v.shape))
+    one = v.ndim == 1
+    if npair == 0:
+        return np.zeros(v.shape, dtype=np.complex128)
+    V = v.reshape(npair, -1).astype(np.complex128)
+    ncol = V.shape[1]
+    S = scipy.sparse.csr_array((np.ones(npair), (alpha * nd + beta, np.arange(npair))),
+                               shape=(nd * nd, npair))
+    y = np.zeros((npair, ncol), dtype=np.complex128)
+    per_k = max(npair * ncol, ncol * nd * nd, nb * nb)
+    chunk = max(1, _LINDHARD_CHUNK_ENTRIES // per_k)
+    for k0 in range(0, nk, chunk):
+        ks = np.arange(k0, min(nk, k0 + chunk))
+        c = ks.size
+        ph = _lindhard_phases(kq_idx[ks], r, shape)                 # (c, P)
+        Mv = np.conj(ph).T[:, :, None] * V[:, None, :]              # (P, c, ncol)
+        M = (S @ Mv.reshape(npair, c * ncol)).reshape(nd, nd, c, ncol)
+        M = np.moveaxis(M, (2, 3), (0, 1))                          # (c, ncol, nd, nd)
+        Ukq = vec[kq[ks]][:, None]                                  # (c, 1, nd, nb)
+        Uk = vec[ks][:, None]
+        X = np.conj(np.swapaxes(Ukq, -1, -2)) @ M @ Uk               # (c, ncol, nb, nb)
+        X *= F[ks][:, None]
+        Y = Ukq @ X @ np.conj(np.swapaxes(Uk, -1, -2))              # (c, ncol, nd, nd)
+        y += np.einsum("cm,cjm->mj", ph, Y[:, :, alpha, beta])
+    y /= nk
+    return y[:, 0] if one else y
 
 
 # eq=False: the fields hold arrays

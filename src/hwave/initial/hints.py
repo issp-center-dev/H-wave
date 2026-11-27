@@ -74,7 +74,10 @@ Hartree-Fock map reads and writes (:class:`PairSpace`, with its label
 coordinates), :func:`vertex` and :func:`vertex_sparse` give the Jacobian
 ``Gamma(q) = dSigma'/drho`` of that map on them (dense for the small tier,
 CSR for the medium tier), and :func:`vertex_self_adjoint` checks that it is
-Hermitian.
+Hermitian. :func:`lindhard` and :func:`lindhard_apply` give the static
+Lindhard response ``chi0(q)`` of the para bands on the same pair space and
+sectors (dense for the small tier, a matrix-free product for the medium
+tier; one kernel, :func:`hwave.solver.initial_facade.static_lindhard`).
 """
 import dataclasses
 import json
@@ -1293,3 +1296,54 @@ def vertex_self_adjoint(Gamma) -> Tuple[bool, float]:
         gn = float(np.linalg.norm(g))
     res = dn / max(1.0, gn)
     return res <= VERTEX_SELF_ADJOINT_TOL, res
+
+
+def _check_bands(bands, P, who):
+    """``ValueError`` unless ``bands`` live on the mesh and index space of
+    the pair space ``P`` (the primitive cell, its mode)."""
+    if not isinstance(bands, initial_facade.Bands):
+        raise ValueError("{}: bands must be a Bands (initial_facade.bands_of), got {!r}"
+                         .format(who, type(bands).__name__))
+    so = int(bands.ns) == 1
+    nphys = int(bands.norb) // 2 if so else int(bands.norb)
+    if (tuple(int(n) for n in bands.kgrid) != tuple(P.shape) or so != P.spin_orbital
+            or nphys != P.norb_phys):
+        raise ValueError("{}: the bands (mesh {}, {} physical orbitals, spin-orbital {}) "
+                         "do not belong to the pair space (mesh {}, {} physical orbitals, "
+                         "spin-orbital {}); use the bands of the primitive cell of the same "
+                         "model".format(who, list(bands.kgrid), nphys, so, list(P.shape),
+                                        P.norb_phys, P.spin_orbital))
+
+
+def lindhard(bands, q, P, *, sector=None) -> np.ndarray:
+    """The static Lindhard response ``chi0(q)`` on the pair space ``P``
+    (:func:`initial_facade.static_lindhard` on ``P.labels``), dense,
+    Hermitian and positive semidefinite, in the coordinates of
+    :class:`PairSpace` (rho-components in and out: ``delta x = chi0
+    (-h)``). ``bands``: the para bands of the primitive cell
+    (:attr:`ParaResult.bands`). ``sector``: one of ``P.sectors``; the block
+    ``U^dag chi0 U`` of that sector's basis (``None``: the full space)."""
+    _check_bands(bands, P, "lindhard")
+    k = _sector_index(P, sector)
+    chi = initial_facade.static_lindhard(bands, q, P.labels)
+    if k is None or P.sector_basis[k] is None:
+        return chi
+    u = P.sector_basis[k].toarray()
+    return u.conj().T @ chi @ u
+
+
+def lindhard_apply(bands, q, P, v, *, sector=None) -> np.ndarray:
+    """``chi0(q) v`` of :func:`lindhard` without forming ``chi0``
+    (:func:`initial_facade.apply_lindhard`); ``v`` ``(d,)`` or ``(d, c)``,
+    ``d`` the dimension of ``sector`` (``|P|`` for ``None``)."""
+    _check_bands(bands, P, "lindhard_apply")
+    k = _sector_index(P, sector)
+    if k is None or P.sector_basis[k] is None:
+        return initial_facade.apply_lindhard(bands, q, P.labels, v)
+    u = P.sector_basis[k]
+    v = np.asarray(v)
+    if v.ndim not in (1, 2) or v.shape[0] != u.shape[1]:
+        raise ValueError("lindhard_apply: v must be (d,) or (d, c) with d = {} (sector "
+                         "{}), got {}".format(u.shape[1], sector, v.shape))
+    y = initial_facade.apply_lindhard(bands, q, P.labels, u @ v.astype(np.complex128))
+    return u.conj().T @ y
