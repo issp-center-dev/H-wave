@@ -78,6 +78,16 @@ Hermitian. :func:`lindhard` and :func:`lindhard_apply` give the static
 Lindhard response ``chi0(q)`` of the para bands on the same pair space and
 sectors (dense for the small tier, a matrix-free product for the medium
 tier; one kernel, :func:`hwave.solver.initial_facade.static_lindhard`).
+
+**The eigen-solve.** :func:`solve_small` gives the leading eigenpairs of
+``K(q) = -chi0(q) Gamma(q)`` at one q through the symmetric form ``B =
+chi0^(1/2) (-Gamma) chi0^(1/2)`` (dense, the small tier), the sectors
+merged before ``top_k``; :func:`hint_eigenpairs` runs it over a q set on
+the para bands (:class:`SolveResult` per q) and gives each pair's
+conjugate field ``O = Gamma x`` as a PatternSpec amplitude
+(:func:`amplitude_entries`); :func:`vertex_fields` the vertex fields of
+the hint record. The eigenvalues order the instability rows and never
+remove a row.
 """
 import dataclasses
 import json
@@ -99,10 +109,13 @@ logger = logging.getLogger("qlms").getChild("initial").getChild("hints")
 
 __all__ = ["THint", "t_hint_bare", "W_FLOOR_ACT", "T_HINT_REL_FLOOR",
            "STRUCTURAL_AXIS_MAX", "WIDE_WINDOW_FACTOR", "group_bands",
-           "ParaResult", "para_hf", "para_from_green", "fold_para", "hint_record", "model_key", "input_digest",
+           "ParaResult", "para_hf", "para_from_green", "para_from_work", "fold_para", "hint_record", "model_key", "input_digest",
            "PARA_RESIDUAL_TOL", "PARA_CHECK_TOL", "PARA_SYMMETRY_TOL",
            "PairSpace", "pair_space", "vertex", "vertex_sparse", "vertex_self_adjoint",
-           "SECTOR_FULL", "SECTOR_CHARGE", "SECTOR_SZ", "VERTEX_SELF_ADJOINT_TOL"]
+           "SECTOR_FULL", "SECTOR_CHARGE", "SECTOR_SZ", "VERTEX_SELF_ADJOINT_TOL",
+           "lindhard", "lindhard_apply", "SolveResult", "solve_small", "amplitude_entries",
+           "hint_eigenpairs", "vertex_fields", "HINT_METHOD", "REAL_TOL", "Q_OK", "Q_FEW",
+           "Q_NONE", "Q_FAILED", "GENERAL_SOLVE_SOURCE"]
 
 #: the floor of ``W0`` in input energy units (a single flat level)
 W_FLOOR_ACT = 1e-3
@@ -582,6 +595,44 @@ def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=
         input_sha256=MappingProxyType(dict(facts.input_sha256)), model=model_key(facts),
         eps=None if eps is None else int(eps),
         iteration_max=None if iteration_max is None else int(iteration_max))
+
+
+#: the files of a para work directory (:func:`para_hf` with ``work_dir``)
+PARA_GREEN = "green.npz"
+PARA_RECORD = "para_hf.json"
+
+
+def para_from_work(facts, work_dir) -> Optional[ParaResult]:
+    """The :class:`ParaResult` kept in the work directory of
+    :func:`para_hf` (``green.npz`` and ``para_hf.json``), rebuilt by
+    :func:`para_from_green` at the recorded T: the same ``H_para_k`` and
+    bands as the run that wrote it, with the recorded status, skip reason,
+    warnings and para-check energy. ``None`` when the step wrote no Green
+    function (it was skipped or failed). ``ValueError`` when the record
+    belongs to other input files."""
+    from types import SimpleNamespace
+    root = os.path.abspath(os.fspath(work_dir))
+    with open(os.path.join(root, PARA_RECORD)) as f:
+        rec = json.load(f)
+    green = os.path.join(root, PARA_GREEN)
+    if rec.get("selected_start") is None or not os.path.isfile(green):
+        return None
+    if rec.get("input_digest") != input_digest(facts.input_sha256):
+        raise ValueError("{}: the para record belongs to other input files (input digest "
+                         "{}, this input {})".format(os.path.join(root, PARA_RECORD),
+                                                     rec.get("input_digest"),
+                                                     input_digest(facts.input_sha256)))
+    with np.load(green, allow_pickle=False) as data:
+        G = np.array(data["green"], dtype=np.complex128)
+    res = para_from_green(facts, SimpleNamespace(T_hint=float(rec["T"])), G,
+                          free_energy=rec["free_energy"],
+                          converged=rec["status"] == "converged",
+                          iterations=rec.get("iterations"),
+                          scf_residual=rec.get("scf_residual"), eps=rec.get("eps"),
+                          iteration_max=rec.get("iteration_max"),
+                          warnings=tuple(rec.get("warnings") or ()))
+    return dataclasses.replace(res, status=rec["status"], skip_reason=rec.get("skip_reason"),
+                               free_energy_check=rec.get("free_energy_check"))
 
 
 def _skipped(facts, thint, reason, warnings=()):
@@ -1350,3 +1401,353 @@ def lindhard_apply(bands, q, P, v, *, sector=None) -> np.ndarray:
                          "{}), got {}".format(u.shape[1], sector, v.shape))
     y = initial_facade.apply_lindhard(bands, q, P.labels, u @ v.astype(np.complex128))
     return u.conj().T @ y
+
+
+# ---------------------------------------------------------------------------
+# The small-tier eigen-solve and the hint eigenpairs
+# ---------------------------------------------------------------------------
+
+#: the method of the hint record (one kernel for every tier)
+HINT_METHOD = "lindhard_static"
+#: an eigenvalue of the general solve counts as real when ``|Im lambda| <=
+#: REAL_TOL * max(1, max |lambda|)`` (the tolerance of
+#: ``flex_diagnostics.REAL_TOL``)
+REAL_TOL = 1e-6
+#: the eigenvalues ``c_i < CHI0_CUTOFF * max(c)`` of chi0 are set to 0
+CHI0_CUTOFF = 1e-12
+#: the null guard: a pair with ``lambda <= NULL_TOL * max(1, ||Gamma||_F *
+#: chi_bound)`` or ``||Gamma x|| <= NULL_TOL * max(1, ||Gamma||_F)`` is dropped
+NULL_TOL = 1e-10
+#: eigenvalues within ``DEGENERACY_RTOL * max(1, |lambda|)`` of the next
+#: form one degenerate set
+DEGENERACY_RTOL = 1e-8
+#: a retained pair must satisfy ``||K x - lambda x|| <= RESIDUAL_TOL *
+#: max(1, |lambda|) ||x||``
+RESIDUAL_TOL = 1e-8
+#: an amplitude entry (or coefficient) below this fraction of the largest
+#: modulus of ``O = Gamma x`` is round-off and set to zero
+AMPLITUDE_ZERO_RTOL = 1e-12
+
+Q_OK = "ok"
+Q_FEW = "fewer than top_k positive eigenvalues"
+Q_NONE = "no positive eigenvalue"
+Q_FAILED = "solve failed: {}"
+
+GAMMA_NOT_SELF_ADJOINT_WARNING = (
+    "the Hartree-Fock vertex is not self-adjoint at q = {} (relative residual {:.3g}); "
+    "the eigenvalues come from the general solve of K = -chi0 Gamma (an eigenvalue "
+    "counts as real when |Im| <= {:.0e} max(1, max |lambda|)) and the rows are marked. "
+    "This is a convention or implementation defect, not a property of the model")
+#: the source mark of an instability row from the general solve
+GENERAL_SOLVE_SOURCE = "general solve (vertex not self-adjoint)"
+
+
+# eq=False: the fields hold arrays
+@dataclass(frozen=True, eq=False)
+class SolveResult:
+    """The eigenpairs of ``K(q) = -chi0(q) Gamma(q)`` at one q.
+
+    ``pairs``: ``(lambda, x)`` with ``lambda > 0`` in descending order
+    (ties: sector order, then the index within the sector), ``x`` the
+    density shape in the coordinates of its sector (``||x||_2 = 1``),
+    after the merge of the sectors and ``top_k`` (a degenerate set
+    crossing the cutoff is kept whole; a degenerate set within one
+    sector is given its canonical basis,
+    :func:`hwave.initial.patterns.canonical_basis`). ``q_status``:
+    ``"ok"``, ``"fewer than top_k positive eigenvalues"``, ``"no positive
+    eigenvalue"`` or ``"solve failed: [<sector>: ]<reason>"`` (the other
+    sectors' pairs are kept). ``gamma_self_adjoint``: whether ``Gamma``
+    is Hermitian in every sector (otherwise the general solve was used).
+    ``lambda_imag``: the imaginary part of each pair's eigenvalue (0 on
+    the symmetric path). ``sectors``: the sector of each pair;
+    ``groups``: the degenerate set of each pair (consecutive integers in
+    pair order); ``fields``: ``Gamma x`` of each pair in its sector's
+    coordinates; ``n_positive``: the number of positive pairs before
+    ``top_k``; ``warnings``.
+
+    :func:`hint_eigenpairs` adds ``amplitudes`` (the conjugate field
+    ``O = Gamma x`` of each pair as the entries of a PatternSpec amplitude,
+    normalised to ``||O||_2 = 1`` on the pair space) and ``x_full`` (``x``
+    on the full pair space)."""
+    pairs: Tuple[Tuple[float, np.ndarray], ...]
+    q_status: str
+    gamma_self_adjoint: bool
+    lambda_imag: Tuple[float, ...]
+    sectors: Tuple[str, ...] = ()
+    groups: Tuple[int, ...] = ()
+    fields: Tuple[np.ndarray, ...] = ()
+    n_positive: int = 0
+    warnings: Tuple[str, ...] = ()
+    amplitudes: Tuple[Tuple, ...] = ()
+    x_full: Tuple[np.ndarray, ...] = ()
+
+
+def _as_sectors(chi0, Gamma):
+    if isinstance(chi0, Mapping) != isinstance(Gamma, Mapping):
+        raise ValueError("solve_small: chi0 and Gamma must both be matrices or both "
+                         "mappings sector -> matrix")
+    if not isinstance(chi0, Mapping):
+        return {SECTOR_FULL: chi0}, {SECTOR_FULL: Gamma}
+    if list(chi0) != list(Gamma):
+        raise ValueError("solve_small: chi0 and Gamma must have the same sectors in the "
+                         "same order, got {} and {}".format(list(chi0), list(Gamma)))
+    return dict(chi0), dict(Gamma)
+
+
+def _sector_pairs(c, g, top_k, chi_bound, sector, label):
+    """The positive pairs of one sector: ``(pairs, self_adjoint, warnings,
+    failure)``, each pair ``(lambda, lambda_imag, x, Gamma x)``."""
+    import scipy.linalg
+    c = np.asarray(c, dtype=np.complex128)
+    g = np.asarray(g, dtype=np.complex128)
+    if c.ndim != 2 or c.shape[0] != c.shape[1] or c.shape != g.shape:
+        raise ValueError("solve_small: chi0 and Gamma of sector {!r} must be square of "
+                         "one shape, got {} and {}".format(sector, c.shape, g.shape))
+    n = c.shape[0]
+    if n == 0:
+        return [], True, [], None
+    ok, res = vertex_self_adjoint(g)
+    gnorm = float(np.linalg.norm(g))
+    chi = 0.5 * (c + c.conj().T)
+    cv, V = np.linalg.eigh(chi)
+    cmax = float(max(cv.max(), 0.0))
+    if cmax <= 0.0:
+        return [], ok, [], None
+    cv = np.where(cv < CHI0_CUTOFF * cmax, 0.0, cv)
+    chi_c = (V * cv) @ V.conj().T
+    bound = cmax if chi_bound is None else float(chi_bound)
+    lam_tol = NULL_TOL * max(1.0, gnorm * bound)
+    f_tol = NULL_TOL * max(1.0, gnorm)
+    warnings = []
+    found = []
+    if ok:
+        S = (V * np.sqrt(cv)) @ V.conj().T
+        B = S @ (-g) @ S
+        B = 0.5 * (B + B.conj().T)
+        lam, Y = np.linalg.eigh(B)
+        for j in range(n - 1, -1, -1):
+            if lam[j] <= lam_tol:
+                break
+            x = S @ Y[:, j]
+            nx = float(np.linalg.norm(x))
+            if nx == 0.0:
+                continue
+            x = x / nx
+            f = g @ x
+            if float(np.linalg.norm(f)) <= f_tol:
+                continue
+            found.append((float(lam[j]), 0.0, x, f))
+    else:
+        msg = GAMMA_NOT_SELF_ADJOINT_WARNING.format(label, res, REAL_TOL)
+        logger.warning(msg)
+        warnings.append(msg)
+        K = -(chi_c @ g)
+        w, X = scipy.linalg.eig(K)
+        scale = max(1.0, float(np.max(np.abs(w), initial=0.0)))
+        sel = [j for j in range(n) if abs(w[j].imag) <= REAL_TOL * scale
+               and w[j].real > lam_tol]
+        sel.sort(key=lambda j: (-w[j].real, j))
+        for j in sel:
+            x = X[:, j] / np.linalg.norm(X[:, j])
+            f = g @ x
+            if float(np.linalg.norm(f)) <= f_tol:
+                continue
+            found.append((float(w[j].real), float(w[j].imag), x, f))
+    K = -(chi_c @ g)
+    for lam_, lim_, x, _f in found:
+        r = float(np.linalg.norm(K @ x - (lam_ + 1j * lim_) * x))
+        if r > RESIDUAL_TOL * max(1.0, abs(lam_)):
+            return [], ok, warnings, "residual {:.3g} of lambda = {:.6g}".format(r, lam_)
+    return found, ok, warnings, None
+
+
+def solve_small(chi0, Gamma, *, top_k=3, chi_bound=None) -> SolveResult:
+    """The leading eigenpairs of ``K = -chi0 Gamma`` at one q (the small
+    tier, dense).
+
+    ``chi0``, ``Gamma``: dense ``(d, d)`` matrices (one sector), or
+    mappings ``sector -> matrix`` in the sector order (charge, then
+    ``S^z``, under a passed spin-rotation check). ``chi0`` is Hermitian
+    positive semidefinite (the static Lindhard response), ``Gamma``
+    Hermitian (the Hartree-Fock vertex) in the same inner product.
+
+    **Symmetric form.** ``chi0 = V diag(c) V^dag`` with ``c_i <
+    1e-12 max(c)`` set to 0, ``chi0^(1/2) = V diag(sqrt c) V^dag`` and ``B =
+    chi0^(1/2) (-Gamma) chi0^(1/2)`` (Hermitian, dense ``eigh``); ``B y =
+    lambda y`` gives ``x = chi0^(1/2) y`` with ``K x = lambda x``,
+    normalised ``||x||_2 = 1``. **Null guard**: a pair with ``lambda <=
+    1e-10 max(1, ||Gamma||_F chi_bound)`` (``chi_bound``: the largest
+    ``c`` unless given) or ``||Gamma x|| <= 1e-10 max(1, ||Gamma||_F)`` is
+    dropped; only ``lambda > 0`` is kept, never filled with null vectors.
+    Every retained pair must satisfy ``||K x - lambda x|| <= 1e-8 max(1,
+    |lambda|)`` (else that sector's ``q_status`` is ``solve failed``).
+
+    **Not self-adjoint** (:func:`vertex_self_adjoint` fails): a warning,
+    the general solve of ``K`` (an eigenvalue counts as real when ``|Im
+    lambda| <= REAL_TOL max(1, max |lambda|)``, its real part used, the
+    imaginary part reported in ``lambda_imag``) and
+    ``gamma_self_adjoint = False``.
+
+    The pairs of all sectors are merged, sorted by ``lambda`` (ties:
+    sector order, then index), and ``top_k`` is applied to the merged
+    list; a degenerate set (:data:`DEGENERACY_RTOL`) crossing the cutoff
+    is kept whole. The pairs of one degenerate set and sector are replaced
+    by the canonical basis of their span
+    (:func:`hwave.initial.patterns.canonical_basis`, a single pair
+    included), so neither the basis nor the phase of the eigensolver
+    reaches a pattern. Returns a :class:`SolveResult`."""
+    from hwave.initial.patterns import canonical_basis
+    if isinstance(top_k, bool) or not isinstance(top_k, numbers.Integral) or top_k < 1:
+        raise ValueError("solve_small: top_k must be an integer >= 1, got {!r}".format(top_k))
+    chis, gams = _as_sectors(chi0, Gamma)
+    found, failures, warnings = [], [], []
+    self_adjoint = True
+    for si, s in enumerate(chis):
+        pairs, ok, warn, fail = _sector_pairs(chis[s], gams[s], top_k, chi_bound, s, s)
+        self_adjoint &= ok
+        warnings.extend(warn)
+        if fail is not None:
+            failures.append(fail if len(chis) == 1 else "{}: {}".format(s, fail))
+        for j, (lam, lim, x, f) in enumerate(pairs):
+            found.append((lam, si, j, lim, x, f, s))
+    found.sort(key=lambda t: (-t[0], t[1], t[2]))
+    n_pos = len(found)
+    # degenerate sets in merged order
+    groups, gid = [], 0
+    for i, t in enumerate(found):
+        if i and abs(found[i - 1][0] - t[0]) > DEGENERACY_RTOL * max(1.0, abs(found[i - 1][0])):
+            gid += 1
+        groups.append(gid)
+    keep = min(top_k, n_pos)
+    while keep < n_pos and keep > 0 and groups[keep] == groups[keep - 1]:
+        keep += 1
+    found, groups = found[:keep], groups[:keep]
+    xs = [t[4] for t in found]
+    fs = [t[5] for t in found]
+    # the canonical basis of each degenerate set within one sector (a single
+    # pair included: its phase is then fixed by its pivot entry, so the
+    # pattern does not carry the arbitrary phase of the eigensolver)
+    for g in sorted(set(groups)):
+        for s in chis:
+            idx = [i for i in range(keep) if groups[i] == g and found[i][6] == s]
+            if not idx:
+                continue
+            W = canonical_basis(np.stack([xs[i] for i in idx], axis=1))
+            gam = np.asarray(gams[s], dtype=np.complex128)
+            for col, i in enumerate(idx):
+                xs[i] = W[:, col]
+                fs[i] = gam @ W[:, col]
+    if failures:
+        status = Q_FAILED.format("; ".join(failures))
+    elif n_pos == 0:
+        status = Q_NONE
+    elif n_pos < top_k:
+        status = Q_FEW
+    else:
+        status = Q_OK
+    return SolveResult(
+        pairs=tuple((t[0], x) for t, x in zip(found, xs)), q_status=status,
+        gamma_self_adjoint=bool(self_adjoint), lambda_imag=tuple(t[3] for t in found),
+        sectors=tuple(t[6] for t in found), groups=tuple(groups), fields=tuple(fs),
+        n_positive=n_pos, warnings=tuple(warnings))
+
+
+def amplitude_entries(P, O):
+    """The conjugate field ``O`` (``(|P|,)``, potential components on the
+    labels of the pair space ``P``) as the entries of a PatternSpec
+    amplitude: per bond slot ``(a, b, r)`` the spin block ``X[s, t] =
+    O_m`` (``m = (a, s, b, t, r)``), written as ``c^mu = tr(sigma^mu X)``
+    (:class:`hwave.initial.patterns.Entry`, physical orbitals). Entries and
+    coefficients below :data:`AMPLITUDE_ZERO_RTOL` of the largest modulus
+    are round-off and dropped. Sorted by ``(a, b, r)``."""
+    from hwave.initial.patterns import Entry
+    O = np.asarray(O, dtype=np.complex128).reshape(-1)
+    if O.shape[0] != P.size:
+        raise ValueError("amplitude_entries: O must have |P| = {} components, got {}"
+                         .format(P.size, O.shape[0]))
+    top = float(np.max(np.abs(O), initial=0.0))
+    if top == 0.0:
+        raise ValueError("amplitude_entries: the field is zero")
+    tol = AMPLITUDE_ZERO_RTOL * top
+    blocks = {}
+    for m, lab in enumerate(P.labels):
+        a, s, b, t = (int(v) for v in lab[:4])
+        key = (a, b, tuple(int(v) for v in lab[4:]))
+        blocks.setdefault(key, np.zeros((2, 2), dtype=np.complex128))[s, t] = O[m]
+    sig = (np.eye(2), _SIGMA_P[0], _SIGMA_P[1], _SIGMA_P[2])
+    out = []
+    for key in sorted(blocks):
+        X = blocks[key]
+        c = []
+        for sm in sig:
+            z = complex(np.trace(sm @ X))
+            re = z.real if abs(z.real) > tol else 0.0
+            im = z.imag if abs(z.imag) > tol else 0.0
+            c.append(complex(re, im))
+        if all(z == 0 for z in c):
+            continue
+        out.append(Entry(key[0], key[1], key[2], c0=c[0], cx=c[1], cy=c[2], cz=c[3]))
+    return tuple(out)
+
+
+def hint_eigenpairs(facts, para, P, q_set, *, solve=None, top_k=3) -> dict:
+    """The hint eigenpairs at every q of ``q_set``: ``{q: SolveResult}``
+    (``q`` the reduced three-Fraction tuple, in ``q_set`` order).
+
+    ``para``: a converged :class:`ParaResult` of the model (its bands at
+    ``T_hint`` give ``chi0``); ``P``: :func:`pair_space` of the model;
+    ``q_set``: q on the k-mesh of the primitive cell (the small tier: the
+    whole mesh, :func:`hwave.initial.cells.commensurate_q` of
+    ``CellShape``). Per q the vertex (:func:`vertex`, which depends on the
+    model only) and the Lindhard response (:func:`lindhard`) are built on
+    the full pair space once and projected onto each sector of ``P``;
+    ``solve(chi0, Gamma, top_k=top_k)`` (default :func:`solve_small`)
+    receives the mappings ``sector -> dense matrix``. The result gains the
+    amplitudes of :func:`amplitude_entries` (the conjugate field ``O =
+    Gamma x`` on the full pair space, ``||O||_2 = 1``) and ``x`` on the
+    full pair space."""
+    from hwave.initial.cells import to_qfrac
+    if not isinstance(para, ParaResult) or para.status != "converged":
+        raise ValueError("hint_eigenpairs: a converged ParaResult is required (got {})"
+                         .format(getattr(para, "status", type(para).__name__)))
+    solve = solve_small if solve is None else solve
+    facts1 = _primitive_facts(facts)
+    out = {}
+    for q in q_set:
+        qf = to_qfrac(q)
+        G = vertex(facts1, qf, P)
+        C = lindhard(para.bands, qf, P)
+        chis, gams, bases = {}, {}, {}
+        for k, s in enumerate(P.sectors):
+            U = P.sector_basis[k]
+            if U is None:
+                chis[s], gams[s], bases[s] = C, G, None
+            else:
+                u = U.toarray()
+                chis[s] = u.conj().T @ C @ u
+                gams[s] = u.conj().T @ G @ u
+                bases[s] = u
+        res = solve(chis, gams, top_k=top_k)
+        amps, xf = [], []
+        for (lam, x), s, f in zip(res.pairs, res.sectors, res.fields):
+            u = bases[s]
+            ff = np.asarray(f) if u is None else u @ np.asarray(f)
+            xx = np.asarray(x) if u is None else u @ np.asarray(x)
+            ff = ff / np.linalg.norm(ff)
+            amps.append(amplitude_entries(P, ff))
+            xf.append(xx)
+        out[qf] = dataclasses.replace(res, amplitudes=tuple(amps), x_full=tuple(xf))
+    return out
+
+
+def vertex_fields(eigenpairs) -> dict:
+    """The vertex fields of a computed hint record from the result of
+    :func:`hint_eigenpairs`: ``gamma_self_adjoint`` (every q), ``method``,
+    ``q_status`` keyed by the q string and ``q_set``."""
+    from hwave.initial.cells import q_string
+    return {
+        "gamma_self_adjoint": all(r.gamma_self_adjoint for r in eigenpairs.values()),
+        "method": HINT_METHOD,
+        "q_status": {q_string(q): r.q_status for q, r in eigenpairs.items()},
+        "q_set": [q_string(q) for q in eigenpairs],
+    }

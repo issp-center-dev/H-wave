@@ -129,6 +129,15 @@ def _row(cov, prefix):
 PARA, FERRO, NEEL = "para-", "ferro-", "baseline-q1_2_1_2_0-spin-z"
 
 
+
+def _pin_tier(argv):
+    """``prepare`` argv with ``--tier large`` unless a tier is given: these
+    tests check the large tier (the default tier depends on the host
+    memory)."""
+    if argv and argv[0] == "prepare" and "--tier" not in argv and "--help" not in argv:
+        return argv + ["--tier", "large"]
+    return argv
+
 class _Tmp(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp(prefix="initial_validation_")
@@ -302,7 +311,7 @@ class TestPrepareValidation(_Tmp):
         import contextlib
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = cli.main([str(a) for a in argv])
+            rc = cli.main(_pin_tier([str(a) for a in argv]))
         return rc, out.getvalue(), err.getvalue()
 
     def coverage(self, work):
@@ -376,7 +385,7 @@ class TestPrepareValidation(_Tmp):
         # with max_denominator = 12 (a library keyword of prepare): no cell
         work12 = self.path("W12")
         rc = cli.prepare(src, work12, extra_candidates=extra, max_candidates=0,
-                         max_denominator=12, stdout=io.StringIO())
+                         max_denominator=12, tier="large", stdout=io.StringIO())
         self.assertEqual(rc, 0)
         row, = self.rows_of(self.coverage(work12), "user")
         self.assertFalse(row["tried"])

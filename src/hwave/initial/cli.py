@@ -576,23 +576,35 @@ def _rho(G, problem):
     return np.swapaxes(g, -1, -2)
 
 
-def _para_green(facts, cache):
-    """The bare-H0 paramagnet of the cell of ``facts`` (the reference of
-    the labels)."""
-    from hwave.initial.hints import t_hint_bare
+#: the para work directory inside WORK (the small tier)
+PARA_DIR = "para_hf"
+
+
+def _para_green(facts, cache, para=None):
+    """The reference of the labels on the cell of ``facts``: the h = 0 seed
+    on the base the seeds use, the para Hartree-Fock Hamiltonian folded to
+    the cell when ``para`` is a converged para reference, else the bare
+    ``H0`` paramagnet."""
+    from hwave.initial.hints import fold_para, t_hint_bare
     from hwave.initial.seed import seed_pattern
-    key = tuple(facts.problem.subshape)
+    on_para = para is not None and para.status == "converged"
+    key = (tuple(facts.problem.subshape), on_para)
     if key not in cache:
         p = facts.problem
-        cache[key] = seed_pattern(facts, p.ham_trans_k, None, T_run=p.T,
-                                  W0=t_hint_bare(p).W0, seed_base="bare").G
+        if on_para:
+            base, seed_base = fold_para(para.H_para_k, facts, p.subshape), "para_hf"
+        else:
+            base, seed_base = p.ham_trans_k, "bare"
+        cache[key] = seed_pattern(facts, base, None, T_run=p.T, W0=t_hint_bare(p).W0,
+                                  seed_base=seed_base).G
     return cache[key]
 
 
 def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False,
-                 ordering=None):
-    """The label of the state ``G`` from ``delta rho`` against the bare-H0
-    paramagnet of its cell (the rho = G^T convention)."""
+                 ordering=None, para=None):
+    """The label of the state ``G`` from ``delta rho`` against the
+    reference of its cell (:func:`_para_green`: the seed base at h = 0;
+    the rho = G^T convention)."""
     from hwave.initial import labels
     from hwave.initial.symmetry import hermitian_green
     from hwave.initial.writer import HERMITE_TOL
@@ -605,8 +617,9 @@ def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False
                          "conj(G(-r)_ba)| / 2 = {:.3g})".format(off))
     # Hermitian to round-off: the Hermitian parts, so that a delta rho of
     # round-off size is not judged against its own norm
-    para = hermitian_green(np.asarray(_para_green(facts, cache)).reshape(g5.shape), p.shape)
-    d = _rho(gh, p) - _rho(para, p)
+    ref = hermitian_green(np.asarray(_para_green(facts, cache, para)).reshape(g5.shape),
+                          p.shape)
+    d = _rho(gh, p) - _rho(ref, p)
     if float(np.max(np.abs(d), initial=0.0)) <= labels.PARA_TOL:
         d = np.zeros_like(d)
     return labels.label(d, facts, q=q, eta=None, phase=phase, sign=sign,
@@ -696,6 +709,61 @@ def _write_json(path, obj):
     _write_text(path, json.dumps(obj, indent=1, allow_nan=False) + "\n")
 
 
+def _para_of(work, cset, base):
+    """``(para, manifest entry)`` of the para step of ``cset`` kept in
+    ``WORK/para_hf`` (the small tier): the para reference rebuilt from its
+    files (:func:`hwave.initial.hints.para_from_work`), so the seeds,
+    the labels and ``collect`` share one reference; ``(None, None)`` when
+    no para Green function was written (the large tier, or a skipped or
+    failed para step: the seeds use the bare ``H0``)."""
+    from hwave.initial.hints import PARA_GREEN, PARA_RECORD, para_from_work
+    root = work / PARA_DIR
+    if cset.tier != "small" or not (root / PARA_RECORD).is_file():
+        return None, None
+    para = para_from_work(base, root)
+    entry = {"dir": PARA_DIR, "record": PARA_DIR + "/" + PARA_RECORD,
+             "record_sha256": _sha256(root / PARA_RECORD), "green": None,
+             "green_sha256": None, "status": None if para is None else para.status,
+             "T": None if para is None else float(para.T)}
+    if para is not None:
+        entry.update(green=PARA_DIR + "/" + PARA_GREEN,
+                     green_sha256=_sha256(root / PARA_GREEN))
+    return para, entry
+
+
+def _check_para_entry(manifest, work):
+    """The para entry of ``manifest`` (``None`` without a para Green
+    function), its files checked: paths inside WORK, SHA-256 as prepare
+    wrote them (``ValueError`` naming the file otherwise)."""
+    entry = manifest.get("para")
+    if not entry or not entry.get("green"):
+        return None
+    for key in ("dir", "record", "green"):
+        name = entry.get(key)
+        if not isinstance(name, str) or os.path.isabs(name) or ".." in _parts(name):
+            raise ValueError("{}: para.{} {!r} is not a path inside WORK".format(
+                work / MANIFEST, key, name))
+    for key in ("record", "green"):
+        path = work / entry[key]
+        if not path.is_file() or _sha256(path) != entry.get(key + "_sha256"):
+            raise ValueError("{}: the para reference file {} is missing or differs from "
+                             "the file prepare wrote; the labels of WORK refer to it"
+                             .format(work, entry[key]))
+    return entry
+
+
+def _collect_para(cache, facts):
+    """The para reference of the WORK being collected (``cache["para_dir"]``
+    set by :func:`collect`), rebuilt once."""
+    from hwave.initial.hints import para_from_work
+    root = cache.get("para_dir")
+    if root is None:
+        return None
+    if "para" not in cache:
+        cache["para"] = para_from_work(facts, root)
+    return cache["para"]
+
+
 def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None,
             t_hint=None, amplitude=None, max_candidates=None, orbital_site=None,
             para_check=False, stdout=None, **limits) -> int:
@@ -706,6 +774,14 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
     ``coverage.json`` (``pre_run``), ``manifest.json``, ``candidates.json``,
     ``commands.txt`` and one run directory per run (:func:`stage_run_dir`,
     then ``initial.npz``, checked with ``check_initial_state``).
+
+    In the small tier the paramagnetic Hartree-Fock step runs into
+    ``WORK/para_hf`` (``green.npz``, ``para_hf.json`` and its runs; their
+    SHA-256 recorded in ``manifest.json`` under ``para``): the seeds are
+    built on its Hamiltonian, and the labels of prepare and collect take
+    the h = 0 seed on that base as their reference. ``para_check``: the
+    para step also runs from the uniform orbital occupation (small tier;
+    refused with the large tier given explicitly).
 
     ``extra_candidates`` and ``orbital_site`` are JSON file paths;
     ``**limits`` are further :class:`~hwave.initial.enumerate.Limits`
@@ -722,9 +798,12 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
     import tomli
 
     stdout = stdout or sys.stdout
-    if para_check:
-        raise NotImplementedError("--para-check checks the para Hartree-Fock step of the "
-                                  "small and medium tiers, which arrive in a later release")
+    if tier == "medium":
+        raise NotImplementedError("tier 'medium' arrives in a later release; this release "
+                                  "has the large and small tiers")
+    if para_check and tier == "large":
+        raise ValueError("--para-check checks the para Hartree-Fock step of the small tier; "
+                         "the large tier has none")
     toml = pathlib.Path(os.path.realpath(_resolve_toml(input_path)))
     work = pathlib.Path(os.path.abspath(os.fspath(out)))
     lim = dict(limits)
@@ -773,14 +852,18 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
     # the staging rules are checked before anything is enumerated or written
     _plan_run_doc(doc, source_dir=str(toml.parent), overrides={"SubShape": [1, 1, 1]})
     extras = _extra_candidates(extra_path) if extra_path else ()
-    cset = candidate_states(toml, subshapes=subshapes,
-                            tier="auto" if tier is None else tier, t_hint=t_hint,
-                            extra=extras, orbital_site=site, **lim)
 
     created = not work.exists()
     work.mkdir(parents=True, exist_ok=True)
-    made = []
+    made = [work / PARA_DIR]
     try:
+        cset = candidate_states(toml, subshapes=subshapes,
+                                tier="auto" if tier is None else tier, t_hint=t_hint,
+                                extra=extras, orbital_site=site, para_check=para_check,
+                                para_dir=work / PARA_DIR, **lim)
+        para, para_entry = _para_of(work, cset, base)
+        if not (work / PARA_DIR).exists():
+            made.remove(work / PARA_DIR)
         rows = [_thaw_json(r) for r in cset.rows]
         index = {r["run_id"]: i for i, r in enumerate(rows)}
         kept, entries, staged_bytes, cache = [], [], 0, {}
@@ -793,7 +876,8 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
             row = rows[index[run.run_id]]
             try:
                 path, res, facts = seed_and_write(staged.toml_path, run,
-                                                  out=staged.initial_path)
+                                                  out=staged.initial_path, para=para,
+                                                  t_hint=t_hint)
             except InitialStateError as exc:
                 # a writer refusal of a user or literature row becomes a
                 # "refused:" row; for a generated row it is an error
@@ -818,7 +902,8 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
             row["label"] = _state_label(
                 res.G, facts, cache, q=spec.q if modulated else None,
                 phase=spec.phase if modulated else None,
-                sign=spec.sign if modulated else None, spiral=spec.modulation == "spiral")
+                sign=spec.sign if modulated else None, spiral=spec.modulation == "spiral",
+                para=para)
             kept.append(run)
             staged_bytes += sum(s.nbytes for s in {s.name: s for s in staged.staged}.values())
             entries.append({
@@ -840,7 +925,7 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
         made.append(work / COMMANDS)
         manifest = dict(record, manifest_version=MANIFEST_VERSION,
                         hwave_version=hwave.__version__, work_dir_at_prepare=str(work),
-                        staged_bytes=staged_bytes, runs=entries)
+                        staged_bytes=staged_bytes, runs=entries, para=para_entry)
         _write_json(work / MANIFEST, manifest)
     except BaseException:
         if created:
@@ -1004,7 +1089,8 @@ def _read_outputs(row, run, run_toml, model, facts_cache, para_cache):
     # the ordering vectors come from the on-site amplitudes, so they follow
     # the on-site channels of the name, not a bond channel
     row["final_label"] = _state_label(G, facts, para_cache,
-                                      ordering=[q.split(",") for q in qs])
+                                      ordering=[q.split(",") for q in qs],
+                                      para=_collect_para(para_cache, facts))
 
 
 _OUTPUT_ROW_FIELDS = ("energy_total", "free_energy_total", "rest", "free_energy_per_cell",
@@ -1157,7 +1243,10 @@ def collect(work, *, stdout=None, stderr=None) -> int:
     initial-state check refuses it; otherwise a valid status file decides
     (``iterations = 0`` gives ``failed``); otherwise ``hwave.log``
     (``not_run``, ``convergence_unverified``, ``failed``, ``not_converged``,
-    ``converged``). A status file that exists but cannot be read makes the
+    ``converged``). The final labels take the reference of prepare's
+    labels (the para reference kept in ``WORK/para_hf`` in the small tier,
+    refused when its files differ from the manifest). A status file that
+    exists but cannot be read makes the
     row ``failed`` (``"<file> unreadable: <message>"``): the output readers
     refuse such a run. Outputs of a converged run must be readable, else
     ``failed``. Every reader gets ``base_dir`` = the run directory.
@@ -1181,6 +1270,9 @@ def collect(work, *, stdout=None, stderr=None) -> int:
             work / CANDIDATES, type(exc).__name__, exc)) from None
     model = _thaw_json(cset.model)
     rows, warnings, facts_cache, para_cache = [], [], {}, {}
+    para_entry = _check_para_entry(manifest, work)
+    if para_entry is not None:
+        para_cache["para_dir"] = work / para_entry["dir"]
     for r in cset.rows:
         row = _thaw_json(r)
         if row.get("tried"):
@@ -1278,14 +1370,19 @@ def build_parser():
                     help="a SubShape to evaluate every candidate on (repeatable); "
                          "default: the input's SubShape")
     pp.add_argument("--tier", choices=("auto", "large", "medium", "small"),
-                    help="the enumeration tier (this release: large; auto resolves to it)")
+                    help="the enumeration tier: large (spin and charge patterns), small "
+                         "(adds orbital patterns and instability hints from a paramagnetic "
+                         "Hartree-Fock run); auto chooses small when its memory estimate "
+                         "fits a quarter of the host memory, else large; medium arrives in "
+                         "a later release")
     pp.add_argument("--extra-candidates", metavar="FILE.json",
                     help="a JSON list of {family: user|literature, pattern, label, "
                          "citation}; the pattern follows patternspec.schema.json")
     pp.add_argument("--t-hint", type=_positive_float, metavar="T",
                     help="the hint temperature, in input energy units (default: the input "
-                         "T, or a rule from the bands and k mesh at T = 0); recorded in "
-                         "the report only, it never changes the candidates or the seeds")
+                         "T, or a rule from the bands and k mesh at T = 0); it changes only "
+                         "the instability rows of the small tier, never the other "
+                         "candidates")
     pp.add_argument("--amplitude", type=float, metavar="A",
                     help="the requested seed amplitude, in (0, 1) (default 0.5)")
     pp.add_argument("--max-candidates", type=_nonneg_int, metavar="N",
@@ -1293,8 +1390,8 @@ def build_parser():
     pp.add_argument("--orbital-site", metavar="FILE",
                     help="a JSON list: one site label per physical orbital")
     pp.add_argument("--para-check", action="store_true",
-                    help="also check the para step (small and medium tiers; a later "
-                         "release)")
+                    help="small tier: also run the paramagnetic Hartree-Fock step from "
+                         "the uniform orbital occupation and keep the lower free energy")
     pc = sub.add_parser(
         "check", help="check an initial-state file against the input that reads it",
         epilog=_epilog(), formatter_class=argparse.RawDescriptionHelpFormatter,

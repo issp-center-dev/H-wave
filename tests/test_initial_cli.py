@@ -61,6 +61,15 @@ def _geometry_uhf(L):
 _ONEBODYG = "=====\nNCisAjs 2\n=====\n=====\n=====\n0 0 0 0\n0 0 1 0\n"
 
 
+
+def _pin_tier(argv):
+    """``prepare`` argv with ``--tier large`` unless a tier is given: these
+    tests check the large tier (the default tier depends on the host
+    memory)."""
+    if argv and argv[0] == "prepare" and "--tier" not in argv and "--help" not in argv:
+        return argv + ["--tier", "large"]
+    return argv
+
 class _Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -91,6 +100,7 @@ class _Base(unittest.TestCase):
         from hwave.initial import cli
         kw.setdefault("n_random", 0)
         kw.setdefault("max_candidates", 0)
+        kw.setdefault("tier", "large")
         out = io.StringIO()
         rc = cli.prepare(src, work, stdout=out, **kw)
         self.assertEqual(rc, 0)
@@ -100,7 +110,7 @@ class _Base(unittest.TestCase):
         from hwave.initial import cli
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = cli.main(list(argv))
+            rc = cli.main(_pin_tier([str(a) for a in argv]))
         return rc, out.getvalue(), err.getvalue()
 
     def manifest(self, work):
@@ -520,7 +530,8 @@ class TestPrepare(_Base):
             f.write("\n")
         from hwave.initial import cli
         with self.assertRaisesRegex(ValueError, "input file Transfer changed"):
-            cli.prepare(src, work, n_random=0, max_candidates=0, stdout=io.StringIO())
+            cli.prepare(src, work, n_random=0, max_candidates=0, tier="large",
+                        stdout=io.StringIO())
         # a foreign directory
         foreign = self.path("foreign")
         os.makedirs(foreign)

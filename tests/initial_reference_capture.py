@@ -418,6 +418,9 @@ def prepare_run_collect(toml_path, work, **prepare_kw):
     document."""
     import io
     from hwave.initial import cli
+    # the frozen references are large-tier runs (the "auto" tier depends on
+    # the host memory)
+    prepare_kw.setdefault("tier", "large")
     rc = cli.prepare(toml_path, work, stdout=io.StringIO(), **prepare_kw)
     if rc != 0:
         raise RuntimeError("prepare returned {}".format(rc))

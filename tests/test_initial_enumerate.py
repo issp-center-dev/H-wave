@@ -168,23 +168,22 @@ class TestLimits(_Tmp):
         from hwave.initial.enumerate import candidate_states
         from hwave.initial.facts import NO_SUBSHAPE_WARNING
         toml = self.square()
-        for tier in ("small", "medium"):
-            with self.assertRaises(NotImplementedError) as cm:
-                candidate_states(toml, tier=tier)
-            self.assertIn("arrives in a later release", str(cm.exception))
+        with self.assertRaises(NotImplementedError) as cm:
+            candidate_states(toml, tier="medium")
+        self.assertIn("arrives in a later release", str(cm.exception))
         with self.assertRaises(ValueError):
             candidate_states(toml, tier="huge")
-        cset = candidate_states(toml, n_random=0)
+        cset = candidate_states(toml, n_random=0, tier="large")
         self.assertEqual(cset.tier, "large")
         self.assertEqual({tuple(r.subshape) for r in cset.runs}, {(2, 2, 1)})
         # no SubShape in the input and none given
         bare = self.square(subshape=None)
         with self.assertRaises(ValueError) as cm:
-            candidate_states(bare)
+            candidate_states(bare, tier="large")
         self.assertIn(NO_SUBSHAPE_WARNING, str(cm.exception))
         # duplicate subshapes are refused
         with self.assertRaises(ValueError):
-            candidate_states(toml, subshapes=[(2, 2, 1), [2, 2, 1]])
+            candidate_states(toml, subshapes=[(2, 2, 1), [2, 2, 1]], tier="large")
 
 
 # --------------------------------------------------------------------------
@@ -196,7 +195,7 @@ class TestReserved(_Tmp):
         from hwave.initial.enumerate import candidate_states
         subshapes = [(2, 2, 1), (4, 4, 1)]
         # SU(2): one ferro direction, -O merged
-        cset = candidate_states(self.square(), subshapes=subshapes)
+        cset = candidate_states(self.square(), subshapes=subshapes, tier="large")
         self.assertEqual(cset.model["su2"]["status"], "passed")
         reserved = [r for r in cset.rows if r["family"] in _RESERVED]
         self.assertEqual(len(reserved), 2 * (1 + 1) + 4)
@@ -220,7 +219,7 @@ class TestReserved(_Tmp):
             self.assertEqual([r.subshape for r in runs], [c.subshape])
 
         # 2Sz = 2: z only, and no map merges +z and -z
-        cset2 = candidate_states(self.square(two_sz=2), subshapes=subshapes)
+        cset2 = candidate_states(self.square(two_sz=2), subshapes=subshapes, tier="large")
         reserved = [r for r in cset2.rows if r["family"] in _RESERVED]
         self.assertEqual(len(reserved), 2 * (1 + 2) + 4)
         ferro = [c for c in cset2.candidates if c.family == "ferro"]
@@ -239,7 +238,7 @@ class TestReserved(_Tmp):
         toml = self.two_site_chain(delta=0.0, interactions={
             "CoulombIntra": {((0, 0, 0), 0, 0): 4.0, ((0, 0, 0), 1, 1): 4.0},
             "Ising": {((0, 0, 0), 0, 1): 1.0, ((0, 0, 0), 1, 0): 1.0}})
-        cset = candidate_states(toml, n_random=0)
+        cset = candidate_states(toml, n_random=0, tier="large")
         self.assertEqual(cset.model["su2"]["status"], "failed")
         self.assertTrue(cset.model["tr"]["invariant"])
         ferro = [c for c in cset.candidates if c.family == "ferro"]
@@ -256,7 +255,7 @@ class TestReserved(_Tmp):
             self.assertIn("-O merged (time_reversal)", row["sources"])
         # without time reversal (2Sz = 2) the -O ferro is its own candidate
         toml2 = self.two_site_chain(delta=0.0, two_sz=2)
-        cset2 = candidate_states(toml2, n_random=0)
+        cset2 = candidate_states(toml2, n_random=0, tier="large")
         self.assertEqual(sorted(c.sign for c in cset2.candidates if c.family == "ferro"),
                          [-1, 1])
 
@@ -265,7 +264,7 @@ class TestReserved(_Tmp):
         from hwave.initial.enumerate import candidate_states
         lit = _literature(_NEEL)
         cset = candidate_states(self.square(), subshapes=[(2, 2, 1), (4, 4, 1)],
-                                extra=[lit])
+                                extra=[lit], tier="large")
         runs = [r for r in cset.runs if r.candidate.candidate_id == lit.candidate_id]
         self.assertEqual([r.run_id for r in runs],
                          [lit.candidate_id + "-b2x2x1", lit.candidate_id + "-b4x4x1"])
@@ -284,7 +283,7 @@ class TestReserved(_Tmp):
         toml = initial_fixtures.square(self.dest(), 12, U=2.0, T=0.1, ncond=144,
                                        subshape=(2, 2, 1))
         lit = _literature(_TRI_120)
-        cset = candidate_states(toml, extra=[lit], n_random=0)
+        cset = candidate_states(toml, extra=[lit], n_random=0, tier="large")
         rows = self.rows_of(cset, candidate_id=lit.candidate_id)
         self.assertEqual(len(rows), 1)
         row = rows[0]
@@ -322,7 +321,7 @@ class TestBaselineAndDedup(_Tmp):
 
     def test_neel_merge_by_translation(self):
         from hwave.initial.enumerate import candidate_states
-        cset = candidate_states(self.square(), n_random=0)
+        cset = candidate_states(self.square(), n_random=0, tier="large")
         rows = self._neel_rows(cset, (2, 2, 1))
         self.assertEqual([r["sign"] for r in rows], [1, -1])
         kept, neg = rows
@@ -349,7 +348,7 @@ class TestBaselineAndDedup(_Tmp):
 
     def test_dedup_targets_run_ids(self):
         from hwave.initial.enumerate import candidate_states
-        cset = candidate_states(self.square(), subshapes=[(2, 2, 1), (4, 4, 1)])
+        cset = candidate_states(self.square(), subshapes=[(2, 2, 1), (4, 4, 1)], tier="large")
         run_ids = {r.run_id for r in cset.runs}
         for B in ((2, 2, 1), (4, 4, 1)):
             kept, neg = self._neel_rows(cset, B)
@@ -375,7 +374,7 @@ class TestBaselineAndDedup(_Tmp):
         """A q = 0 charge transfer between two inequivalent sites: no map
         takes it to -O, so both signs are runs."""
         from hwave.initial.enumerate import candidate_states
-        cset = candidate_states(self.two_site_chain(), n_random=0)
+        cset = candidate_states(self.two_site_chain(), n_random=0, tier="large")
         self.assertEqual(cset.model["su2"]["status"], "passed")
         rows = [r for r in cset.rows if r["family"] == "baseline" and r["channel"] == "charge"
                 and r["q_string"] == "0,0,0"]
@@ -395,7 +394,7 @@ class TestBaselineAndDedup(_Tmp):
         from hwave.initial.enumerate import candidate_states
         L = 4
         cset = candidate_states(initial_fixtures.square(self.dest(), L, U=4.0, T=0.1,
-                                                        subshape=(4, 1, 1)), n_random=0)
+                                                        subshape=(4, 1, 1)), n_random=0, tier="large")
         chans = [r["channel"] for r in cset.rows if r["family"] == "baseline"]
         self.assertEqual(set(chans), {"spin-z", "spin-spiral", "charge"})
         q14 = [r for r in cset.rows if r["family"] == "baseline" and r["q_string"] == "1/4,0,0"
@@ -406,7 +405,7 @@ class TestBaselineAndDedup(_Tmp):
         self.assertAlmostEqual(q14[1]["phase"] - q14[0]["phase"], 3.141592653589793 / 4)
         cset2 = candidate_states(self.two_site_chain(delta=0.0, interactions={
             "CoulombIntra": {((0, 0, 0), 0, 0): 4.0, ((0, 0, 0), 1, 1): 4.0},
-            "Ising": {((0, 0, 0), 0, 1): 1.0, ((0, 0, 0), 1, 0): 1.0}}), n_random=0)
+            "Ising": {((0, 0, 0), 0, 1): 1.0, ((0, 0, 0), 1, 0): 1.0}}), n_random=0, tier="large")
         chans = {r["channel"] for r in cset2.rows if r["family"] == "baseline"}
         self.assertEqual(chans, {"spin-x", "spin-y", "spin-z", "charge"})
 
@@ -420,7 +419,7 @@ class TestBaselineAndDedup(_Tmp):
             transfer={((1, 0, 0), 0, 0): -1.0, ((-1, 0, 0), 0, 0): -1.0},
             interactions={"CoulombIntra": {((0, 0, 0), 0, 0): 4.0}},
             param={"Ncond": 6, "T": 0.1, "SubShape": [3, 1, 1]})
-        cset = candidate_states(toml, n_random=0)
+        cset = candidate_states(toml, n_random=0, tier="large")
         charge = [r for r in cset.rows if r["family"] == "baseline"
                   and r["q_string"] == "1/3,0,0" and r["channel"] == "charge"]
         self.assertEqual(len(charge), 2)
@@ -500,10 +499,10 @@ class TestBaselineAndDedup(_Tmp):
         for toml in (self.square(), self.two_site_chain(delta=0.0, interactions={
                 "CoulombIntra": {((0, 0, 0), 0, 0): 4.0, ((0, 0, 0), 1, 1): 4.0},
                 "Ising": {((0, 0, 0), 0, 1): 1.0, ((0, 0, 0), 1, 0): 1.0}})):
-            a = en.candidate_states(toml, n_random=2, max_candidates=1000)
+            a = en.candidate_states(toml, n_random=2, max_candidates=1000, tier="large")
             with mock.patch.object(en, "_candidates_by_invariants",
                                    lambda kept, inv, i: list(kept)):
-                b = en.candidate_states(toml, n_random=2, max_candidates=1000)
+                b = en.candidate_states(toml, n_random=2, max_candidates=1000, tier="large")
             self.assertEqual(a.to_json()["rows"], b.to_json()["rows"])
 
     def test_translate_strided_input(self):
@@ -544,8 +543,8 @@ class TestBaselineAndDedup(_Tmp):
             centers=[(0.0, 0.0, 0.0), (0.3, 0.0, 0.0), (0.6, 0.0, 0.0)],
             interactions={"CoulombIntra": {((0, 0, 0), a, a): 4.0 for a in range(3)}},
             param={"Ncond": 6, "T": 0.1, "SubShape": [1, 1, 1]})
-        full = candidate_states(toml, n_random=0, max_candidates=1000)
-        capped = candidate_states(toml, n_random=0, max_candidates=1000, max_site_patterns=3)
+        full = candidate_states(toml, n_random=0, max_candidates=1000, tier="large")
+        capped = candidate_states(toml, n_random=0, max_candidates=1000, max_site_patterns=3, tier="large")
 
         def count(cset, channel):
             return len([r for r in cset.rows if r["family"] == "baseline"
@@ -583,7 +582,7 @@ class TestBaselineAndDedup(_Tmp):
             interactions={"CoulombIntra": {((0, 0, 0), 0, 0): 3.0}},
             mode={"enable_spin_orbital": True},
             param={"Ncond": 4, "T": 0.1, "SubShape": [2, 1, 1]})
-        cset = candidate_states(toml, n_random=1)
+        cset = candidate_states(toml, n_random=1, tier="large")
         self.assertEqual(cset.model["su2"]["status"], "not applicable (spin-orbital)")
         self.assertEqual(cset.model["interacting_orbitals"], (0,))
         ferro = [c for c in cset.candidates if c.family == "ferro"]
@@ -607,8 +606,8 @@ class TestQuotasAndEdges(_Tmp):
         from hwave.initial.enumerate import candidate_states
         lit = _literature(_NEEL)
         toml = self.square()
-        full = candidate_states(toml, extra=[lit])
-        cset = candidate_states(toml, extra=[lit], max_candidates=0)
+        full = candidate_states(toml, extra=[lit], tier="large")
+        cset = candidate_states(toml, extra=[lit], max_candidates=0, tier="large")
         for r in cset.rows:
             if r["family"] in _RESERVED + ("literature",):
                 self.assertTrue(r["tried"], r["run_id"])
@@ -624,7 +623,7 @@ class TestQuotasAndEdges(_Tmp):
         self.assertEqual([c.candidate_id for c in cset.candidates],
                          [c.candidate_id for c in full.candidates])
         # a small quota keeps the first generated rows, in order
-        three = candidate_states(toml, extra=[lit], max_candidates=3)
+        three = candidate_states(toml, extra=[lit], max_candidates=3, tier="large")
         kept = [r.run_id for r in three.runs if r.candidate.family == "baseline"]
         tried_full = [r.run_id for r in full.runs if r.candidate.family == "baseline"]
         self.assertEqual(kept, tried_full[:3])
@@ -673,7 +672,7 @@ class TestQuotasAndEdges(_Tmp):
             param={"Ncond": 3 * L * L, "T": 0.1, "SubShape": [2, 2, 1]})
         # q = 0 alone has 18 counted rows (3 axes x 4 sign patterns, charge
         # 3 pairs): a q-major order would spend the whole quota there
-        cset = candidate_states(toml, n_random=0, max_candidates=16)
+        cset = candidate_states(toml, n_random=0, max_candidates=16, tier="large")
         self.assertEqual(cset.model["su2"]["status"], "failed")
         base = [r for r in cset.rows if r["family"] == "baseline"]
         tried = collections.Counter(r["q_string"] for r in base if r["tried"])
@@ -723,7 +722,7 @@ class TestQuotasAndEdges(_Tmp):
         ferro = PatternSpec(q=("0", "0", "0"), subshape=(1, 1, 1), phase=0.0, sign=1,
                             modulation="cos", entries=(Entry(0, 0, (0, 0, 0), cz=2.0),))
         user = Candidate.user(pattern=ferro, label="my ferro")
-        cset = candidate_states(self.square(), extra=[user], n_random=0)
+        cset = candidate_states(self.square(), extra=[user], n_random=0, tier="large")
         row = self.rows_of(cset, candidate_id=user.candidate_id)[0]
         self.assertTrue(row["tried"])
         self.assertIn(row["run_id"], [r.run_id for r in cset.runs])
@@ -740,13 +739,13 @@ class TestQuotasAndEdges(_Tmp):
         self.assertEqual(a.candidate_id, b.candidate_id)
         with mock.patch.object(en, "model_facts", side_effect=AssertionError("loaded")):
             with self.assertRaises(ValueError) as cm:
-                en.candidate_states(self.square(), extra=[a, b])
+                en.candidate_states(self.square(), extra=[a, b], tier="large")
         self.assertIn("taken=", str(cm.exception))
 
     def test_nc_zero_only_para(self):
         from hwave.initial.enumerate import candidate_states, NC_ZERO_NOTE
         user = _literature(_NEEL)
-        cset = candidate_states(self.square(U=0.0), extra=[user])
+        cset = candidate_states(self.square(U=0.0), extra=[user], tier="large")
         self.assertEqual(cset.model["n_c"], 0)
         self.assertEqual({r.candidate.family for r in cset.runs}, {"para"})
         self.assertIn(NC_ZERO_NOTE, cset.model["warnings"])
@@ -765,7 +764,7 @@ class TestQuotasAndEdges(_Tmp):
             interactions={"CoulombIntra": {((0, 0, 0), 0, 0): 4.0}},
             param={"Filling": 0.0, "T": 0.1, "SubShape": [2, 2, 1]})
         for toml in (empty, self.square(L, ncond=2 * L * L)):
-            cset = candidate_states(toml, subshapes=[(2, 2, 1), (4, 4, 1)])
+            cset = candidate_states(toml, subshapes=[(2, 2, 1), (4, 4, 1)], tier="large")
             self.assertEqual([r.candidate.family for r in cset.runs], ["para", "para"])
             self.assertIn(EMPTY_FULL_NOTE, cset.model["warnings"])
             others = [r for r in cset.rows if r["family"] != "para"]
@@ -779,8 +778,8 @@ class TestQuotasAndEdges(_Tmp):
         from hwave.initial import CandidateSet
         lit = _literature(_NEEL)
         toml = self.square()
-        a = candidate_states(toml, subshapes=[(2, 2, 1), (4, 1, 1)], extra=[lit])
-        b = candidate_states(toml, subshapes=[(2, 2, 1), (4, 1, 1)], extra=[lit])
+        a = candidate_states(toml, subshapes=[(2, 2, 1), (4, 1, 1)], extra=[lit], tier="large")
+        b = candidate_states(toml, subshapes=[(2, 2, 1), (4, 1, 1)], extra=[lit], tier="large")
         ja = json.dumps(a.to_json(), sort_keys=True)
         self.assertEqual(ja, json.dumps(b.to_json(), sort_keys=True))
         # the JSON round trip is exact
@@ -795,7 +794,7 @@ class TestQuotasAndEdges(_Tmp):
         """T_hint affects only the hint record (design section 6.4 Scope)."""
         from hwave.initial.enumerate import candidate_states
         toml = self.square()
-        sets = [candidate_states(toml, subshapes=[(2, 2, 1), (4, 1, 1)], t_hint=t)
+        sets = [candidate_states(toml, subshapes=[(2, 2, 1), (4, 1, 1)], t_hint=t, tier="large")
                 for t in (None, 0.01, 2.0)]
         hints = [s.model["hint"]["T_hint"] for s in sets]
         self.assertEqual(len(set(hints)), 3)
@@ -890,12 +889,12 @@ class TestDedupFastPath(_Tmp):
         merged = 0
         for toml, subs in cases:
             kw = dict(subshapes=subs, n_random=2, max_candidates=8)
-            fast = candidate_states(toml, **kw)
+            fast = candidate_states(toml, **kw, tier="large")
             with mock.patch("hwave.initial.enumerate.symmetry",
                             _SymmetryProxy(symmetry, _to_r=lambda O, problem: _Tagged(O),
                                            _map_invariants_r=slow_inv,
                                            _find_map_r=slow_find)):
-                slow = candidate_states(toml, **kw)
+                slow = candidate_states(toml, **kw, tier="large")
             self.assertEqual([r.run_id for r in fast.runs], [r.run_id for r in slow.runs])
             self.assertEqual(json.dumps(fast.to_json(), sort_keys=True, default=str),
                              json.dumps(slow.to_json(), sort_keys=True, default=str))

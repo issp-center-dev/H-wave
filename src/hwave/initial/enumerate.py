@@ -12,8 +12,9 @@ function:
    (``seed = base_seed + i``, regenerated as ``default_rng(seed)``).
 2. :func:`baseline_candidates`: per ``SubShape`` B, the site-summed spin and
    charge patterns at every q commensurate with B (see **Order** below).
-   The large tier has these only; orbital patterns
-   come with the small and medium tiers.
+   The large tier has these only; the small and medium tiers add the
+   orbital patterns ``n_a - n_b`` per site (family ``orbital``, baseline
+   quota).
 3. :func:`expand_runs`: which candidate runs on which ``SubShape``. User
    and literature candidates are evaluated on every B, para and ferro run
    once on every B, a random or generated candidate only on the B it was
@@ -35,7 +36,8 @@ round-robin over q by sign-pattern rank: for rank r = 0, 1, ... (the r-th
 representative eta of :func:`sign_patterns` in each (q, channel)), every
 commensurate q in q-order (by increasing order n, so Gamma first and the
 q = -q points next, then lexicographically), within one q the spin
-directions (z, x, y, or z alone), then charge; within one sign pattern
+directions (z, x, y, or z alone), then charge, then the orbital pairs
+(small and medium tiers); within one sign pattern
 its phase rows, the -O row of each phase, and the spiral. Every q thus
 gets its low-rank patterns before any q gets a higher-rank one, so a
 quota is spent evenly over q (lattice-equivalent q such as (0, 1/2) and
@@ -83,8 +85,19 @@ convention of :mod:`hwave.results`); in
 spin-orbital mode the patterns are realised on the interleaved layout by
 :func:`hwave.initial.patterns.realise`.
 
-**T_hint** never enters: it is computed for the ``hint`` record of the
-model only, and never changes the candidate set or the seeds.
+**Tiers and hints.** :func:`choose_tier` picks the tier before any para
+step. In the small tier the para Hartree-Fock reference and the hint
+eigenpairs of :mod:`hwave.initial.hints` give the instability rows
+(:func:`instability_candidates`, family ``instability``): the eigenvalues
+order them (best first, :func:`hint_pairs`) and fill the instability
+quota of each ``SubShape``; a pair that is not realised is still listed
+with its eigenvalue and the reason. The eigenvalues never remove a row.
+
+**T_hint** enters only the hints: of the candidate set it changes the
+instability rows and nothing else (the reserved, baseline, orbital, user
+and literature rows and the cells are the same at any T_hint). The seeds
+of the small tier are built on the para reference at T_hint (the writer's
+``para_hf`` base).
 """
 import dataclasses
 import itertools
@@ -93,7 +106,8 @@ import numbers
 import os
 from dataclasses import dataclass
 from fractions import Fraction
-from typing import Iterator, List, Tuple
+from types import MappingProxyType
+from typing import Iterator, List, Mapping, Tuple
 
 import numpy as np
 
@@ -101,6 +115,7 @@ from hwave.initial import cells, labels, symmetry
 from hwave.initial.candidates import (
     Candidate, CandidateRun, CandidateSet, DEFAULT_AMPLITUDE, make_candidate_id)
 from hwave.initial.facts import NO_SUBSHAPE_WARNING, ModelFacts, model_facts
+from hwave.initial import hints as hints_mod
 from hwave.initial.hints import hint_record, t_hint_bare
 from hwave.initial.patterns import (
     NEG_TRANSLATED, Entry, PatternSpec, fix_sign, pattern_rows, phi0, realise)
@@ -112,7 +127,10 @@ __all__ = [
     "NC_ZERO_NOTE", "EMPTY_FULL_NOTE", "LARGE_TIER_SKIP", "UNIFORM_CHARGE_REASON",
     "sign_patterns", "skipped_patterns",
     "interacting_sites", "baseline_candidates", "reserved_candidates", "expand_runs",
-    "deduplicate", "apply_quotas", "candidate_states",
+    "deduplicate", "apply_quotas", "candidate_states", "orbital_pairs",
+    "HintPair", "hint_pairs", "InstabilityCandidates", "instability_candidates",
+    "QUOTA_INSTABILITY", "TierChoice", "choose_tier", "small_tier_bytes",
+    "SMALL_TIER_MAX_OPERATIONS", "SMALL_TIER_LIMIT_WARNING", "UNKNOWN_MEMORY_WARNING",
 ]
 
 #: families outside every quota, never cut, kept first by deduplication
@@ -284,6 +302,29 @@ def _site_summed(sites, eta, mu, *, traceless):
                  if abs(v) > _ZERO)
 
 
+def orbital_pairs(facts) -> Tuple[Tuple[Tuple[int, int], ...], ...]:
+    """The orbital pairs of the orbital family: for pair rank p = 0, 1, ...
+    the pair ``(a_p, a_(p+1))`` of consecutive interacting orbitals of every
+    site that has at least p + 2 of them (physical orbital indices, sites
+    in site order). The patterns ``n_a - n_b`` of the consecutive pairs of
+    a site span its traceless orbital-diagonal densities."""
+    sites = [s for s in interacting_sites(facts) if len(s) >= 2]
+    out = []
+    for p in range(max((len(s) for s in sites), default=1) - 1):
+        out.append(tuple((s[p], s[p + 1]) for s in sites if len(s) >= p + 2))
+    return tuple(out)
+
+
+def _orbital_pattern(pairs, eta):
+    """``sum_site eta_site (n_a - n_b)`` over the orbital pairs of the sites,
+    as on-site entries."""
+    out = []
+    for (a, b), e in zip(pairs, eta):
+        out.append(Entry(a, a, (0, 0, 0), c0=float(e)))
+        out.append(Entry(b, b, (0, 0, 0), c0=-float(e)))
+    return tuple(sorted(out, key=lambda x: x.key))
+
+
 def _spin_axes(su2, problem):
     """z, x, y; z alone when the SU(2) check passed or 2Sz is fixed.
 
@@ -331,17 +372,27 @@ def _etas(n_s, cap, both, skip_uniform):
 
 def _channel_units(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken, patterns):
     """The baseline candidates of one (q, channel) on the cell B, one list
-    per sign-pattern representative in rank order."""
+    per sign-pattern representative in rank order. ``kind``: ``"spin"``,
+    ``"charge"`` or ``"orbital"`` (then ``mu`` is the orbital-pair rank
+    and ``sites`` the orbital pairs ``(a, b)`` of the sites that have
+    one, family ``orbital``)."""
     p = facts.problem
     self_conj = cells.is_self_conjugate(q)
     traceless = kind == "charge" and all(x == 0 for x in q)
     n_s = len(sites)
+    family = "orbital" if kind == "orbital" else "baseline"
+    if kind == "orbital":
+        def amp(eta):
+            return _orbital_pattern(sites, eta)
+    else:
+        def amp(eta):
+            return _site_summed(sites, eta, mu, traceless=traceless)
     # the merge of eta and -eta, decided on the first non-zero pattern
     first = None
     for eta in sign_patterns(n_s, cap=1 << (n_s - 1)):
         if traceless and eta == (1,) * n_s:
             continue
-        A = _site_summed(sites, eta, mu, traceless=traceless)
+        A = amp(eta)
         if A:
             first = A
             break
@@ -363,7 +414,7 @@ def _channel_units(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken, patt
         if eta[0] != 1:
             continue                 # a -eta twin: the -O rows of its representative
         rank += 1
-        A = _site_summed(sites, eta, mu, traceless=traceless)
+        A = amp(eta)
         if not A:
             continue
         out = []
@@ -380,16 +431,16 @@ def _channel_units(facts, B, q, kind, mu, sites, *, su2, tr, limits, taken, patt
         for row in rows:
             spec = row.spec
             index = 0 if row.spiral else k
-            cand, _ = _named("baseline", spec, facts, B, eta=eta_name, spiral=row.spiral,
+            cand, _ = _named(family, spec, facts, B, eta=eta_name, spiral=row.spiral,
                              rank=rank, phase_index=index, neg=False, taken=taken,
-                             amplitude=limits.amplitude, sources=("baseline",),
+                             amplitude=limits.amplitude, sources=(family,),
                              patterns=patterns)
             out.append(cand)
             if neg_listed and not row.spiral:
-                twin, _ = _named("baseline", _neg(spec), facts, B, eta=eta_name,
+                twin, _ = _named(family, _neg(spec), facts, B, eta=eta_name,
                                  spiral=False, rank=rank, phase_index=index, neg=True,
                                  taken=taken, amplitude=limits.amplitude,
-                                 sources=("baseline",), patterns=patterns)
+                                 sources=(family,), patterns=patterns)
                 out.append(twin)
             if not row.spiral:
                 k += 1
@@ -418,23 +469,25 @@ def baseline_candidates(facts, subshape, *, su2, tr, limits=None, tier="large",
     commensurate with it, the site-summed spin patterns
     (z, x, y; z alone under a passed SU(2) check or with 2Sz fixed; plus
     one coplanar spiral per sign pattern at q not equal to -q under a
-    passed SU(2) check) and the site-summed charge patterns (traceless
-    over the cell), each in the order of the module docstring.
+    passed SU(2) check), the site-summed charge patterns (traceless
+    over the cell) and, in the small and medium tiers, the orbital
+    patterns ``n_a - n_b`` (family ``orbital``, :func:`orbital_pairs`:
+    uniform and with the (q, eta) signs over the sites that hold the
+    pair), each in the order of the module docstring.
 
     ``facts`` must be loaded on ``subshape`` (``model_facts(...,
     subshape=subshape)``); the PatternSpec ``subshape`` of every candidate
     is ``subshape`` (a generated row runs only on its own cell). ``su2``,
     ``tr``: the checks of :mod:`hwave.initial.symmetry`. ``limits``:
     :class:`Limits` (``max_site_patterns``, ``amplitude``). ``tier``: the
-    large tier has spin and charge only; orbital
-    patterns (``family = "orbital"``) arrive with the small and medium
-    tiers (``NotImplementedError``). ``taken``: the ids already used
+    large tier has spin and charge only; the small and medium tiers add
+    the orbital patterns. ``taken``: the ids already used
     (:func:`make_candidate_id`). ``patterns``: an optional dict that
     receives each candidate's realised ``O(k)`` keyed by its run id on
     ``subshape`` (the ``cache`` of :func:`deduplicate`)."""
-    if tier != "large":
-        raise NotImplementedError("tier {!r} arrives in a later release: the orbital "
-                                  "baseline patterns come with it".format(tier))
+    if tier not in ("large", "medium", "small"):
+        raise ValueError("baseline_candidates: tier must be 'large', 'medium' or 'small', "
+                         "got {!r}".format(tier))
     limits = Limits() if limits is None else limits
     B = tuple(int(x) for x in subshape)
     if tuple(facts.problem.subshape) != B:
@@ -444,10 +497,14 @@ def baseline_candidates(facts, subshape, *, su2, tr, limits=None, tier="large",
     sites = interacting_sites(facts)
     if not sites:
         return []
-    channels = [("spin", mu) for mu in _spin_axes(su2, facts.problem)] + [("charge", "0")]
-    units = [_channel_units(facts, B, q, kind, mu, sites, su2=su2, tr=tr, limits=limits,
+    channels = [("spin", mu, sites) for mu in _spin_axes(su2, facts.problem)]
+    channels.append(("charge", "0", sites))
+    if tier != "large":
+        channels.extend(("orbital", p, pairs)
+                        for p, pairs in enumerate(orbital_pairs(facts)))
+    units = [_channel_units(facts, B, q, kind, mu, members, su2=su2, tr=tr, limits=limits,
                             taken=taken, patterns=patterns)
-             for q in _q_order(B) for kind, mu in channels]
+             for q in _q_order(B) for kind, mu, members in channels]
     out = []
     for r in range(max((len(u) for u in units), default=0)):
         for u in units:
@@ -877,19 +934,357 @@ def apply_quotas(runs, rows, limits):
 
 
 # --------------------------------------------------------------------------
+# the instability rows
+# --------------------------------------------------------------------------
+
+#: the reason of an instability row that its SubShape could run but the
+#: instability quota of that SubShape leaves out (it is not realised)
+QUOTA_INSTABILITY = "quota: instability"
+
+
+@dataclass(frozen=True, eq=False)
+class HintPair:
+    """One eigenpair of the hints, as the instability rows use it.
+
+    ``q`` (reduced Fractions), ``index`` (its place among the pairs of its
+    q, merged over the sectors: the ``r<rank>`` of the candidate id),
+    ``rank`` (its place among every pair of every q, by descending
+    ``lam``; ties by q order, increasing order n then lexicographic, then
+    ``index``; recorded as the row's ``rank``), ``lam`` and ``lam_imag``
+    (the eigenvalue), ``sector``, ``group`` (its degenerate set within
+    q), ``amplitude`` (the conjugate field ``O = Gamma x`` as PatternSpec
+    entries) and ``general_solve`` (the vertex was not self-adjoint at
+    this q, so the pair comes from the general solve and its rows are
+    marked)."""
+    q: Tuple[Fraction, Fraction, Fraction]
+    index: int
+    rank: int
+    lam: float
+    lam_imag: float
+    sector: str
+    group: int
+    amplitude: Tuple[Entry, ...]
+    general_solve: bool
+
+
+def hint_pairs(eigenpairs) -> Tuple[HintPair, ...]:
+    """The eigenpairs of :func:`hwave.initial.hints.hint_eigenpairs` as
+    :class:`HintPair`, in rank order (the order of the instability
+    rows)."""
+    flat = []
+    for q, res in eigenpairs.items():
+        qf = cells.to_qfrac(q)
+        for i, ((lam, _x), lim, sec, grp, amp) in enumerate(zip(
+                res.pairs, res.lambda_imag, res.sectors, res.groups, res.amplitudes)):
+            flat.append((qf, i, float(lam), float(lim), sec, int(grp), tuple(amp),
+                         not res.gamma_self_adjoint))
+    flat.sort(key=lambda t: (-t[2], cells.order(t[0]), t[0], t[1]))
+    return tuple(HintPair(q=t[0], index=t[1], rank=k, lam=t[2], lam_imag=t[3],
+                          sector=t[4], group=t[5], amplitude=t[6], general_solve=t[7])
+                 for k, t in enumerate(flat))
+
+
+@dataclass(frozen=True)
+class InstabilityCandidates:
+    """The instability rows of :func:`instability_candidates`.
+
+    ``runnable``: the realised candidates, per ``SubShape`` in the given
+    order, in rank order of their pairs (each pair's phase rows, the -O
+    row of each at q = -q, and the spiral). ``listed``: ``(candidate,
+    subshape, reason)`` of every pair that is not realised, named from its
+    amplitude: ``"quota: instability"`` on a ``SubShape`` that holds its q
+    (the quota of that cell leaves it out), or ``"unrepresentable"`` (no
+    ``SubShape`` holds its q; listed once, on the first ``SubShape``, with
+    the PatternSpec ``subshape`` its minimal cell). ``hint_of``: the
+    :class:`HintPair` of every candidate id. ``realised``: per
+    ``SubShape``, the number of pairs realised (or tried) there; ``held``:
+    per ``SubShape``, the number of pairs whose q it holds."""
+    runnable: Tuple[Candidate, ...]
+    listed: Tuple[Tuple[Candidate, Tuple[int, int, int], str], ...]
+    hint_of: Mapping
+    realised: Mapping = MappingProxyType({})
+    held: Mapping = MappingProxyType({})
+
+
+def _site_of(facts):
+    out = {}
+    for k, group in enumerate(facts.site_groups.groups):
+        for a in group:
+            out[int(a)] = k
+    return out
+
+
+def _amplitude_name(A, facts, q, phase):
+    """The name of a listed (not realised) instability row from its
+    amplitude: the dominant channels (weight at least
+    :data:`hwave.initial.labels.DOMINANT_WEIGHT`) among ``charge``,
+    ``spin-<axis>`` (on-site, orbital-diagonal), ``orbital-hybridization``,
+    ``inter-orbital-spin-<axis>`` (on-site, two orbitals) and
+    ``bond-charge``, ``bond-spin-<axis>`` (two sites), then q and the
+    phase."""
+    site = _site_of(facts)
+    weights = {}
+    for e in A:
+        same = e.r == (0, 0, 0) and site.get(e.orb_a) == site.get(e.orb_b)
+        for key, mu in (("c0", None), ("cx", "x"), ("cy", "y"), ("cz", "z")):
+            w = abs(getattr(e, key)) ** 2
+            if w == 0:
+                continue
+            if not same:
+                name = "bond-charge" if mu is None else "bond-spin-" + mu
+            elif e.orb_a == e.orb_b:
+                name = "charge" if mu is None else "spin-" + mu
+            else:
+                name = ("orbital-hybridization" if mu is None
+                        else "inter-orbital-spin-" + mu)
+            weights[name] = weights.get(name, 0.0) + w
+    total = sum(weights.values())
+    ranked = sorted(weights, key=lambda k: (-weights[k], k))
+    names = [k for k in ranked if weights[k] >= labels.DOMINANT_WEIGHT * total] or ranked[:1]
+    return " ".join([" + ".join(names)] + labels._name_suffix(q, None, phase, None, False))
+
+
+def _instability_rows(facts, B, h, *, su2, tr, limits, taken, patterns):
+    """The realised candidates of one pair on the cell B."""
+    p = facts.problem
+    q = h.q
+    A = h.amplitude
+    sources = ("instability",) + ((hints_mod.GENERAL_SOLVE_SOURCE,)
+                                  if h.general_solve else ())
+    if cells.is_self_conjugate(q):
+        rows = pattern_rows(A, q, sign_map=True, subshape=B)
+        twins = True
+    else:
+        O0 = realise(pattern_rows(A, q, sign_map=True, subshape=B)[0].spec, facts, B)
+        smap = symmetry.sign_map_verified(O0, problem=p, su2=su2, tr=tr)
+        spiral = (h.sector == hints_mod.SECTOR_SZ and su2 is not None
+                  and su2.status == "passed")
+        rows = pattern_rows(A, q, sign_map=smap, spiral=spiral, subshape=B)
+        twins = False
+    out, k = [], 0
+    for row in rows:
+        index = 0 if row.spiral else k
+        cand, _ = _named("instability", row.spec, facts, B, eta=None, spiral=row.spiral,
+                         rank=h.index, phase_index=index, neg=False, taken=taken,
+                         amplitude=limits.amplitude, sources=sources, patterns=patterns)
+        out.append(cand)
+        if twins and not row.spiral:
+            twin, _ = _named("instability", _neg(row.spec), facts, B, eta=None,
+                             spiral=False, rank=h.index, phase_index=index, neg=True,
+                             taken=taken, amplitude=limits.amplitude, sources=sources,
+                             patterns=patterns)
+            out.append(twin)
+        if not row.spiral:
+            k += 1
+    return out
+
+
+def _listed(facts, h, subshape, taken, limits):
+    A = fix_sign(h.amplitude, h.q)
+    phase = phi0(A, h.q)
+    spec = PatternSpec(q=tuple(str(x) for x in h.q), subshape=tuple(subshape), phase=phase,
+                       sign=1, modulation="cos", entries=A)
+    name = _amplitude_name(A, facts, h.q, phase)
+    sources = ("instability",) + ((hints_mod.GENERAL_SOLVE_SOURCE,)
+                                  if h.general_solve else ())
+    cid = make_candidate_id("instability", spec.q, labels.ascii_name(name), h.index, 0,
+                            False, taken)
+    return Candidate(candidate_id=cid, family="instability", sources=sources, pattern=spec,
+                     amplitude_requested=limits.amplitude, label=name)
+
+
+def instability_candidates(facts, eigenpairs, subshapes, limits, *, su2, tr, taken=None,
+                           patterns=None, budget=None) -> InstabilityCandidates:
+    """The instability rows of the hint eigenpairs on the ``SubShape``
+    list.
+
+    ``facts``: a mapping ``SubShape -> ModelFacts`` loaded on that cell;
+    ``eigenpairs``: :func:`hwave.initial.hints.hint_eigenpairs` (or the
+    :class:`HintPair` tuple of :func:`hint_pairs`); ``limits``:
+    :class:`Limits`; ``su2``, ``tr``: the checks of
+    :mod:`hwave.initial.symmetry`.
+
+    Per ``SubShape`` B, the pairs whose q B holds are taken in rank order
+    (best lambda first). The first of them are realised: the conjugate
+    field ``O = Gamma x`` of the pair becomes the anchored modulation of
+    :mod:`hwave.initial.patterns` (sign fixed once on the phi0 row,
+    :func:`~hwave.initial.patterns.fix_sign`; the phase rows of
+    :func:`~hwave.initial.patterns.phase_rows`, with the sign map of
+    :func:`hwave.initial.symmetry.sign_map_verified` at q not equal to -q;
+    at q = -q each phase row followed by its -O row, which deduplication
+    merges when a verified map exists; a spiral for an ``S^z`` pair at q
+    not equal to -q under a passed spin-rotation check), named by its
+    pattern (family ``instability``, id rank = the pair's index at its q).
+    ``budget`` maps B to the number of pairs to realise; by default pairs
+    are realised until their rows reach ``limits.quota_instability``,
+    the rest of a degenerate set included. Every other pair is listed,
+    not realised (:class:`InstabilityCandidates`); a pair no B holds is
+    listed as unrepresentable. Eigenvalues only order the rows: no row is
+    removed for its eigenvalue."""
+    pairs = eigenpairs if isinstance(eigenpairs, tuple) else hint_pairs(eigenpairs)
+    subshapes = [tuple(int(x) for x in B) for B in subshapes]
+    taken = set() if taken is None else taken
+    runnable, listed, hint_of = [], [], {}
+    held, realised, n_held = set(), {}, {}
+    for B in subshapes:
+        f = facts[B]
+        mine = [h for h in pairs if cells.representable(h.q, B)[0]]
+        held.update(id(h) for h in mine)
+        n_held[B] = len(mine)
+        n = None if budget is None or B not in budget else int(budget[B])
+        count = 0
+        last = None
+        realised[B] = 0
+        for i, h in enumerate(mine):
+            take = (count < limits.quota_instability if n is None else i < n)
+            if not take and last is not None and (h.q, h.group) == last:
+                take = True                   # the rest of a degenerate set
+            reason = QUOTA_INSTABILITY
+            if take:
+                realised[B] += 1
+                try:
+                    rows = _instability_rows(f, B, h, su2=su2, tr=tr, limits=limits,
+                                             taken=taken, patterns=patterns)
+                except ValueError:
+                    # the field vanishes on this cell (realise refuses a zero
+                    # pattern): listed as giving no response
+                    reason = _NO_RESPONSE
+                else:
+                    for c in rows:
+                        hint_of[c.candidate_id] = h
+                    runnable.extend(rows)
+                    count += len(rows)
+                    last = (h.q, h.group)
+                    continue
+            c = _listed(f, h, B, taken, limits)
+            hint_of[c.candidate_id] = h
+            listed.append((c, B, reason))
+    first = facts[subshapes[0]]
+    for h in pairs:
+        if id(h) in held:
+            continue
+        c = _listed(first, h, tuple(x.denominator for x in h.q), taken, limits)
+        hint_of[c.candidate_id] = h
+        listed.append((c, subshapes[0], _UNREPRESENTABLE))
+    return InstabilityCandidates(runnable=tuple(runnable), listed=tuple(listed),
+                                 hint_of=MappingProxyType(hint_of),
+                                 realised=MappingProxyType(realised),
+                                 held=MappingProxyType(n_held))
+
+
+# --------------------------------------------------------------------------
 # the entry point
 # --------------------------------------------------------------------------
 
-def _resolve_tier(tier):
-    if tier == "auto":
-        return "large"
+#: the interim cap of the small tier on ``N_q |P|^3`` (the dense eigen-solves)
+SMALL_TIER_MAX_OPERATIONS = 10 ** 11
+#: the warning when the interim rule does not choose the small tier
+SMALL_TIER_LIMIT_WARNING = ("the small tier exceeds the preview limits; the medium tier "
+                            "arrives in a later release")
+#: the warning when the host memory is unknown
+UNKNOWN_MEMORY_WARNING = ("the available host memory is unknown, so the small tier is not "
+                          "chosen automatically; the large tier is used (give the tier "
+                          "small explicitly to run it)")
+#: the warning when a small tier given explicitly is over the budget
+SMALL_TIER_OVER_BUDGET_WARNING = (
+    "the small tier given explicitly exceeds the preview limits ({}); it runs anyway")
+_TIERS_IN = ("auto", "large", "medium", "small")
+
+
+def small_tier_bytes(n_pair, n_q, n_k, n_bands, top_k) -> int:
+    """The small-tier memory estimate ``16 (|P|^2 + N_q top_k |P| + N_k nb^2
+    + N_k nb |P|)`` bytes."""
+    P, nq, nk, nb, k = (int(v) for v in (n_pair, n_q, n_k, n_bands, top_k))
+    return 16 * (P * P + nq * k * P + nk * nb * nb + nk * nb * P)
+
+
+@dataclass(frozen=True)
+class TierChoice:
+    """The tier of an enumeration: ``name`` (``"large"`` or ``"small"``),
+    ``chosen_by`` (``"auto (interim rule)"`` or ``"user"``), ``record`` (the
+    estimate, budget, constants, rule and preflight of the ``tier`` record
+    of ``coverage.json``) and ``warnings``."""
+    name: str
+    chosen_by: str
+    record: Mapping
+    warnings: Tuple[str, ...] = ()
+
+
+def choose_tier(base, tier="auto", *, su2=None, limits=None) -> TierChoice:
+    """The tier of the model of ``base`` (primitive-cell facts), before any
+    para step.
+
+    The interim rule of this release for ``"auto"``: the small tier when
+    its memory estimate (:func:`small_tier_bytes` with ``|P|`` from
+    :func:`hwave.initial.hints.pair_space`, ``N_q = N_k = prod(CellShape)``
+    and ``nb`` the bands of the primitive cell) is at most
+    ``budget_fraction = 0.25`` of
+    ``initial_facade.available_host_bytes()`` and ``N_q |P|^3 <=``
+    :data:`SMALL_TIER_MAX_OPERATIONS`; otherwise the large tier with the
+    warning :data:`SMALL_TIER_LIMIT_WARNING`. Unknown host memory gives the
+    large tier with :data:`UNKNOWN_MEMORY_WARNING`. ``"small"`` given
+    explicitly runs the same preflight: a warning when over the limits, a
+    ``ValueError`` when the estimate exceeds the available memory.
+    ``"large"`` needs no estimate; ``"medium"`` raises
+    ``NotImplementedError`` (a later release)."""
+    from hwave.initial.report import BUDGET_FRACTION, INTERIM_TIER_RULE
+    from hwave.solver import initial_facade
+    if tier not in _TIERS_IN:
+        raise ValueError("tier: must be 'auto', 'large', 'medium' or 'small', got {!r}"
+                         .format(tier))
+    if tier == "medium":
+        raise NotImplementedError("tier 'medium' arrives in a later release; this release "
+                                  "has the large and small tiers")
+    limits = Limits() if limits is None else limits
+    chosen_by = "auto (interim rule)" if tier == "auto" else "user"
+    record = {
+        "estimate": {"bytes": None, "seconds": None, "class": None},
+        "budget": {"budget_fraction": BUDGET_FRACTION, "bytes": None,
+                   "available_bytes": None, "source": None},
+        "constants": {"budget_fraction": BUDGET_FRACTION,
+                      "small_max_operations": SMALL_TIER_MAX_OPERATIONS},
+        "rule": INTERIM_TIER_RULE if tier == "auto" else None,
+        "preflight": None,
+    }
     if tier == "large":
-        return tier
-    if tier in ("small", "medium"):
-        raise NotImplementedError("tier {!r} arrives in a later release; this release "
-                                  "has the large tier".format(tier))
-    raise ValueError("tier: must be 'auto', 'large', 'medium' or 'small', got {!r}"
-                     .format(tier))
+        return TierChoice("large", chosen_by, record)
+    p = base.problem
+    n_pair = hints_mod.pair_space(base, su2=su2).size
+    nk = int(np.prod(base.cellshape))
+    nb = int(p.nd)
+    nbytes = small_tier_bytes(n_pair, nk, nk, nb, limits.top_k)
+    ops = nk * n_pair ** 3
+    mem = initial_facade.available_host_bytes()
+    budget = None if mem.nbytes is None else int(BUDGET_FRACTION * mem.nbytes)
+    record["budget"].update(bytes=budget, available_bytes=mem.nbytes, source=mem.source)
+    over = []
+    if budget is not None and nbytes > budget:
+        over.append("memory estimate {} bytes > {} bytes, {:.0%} of the available host "
+                    "memory".format(nbytes, budget, BUDGET_FRACTION))
+    if ops > SMALL_TIER_MAX_OPERATIONS:
+        over.append("N_q |P|^3 = {} > {:.0e}".format(ops, SMALL_TIER_MAX_OPERATIONS))
+    pre = {"pair_space": n_pair, "n_q": nk, "n_k": nk, "bands": nb, "top_k": limits.top_k,
+           "small_bytes": nbytes, "small_operations": ops, "over_limits": over}
+    record["preflight"] = pre
+    warnings = []
+    if tier == "auto":
+        if mem.nbytes is None:
+            name, warnings = "large", [UNKNOWN_MEMORY_WARNING]
+        elif over:
+            name, warnings = "large", [SMALL_TIER_LIMIT_WARNING]
+        else:
+            name = "small"
+    else:
+        if mem.nbytes is not None and nbytes > mem.nbytes:
+            raise ValueError("tier small: the memory estimate {} bytes exceeds the available "
+                             "host memory {} bytes ({}); use the large tier".format(
+                                 nbytes, mem.nbytes, mem.source))
+        name = "small"
+        if over:
+            warnings = [SMALL_TIER_OVER_BUDGET_WARNING.format("; ".join(over))]
+    if name == "small":
+        record["estimate"]["bytes"] = nbytes
+    return TierChoice(name, chosen_by, record, tuple(warnings))
 
 
 def _input_path(obj):
@@ -946,7 +1341,11 @@ def _json_num(v):
     return float(v)
 
 
-def _model_record(base, su2, tr, hint, warnings):
+#: the statuses of a spin-rotation check that ran
+_SU2_APPLIED = ("passed", "failed")
+
+
+def _model_record(base, su2, tr, hint_rec, warnings, tier_record):
     sg = base.site_groups
     return {
         "spin_orbital": bool(base.spin_orbital), "norb": int(base.norb),
@@ -957,18 +1356,62 @@ def _model_record(base, su2, tr, hint, warnings):
                         "ambiguous": list(sg.ambiguous)},
         "Ncond": _json_num(base.ncond), "Ncond_per_cell": _json_num(base.ncond_per_cell),
         "T": float(base.T), "2Sz": base.two_sz, "cellshape": list(base.cellshape),
-        "su2": {"status": su2.status, "max_residual": su2.max_residual,
-                "method": su2.method, "sz_residual": su2.sz_residual},
+        # the report's su2 record: max_residual and method are null when the
+        # check is not applicable (the S_z-only check of 2Sz mode records its
+        # result in sz_residual)
+        "su2": {"status": su2.status,
+                "max_residual": su2.max_residual if su2.status in _SU2_APPLIED else None,
+                "method": su2.method if su2.status in _SU2_APPLIED else None,
+                "sz_residual": su2.sz_residual},
         "tr": {"invariant": bool(tr.invariant), "h0_residual": float(tr.h0_residual),
                "hf_residual": float(tr.hf_residual)},
         "warnings": list(warnings),
         "input_sha256": dict(base.input_sha256),
-        "hint": hint_record(hint, skip_reason=LARGE_TIER_SKIP),
+        "hint": hint_rec,
+        "tier_record": tier_record,
     }
 
 
+#: the warning when a para check is asked for but the tier has no para step
+PARA_CHECK_LARGE_WARNING = ("the para check is not run: the large tier has no "
+                            "paramagnetic Hartree-Fock step")
+
+
+def _pipeline(cands, subshapes, base, facts, lim, cache, *, su2, tr):
+    """Runs and rows of ``cands``: :func:`expand_runs`, the response checks,
+    :func:`deduplicate` and :func:`apply_quotas`."""
+    runs, rows = expand_runs(cands, subshapes, cellshape=base.cellshape,
+                             max_denominator=lim.max_denominator)
+    runs, rows = _response_checks(runs, rows, facts, nc_zero=base.n_c == 0,
+                                  only_para=_only_para(base.problem), cache=cache)
+    kept, dup_rows = deduplicate(runs, facts=facts, su2=su2, tr=tr, cache=cache)
+    index = {r["run_id"]: i for i, r in enumerate(rows)}
+    for r in dup_rows:
+        rows[index[r["run_id"]]] = r
+    return apply_quotas(kept, rows, lim)
+
+
+def _saturated(rows, B):
+    """Whether the instability quota of B cut a realised row."""
+    return any(r["family"] == "instability" and tuple(r["subshape"]) == B
+               and (r.get("not_tried_reason") or "").startswith("quota: instability")
+               for r in rows)
+
+
+def _listed_row(cand, B, reason, cellshape, lim):
+    run = CandidateRun(cand, B)
+    if reason == _UNREPRESENTABLE:
+        ok, why = cells.representable(cand.pattern.q, B)
+        row = _row(run, cellshape, representable=False, reason=why)
+        sub, cell, note = _proposal(cand.pattern, cellshape, lim.max_denominator)
+        row.update(proposed_subshape=sub, proposed_cellshape=cell, proposal_note=note)
+        return row
+    return _not_tried(_row(run, cellshape), reason)
+
+
 def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=None,
-                     extra=(), orbital_site=None, **limits) -> CandidateSet:
+                     extra=(), orbital_site=None, para=None, para_check=False,
+                     para_dir=None, **limits) -> CandidateSet:
     """The candidate set of a UHFk input.
 
     Parameters
@@ -982,21 +1425,55 @@ def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=
         :data:`hwave.initial.facts.NO_SUBSHAPE_WARNING`. Each must divide
         ``CellShape``; a duplicate is refused.
     tier : ``"auto"``, ``"large"``, ``"medium"`` or ``"small"``
-        In this release ``"auto"`` resolves to ``"large"``; ``"small"`` and
-        ``"medium"`` raise ``NotImplementedError``.
+        Chosen first, before any para step (:func:`choose_tier`; ``"auto"``
+        follows the interim rule there). ``"medium"`` raises
+        ``NotImplementedError`` (a later release).
     t_hint : float, optional
-        The user T_hint (the ``hint`` record only; never the candidates).
+        The user T_hint (the hints only; never the other rows).
     extra : sequence of Candidate
         User and literature candidates (evaluated on every SubShape).
     orbital_site : list of int, optional
         A site label per physical orbital (overrides the input and the
         clustering).
+    para : ParaResult, optional
+        The small tier: a para reference computed before
+        (:func:`hwave.initial.hints.para_hf` or
+        :func:`hwave.initial.hints.para_from_work`) for this input and
+        T_hint; ``None`` runs the para step here, after the tier is chosen.
+    para_check : bool
+        The small tier: the para step also runs from the uniform orbital
+        occupation (:func:`hwave.initial.hints.para_hf`). With the large
+        tier given explicitly ``ValueError``; when ``"auto"`` chose the
+        large tier, a warning.
+    para_dir : path-like, optional
+        The work directory of the para step (its runs, ``green.npz`` and
+        ``para_hf.json`` are kept there).
     **limits
         The fields of :class:`Limits`; any other keyword raises
         ``TypeError``.
+
+    In the small tier the hints run on the converged para reference
+    (:func:`hwave.initial.hints.hint_eigenpairs` over the whole k-mesh of
+    the primitive cell); their pairs give the instability rows
+    (:func:`instability_candidates`): the pairs a ``SubShape`` holds are
+    realised in rank order until its instability quota is reached (after
+    deduplication), every other pair is listed with its eigenvalue and the
+    reason it is not tried. The hints change only the instability rows;
+    every other row is the same at any T_hint. A para reference that is
+    not converged skips the hints with its reason.
     """
     lim = Limits.from_keywords(**limits)
-    tier = _resolve_tier(tier)
+    if tier not in _TIERS_IN:
+        raise ValueError("tier: must be 'auto', 'large', 'medium' or 'small', got {!r}"
+                         .format(tier))
+    if tier == "medium":
+        choose_tier(None, tier)                 # NotImplementedError
+    if para_check and tier == "large":
+        raise ValueError("para_check: the para step runs only in the small tier (the large "
+                         "tier has no hints)")
+    if para is not None and tier == "large":
+        raise ValueError("para: the large tier has no hints, so a para reference is not "
+                         "used; give tier small")
     path = _input_path(input_dir_or_model)
     extras = _extras(extra)
     base = model_facts(path, subshape=_UNIT, orbital_site=orbital_site)
@@ -1009,10 +1486,39 @@ def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=
 
     su2 = symmetry.su2_check(base.problem)
     tr = symmetry.tr_check(base.problem)
+    choice = choose_tier(base, tier, su2=su2, limits=lim)
+    tier_name = choice.name
     facts = {B: (base if B == _UNIT else model_facts(path, subshape=B,
                                                      orbital_site=orbital_site))
              for B in subshapes}
     hint = t_hint_bare(base.problem, t_user=t_hint)
+    warnings_extra = list(choice.warnings)
+
+    pairs = ()
+    if tier_name == "small":
+        if para is None:
+            para = hints_mod.para_hf(base, hint, para_check=para_check, work_dir=para_dir)
+        else:
+            from hwave.initial.writer import _check_para
+            _check_para(para, base, t_hint)
+        warnings_extra.extend(para.warnings)
+        if para.status == "converged":
+            P = hints_mod.pair_space(base, su2=su2)
+            eigen = hints_mod.hint_eigenpairs(base, para, P,
+                                              cells.commensurate_q(base.cellshape),
+                                              top_k=lim.top_k)
+            hint_rec = hint_record(hint, para, vertex=hints_mod.vertex_fields(eigen))
+            pairs = hint_pairs(eigen)
+            for res in eigen.values():
+                for w in res.warnings:
+                    if w not in warnings_extra:
+                        warnings_extra.append(w)
+        else:
+            hint_rec = hint_record(hint, para)
+    else:
+        if para_check:
+            warnings_extra.append(PARA_CHECK_LARGE_WARNING)
+        hint_rec = hint_record(hint, skip_reason=LARGE_TIER_SKIP)
 
     taken = {c.candidate_id for c in extras}
     reserved = reserved_candidates(base, subshapes, su2=su2, tr=tr, n_random=lim.n_random,
@@ -1022,33 +1528,51 @@ def candidate_states(input_dir_or_model, *, subshapes=None, tier="auto", t_hint=
     baseline = []
     for B in subshapes:
         baseline.extend(baseline_candidates(facts[B], B, su2=su2, tr=tr, limits=lim,
-                                            tier=tier, taken=taken, patterns=cache))
+                                            tier=tier_name, taken=taken, patterns=cache))
     cands = reserved + extras + baseline
 
-    runs, rows = expand_runs(cands, subshapes, cellshape=base.cellshape,
-                             max_denominator=lim.max_denominator)
-    nc_zero = base.n_c == 0
-    only_para = _only_para(base.problem)
-    runs, rows = _response_checks(runs, rows, facts, nc_zero=nc_zero, only_para=only_para,
-                                  cache=cache)
-    kept, dup_rows = deduplicate(runs, facts=facts, su2=su2, tr=tr, cache=cache)
-    index = {r["run_id"]: i for i, r in enumerate(rows)}
-    for r in dup_rows:
-        rows[index[r["run_id"]]] = r
-    runs, rows = apply_quotas(kept, rows, lim)
+    inst = InstabilityCandidates((), (), MappingProxyType({}))
+    budget = None
+    while True:
+        if pairs:
+            inst = instability_candidates(facts, pairs, subshapes, lim, su2=su2, tr=tr,
+                                          taken=set(taken), patterns=cache, budget=budget)
+        runs, rows = _pipeline(cands + list(inst.runnable), subshapes, base, facts, lim,
+                               cache, su2=su2, tr=tr)
+        grow = {}
+        for B in subshapes:
+            done = inst.realised.get(B, 0)
+            if done < inst.held.get(B, 0) and not _saturated(rows, B):
+                grow[B] = done + max(1, done)
+        if not grow:
+            break
+        budget = dict(inst.realised)
+        budget.update(grow)
+    taken.update(c.candidate_id for c in inst.runnable)
+    taken.update(c.candidate_id for c, _B, _r in inst.listed)
+    rows = list(rows)
+    for c, B, reason in inst.listed:
+        rows.append(_listed_row(c, B, reason, base.cellshape, lim))
+    for r in rows:
+        h = inst.hint_of.get(r["candidate_id"])
+        if h is not None:
+            r.update(rank=h.rank, **{"lambda": h.lam, "lambda_imag": h.lam_imag})
 
     warnings = list(base.warnings) + list(su2.warnings) + list(hint.warnings)
-    if nc_zero:
+    warnings.extend(w for w in warnings_extra if w not in warnings)
+    if base.n_c == 0:
         warnings.append(NC_ZERO_NOTE)
-    elif only_para:
+    elif _only_para(base.problem):
         warnings.append(EMPTY_FULL_NOTE)
+    all_cands = cands + list(inst.runnable) + [c for c, _B, _r in inst.listed]
     with_rows = {r["candidate_id"] for r in rows}
     cell_records = [{"subshape": list(B),
                      "commensurate_q": [cells.q_string(q) for q in cells.commensurate_q(B)],
                      "cellshape": list(base.cellshape), "cellshape_compatible": True,
                      "skipped_patterns": skipped_patterns(facts[B], B)}
                     for B in subshapes]
-    return CandidateSet(model=_model_record(base, su2, tr, hint, warnings), tier=tier,
-                        cells=cell_records,
-                        candidates=[c for c in cands if c.candidate_id in with_rows],
+    record = dict(choice.record, chosen_by=choice.chosen_by)
+    return CandidateSet(model=_model_record(base, su2, tr, hint_rec, warnings, record),
+                        tier=tier_name, cells=cell_records,
+                        candidates=[c for c in all_cands if c.candidate_id in with_rows],
                         runs=runs, rows=rows, limits=lim.to_json())

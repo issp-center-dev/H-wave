@@ -39,7 +39,9 @@ module it imports; it does not import ``hwave.initial``.
   writes its Green function in), :func:`diag_blocks` and
   :func:`assemble_green` (``uhfk_fill``: the per-block eigen-decomposition
   of ``H(k)`` and the stored Green function of given eigenvectors and
-  occupations, the two halves of :func:`green_function`).
+  occupations, the two halves of :func:`green_function`) and
+  :func:`available_host_bytes` (``host_memory``, the host memory a tier
+  may plan with).
 
 Every function takes and returns the stored Green function of UHFk,
 ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>`` (the layout of the
@@ -57,6 +59,7 @@ import numpy as np
 from . import hamiltonian_k
 from .fold import fold_layout, unfold_layout
 from .hamiltonian_k import to_k
+from .host_memory import HostMemory, available_host_bytes
 from .spin_orbital import interleaved_index
 from .uhfk_blocks import HFTables, SolverBlocks, accumulate_hf_projected
 from .uhfk_fill import (FillInfo, MuNotConvergedError, ShellRecord, assemble_green,
@@ -70,7 +73,8 @@ __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "unfold_layout", "diag_blocks", "assemble_green", "Bands", "bands_of",
            "fold_hamiltonian_k", "LINDHARD_DEGENERACY_TOL", "LINDHARD_ZERO_T_GAP",
            "static_lindhard",
-           "apply_lindhard", "ParaRun", "run_para", "PARA_EPS_MIN", "discard_profile_statistics"]
+           "apply_lindhard", "ParaRun", "run_para", "PARA_EPS_MIN", "discard_profile_statistics",
+           "HostMemory", "available_host_bytes"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
 #: and the combined ``Coulomb`` table, uhfk.py ``_check_interaction``)

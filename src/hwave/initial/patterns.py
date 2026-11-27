@@ -593,11 +593,18 @@ def _degenerate(A, q):
 def phi0(A, q) -> float:
     """``phi0 = -1/2 arg tr AA`` (in ``[-pi/2, pi/2)``), the phase that
     maximises the Hermitian norm at R = 0; 0 when ``|tr AA| <= PHI0_TOL *
-    ||A||^2``."""
+    ||A||^2``. A part of ``tr AA`` below :data:`SIGN_TIE_RTOL` of its
+    modulus is taken as zero (a real negative ``tr AA`` gives
+    ``-pi/2``)."""
     t = trAA(A, q)
     if abs(t) <= PHI0_TOL * _norm2(_amplitude(A)):
         return 0.0
-    return -0.5 * cmath.phase(t) + 0.0
+    # a real or imaginary part of round-off size is zero (+0.0), so that
+    # the branch of the phase at a real negative tr AA (phi0 = -pi/2, not
+    # +pi/2) does not depend on the sign of the round-off
+    re = t.real if abs(t.real) > SIGN_TIE_RTOL * abs(t) else 0.0
+    im = t.imag if abs(t.imag) > SIGN_TIE_RTOL * abs(t) else 0.0
+    return -0.5 * cmath.phase(complex(re, im)) + 0.0
 
 
 @dataclass(frozen=True)
