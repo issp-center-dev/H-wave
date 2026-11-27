@@ -138,9 +138,11 @@ _MODEL_KEYS = ("input_sha256", "hwave_version", "hwave_initial_version", "spin_o
 _HINT_KEYS = ("status", "skip_reason", "T_hint", "rule", "W0", "W_act", "W_all", "E_F",
               "D", "W_act_groups", "W_source", "q_status", "L_min", "t_hint_rule",
               "t_hint_source", "effect", "para_status", "para_free_energy",
-              "para_residual", "gamma_self_adjoint", "method", "q_set")
+              "para_residual", "para_polarisation", "gamma_self_adjoint", "method",
+              "q_set")
 #: null in a skipped hint record
-_HINT_SKIPPED_NULL = ("para_free_energy", "para_residual", "gamma_self_adjoint", "method")
+_HINT_SKIPPED_NULL = ("para_free_energy", "para_residual", "para_polarisation",
+                      "gamma_self_adjoint", "method")
 _TIER_KEYS = ("name", "chosen_by", "estimate", "budget", "constants")
 _LIMIT_KEYS = ("top_k", "max_candidates", "quota_instability", "precedence",
                "max_site_patterns", "n_random", "base_seed", "max_denominator",

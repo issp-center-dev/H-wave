@@ -367,17 +367,42 @@ def _run_of(candidate_or_run, subshape):
                     .format(candidate_or_run))
 
 
+def _check_para(para, facts):
+    """``para`` must be a :class:`~hwave.initial.hints.ParaResult` of the
+    model of ``facts``."""
+    from hwave.initial.hints import ParaResult, model_key
+    if not isinstance(para, ParaResult):
+        raise TypeError("para: a ParaResult (hwave.initial.hints.para_hf), got {!r}"
+                        .format(type(para).__name__))
+    if para.input_sha256 is not None and dict(para.input_sha256) != dict(facts.input_sha256):
+        raise ValueError("para: the para reference was computed for other input files "
+                         "(input_sha256 differs)")
+    if para.model is not None:
+        want = dict(model_key(facts))
+        diff = sorted(k for k in want if dict(para.model).get(k) != want[k])
+        if diff:
+            raise ValueError("para: the para reference was computed for another model "
+                             "({} differ)".format(", ".join(diff)))
+    if para.status == "converged":
+        p = facts.problem
+        nd0 = p.ns * p.norb_orig
+        want = (int(np.prod(facts.cellshape)), nd0, nd0)
+        if tuple(np.shape(para.H_para_k)) != want:
+            raise ValueError("para: H_para_k has shape {}, the primitive cell of this model "
+                             "{}".format(tuple(np.shape(para.H_para_k)), want))
+
+
 def _seed(facts, run, para):
     """The seed of ``run`` on the cell of ``facts``;
-    a :class:`SeedResult` whose ``tried`` may be false."""
+    a :class:`SeedResult` whose ``tried`` may be false. With a converged
+    para reference ``para`` the base Hamiltonian is its ``H_para_k`` folded
+    to the cell (``seed_base = "para_hf"``); otherwise the bare ``T(k)``."""
     from hwave.initial.cells import representable, to_qfrac
-    from hwave.initial.hints import t_hint_bare
+    from hwave.initial.hints import fold_para, t_hint_bare
     from hwave.initial.patterns import realise
     from hwave.initial.seed import seed_pattern
     if para is not None:
-        raise NotImplementedError(
-            "para=: seeding on the para Hartree-Fock state arrives in a later release; "
-            "this release seeds on the bare H0 (para=None)")
+        _check_para(para, facts)
     cand = run.candidate
     spec = cand.pattern
     B = tuple(run.subshape)
@@ -388,8 +413,12 @@ def _seed(facts, run, para):
                 run.run_id, list(B), reason))
     p = facts.problem
     O = None if spec.modulation == "none" else realise(spec, facts, B)
-    return seed_pattern(facts, p.ham_trans_k, O, T_run=p.T, W0=t_hint_bare(p).W0,
-                        amplitude=cand.amplitude_requested, seed_base="bare")
+    if para is not None and para.status == "converged":
+        base, seed_base = fold_para(para.H_para_k, facts, B), "para_hf"
+    else:
+        base, seed_base = p.ham_trans_k, "bare"
+    return seed_pattern(facts, base, O, T_run=p.T, W0=t_hint_bare(p).W0,
+                        amplitude=cand.amplitude_requested, seed_base=seed_base)
 
 
 def _provenance(facts, run, res):
@@ -437,10 +466,13 @@ def initial_state(input_dir_or_model, candidate_or_run, *, out, subshape=None,
     uhfr_toml : path-like, optional
         UHFr only: the target UHFr input, whose ``Nsite``, ``Ncond`` and
         ``2Sz`` must agree with the map and the model.
-    para : None
-        Reserved for seeding on the para Hartree-Fock state (a later
-        release); ``None`` seeds on the bare ``H0`` (``seed_base =
-        "bare"``).
+    para : ParaResult, optional
+        The para Hartree-Fock reference of the model
+        (:func:`hwave.initial.hints.para_hf`), computed once and reused:
+        when converged the seed is built on its Hamiltonian folded to the
+        cell (``seed_base = "para_hf"``); ``None`` or a reference that is
+        not converged seeds on the bare ``H0`` (``seed_base = "bare"``).
+        No para step runs here.
 
     Returns
     -------

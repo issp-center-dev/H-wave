@@ -17,6 +17,13 @@ module it imports; it does not import ``hwave.initial``.
 * :func:`green_function`: the stored Green function UHFk builds from a
   Hamiltonian (its diagonalisation and occupation fill), or with a uniform
   fill of an open T = 0 Fermi shell.
+* :func:`bands_of`: the bands of a Hamiltonian with the solver's
+  occupations (:class:`Bands`).
+* :func:`fold_hamiltonian_k`: a primitive-cell ``H(k)`` folded onto the
+  k-mesh of a ``SubShape``.
+* :func:`run_para`: a UHFk self-consistent run of an input on the
+  primitive cell (``SubShape = [1, 1, 1]``) at a given T from a given
+  Green function (:class:`ParaRun`).
 * :func:`referenced_input_files`: the files an input TOML names, by key.
 * :func:`primitive_h0_k`: the bare ``T(k)`` of the original (primitive)
   cell on the ``CellShape`` mesh, built by the solver's
@@ -49,15 +56,16 @@ from .fold import fold_layout, unfold_layout
 from .hamiltonian_k import to_k
 from .spin_orbital import interleaved_index
 from .uhfk_blocks import HFTables, SolverBlocks, accumulate_hf_projected
-from .uhfk_fill import FillInfo, MuNotConvergedError, ShellRecord, assemble_green, diag_blocks
+from .uhfk_fill import (FillInfo, MuNotConvergedError, ShellRecord, assemble_green,
+                        diag_blocks, fill_occupations)
 
 __all__ = ["UHFkProblem", "SolverBlocks", "HFTables", "FillInfo", "ShellRecord",
            "MuNotConvergedError", "TWO_BODY_TYPES", "load_problem",
            "solver_blocks", "hf_tables", "accumulate_hf_projected",
            "hf_potential", "green_function", "referenced_input_files",
            "primitive_h0_k", "to_k", "interleaved_index", "fold_layout",
-           "unfold_layout", "diag_blocks", "assemble_green",
-           "discard_profile_statistics"]
+           "unfold_layout", "diag_blocks", "assemble_green", "Bands", "bands_of",
+           "fold_hamiltonian_k", "ParaRun", "run_para", "discard_profile_statistics"]
 
 #: the two-body interaction tables UHFk reads (hartree_fock.HF_TYPE_ORDER
 #: and the combined ``Coulomb`` table, uhfk.py ``_check_interaction``)
@@ -198,10 +206,15 @@ def _read_config(toml_path):
     return doc
 
 
-def _build_solver(toml_path, *, subshape=None, with_green=False):
+def _build_solver(toml_path, *, subshape=None, with_green=False, param=None,
+                  prologue=True):
     """The UHFk instance of ``toml_path`` after the ``solve`` prologue
     (``T(k)``, the interaction tables and the blocks), as ``hwave`` would
     build it with its working directory at the TOML's directory.
+
+    ``param`` overrides ``[mode.param]`` keys (case-insensitively, as the
+    solver reads them); ``prologue=False`` stops after the constructor (the
+    solver's ``solve`` runs the prologue itself).
 
     Returns ``(solver, green_info, input_files)``: ``green_info`` is the
     green-function input (``initial`` and the other ``[file.input]`` files,
@@ -225,6 +238,8 @@ def _build_solver(toml_path, *, subshape=None, with_green=False):
     info_mode["param"] = ParamDict(info_mode.get("param", {}) or {})
     if subshape is not None:
         info_mode["param"]["SubShape"] = [int(n) for n in subshape]
+    for key, value in (param or {}).items():
+        info_mode["param"][key] = value
 
     finput = dict(doc.get("file", {}).get("input", {}))
     # the solver joins every path with its cwd; hwave runs at the TOML's
@@ -246,9 +261,10 @@ def _build_solver(toml_path, *, subshape=None, with_green=False):
         ham_info = read_io.get_param("ham")
         green_info = read_io.get_param("green") if with_green else {}
         solver = UHFk(ham_info, info_log, info_mode)
-        solver._make_ham_trans()
-        solver._make_ham_inter()
-        solver._detect_blocks()
+        if prologue:
+            solver._make_ham_trans()
+            solver._make_ham_inter()
+            solver._detect_blocks()
     except SystemExit as exc:
         raise ValueError("{}: UHFk refused the input (exit status {}); the logged "
                          "error says why.".format(toml_path, exc.code)) from None
@@ -518,6 +534,199 @@ def green_function(ham_k, T, blocks, *, shape, ns, norb, fill="solver",
     if return_info:
         return out[0], out[2]
     return out[0]
+
+
+# eq=False: the fields hold arrays (identity comparison and hash)
+@dataclass(frozen=True, eq=False)
+class Bands:
+    """The bands of a Hamiltonian with the solver's occupations.
+
+    ``eps_k`` ``(nk, nb)``: the eigenvalues, block by block (the solver's
+    block order), ascending within a block. ``vec_k`` ``(nk, nd, nb)``: the
+    eigenvectors embedded in the full index space (column ``l`` is the
+    eigenvector of band ``l``, zero outside its block). ``kgrid``: the
+    k-mesh ``(nx, ny, nz)`` (k in C order, ``k_i = 2 pi m_i / n_i``). ``T``:
+    the temperature of the occupations. ``mu``: one chemical potential per
+    mu-group. ``band_group`` ``(nk, nb)``: the mu-group of each band.
+    ``occ_k`` ``(nk, nb)``: the occupation of each band, the solver's fill
+    (:func:`hwave.solver.uhfk_fill.fill_occupations`).
+
+    The stored Green function of the bands is ``G(k)_ab = sum_l
+    conj(vec_k[k, a, l]) occ_k[k, l] vec_k[k, b, l]``, ``G(r)`` its
+    ``fftn(..., norm="forward")``: :func:`green_function` of the same
+    Hamiltonian. Every array is read-only. Not the ``Bands`` of
+    :mod:`hwave.results`.
+    """
+    eps_k: np.ndarray
+    vec_k: np.ndarray
+    kgrid: Tuple[int, int, int]
+    T: float
+    mu: Tuple[float, ...]
+    band_group: np.ndarray
+    occ_k: np.ndarray
+
+
+def bands_of(H_k, blocks, T, *, shape, ns, norb, ene_cutoff=None):
+    """The :class:`Bands` of the Hamiltonian ``H_k`` ``(nvol, nd, nd)``
+    (solver index order) with the blocks and mu-groups of ``blocks``
+    (:class:`SolverBlocks`, ``group_nconds`` included) at temperature ``T``.
+
+    It composes the solver's per-block diagonalisation
+    (:func:`diag_blocks`) and occupation fill
+    (:func:`hwave.solver.uhfk_fill.fill_occupations`, ``fill="solver"``),
+    the two steps of :func:`green_function`, so ``mu`` and the occupations
+    are those of the solver. ``shape`` is the k-grid, ``ns`` and ``norb``
+    the stored layout, ``ene_cutoff`` the Fermi-function cut (``None``: the
+    solvers' default). Raises :class:`MuNotConvergedError` when the T > 0
+    ``mu`` search fails.
+    """
+    from .base import PARAM_DEFAULTS
+    if ene_cutoff is None:
+        ene_cutoff = PARAM_DEFAULTS["ene_cutoff"]
+    H_k = np.asarray(H_k)
+    shape = tuple(int(n) for n in shape)
+    nvol = int(np.prod(shape))
+    nd = int(ns) * int(norb)
+    if H_k.shape != (nvol, nd, nd):
+        raise ValueError("bands_of: H_k must be (nvol, nd, nd) = {}, got {}"
+                         .format((nvol, nd, nd), H_k.shape))
+    ws, vs = diag_blocks(H_k, blocks.block_info)
+    dists, mus = fill_occupations(ws, vs, blocks.block_info, blocks.block_to_group,
+                                  blocks.group_nconds, shape=shape, T=T,
+                                  ene_cutoff=ene_cutoff)
+    nb = sum(w.shape[1] for w in ws)
+    eps = np.empty((nvol, nb))
+    occ = np.empty((nvol, nb))
+    vec = np.zeros((nvol, nd, nb), dtype=np.complex128)
+    group = np.empty((nvol, nb), dtype=int)
+    col = 0
+    for blk, g, w, v, d in zip(blocks.block_info, blocks.block_to_group, ws, vs, dists):
+        n = w.shape[1]
+        idx = np.asarray(blk)
+        eps[:, col:col + n] = w
+        occ[:, col:col + n] = d
+        vec[:, idx, col:col + n] = v
+        group[:, col:col + n] = int(g)
+        col += n
+    return Bands(eps_k=_read_only(eps), vec_k=_read_only(vec), kgrid=shape, T=float(T),
+                 mu=tuple(float(m) for m in mus), band_group=_read_only(group),
+                 occ_k=_read_only(occ))
+
+
+def fold_hamiltonian_k(H_k, *, cellshape, subshape, norb_orig, ns):
+    """A primitive-cell Hamiltonian ``H_k`` ``(prod(cellshape), nd_orig,
+    nd_orig)`` on the ``CellShape`` mesh, folded onto the ``SubShape``
+    cell: ``(nvol, nd, nd)`` on the mesh ``cellshape // subshape``, in the
+    folded index order UHFk uses (folded orbital ``a + norb_orig * ir``).
+
+    The fold is done in real space with the solver's Fourier convention:
+    ``H(R)`` by :func:`hamiltonian_k.from_k` (the inverse of
+    :func:`to_k`), :func:`fold_layout` in the Hamiltonian convention
+    (``hamiltonian=True``, the layout ``fold.reshape_interaction`` gives the
+    Transfer table), then :func:`to_k` on the supercell mesh. Callers never
+    apply :func:`fold_layout` to a k-space array.
+    """
+    cellshape = tuple(int(n) for n in cellshape)
+    subshape = tuple(int(n) for n in subshape)
+    norb_orig, ns = int(norb_orig), int(ns)
+    nd_orig = ns * norb_orig
+    H_k = np.asarray(H_k)
+    lvol = int(np.prod(cellshape))
+    if H_k.shape != (lvol, nd_orig, nd_orig):
+        raise ValueError("fold_hamiltonian_k: H_k must be (prod(cellshape), nd_orig, "
+                         "nd_orig) = {}, got {}".format((lvol, nd_orig, nd_orig), H_k.shape))
+    h_r = hamiltonian_k.from_k(H_k, cellshape).reshape(lvol, ns, norb_orig, ns, norb_orig)
+    sub = fold_layout(h_r, cellshape=cellshape, subshape=subshape, norb_orig=norb_orig,
+                      ns=ns, hamiltonian=True)
+    shape = tuple(c // b for c, b in zip(cellshape, subshape))
+    nd = sub.shape[1] * sub.shape[2]
+    return to_k(sub.reshape(shape + (nd, nd)))
+
+
+# eq=False: the fields hold arrays
+@dataclass(frozen=True, eq=False)
+class ParaRun:
+    """The result of :func:`run_para`.
+
+    ``G``: the stored Green function at the end of the run ``(nvol, ns,
+    norb, ns, norb)`` (the solver's mixed G, the ``green`` it writes).
+    ``H_k``: ``T(k) + hf_potential(G)`` ``(nvol, nd, nd)``, the
+    Hamiltonian of ``G`` (block-projected). ``free_energy``: the solver's
+    ``FreeEnergy_Total`` (of the whole lattice). ``residual``: the last SCF
+    residual (``nan`` after zero steps). ``converged``, ``iterations``: the
+    solver's convergence record. ``mu``: one chemical potential per
+    mu-group of the last step. ``work_dir``: the directory the run wrote
+    its results to (``energy.dat``, ``green.npz``, ``scf_status.dat``, and
+    the start Green function ``start.npz``).
+    """
+    G: np.ndarray
+    H_k: np.ndarray
+    free_energy: float
+    residual: float
+    converged: bool
+    iterations: int
+    mu: Tuple[float, ...]
+    work_dir: pathlib.Path
+
+
+def run_para(toml_path, *, T, start_G, work_dir):
+    """Run UHFk for the input ``toml_path`` on its primitive cell.
+
+    The problem is loaded as :func:`load_problem` loads it, with ``SubShape
+    = [1, 1, 1]`` (whatever the input's ``SubShape``) and the temperature
+    ``T``; ``IterationMax``, ``EPS``, ``Mix`` and every other parameter are
+    the input's. The start Green function ``start_G`` (stored layout of
+    the primitive cell, ``(prod(CellShape), ns, norb_orig, ns,
+    norb_orig)``) is written to ``work_dir/start.npz`` and read by the
+    solver as its ``initial`` Green function; the solver's public ``solve``
+    then runs in ``work_dir`` and its ``save_results`` writes
+    ``energy.dat``, ``green.npz`` and ``scf_status.dat`` there.
+
+    Returns
+    -------
+    ParaRun
+
+    Raises
+    ------
+    ValueError
+        A refused input, a ``start_G`` of the wrong shape, a negative T,
+        or a solver exit (for example a failed chemical-potential search).
+    """
+    T = float(T)
+    if not np.isfinite(T) or T < 0.0:
+        raise ValueError("run_para: T must be a finite number >= 0, got {!r}".format(T))
+    work_dir = pathlib.Path(os.path.abspath(os.fspath(work_dir)))
+    work_dir.mkdir(parents=True, exist_ok=True)
+    solver, _, _ = _build_solver(toml_path, subshape=(1, 1, 1), param={"T": T},
+                                 prologue=False)
+    want = (solver.nvol, solver.ns, solver.norb, solver.ns, solver.norb)
+    start_G = np.asarray(start_G, dtype=np.complex128)
+    if start_G.shape != want:
+        raise ValueError("run_para: start_G must be (nvol, ns, norb, ns, norb) = {} on "
+                         "the primitive cell, got {}".format(want, start_G.shape))
+    start = work_dir / "start.npz"
+    np.savez(start, green=start_G)
+    info_out = {"path_to_output": str(work_dir), "energy": "energy.dat",
+                "green": "green.npz"}
+    try:
+        with np.load(start, allow_pickle=False) as data:
+            green_info = {"initial": data}
+            solver.solve(green_info, str(work_dir))
+        solver.save_results(info_out, {})
+    except SystemExit as exc:
+        raise ValueError("{}: the paramagnetic UHFk run stopped (exit status {}); the "
+                         "logged error says why.".format(toml_path, exc.code)) from None
+    G = np.array(solver.Green, dtype=np.complex128)
+    H_k = np.array(solver.ham_trans, dtype=np.complex128)
+    accumulate_hf_projected(H_k, G, solver._hf_tables(), include_fock=solver.iflag_fock,
+                            blocks=solver.block_info)
+    rest = solver.physics.get("Rest", float("nan")) if solver.scf_iterations else float("nan")
+    free = solver.physics.get("FreeEne", {}).get("Total", float("nan"))
+    mu = np.atleast_1d(solver._green_list.get("mu", ()))
+    return ParaRun(G=_read_only(G), H_k=_read_only(H_k), free_energy=float(np.real(free)),
+                   residual=float(rest), converged=bool(solver.scf_converged),
+                   iterations=int(solver.scf_iterations),
+                   mu=tuple(float(m) for m in mu), work_dir=work_dir)
 
 
 #: the ``[file.input]`` keys that name an initial state, not a model input

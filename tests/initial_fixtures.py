@@ -149,3 +149,66 @@ def triangular(dest, L, *, U=0.0, T=0.0, ncond=None, subshape=None, param=None):
     inter = {"CoulombIntra": {((0, 0, 0), 0, 0): U}} if U else None
     return write_input(dest, cellshape=(L, L, 1), transfer=triangular_transfer(),
                        rvec=TRIANGULAR_RVEC, interactions=inter, param=p)
+
+
+def chain_transfer(t=1.0, norb=1):
+    """Nearest-neighbour hopping ``t`` along x of each of ``norb``
+    orbitals (orbital-diagonal)."""
+    out = {}
+    for a in range(norb):
+        out[((1, 0, 0), a, a)] = -t
+        out[((-1, 0, 0), a, a)] = -t
+    return out
+
+
+def chain(dest, L, *, U=0.0, T=0.0, ncond=None, subshape=None, param=None, mode=None):
+    """One-orbital chain of ``L`` sites along x, hopping 1, on-site ``U``;
+    half filling unless ``ncond`` is given."""
+    p = {"Ncond": L if ncond is None else ncond, "T": T}
+    if subshape is not None:
+        p["SubShape"] = list(subshape)
+    p.update(param or {})
+    inter = {"CoulombIntra": {((0, 0, 0), 0, 0): U}} if U else None
+    return write_input(dest, cellshape=(L, 1, 1), transfer=chain_transfer(),
+                       interactions=inter, param=p, mode=mode)
+
+
+def two_orbital(dest, L, *, delta, t=1.0, U=(0.0, 0.0), V=0.0, T=0.0, ncond=None,
+                subshape=None, param=None, mode=None):
+    """Two orbitals per site on a chain of ``L`` sites: hopping ``t`` along x
+    within each orbital, on-site levels ``-delta/2`` (orbital 0) and
+    ``+delta/2`` (orbital 1), on-site ``U = (U_0, U_1)`` and the on-site
+    inter-orbital density interaction ``V`` (CoulombInter at R = 0); one
+    electron per site unless ``ncond`` is given."""
+    transfer = chain_transfer(t, norb=2)
+    transfer[((0, 0, 0), 0, 0)] = -0.5 * delta
+    transfer[((0, 0, 0), 1, 1)] = 0.5 * delta
+    inter = {}
+    intra = {((0, 0, 0), a, a): u for a, u in enumerate(U) if u}
+    if intra:
+        inter["CoulombIntra"] = intra
+    if V:
+        inter["CoulombInter"] = {((0, 0, 0), 0, 1): V, ((0, 0, 0), 1, 0): V}
+    p = {"Ncond": L if ncond is None else ncond, "T": T}
+    if subshape is not None:
+        p["SubShape"] = list(subshape)
+    p.update(param or {})
+    return write_input(dest, cellshape=(L, 1, 1), norb=2, transfer=transfer,
+                       interactions=inter or None, param=p, mode=mode)
+
+
+def so_chain(dest, L, *, U=0.0, T=0.0, soc=0.0, ncond=None, param=None):
+    """One physical orbital on a chain of ``L`` sites in spin-orbital mode
+    (Geometry norb = 2, spin-orbitals ``2a + s``): hopping 1 along x and a
+    spin-orbit hopping ``i soc sigma^z`` on the x bond (time-reversal
+    invariant), on-site ``U``; half filling unless ``ncond`` is given."""
+    transfer = {}
+    for s in range(2):
+        transfer[((1, 0, 0), s, s)] = -1.0 + 1j * soc * (1 - 2 * s)
+        transfer[((-1, 0, 0), s, s)] = -1.0 - 1j * soc * (1 - 2 * s)
+    p = {"Ncond": L if ncond is None else ncond, "T": T}
+    p.update(param or {})
+    inter = {"CoulombIntra": {((0, 0, 0), 0, 0): U}} if U else None
+    return write_input(dest, cellshape=(L, 1, 1), norb=2, transfer=transfer,
+                       interactions=inter, param=p, mode={"enable_spin_orbital": True},
+                       centers=[(0.0, 0.0, 0.0)] * 2)

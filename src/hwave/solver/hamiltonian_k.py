@@ -168,6 +168,24 @@ def to_k(tab_r, *, scale_after=False):
     return tab_k.reshape(nx * ny * nz, p, q)
 
 
+def from_k(tab_k, shape):
+    """``T(R) = (1/N) sum_k e^{-ikR} T(k)``, the inverse of :func:`to_k`,
+    as ``(nx, ny, nz, p, q)``.
+
+    ``tab_k`` is ``(nvol, p, q)`` on the FFT grid ``shape = (nx, ny, nz)``
+    (k in C order, as :func:`to_k` returns it). The transform is
+    ``fftn(..., norm="forward")``, the expression UHFk uses for ``G(r)``
+    (``uhfk_fill.assemble_green``).
+    """
+    tab_k = np.asarray(tab_k)
+    nx, ny, nz = (int(n) for n in shape)
+    nvol, p, q = tab_k.shape
+    if nvol != nx * ny * nz:
+        raise ValueError("from_k: tab_k has {} k points, shape {} has {}"
+                         .format(nvol, tuple(shape), nx * ny * nz))
+    return np.fft.fftn(tab_k.reshape(nx, ny, nz, p, q), axes=(0, 1, 2), norm="forward")
+
+
 def embed_spin(mat_k, ns=2):
     """``(nvol, p, q)`` -> ``(nvol, ns*p, ns*q)``: ``I_ns ⊗ mat_k``, the
     spin index outer (composite index ``s*p + a``), i.e. the same

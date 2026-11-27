@@ -101,7 +101,7 @@ from hwave.initial import cells, labels, symmetry
 from hwave.initial.candidates import (
     Candidate, CandidateRun, CandidateSet, DEFAULT_AMPLITUDE, make_candidate_id)
 from hwave.initial.facts import NO_SUBSHAPE_WARNING, ModelFacts, model_facts
-from hwave.initial.hints import t_hint_bare
+from hwave.initial.hints import hint_record, t_hint_bare
 from hwave.initial.patterns import (
     NEG_TRANSLATED, Entry, PatternSpec, fix_sign, pattern_rows, phi0, realise)
 from hwave.initial.seed import (
@@ -963,16 +963,7 @@ def _model_record(base, su2, tr, hint, warnings):
                "hf_residual": float(tr.hf_residual)},
         "warnings": list(warnings),
         "input_sha256": dict(base.input_sha256),
-        "hint": {
-            "status": "skipped", "skip_reason": LARGE_TIER_SKIP,
-            "T_hint": hint.T_hint, "rule": hint.rule, "W0": hint.W0, "W_act": hint.W_act,
-            "W_all": hint.W_all, "E_F": list(hint.E_F), "D": list(hint.D),
-            "W_act_groups": list(hint.W_act_groups), "W_source": hint.W_source,
-            "q_status": {}, "L_min": hint.L_min, "t_hint_rule": hint.t_hint_rule,
-            "t_hint_source": hint.t_hint_source, "effect": hint.effect,
-            "para_status": None, "para_free_energy": None, "para_residual": None,
-            "gamma_self_adjoint": None, "method": None, "q_set": [],
-        },
+        "hint": hint_record(hint, skip_reason=LARGE_TIER_SKIP),
     }
 
 

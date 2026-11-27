@@ -8,9 +8,10 @@ arithmetic and its order are those of the methods they came from, so the
 solver results are bit-for-bit unchanged.
 
 * :func:`diag_blocks`: the eigen-decomposition of each block of ``H(k)``.
-* :func:`fill_green`: one chemical potential per mu-group, the occupations
-  and the stored Green function ``G[r, s, a, t, b] = <c^dag_{sa}(r)
-  c_{tb}(0)>``, with the solver's fill (``fill="solver"``) or, at T = 0, a
+* :func:`fill_occupations`: one chemical potential per mu-group and the
+  occupations of every block (the mu-group loop).
+* :func:`fill_green`: :func:`fill_occupations`, then the stored Green
+  function ``G[r, s, a, t, b] = <c^dag_{sa}(r) c_{tb}(0)>``, with the solver's fill (``fill="solver"``) or, at T = 0, a
   uniform fill of the Fermi shell (``fill="uniform"``).
 * :func:`find_dist_group`, :func:`find_dist_group_zero_t`,
   :func:`find_dist_group_nonzero_t`: the occupations of one mu-group.
@@ -34,8 +35,8 @@ import numpy as np
 logger = logging.getLogger("qlms").getChild("uhfk")
 
 __all__ = ["ShellRecord", "FillInfo", "MuNotConvergedError", "diag_blocks",
-           "group_blocks", "assemble_green", "fill_green", "find_dist_group", "find_dist_group_zero_t",
-           "find_dist_group_nonzero_t"]
+           "group_blocks", "assemble_green", "fill_occupations", "fill_green",
+           "find_dist_group", "find_dist_group_zero_t", "find_dist_group_nonzero_t"]
 
 _FILLS = ("solver", "uniform")
 
@@ -284,24 +285,20 @@ def assemble_green(vs_list, dists, blocks, *, shape, ns, norb):
     return gab_r.reshape(nvol, ns, norb, ns, norb)
 
 
-def fill_green(ws_list, vs_list, blocks, block_to_group, group_nconds, *, shape,
-               ns, norb, T, ene_cutoff, fill="solver", shell_tol=None,
-               return_info=False):
-    """The stored Green function of the eigen-decomposition ``ws_list``,
-    ``vs_list`` (:func:`diag_blocks`) of the blocks ``blocks``.
+def fill_occupations(ws_list, vs_list, blocks, block_to_group, group_nconds, *, shape,
+                     T, ene_cutoff, ns=None, norb=None, fill="solver", shell_tol=None,
+                     return_info=False):
+    """The occupations and chemical potentials of the eigen-decomposition
+    ``ws_list``, ``vs_list`` (:func:`diag_blocks`) of the blocks ``blocks``:
+    the mu-group loop of :func:`fill_green` (``UHFk._green``), without the
+    assembly of the Green function.
 
-    With ``fill="solver"`` this is ``UHFk._green``: ``(green, mu)``,
-    ``green`` ``(nvol, ns, norb, ns, norb)`` and ``mu`` one float per
-    mu-group (an ``ndarray``). With ``fill="uniform"`` at T = 0 the levels
-    within ``shell_tol`` of the Fermi level (the ``ncond``-th lowest level
-    of the group) form the shell; the levels below it are filled and the
-    shell by ``(n_group - n_below) / g_shell`` each. At T > 0 the uniform
-    fill is the solver's.
-
-    With ``return_info`` a :class:`FillInfo` is appended to the result. At
-    T = 0 and ``fill="solver"`` its shell is that of ``shell_tol`` (exact
-    ties when ``shell_tol`` is ``None``); the solver's fill does not change
-    with it.
+    Returns ``(dists, mus)``: ``dists`` one ``(nvol, n_b)`` array of
+    occupations per block (in block order), ``mus`` one float per mu-group
+    (an ``ndarray``). ``fill``, ``shell_tol`` and ``return_info`` are those
+    of :func:`fill_green`; with ``return_info`` the per-group
+    :class:`ShellRecord` tuple is appended (``ns`` and ``norb`` name the
+    groups ``"up"``/``"down"``; they are needed only then).
     """
     if fill not in _FILLS:
         raise ValueError("fill must be one of {}, got {!r}".format(_FILLS, fill))
@@ -360,7 +357,38 @@ def fill_green(ws_list, vs_list, blocks, block_to_group, group_nconds, *, shape,
         for i, b in enumerate(blist):
             group_dists[b] = dists[i]
 
+    if return_info:
+        return group_dists, mus, tuple(shells)
+    return group_dists, mus
+
+
+def fill_green(ws_list, vs_list, blocks, block_to_group, group_nconds, *, shape,
+               ns, norb, T, ene_cutoff, fill="solver", shell_tol=None,
+               return_info=False):
+    """The stored Green function of the eigen-decomposition ``ws_list``,
+    ``vs_list`` (:func:`diag_blocks`) of the blocks ``blocks``.
+
+    With ``fill="solver"`` this is ``UHFk._green``: ``(green, mu)``,
+    ``green`` ``(nvol, ns, norb, ns, norb)`` and ``mu`` one float per
+    mu-group (an ``ndarray``). With ``fill="uniform"`` at T = 0 the levels
+    within ``shell_tol`` of the Fermi level (the ``ncond``-th lowest level
+    of the group) form the shell; the levels below it are filled and the
+    shell by ``(n_group - n_below) / g_shell`` each. At T > 0 the uniform
+    fill is the solver's.
+
+    With ``return_info`` a :class:`FillInfo` is appended to the result. At
+    T = 0 and ``fill="solver"`` its shell is that of ``shell_tol`` (exact
+    ties when ``shell_tol`` is ``None``); the solver's fill does not change
+    with it.
+
+    The occupations come from :func:`fill_occupations` (the one mu-group
+    loop), the Green function from :func:`assemble_green`.
+    """
+    out = fill_occupations(ws_list, vs_list, blocks, block_to_group, group_nconds,
+                           shape=shape, T=T, ene_cutoff=ene_cutoff, ns=ns, norb=norb,
+                           fill=fill, shell_tol=shell_tol, return_info=return_info)
+    group_dists, mus = out[0], out[1]
     green = assemble_green(vs_list, group_dists, blocks, shape=shape, ns=ns, norb=norb)
     if return_info:
-        return green, mus, FillInfo(mu=tuple(float(m) for m in mus), shell=tuple(shells))
+        return green, mus, FillInfo(mu=tuple(float(m) for m in mus), shell=out[2])
     return green, mus
