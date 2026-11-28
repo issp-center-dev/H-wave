@@ -58,10 +58,14 @@ Basic usage
   ``python -m hwave.initial`` prepares a set of candidate initial states for a
   UHFk input, one run directory each, and after the ``hwave`` runs collects
   and ranks the results (``prepare``, ``check``, ``collect``; see
-  ``python -m hwave.initial --help``). It is a preview until its full
-  documentation; see :doc:`initial_states`. The selected state is the lowest
-  free energy among the candidates tried. It is not a proof of the ground
-  state.
+  ``python -m hwave.initial --help``). ``--tier small`` adds orbital
+  patterns and instability rows from a preliminary paramagnetic
+  Hartree-Fock run (``--para-check`` also starts that run from the uniform
+  orbital occupation; with ``--stage0`` it runs as a job of its own and
+  ``prepare`` exits with code 3 until it has run). It is a preview until its
+  full documentation; see :doc:`initial_states`. The selected state is the
+  lowest free energy among the candidates tried. It is not a proof of the
+  ground state.
 
 - Official Page
 

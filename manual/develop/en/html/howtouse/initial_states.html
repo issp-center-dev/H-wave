@@ -42,11 +42,13 @@ directory, and the tool collects the results and ranks them by free energy.</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p>This is a preview. The commands, options and file formats may still
-change, and this release provides the large tier only. The large tier is
-the default candidate set: spin and charge patterns at every q the cell
-can represent, plus the reserved rows <code class="docutils literal notranslate"><span class="pre">para</span></code>, <code class="docutils literal notranslate"><span class="pre">ferro</span></code> and <code class="docutils literal notranslate"><span class="pre">random</span></code>,
-which no quota cuts. Later releases add smaller candidate sets chosen
-from an instability analysis of the paramagnet.</p>
+change. This release provides two tiers. The large tier is the default
+candidate set: spin and charge patterns at every q the cell can
+represent, plus the reserved rows <code class="docutils literal notranslate"><span class="pre">para</span></code>, <code class="docutils literal notranslate"><span class="pre">ferro</span></code> and <code class="docutils literal notranslate"><span class="pre">random</span></code>,
+which no quota cuts. The small tier adds orbital patterns and
+instability rows from a static analysis of the paramagnet (see
+<a class="reference internal" href="#initial-states-small-tier"><span class="std std-ref">The small tier</span></a>). A medium tier for larger models, and a
+tier choice from a calibrated cost model, arrive in a later release.</p>
 </div>
 <p>The selected state is the lowest free energy among the candidates tried. It is
 not a proof of the ground state.</p>
@@ -75,15 +77,18 @@ package, <code class="docutils literal notranslate"><span class="pre">hwave/init
 its orbital indices are physical orbital indices (also in spin-orbital
 mode).</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">--t-hint</span> <span class="pre">T</span></code>: the hint temperature, in the energy units of the input.
-It is recorded in the report only and never changes the candidate set or
-the seeds. Default: the input <code class="docutils literal notranslate"><span class="pre">T</span></code> when <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">&gt;</span> <span class="pre">0</span></code>; at <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">0</span></code> a rule
-from the bands and the k mesh, <code class="docutils literal notranslate"><span class="pre">max(W/(2</span> <span class="pre">L),</span> <span class="pre">1e-4</span> <span class="pre">W)</span></code>, with <code class="docutils literal notranslate"><span class="pre">W</span></code> the
-energy span of the bands around the Fermi level (at least 1e-3) and <code class="docutils literal notranslate"><span class="pre">L</span></code>
-the shortest <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> axis longer than 2. The rule used is shown in the summary.</p></li>
+The small tier evaluates its hints at this temperature (see
+<a class="reference internal" href="#initial-states-small-tier"><span class="std std-ref">The small tier</span></a>); it changes only the instability rows
+and their order, never the other candidates, and the candidate runs stay
+at the input <code class="docutils literal notranslate"><span class="pre">T</span></code>. The large tier only records it. Default: the input
+<code class="docutils literal notranslate"><span class="pre">T</span></code> when <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">&gt;</span> <span class="pre">0</span></code>; at <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">0</span></code> a rule from the bands and the k mesh,
+<code class="docutils literal notranslate"><span class="pre">max(W/(2</span> <span class="pre">L),</span> <span class="pre">1e-4</span> <span class="pre">W)</span></code>, with <code class="docutils literal notranslate"><span class="pre">W</span></code> the energy span of the bands around
+the Fermi level (at least 1e-3) and <code class="docutils literal notranslate"><span class="pre">L</span></code> the shortest <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> axis
+longer than 2. The rule used is shown in the summary.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">--amplitude</span> <span class="pre">A</span></code> (the requested seed amplitude, in (0, 1), default 0.5),
 <code class="docutils literal notranslate"><span class="pre">--max-candidates</span> <span class="pre">N</span></code> (generated rows per <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>, default 32),
 <code class="docutils literal notranslate"><span class="pre">--orbital-site</span> <span class="pre">FILE</span></code> (a JSON list with one site label per physical
-orbital), <code class="docutils literal notranslate"><span class="pre">--tier</span></code> (<code class="docutils literal notranslate"><span class="pre">auto</span></code> resolves to <code class="docutils literal notranslate"><span class="pre">large</span></code> in this release).
+orbital).
 At <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">0</span></code> the seed field can reach the requested amplitude exactly
 where two levels cross at the Fermi level. The seed is then taken at
 that crossing, with the crossing levels filled uniformly when that meets
@@ -91,6 +96,19 @@ the request, or else with the occupation just past the crossing.
 <code class="docutils literal notranslate"><span class="pre">amplitude_used</span></code> in <code class="docutils literal notranslate"><span class="pre">coverage.json</span></code> can therefore exceed the request.
 On a spin-symmetric model, a pattern without a spin component (para,
 charge, orbital) gives a seed with identical spin-up and spin-down parts.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">auto|large|small</span></code>: the candidate set (<code class="docutils literal notranslate"><span class="pre">medium</span></code> is reserved
+for a later release). <code class="docutils literal notranslate"><span class="pre">auto</span></code>, the default, chooses the small tier when
+the model is small enough (see <a class="reference internal" href="#initial-states-auto-tier"><span class="std std-ref">Choosing the tier</span></a>), else the
+large tier.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--para-check</span></code> (small tier): the preliminary paramagnetic run also
+starts from the uniform orbital occupation, and the lower free energy is
+kept (see <a class="reference internal" href="#initial-states-small-tier"><span class="std std-ref">The small tier</span></a>). Refused with <code class="docutils literal notranslate"><span class="pre">--tier</span>
+<span class="pre">large</span></code>; with <code class="docutils literal notranslate"><span class="pre">auto</span></code> choosing the large tier it is ignored with a
+warning.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--stage0</span></code> (small tier): the preliminary paramagnetic run is not run
+inside <code class="docutils literal notranslate"><span class="pre">prepare</span></code> but written as run directories of its own, for a
+batch system (see <a class="reference internal" href="#initial-states-preliminary-run"><span class="std std-ref">The preliminary paramagnetic run on a batch system</span></a>). Refused when the
+large tier is given or chosen.</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">prepare</span></code> writes into WORK:</p>
 <ul class="simple">
@@ -124,10 +142,149 @@ solver would ignore it.</p>
 <p>Running <code class="docutils literal notranslate"><span class="pre">prepare</span></code> again with the same command and inputs on its own WORK
 does nothing; a different command, changed inputs or a non-empty directory
 not written by <code class="docutils literal notranslate"><span class="pre">prepare</span></code> are refused, naming the difference.</p>
+<p>Complex coefficients are accepted only for <code class="docutils literal notranslate"><span class="pre">PairHop</span></code>. <code class="docutils literal notranslate"><span class="pre">prepare</span></code> refuses
+a complex coefficient of <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>, <code class="docutils literal notranslate"><span class="pre">Hund</span></code>, <code class="docutils literal notranslate"><span class="pre">Ising</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Exchange</span></code>, <code class="docutils literal notranslate"><span class="pre">PairLift</span></code> or the combined <code class="docutils literal notranslate"><span class="pre">Coulomb</span></code> table, naming the
+term, the bond and the orbitals: for these terms the solver’s mean-field
+potential with a complex coefficient is not that of the documented
+Hamiltonian, so no candidate built on it would be meaningful.</p>
 <p>With a fixed <code class="docutils literal notranslate"><span class="pre">2Sz</span></code>, the solver keeps only the spin-conserving parts of the
 interaction terms. When an interaction term breaks spin conservation about z
 (for example <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>), <code class="docutils literal notranslate"><span class="pre">prepare</span></code> records a warning naming the terms,
 and the summary shows it.</p>
+</section>
+<section id="the-small-tier">
+<span id="initial-states-small-tier"></span><h3>The small tier<a class="headerlink" href="#the-small-tier" title="Link to this heading">¶</a></h3>
+<p>The small tier adds two families to the large-tier set:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">orbital</span></code>: the orbital polarisation <code class="docutils literal notranslate"><span class="pre">n_a</span> <span class="pre">-</span> <span class="pre">n_b</span></code> of consecutive
+interacting orbitals <code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code> of a site, uniform and with the site
+sign patterns, at every q the cell can represent (counted in
+<code class="docutils literal notranslate"><span class="pre">--max-candidates</span></code> like the baseline rows);</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">instability</span></code>: patterns from a static linear-response analysis of the
+paramagnet, the hints. They order the instability rows only: no hint
+removes a candidate of another family.</p></li>
+</ul>
+<p>The hints are computed in four steps.</p>
+<ol class="arabic simple">
+<li><p><strong>The preliminary paramagnetic run.</strong> UHFk runs on the primitive cell
+(<code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>) at the hint temperature <code class="docutils literal notranslate"><span class="pre">T_hint</span></code>, with the
+input’s <code class="docutils literal notranslate"><span class="pre">Ncond</span></code>, <code class="docutils literal notranslate"><span class="pre">2Sz</span></code>, <code class="docutils literal notranslate"><span class="pre">flag_fock</span></code> and interaction tables, from the
+free density of the bare one-body Hamiltonian, with <code class="docutils literal notranslate"><span class="pre">EPS</span></code> raised to at
+least 12 (recorded as <code class="docutils literal notranslate"><span class="pre">para_eps</span></code>). The result is the reference of the
+hints only when the run converged and keeps the symmetries of the model
+within 1e-8: the spin rotations that the one-body Hamiltonian and the
+interactions both keep, the electron count of each sector with a fixed
+<code class="docutils literal notranslate"><span class="pre">2Sz</span></code>, and time reversal in spin-orbital mode when the model has it.
+Otherwise the hints are skipped with the reason (<code class="docutils literal notranslate"><span class="pre">hint.skip_reason</span></code>)
+and every seed is built on the bare one-body Hamiltonian. With
+<code class="docutils literal notranslate"><span class="pre">--para-check</span></code> a second run starts from the uniform orbital
+occupation; the lower free energy is kept, and a difference above 1e-8
+per cell is reported as a warning (the other start reached a
+metastable, orbital-ordered state). The reference is kept in
+<code class="docutils literal notranslate"><span class="pre">WORK/para_hf/</span></code> (<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>, <code class="docutils literal notranslate"><span class="pre">para_hf.json</span></code> and the runs), so
+<code class="docutils literal notranslate"><span class="pre">collect</span></code> needs no recomputation. The seeds of every family are then
+built on its Hamiltonian <code class="docutils literal notranslate"><span class="pre">H0</span> <span class="pre">+</span> <span class="pre">Sigma'</span></code> folded to each cell
+(<code class="docutils literal notranslate"><span class="pre">seed_base</span> <span class="pre">=</span> <span class="pre">&quot;para_hf&quot;</span></code>), and the labels of <code class="docutils literal notranslate"><span class="pre">prepare</span></code> and
+<code class="docutils literal notranslate"><span class="pre">collect</span></code> are taken relative to it.</p></li>
+<li><p><strong>The vertex</strong> <code class="docutils literal notranslate"><span class="pre">Gamma(q)</span></code>: the derivative of the solver’s Hartree-Fock
+potential with respect to the density, on the one-body slots the solver
+reads and writes (the pair space <code class="docutils literal notranslate"><span class="pre">P</span></code>, restricted to the interacting
+orbitals). It follows the input’s <code class="docutils literal notranslate"><span class="pre">flag_fock</span></code>: the Hartree terms
+always, the Fock terms only when the runs have them, so bond-order
+patterns from a <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> bond appear only with the Fock term.</p></li>
+<li><p><strong>The bare susceptibility</strong> <code class="docutils literal notranslate"><span class="pre">chi0(q)</span></code>: the static Lindhard response of
+the paramagnetic bands at <code class="docutils literal notranslate"><span class="pre">T_hint</span></code>, on the same pair space. At
+<code class="docutils literal notranslate"><span class="pre">q</span> <span class="pre">=</span> <span class="pre">0</span></code> it is taken at the fixed electron number of each sector (with
+a fixed <code class="docutils literal notranslate"><span class="pre">2Sz</span></code> each spin, otherwise the whole system, non-interacting
+orbitals included), as in the solver, which refits the chemical
+potential at every iteration. A uniform change of that number is then
+no instability (<code class="docutils literal notranslate"><span class="pre">lambda</span> <span class="pre">=</span> <span class="pre">0</span></code>); with a fixed <code class="docutils literal notranslate"><span class="pre">2Sz</span></code> this includes the
+uniform <code class="docutils literal notranslate"><span class="pre">S^z</span></code>.</p></li>
+<li><p><strong>The eigenvalues</strong> <code class="docutils literal notranslate"><span class="pre">lambda</span></code> of <code class="docutils literal notranslate"><span class="pre">K(q)</span> <span class="pre">=</span> <span class="pre">-chi0(q)</span> <span class="pre">Gamma(q)</span></code> at every q
+of the <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> mesh, the <code class="docutils literal notranslate"><span class="pre">top_k</span> <span class="pre">=</span> <span class="pre">3</span></code> largest positive ones per q
+(when the spin-rotation check passes, the charge and <code class="docutils literal notranslate"><span class="pre">S^z</span></code> sectors are
+solved separately and merged before the cut). Each eigenvector <code class="docutils literal notranslate"><span class="pre">x</span></code>
+gives an instability row whose seeding pattern is the conjugate field
+<code class="docutils literal notranslate"><span class="pre">O</span> <span class="pre">=</span> <span class="pre">Gamma</span> <span class="pre">x</span></code>.</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">lambda</span></code> is the static Stoner-type factor of that pattern: at <code class="docutils literal notranslate"><span class="pre">lambda</span> <span class="pre">&gt;=</span>
+<span class="pre">1</span></code> the paramagnet at <code class="docutils literal notranslate"><span class="pre">T_hint</span></code> is unstable towards it within Hartree-Fock,
+and a larger <code class="docutils literal notranslate"><span class="pre">lambda</span></code> means a stronger tendency. <code class="docutils literal notranslate"><span class="pre">lambda</span> <span class="pre">&lt;</span> <span class="pre">1</span></code> at
+<code class="docutils literal notranslate"><span class="pre">T_hint</span></code> is normal and does not mean that the pattern cannot order at the
+input <code class="docutils literal notranslate"><span class="pre">T</span></code>. Each instability row records <code class="docutils literal notranslate"><span class="pre">rank</span></code> (its place in the
+ordering), <code class="docutils literal notranslate"><span class="pre">lambda</span></code> and <code class="docutils literal notranslate"><span class="pre">lambda_imag</span></code> (0 unless the vertex is not
+Hermitian, which is reported). Rows are ordered by decreasing <code class="docutils literal notranslate"><span class="pre">lambda</span></code>;
+eigenvalues within a relative 1e-8 of each other form one degenerate set,
+ordered by a fixed rule (q in a fixed order, then the position of the
+eigenvector in that q’s eigenvalue order), and a degenerate set at one q
+is given a canonical basis, so the rows and their ids do not depend on the
+round-off of the eigensolver. Every hint row is listed; at most 12 rows
+(<code class="docutils literal notranslate"><span class="pre">quota_instability</span></code>) are run per <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>, and the others say why
+(<code class="docutils literal notranslate"><span class="pre">quota:</span> <span class="pre">instability</span></code>, or <code class="docutils literal notranslate"><span class="pre">unrepresentable</span></code> with the cell that would
+represent their q).</p>
+<p><strong>The hint temperature smears the hints.</strong> Each transition enters
+<code class="docutils literal notranslate"><span class="pre">chi0</span></code> with the weight <code class="docutils literal notranslate"><span class="pre">(f(e)</span> <span class="pre">-</span> <span class="pre">f(e'))/(e'</span> <span class="pre">-</span> <span class="pre">e)</span> <span class="pre">&lt;=</span> <span class="pre">1/(4</span> <span class="pre">T_hint)</span></code>, so
+structure within about <code class="docutils literal notranslate"><span class="pre">T_hint</span></code> of the Fermi level or from energy
+differences below <code class="docutils literal notranslate"><span class="pre">T_hint</span></code> (small gaps, imperfect nesting, split van
+Hove peaks) is suppressed: <code class="docutils literal notranslate"><span class="pre">lambda</span></code> drops, peaks broaden, the leading q
+can shift and close rows can swap. The summary repeats this sentence with
+the value used.</p>
+<p>The hint record of <code class="docutils literal notranslate"><span class="pre">coverage.json</span></code> (<code class="docutils literal notranslate"><span class="pre">hint</span></code>) holds the hint temperature
+and its rule, the status of the paramagnetic run (<code class="docutils literal notranslate"><span class="pre">para_status</span></code>,
+<code class="docutils literal notranslate"><span class="pre">para_free_energy</span></code>, <code class="docutils literal notranslate"><span class="pre">para_residual</span></code>, <code class="docutils literal notranslate"><span class="pre">para_polarisation</span></code>,
+<code class="docutils literal notranslate"><span class="pre">para_eps</span></code>), whether the vertex is Hermitian, the method, the q set and
+the status of each q (<code class="docutils literal notranslate"><span class="pre">ok</span></code>, <code class="docutils literal notranslate"><span class="pre">fewer</span> <span class="pre">than</span> <span class="pre">top_k</span> <span class="pre">positive</span> <span class="pre">eigenvalues</span></code> or
+<code class="docutils literal notranslate"><span class="pre">no</span> <span class="pre">positive</span> <span class="pre">eigenvalue</span></code>).</p>
+</section>
+<section id="choosing-the-tier">
+<span id="initial-states-auto-tier"></span><h3>Choosing the tier<a class="headerlink" href="#choosing-the-tier" title="Link to this heading">¶</a></h3>
+<p>In this release <code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">auto</span></code> depends on the model only, so an input gets
+the same tier on every host: the small tier when the pair space has
+<code class="docutils literal notranslate"><span class="pre">|P|</span> <span class="pre">&lt;=</span> <span class="pre">400</span></code> slots, the mesh has <code class="docutils literal notranslate"><span class="pre">N_q</span> <span class="pre">&lt;=</span> <span class="pre">4096</span></code> points and <code class="docutils literal notranslate"><span class="pre">N_q</span> <span class="pre">|P|^3</span> <span class="pre">&lt;=</span>
+<span class="pre">1e11</span></code>; otherwise the large tier, with a warning. <code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">small</span></code> given
+explicitly runs even beyond these limits, with a warning. The host memory
+never chooses the tier: it only refuses a small tier whose memory estimate,
+<code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">(|P|^2</span> <span class="pre">+</span> <span class="pre">N_q</span> <span class="pre">top_k</span> <span class="pre">|P|</span> <span class="pre">+</span> <span class="pre">N_k</span> <span class="pre">nb^2</span> <span class="pre">+</span> <span class="pre">N_k</span> <span class="pre">nb</span> <span class="pre">|P|)</span></code> bytes (<code class="docutils literal notranslate"><span class="pre">N_k</span></code> k points,
+<code class="docutils literal notranslate"><span class="pre">nb</span></code> bands), exceeds the available memory. The <code class="docutils literal notranslate"><span class="pre">tier</span></code> record of
+<code class="docutils literal notranslate"><span class="pre">coverage.json</span></code> gives the sizes, the estimate and the rule.</p>
+</section>
+<section id="the-preliminary-paramagnetic-run-on-a-batch-system">
+<span id="initial-states-preliminary-run"></span><h3>The preliminary paramagnetic run on a batch system<a class="headerlink" href="#the-preliminary-paramagnetic-run-on-a-batch-system" title="Link to this heading">¶</a></h3>
+<p>The paramagnetic run of the small tier normally runs inside <code class="docutils literal notranslate"><span class="pre">prepare</span></code>.
+For a large model it can run as a job of its own:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hwave.initial<span class="w"> </span>prepare<span class="w"> </span>INPUT_DIR<span class="w"> </span>--out<span class="w"> </span>WORK<span class="w"> </span>--tier<span class="w"> </span>small<span class="w"> </span>--stage0
+$<span class="w"> </span>bash<span class="w"> </span>WORK/stage0_commands.txt<span class="w">      </span><span class="c1"># exit code 3 above: run this first</span>
+$<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hwave.initial<span class="w"> </span>prepare<span class="w"> </span>INPUT_DIR<span class="w"> </span>--out<span class="w"> </span>WORK<span class="w"> </span>--tier<span class="w"> </span>small<span class="w"> </span>--stage0
+</pre></div>
+</div>
+<p>The first <code class="docutils literal notranslate"><span class="pre">prepare</span></code> writes <code class="docutils literal notranslate"><span class="pre">WORK/stage0_para/</span></code> (and
+<code class="docutils literal notranslate"><span class="pre">WORK/stage0_para_check/</span></code> with <code class="docutils literal notranslate"><span class="pre">--para-check</span></code>), staged like the candidate
+runs (<code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>, <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">T_hint</span></code>, <code class="docutils literal notranslate"><span class="pre">EPS</span></code> raised to at least
+12), and <code class="docutils literal notranslate"><span class="pre">WORK/stage0_commands.txt</span></code>, and exits with code 3. The same
+<code class="docutils literal notranslate"><span class="pre">prepare</span></code> command then checks those inputs against <code class="docutils literal notranslate"><span class="pre">manifest.json</span></code> (a
+changed file is refused, naming it) and reads the run: when it converged
+and keeps the symmetries of the model (step 1 of
+<a class="reference internal" href="#initial-states-small-tier"><span class="std std-ref">The small tier</span></a>) it becomes the reference and the
+candidate runs are written; when it ran and failed, did not converge or
+broke one of those symmetries, the seeds use the bare one-body Hamiltonian
+and the hints are skipped with that reason; when it has not run yet, or has not
+finished, <code class="docutils literal notranslate"><span class="pre">prepare</span></code> prints the commands again, changes nothing and exits
+with code 3. <code class="docutils literal notranslate"><span class="pre">--stage0</span></code> is part of the command: a WORK prepared with it
+re-enters only with it.</p>
+</section>
+<section id="the-initial-state-files">
+<h3>The initial-state files<a class="headerlink" href="#the-initial-state-files" title="Link to this heading">¶</a></h3>
+<p>Each <code class="docutils literal notranslate"><span class="pre">initial.npz</span></code> holds the Green function UHFk reads, and its
+provenance: the candidate and run ids, the label, q, phase and sign of the
+pattern, <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>, <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>, <code class="docutils literal notranslate"><span class="pre">Ncond</span></code>, <code class="docutils literal notranslate"><span class="pre">2Sz</span></code>, the field
+strength used (<code class="docutils literal notranslate"><span class="pre">h_used</span></code>), the SHA-256 of the inputs, and the base of the
+seed:
+<code class="docutils literal notranslate"><span class="pre">seed_base</span></code> is <code class="docutils literal notranslate"><span class="pre">&quot;para_hf&quot;</span></code> (the paramagnetic reference of the small
+tier) or <code class="docutils literal notranslate"><span class="pre">&quot;bare&quot;</span></code>; on the reference it also records the temperature of
+that reference (<code class="docutils literal notranslate"><span class="pre">seed_base_para_T</span></code>) and the digest of its inputs
+(<code class="docutils literal notranslate"><span class="pre">seed_base_para_digest</span></code>). The library writer refuses a reference that
+belongs to another input or another hint temperature.</p>
 </section>
 <section id="running-the-candidates">
 <h3>Running the candidates<a class="headerlink" href="#running-the-candidates" title="Link to this heading">¶</a></h3>
@@ -196,8 +353,8 @@ below, and the sentence quoted at the top of this page.</p>
 <td><p>an argument error</p></td>
 </tr>
 <tr class="row-odd"><td><p>3</p></td>
-<td><p>reserved for a later release (a preliminary paramagnetic run);
-never returned now</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">prepare</span> <span class="pre">--stage0</span></code>: a preliminary paramagnetic run is pending; run
+<code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">WORK/stage0_commands.txt</span></code>, then the same <code class="docutils literal notranslate"><span class="pre">prepare</span></code> command</p></td>
 </tr>
 <tr class="row-even"><td><p>4</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">check</span> <span class="pre">--require-provenance</span></code>: the file has no provenance</p></td>
@@ -216,7 +373,8 @@ proposal).</p>
 <ul class="simple">
 <li><p>The families are <code class="docutils literal notranslate"><span class="pre">para</span></code> and <code class="docutils literal notranslate"><span class="pre">ferro</span></code> (reserved, one run per
 <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>), <code class="docutils literal notranslate"><span class="pre">random</span></code>, <code class="docutils literal notranslate"><span class="pre">baseline</span></code> (spin and charge patterns at the q
-vectors the cell can represent), and <code class="docutils literal notranslate"><span class="pre">user</span></code> and <code class="docutils literal notranslate"><span class="pre">literature</span></code> (from
+vectors the cell can represent), <code class="docutils literal notranslate"><span class="pre">orbital</span></code> and <code class="docutils literal notranslate"><span class="pre">instability</span></code> (the
+small tier), and <code class="docutils literal notranslate"><span class="pre">user</span></code> and <code class="docutils literal notranslate"><span class="pre">literature</span></code> (from
 <code class="docutils literal notranslate"><span class="pre">--extra-candidates</span></code>; never cut by a quota).</p></li>
 <li><p>A candidate is named by its seeding pattern, e.g. <code class="docutils literal notranslate"><span class="pre">spin-z</span> <span class="pre">ferro-orbital</span>
 <span class="pre">q=(1/2,1/2,0)</span> <span class="pre">φ=0</span></code>. The state a run ends in has a <code class="docutils literal notranslate"><span class="pre">final_label</span></code>,
@@ -242,9 +400,16 @@ cells are finite. No candidate covers: multi-q superpositions (double-Q,
 triple-Q, vortex crystals); sliding-phase variants beyond the two kept
 phases; combinations within a degenerate eigenspace other than the canonical
 basis; rotated cells such as √3 × √3, and cells outside the given
-<code class="docutils literal notranslate"><span class="pre">SubShape</span></code> list; orbital and bond patterns in the large tier; more than
-one amplitude per candidate; spirals unless the spin-rotation check passes;
-q vectors with a denominator above 16. The summary repeats these limits.</p>
+<code class="docutils literal notranslate"><span class="pre">SubShape</span></code> list; orbital and bond patterns in the large tier, and bond
+patterns other than the hints; more than one amplitude per candidate;
+spirals unless the spin-rotation check passes; q vectors with a
+denominator above 16. The summary repeats these limits.</p>
+<p>The hints describe the paramagnet only, statically and at <code class="docutils literal notranslate"><span class="pre">T_hint</span></code>. A
+state reached by a first-order transition or at strong coupling may have
+no hint at all; this is why the reserved and baseline rows always run and
+a hint never removes a row. A small <code class="docutils literal notranslate"><span class="pre">lambda</span></code> is not evidence against a
+state, and the largest <code class="docutils literal notranslate"><span class="pre">lambda</span></code> does not select the result: only the
+free energies of the converged runs do, within the candidates tried.</p>
 <p>Only UHFk inputs are supported by the command line. The library function
 <code class="docutils literal notranslate"><span class="pre">hwave.initial.initial_state</span></code> also writes a UHFr <code class="docutils literal notranslate"><span class="pre">Initial</span></code> file from a
 UHFk input of the same lattice and a site map. Spin-orbital mode is

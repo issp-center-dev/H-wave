@@ -87,10 +87,14 @@ types are documented in their docstrings, e.g. <code class="docutils literal not
 <p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">hwave.initial</span></code> prepares a set of candidate initial states for a
 UHFk input, one run directory each, and after the <code class="docutils literal notranslate"><span class="pre">hwave</span></code> runs collects
 and ranks the results (<code class="docutils literal notranslate"><span class="pre">prepare</span></code>, <code class="docutils literal notranslate"><span class="pre">check</span></code>, <code class="docutils literal notranslate"><span class="pre">collect</span></code>; see
-<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">hwave.initial</span> <span class="pre">--help</span></code>). It is a preview until its full
-documentation; see <a class="reference internal" href="initial_states.html"><span class="doc">Candidate initial states (preview)</span></a>. The selected state is the lowest
-free energy among the candidates tried. It is not a proof of the ground
-state.</p>
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">hwave.initial</span> <span class="pre">--help</span></code>). <code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">small</span></code> adds orbital
+patterns and instability rows from a preliminary paramagnetic
+Hartree-Fock run (<code class="docutils literal notranslate"><span class="pre">--para-check</span></code> also starts that run from the uniform
+orbital occupation; with <code class="docutils literal notranslate"><span class="pre">--stage0</span></code> it runs as a job of its own and
+<code class="docutils literal notranslate"><span class="pre">prepare</span></code> exits with code 3 until it has run). It is a preview until its
+full documentation; see <a class="reference internal" href="initial_states.html"><span class="doc">Candidate initial states (preview)</span></a>. The selected state is the
+lowest free energy among the candidates tried. It is not a proof of the
+ground state.</p>
 </li>
 <li><p>Official Page</p>
 <blockquote>

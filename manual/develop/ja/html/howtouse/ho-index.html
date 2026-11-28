@@ -91,7 +91,11 @@ GPU実行時は cuFFT に切り替わります。</p>
 <div><p><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">hwave.initial</span></code> は UHFk の入力に対して初期状態の候補を用意して
 候補ごとに実行ディレクトリを作り、 <code class="docutils literal notranslate"><span class="pre">hwave</span></code> の実行後に結果を集めて順位を
 付けます（ <code class="docutils literal notranslate"><span class="pre">prepare</span></code>, <code class="docutils literal notranslate"><span class="pre">check</span></code>, <code class="docutils literal notranslate"><span class="pre">collect</span></code>。 <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">hwave.initial</span>
-<span class="pre">--help</span></code> を参照）。完全な説明ができるまではプレビュー版です。詳しくは
+<span class="pre">--help</span></code> を参照）。 <code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">small</span></code> は、事前の常磁性 Hartree-Fock 計算から
+軌道のパターンと不安定性の行を加えます（ <code class="docutils literal notranslate"><span class="pre">--para-check</span></code> はその計算を一様な
+軌道占有からも始めます。 <code class="docutils literal notranslate"><span class="pre">--stage0</span></code> を付けるとその計算を別のジョブとして
+実行し、実行されるまで <code class="docutils literal notranslate"><span class="pre">prepare</span></code> は終了コード 3 で終わります）。
+完全な説明ができるまではプレビュー版です。詳しくは
 <a class="reference internal" href="initial_states.html"><span class="doc">初期状態の候補（プレビュー）</span></a> を参照してください。選ばれる状態は、試した候補の中で
 自由エネルギーが最も低いものであり、基底状態であることの証明ではありません。</p>
 </div></blockquote>

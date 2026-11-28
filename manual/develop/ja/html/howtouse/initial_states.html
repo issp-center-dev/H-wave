@@ -43,11 +43,13 @@
 <div class="admonition note">
 <p class="admonition-title">注釈</p>
 <p>これはプレビュー版です。コマンド、オプション、ファイル形式は今後変わる
-可能性があります。このリリースが提供するのは large tier のみです。large
-tier は既定の候補の集合で、セルで表せるすべての q でのスピン・電荷の
-パターンと、上限で削られない予約行 <code class="docutils literal notranslate"><span class="pre">para</span></code>、 <code class="docutils literal notranslate"><span class="pre">ferro</span></code>、 <code class="docutils literal notranslate"><span class="pre">random</span></code>
-からなります。常磁性状態の不安定性解析から選んだより小さな候補の集合は、
-今後のリリースで加わります。</p>
+可能性があります。このリリースは二つの tier を提供します。large tier は
+既定の候補の集合で、セルで表せるすべての q でのスピン・電荷のパターンと、
+上限で削られない予約行 <code class="docutils literal notranslate"><span class="pre">para</span></code>、 <code class="docutils literal notranslate"><span class="pre">ferro</span></code>、 <code class="docutils literal notranslate"><span class="pre">random</span></code> からなります。
+small tier はこれに、常磁性状態の静的な解析から得た軌道のパターンと
+不安定性の行を加えます（ <a class="reference internal" href="#initial-states-small-tier"><span class="std std-ref">small tier</span></a> を参照）。
+より大きな模型のための medium tier と、較正したコストモデルによる tier の
+選択は、今後のリリースで加わります。</p>
 </div>
 <p>The selected state is the lowest free energy among the candidates tried. It is
 not a proof of the ground state.
@@ -78,8 +80,10 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 <code class="docutils literal notranslate"><span class="pre">importlib.resources.files(&quot;hwave.initial&quot;)</span> <span class="pre">/</span> <span class="pre">&quot;patternspec.schema.json&quot;</span></code>）
 に従います。軌道の番号は物理軌道の番号です（spin-orbital モードでも同じ
 です）。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">--t-hint</span> <span class="pre">T</span></code>: ヒント温度。単位は入力のエネルギーの単位です。レポートに
-記録されるだけで、候補の集合や初期状態を変えることはありません。省略時は、
+<li><p><code class="docutils literal notranslate"><span class="pre">--t-hint</span> <span class="pre">T</span></code>: ヒント温度。単位は入力のエネルギーの単位です。small tier
+はこの温度でヒントを評価します（ <a class="reference internal" href="#initial-states-small-tier"><span class="std std-ref">small tier</span></a> を参照）。
+変わるのは不安定性の行とその順序だけで、他の候補は変わらず、候補の実行は
+入力の <code class="docutils literal notranslate"><span class="pre">T</span></code> のままです。large tier では記録されるだけです。省略時は、
 <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">&gt;</span> <span class="pre">0</span></code> なら入力の <code class="docutils literal notranslate"><span class="pre">T</span></code>、 <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">0</span></code> ならバンドと k メッシュから決まる
 <code class="docutils literal notranslate"><span class="pre">max(W/(2</span> <span class="pre">L),</span> <span class="pre">1e-4</span> <span class="pre">W)</span></code> です。 <code class="docutils literal notranslate"><span class="pre">W</span></code> はフェルミ準位付近のバンドの
 エネルギー幅（1e-3 以上）、 <code class="docutils literal notranslate"><span class="pre">L</span></code> は <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> の 2 より長い軸のうち
@@ -87,8 +91,7 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 <li><p><code class="docutils literal notranslate"><span class="pre">--amplitude</span> <span class="pre">A</span></code>（初期状態の振幅の要求値、(0, 1) の範囲、既定値 0.5）、
 <code class="docutils literal notranslate"><span class="pre">--max-candidates</span> <span class="pre">N</span></code>（ <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> ごとの生成行数、既定値 32）、
 <code class="docutils literal notranslate"><span class="pre">--orbital-site</span> <span class="pre">FILE</span></code>（物理軌道ごとにサイトのラベルを一つ並べた JSON
-リスト）、 <code class="docutils literal notranslate"><span class="pre">--tier</span></code>（このリリースでは <code class="docutils literal notranslate"><span class="pre">auto</span></code> は <code class="docutils literal notranslate"><span class="pre">large</span></code> に
-なります）。
+リスト）。
 <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">0</span></code> では、二つの準位がフェルミ準位で交差するちょうどその場で、
 初期状態を作る場が要求した振幅に達することがあります。このとき初期状態は
 その交差点で作ります。交差する準位を一様に占有して要求を満たせばその占有を、
@@ -96,6 +99,18 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 の <code class="docutils literal notranslate"><span class="pre">amplitude_used</span></code> が要求値を上回ることがあります。スピンについて対称な
 模型では、スピン成分を持たないパターン（para、電荷、軌道）から、上向きと
 下向きのスピン成分が一致する初期状態ができます。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">auto|large|small</span></code>: 候補の集合（ <code class="docutils literal notranslate"><span class="pre">medium</span></code> は今後のリリースの
+ために予約されています）。既定値の <code class="docutils literal notranslate"><span class="pre">auto</span></code> は、模型が十分に小さければ
+small tier を、そうでなければ large tier を選びます
+（ <a class="reference internal" href="#initial-states-auto-tier"><span class="std std-ref">tier の選択</span></a> を参照）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--para-check</span></code>（small tier）: 事前の常磁性計算を一様な軌道占有からも
+始め、自由エネルギーの低い方を使います（ <a class="reference internal" href="#initial-states-small-tier"><span class="std std-ref">small tier</span></a>
+を参照）。 <code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">large</span></code> と一緒には指定できません。 <code class="docutils literal notranslate"><span class="pre">auto</span></code> が large
+tier を選んだ場合は、警告を出して無視します。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--stage0</span></code>（small tier）: 事前の常磁性計算を <code class="docutils literal notranslate"><span class="pre">prepare</span></code> の中で実行
+せず、バッチシステム向けに独立した実行ディレクトリとして書き出します
+（ <a class="reference internal" href="#initial-states-preliminary-run"><span class="std std-ref">バッチシステムでの事前の常磁性計算</span></a> を参照）。large tier を指定した
+場合や large tier が選ばれた場合は拒否します。</p></li>
 </ul>
 <p><code class="docutils literal notranslate"><span class="pre">prepare</span></code> は WORK に次を書きます。</p>
 <ul class="simple">
@@ -128,12 +143,144 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 <p>同じ WORK に同じコマンド・同じ入力で <code class="docutils literal notranslate"><span class="pre">prepare</span></code> を再実行しても何も
 しません。コマンドや入力が違う場合、または <code class="docutils literal notranslate"><span class="pre">prepare</span></code> が書いたものでない
 空でないディレクトリは、違いを示して拒否します。</p>
+<p>複素数の係数を受け付けるのは <code class="docutils literal notranslate"><span class="pre">PairHop</span></code> だけです。 <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code>、
+<code class="docutils literal notranslate"><span class="pre">Hund</span></code>、 <code class="docutils literal notranslate"><span class="pre">Ising</span></code>、 <code class="docutils literal notranslate"><span class="pre">Exchange</span></code>、 <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>、まとめた
+<code class="docutils literal notranslate"><span class="pre">Coulomb</span></code> の表に複素数の係数があると、 <code class="docutils literal notranslate"><span class="pre">prepare</span></code> は項、ボンド、軌道を
+示して拒否します。これらの項では、係数が複素数のときソルバーの平均場
+ポテンシャルが説明どおりのハミルトニアンのものにならず、その上に作った
+候補は意味を持たないためです。</p>
 <p><code class="docutils literal notranslate"><span class="pre">2Sz</span></code> を固定した場合、ソルバーは相互作用項のうちスピンを保存する部分
 だけを使います。z 軸まわりのスピン保存を破る相互作用項（例: <code class="docutils literal notranslate"><span class="pre">PairLift</span></code>）
 があると、 <code class="docutils literal notranslate"><span class="pre">prepare</span></code> はその項を名指しした警告を記録し、要約に表示します。</p>
 </section>
-<section id="id3">
-<h3>候補の実行<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
+<section id="small-tier">
+<span id="initial-states-small-tier"></span><h3>small tier<a class="headerlink" href="#small-tier" title="Link to this heading">¶</a></h3>
+<p>small tier は large tier の集合に二つの family を加えます。</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">orbital</span></code>: サイト上で隣り合う相互作用軌道 <code class="docutils literal notranslate"><span class="pre">a</span></code>, <code class="docutils literal notranslate"><span class="pre">b</span></code> の軌道偏極
+<code class="docutils literal notranslate"><span class="pre">n_a</span> <span class="pre">-</span> <span class="pre">n_b</span></code>。一様なものとサイトの符号パターンを付けたものを、セルで
+表せるすべての q で作ります（baseline の行と同じく <code class="docutils literal notranslate"><span class="pre">--max-candidates</span></code>
+に数えます）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">instability</span></code>: 常磁性状態の静的な線形応答の解析から得たパターン
+（ヒント）。ヒントは不安定性の行の順序を決めるだけで、他の family の
+候補を削ることはありません。</p></li>
+</ul>
+<p>ヒントは四つの段階で計算します。</p>
+<ol class="arabic simple">
+<li><p><strong>事前の常磁性計算。</strong> UHFk を基本セル（ <code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>）で
+ヒント温度 <code class="docutils literal notranslate"><span class="pre">T_hint</span></code> において、入力の <code class="docutils literal notranslate"><span class="pre">Ncond</span></code>、 <code class="docutils literal notranslate"><span class="pre">2Sz</span></code>、
+<code class="docutils literal notranslate"><span class="pre">flag_fock</span></code> と相互作用の表を使い、裸の一体ハミルトニアンの自由な密度
+から実行します。 <code class="docutils literal notranslate"><span class="pre">EPS</span></code> は 12 以上に引き上げます（ <code class="docutils literal notranslate"><span class="pre">para_eps</span></code> として
+記録）。計算が収束し、模型の対称性を 1e-8 以内で保つときだけ、その結果を
+ヒントの基準にします。対称性とは、一体ハミルトニアンと相互作用の両方が
+保つスピン回転、 <code class="docutils literal notranslate"><span class="pre">2Sz</span></code> を固定した場合の各セクターの電子数、模型が持つ
+ときの spin-orbital モードでの時間反転です。そうでなければヒントは理由
+（ <code class="docutils literal notranslate"><span class="pre">hint.skip_reason</span></code>）とともに省略され、すべての初期状態は裸の一体
+ハミルトニアンの上に作られます。 <code class="docutils literal notranslate"><span class="pre">--para-check</span></code> を付けると、一様な軌道
+占有から二つ目の計算を始め、自由エネルギーの低い方を使います。差が
+セルあたり 1e-8 を超えると警告します（もう一方の出発点は準安定な軌道
+秩序状態に達したということです）。基準は <code class="docutils literal notranslate"><span class="pre">WORK/para_hf/</span></code>（
+<code class="docutils literal notranslate"><span class="pre">green.npz</span></code>、 <code class="docutils literal notranslate"><span class="pre">para_hf.json</span></code> と計算）に保存されるので、 <code class="docutils literal notranslate"><span class="pre">collect</span></code>
+で計算し直す必要はありません。すべての family の初期状態は、その
+ハミルトニアン <code class="docutils literal notranslate"><span class="pre">H0</span> <span class="pre">+</span> <span class="pre">Sigma'</span></code> を各セルに折り畳んだものの上に作られ
+（ <code class="docutils literal notranslate"><span class="pre">seed_base</span> <span class="pre">=</span> <span class="pre">&quot;para_hf&quot;</span></code>）、 <code class="docutils literal notranslate"><span class="pre">prepare</span></code> と <code class="docutils literal notranslate"><span class="pre">collect</span></code> のラベルも
+それを基準にします。</p></li>
+<li><p><strong>バーテックス</strong> <code class="docutils literal notranslate"><span class="pre">Gamma(q)</span></code>: ソルバーの Hartree-Fock ポテンシャルの
+密度による微分です。ソルバーが読み書きする一体のスロット（ペア空間
+<code class="docutils literal notranslate"><span class="pre">P</span></code>。相互作用軌道に限る）の上で作ります。入力の <code class="docutils literal notranslate"><span class="pre">flag_fock</span></code> に
+従い、Hartree 項は常に、Fock 項は実行が Fock 項を含むときだけ入ります。
+そのため <code class="docutils literal notranslate"><span class="pre">CoulombInter</span></code> のボンドからのボンド秩序のパターンは Fock 項が
+あるときだけ現れます。</p></li>
+<li><p><strong>裸の感受率</strong> <code class="docutils literal notranslate"><span class="pre">chi0(q)</span></code>: <code class="docutils literal notranslate"><span class="pre">T_hint</span></code> での常磁性バンドの静的な
+Lindhard 応答を、同じペア空間の上で求めます。 <code class="docutils literal notranslate"><span class="pre">q</span> <span class="pre">=</span> <span class="pre">0</span></code> では、ソルバーが
+反復ごとに化学ポテンシャルを合わせ直すのと同じく、各セクターの電子数
+（ <code class="docutils literal notranslate"><span class="pre">2Sz</span></code> を固定したときはスピンごと、それ以外は系全体で、相互作用の
+ない軌道も含みます）を固定した応答を使います。その電子数を一様に変える
+モードは不安定性になりません（ <code class="docutils literal notranslate"><span class="pre">lambda</span> <span class="pre">=</span> <span class="pre">0</span></code> ）。 <code class="docutils literal notranslate"><span class="pre">2Sz</span></code> を固定したとき
+は一様な <code class="docutils literal notranslate"><span class="pre">S^z</span></code> もこれに含まれます。</p></li>
+<li><p><strong>固有値</strong> <code class="docutils literal notranslate"><span class="pre">lambda</span></code>: <code class="docutils literal notranslate"><span class="pre">CellShape</span></code> のメッシュのすべての q で
+<code class="docutils literal notranslate"><span class="pre">K(q)</span> <span class="pre">=</span> <span class="pre">-chi0(q)</span> <span class="pre">Gamma(q)</span></code> の正の固有値のうち大きい方から
+<code class="docutils literal notranslate"><span class="pre">top_k</span> <span class="pre">=</span> <span class="pre">3</span></code> 個を求めます（スピン回転の確認に通れば、電荷と <code class="docutils literal notranslate"><span class="pre">S^z</span></code> の
+セクターを別々に解き、打ち切りの前にまとめます）。各固有ベクトル <code class="docutils literal notranslate"><span class="pre">x</span></code>
+から、共役な場 <code class="docutils literal notranslate"><span class="pre">O</span> <span class="pre">=</span> <span class="pre">Gamma</span> <span class="pre">x</span></code> を初期状態のパターンとする不安定性の行が
+一つできます。</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">lambda</span></code> はそのパターンの静的な Stoner 型の因子です。 <code class="docutils literal notranslate"><span class="pre">lambda</span> <span class="pre">&gt;=</span> <span class="pre">1</span></code>
+なら <code class="docutils literal notranslate"><span class="pre">T_hint</span></code> での常磁性状態は Hartree-Fock の範囲でそのパターンに対して
+不安定で、 <code class="docutils literal notranslate"><span class="pre">lambda</span></code> が大きいほどその傾向が強いことを表します。 <code class="docutils literal notranslate"><span class="pre">T_hint</span></code>
+で <code class="docutils literal notranslate"><span class="pre">lambda</span> <span class="pre">&lt;</span> <span class="pre">1</span></code> となるのは普通のことで、入力の <code class="docutils literal notranslate"><span class="pre">T</span></code> でそのパターンが秩序
+化しないという意味ではありません。不安定性の各行には <code class="docutils literal notranslate"><span class="pre">rank</span></code>（順序での
+位置）、 <code class="docutils literal notranslate"><span class="pre">lambda</span></code>、 <code class="docutils literal notranslate"><span class="pre">lambda_imag</span></code>（バーテックスがエルミートでない
+場合を除き 0。その場合は報告されます）が記録されます。行は <code class="docutils literal notranslate"><span class="pre">lambda</span></code> の
+大きい順に並びます。互いに相対 1e-8 以内の固有値は一つの縮退した組とし、
+決まった規則（決まった順序の q、次にその q での固有値の順位）で並べ、一つの q
+の中の縮退した組には標準基底を与えます。そのため行とその id は固有値
+ソルバーの丸め誤差に依存しません。ヒントの行はすべて一覧に載ります。
+<code class="docutils literal notranslate"><span class="pre">SubShape</span></code> ごとに実行されるのは最大 <code class="docutils literal notranslate"><span class="pre">quota_instability</span> <span class="pre">=</span> <span class="pre">12</span></code> 行で、
+残りの行にはその理由（ <code class="docutils literal notranslate"><span class="pre">quota:</span> <span class="pre">instability</span></code>、または q を表せるセルを
+伴う <code class="docutils literal notranslate"><span class="pre">unrepresentable</span></code>）が書かれます。</p>
+<p><strong>ヒント温度はヒントをぼかします。</strong> 各遷移は <code class="docutils literal notranslate"><span class="pre">(f(e)</span> <span class="pre">-</span> <span class="pre">f(e'))/(e'</span> <span class="pre">-</span> <span class="pre">e)</span> <span class="pre">&lt;=</span>
+<span class="pre">1/(4</span> <span class="pre">T_hint)</span></code> の重みで <code class="docutils literal notranslate"><span class="pre">chi0</span></code> に入るため、フェルミ準位から <code class="docutils literal notranslate"><span class="pre">T_hint</span></code>
+程度以内の構造や、 <code class="docutils literal notranslate"><span class="pre">T_hint</span></code> より小さいエネルギー差から来る構造（小さな
+ギャップ、不完全なネスティング、分裂した van Hove ピーク）は抑えられます。
+<code class="docutils literal notranslate"><span class="pre">lambda</span></code> は下がり、ピークは広がり、最大の q がずれ、近い行の順序が入れ
+替わることがあります。要約には、使った値とともにこの説明が書かれます。</p>
+<p><code class="docutils literal notranslate"><span class="pre">coverage.json</span></code> のヒントの記録（ <code class="docutils literal notranslate"><span class="pre">hint</span></code>）には、ヒント温度とその規則、
+常磁性計算の状態（ <code class="docutils literal notranslate"><span class="pre">para_status</span></code>、 <code class="docutils literal notranslate"><span class="pre">para_free_energy</span></code>、
+<code class="docutils literal notranslate"><span class="pre">para_residual</span></code>、 <code class="docutils literal notranslate"><span class="pre">para_polarisation</span></code>、 <code class="docutils literal notranslate"><span class="pre">para_eps</span></code>）、
+バーテックスがエルミートかどうか、方法、q の集合と各 q の状態（ <code class="docutils literal notranslate"><span class="pre">ok</span></code>、
+<code class="docutils literal notranslate"><span class="pre">fewer</span> <span class="pre">than</span> <span class="pre">top_k</span> <span class="pre">positive</span> <span class="pre">eigenvalues</span></code>、 <code class="docutils literal notranslate"><span class="pre">no</span> <span class="pre">positive</span> <span class="pre">eigenvalue</span></code>）
+が含まれます。</p>
+</section>
+<section id="tier">
+<span id="initial-states-auto-tier"></span><h3>tier の選択<a class="headerlink" href="#tier" title="Link to this heading">¶</a></h3>
+<p>このリリースでは <code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">auto</span></code> は模型だけで決まるので、同じ入力はどの
+ホストでも同じ tier になります。ペア空間のスロット数が <code class="docutils literal notranslate"><span class="pre">|P|</span> <span class="pre">&lt;=</span> <span class="pre">400</span></code>、
+メッシュの点の数が <code class="docutils literal notranslate"><span class="pre">N_q</span> <span class="pre">&lt;=</span> <span class="pre">4096</span></code>、かつ <code class="docutils literal notranslate"><span class="pre">N_q</span> <span class="pre">|P|^3</span> <span class="pre">&lt;=</span> <span class="pre">1e11</span></code> なら small
+tier、そうでなければ警告を出して large tier です。 <code class="docutils literal notranslate"><span class="pre">--tier</span> <span class="pre">small</span></code> を明示
+すると、これらの上限を超えても警告を出して実行します。ホストのメモリは tier
+を選びません。small tier のメモリの見積もり
+<code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">(|P|^2</span> <span class="pre">+</span> <span class="pre">N_q</span> <span class="pre">top_k</span> <span class="pre">|P|</span> <span class="pre">+</span> <span class="pre">N_k</span> <span class="pre">nb^2</span> <span class="pre">+</span> <span class="pre">N_k</span> <span class="pre">nb</span> <span class="pre">|P|)</span></code> バイト（ <code class="docutils literal notranslate"><span class="pre">N_k</span></code> は
+k 点の数、 <code class="docutils literal notranslate"><span class="pre">nb</span></code> はバンドの数）が利用できるメモリを超える場合に拒否する
+だけです。 <code class="docutils literal notranslate"><span class="pre">coverage.json</span></code> の <code class="docutils literal notranslate"><span class="pre">tier</span></code> の記録に、サイズ、見積もり、規則が
+書かれます。</p>
+</section>
+<section id="initial-states-preliminary-run">
+<span id="id3"></span><h3>バッチシステムでの事前の常磁性計算<a class="headerlink" href="#initial-states-preliminary-run" title="Link to this heading">¶</a></h3>
+<p>small tier の常磁性計算は通常 <code class="docutils literal notranslate"><span class="pre">prepare</span></code> の中で実行されます。大きな模型
+では、独立したジョブとして実行できます。</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hwave.initial<span class="w"> </span>prepare<span class="w"> </span>INPUT_DIR<span class="w"> </span>--out<span class="w"> </span>WORK<span class="w"> </span>--tier<span class="w"> </span>small<span class="w"> </span>--stage0
+$<span class="w"> </span>bash<span class="w"> </span>WORK/stage0_commands.txt<span class="w">      </span><span class="c1"># 上で終了コード 3: 先にこれを実行</span>
+$<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>hwave.initial<span class="w"> </span>prepare<span class="w"> </span>INPUT_DIR<span class="w"> </span>--out<span class="w"> </span>WORK<span class="w"> </span>--tier<span class="w"> </span>small<span class="w"> </span>--stage0
+</pre></div>
+</div>
+<p>最初の <code class="docutils literal notranslate"><span class="pre">prepare</span></code> は <code class="docutils literal notranslate"><span class="pre">WORK/stage0_para/</span></code>（ <code class="docutils literal notranslate"><span class="pre">--para-check</span></code> を付けると
+<code class="docutils literal notranslate"><span class="pre">WORK/stage0_para_check/</span></code> も）を候補の実行と同じ方法で用意し
+（ <code class="docutils literal notranslate"><span class="pre">SubShape</span> <span class="pre">=</span> <span class="pre">[1,</span> <span class="pre">1,</span> <span class="pre">1]</span></code>、 <code class="docutils literal notranslate"><span class="pre">T</span> <span class="pre">=</span> <span class="pre">T_hint</span></code>、 <code class="docutils literal notranslate"><span class="pre">EPS</span></code> は 12 以上）、
+<code class="docutils literal notranslate"><span class="pre">WORK/stage0_commands.txt</span></code> を書いて終了コード 3 で終わります。同じ
+<code class="docutils literal notranslate"><span class="pre">prepare</span></code> コマンドを再実行すると、それらの入力を <code class="docutils literal notranslate"><span class="pre">manifest.json</span></code> と
+照合し（変わったファイルは名前を示して拒否）、計算の結果を読みます。収束
+し、かつ模型の対称性を保っていれば（ <a class="reference internal" href="#initial-states-small-tier"><span class="std std-ref">small tier</span></a> の
+手順 1）それが基準になり、候補の実行が書かれます。実行されたが失敗した、
+収束しなかった、またはそれらの対称性を破った場合は、初期状態は裸の一体
+ハミルトニアンで作られ、ヒントはその理由とともに省略されます。まだ実行されていない、または終わっていない
+場合は、 <code class="docutils literal notranslate"><span class="pre">prepare</span></code> はコマンドをもう一度表示し、何も変えずに終了コード 3 で
+終わります。 <code class="docutils literal notranslate"><span class="pre">--stage0</span></code> はコマンドの一部です。これを付けて用意した WORK
+には、これを付けたときだけ再び入ります。</p>
+</section>
+<section id="id4">
+<h3>初期状態ファイル<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<p>各 <code class="docutils literal notranslate"><span class="pre">initial.npz</span></code> には UHFk が読むグリーン関数と来歴情報が入っています。
+来歴情報は、候補と実行の id、パターンのラベル・q・位相・符号、
+<code class="docutils literal notranslate"><span class="pre">SubShape</span></code>、 <code class="docutils literal notranslate"><span class="pre">CellShape</span></code>、 <code class="docutils literal notranslate"><span class="pre">Ncond</span></code>、 <code class="docutils literal notranslate"><span class="pre">2Sz</span></code>、使った場の強さ
+（ <code class="docutils literal notranslate"><span class="pre">h_used</span></code>）、入力の SHA-256、初期状態の基準です。 <code class="docutils literal notranslate"><span class="pre">seed_base</span></code> は
+<code class="docutils literal notranslate"><span class="pre">&quot;para_hf&quot;</span></code>（small tier の常磁性の基準）または <code class="docutils literal notranslate"><span class="pre">&quot;bare&quot;</span></code> で、基準を
+使った場合はその温度（ <code class="docutils literal notranslate"><span class="pre">seed_base_para_T</span></code>）と入力のダイジェスト
+（ <code class="docutils literal notranslate"><span class="pre">seed_base_para_digest</span></code>）も記録されます。ライブラリの書き出し関数は、
+別の入力や別のヒント温度に属する基準を拒否します。</p>
+</section>
+<section id="id5">
+<h3>候補の実行<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">WORK/commands.txt</span></code> はどのディレクトリからでも実行できます。各行は
 実行ディレクトリに入り、初期状態ファイルを確認してから
 <code class="docutils literal notranslate"><span class="pre">hwave</span> <span class="pre">input.toml</span> <span class="pre">&gt;</span> <span class="pre">hwave.log</span> <span class="pre">2&gt;&amp;1</span></code> を実行します。GNU parallel やジョブ
@@ -181,8 +328,8 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 後述の制限、このページの冒頭に引用した文が書かれます。</p>
 </section>
 </section>
-<section id="id4">
-<h2><span class="section-number">2.1.2. </span>終了コード<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h2>
+<section id="id6">
+<h2><span class="section-number">2.1.2. </span>終了コード<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h2>
 <table class="docutils align-default">
 <thead>
 <tr class="row-odd"><th class="head"><p>コード</p></th>
@@ -201,8 +348,8 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 <td><p>引数のエラー</p></td>
 </tr>
 <tr class="row-odd"><td><p>3</p></td>
-<td><p>今後のリリースのために予約（事前の常磁性計算の実行待ち）。現在は
-返しません</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">prepare</span> <span class="pre">--stage0</span></code>: 事前の常磁性計算の実行待ち。
+<code class="docutils literal notranslate"><span class="pre">bash</span> <span class="pre">WORK/stage0_commands.txt</span></code> の後、同じ <code class="docutils literal notranslate"><span class="pre">prepare</span></code> を再実行する</p></td>
 </tr>
 <tr class="row-even"><td><p>4</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">check</span> <span class="pre">--require-provenance</span></code>: ファイルに来歴情報がない</p></td>
@@ -210,9 +357,9 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 </tbody>
 </table>
 </section>
-<section id="id5">
-<h2><span class="section-number">2.1.3. </span>網羅性レポート<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">coverage.json</span></code> には候補と <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> の組ごとに一行があります。行は
+<section id="id7">
+<h2><span class="section-number">2.1.3. </span>網羅性レポート<a class="headerlink" href="#id7" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">coverage.json</span></code> には候補と <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> の組み合わせごとに一行があります。行は
 すべて残り、削られることはありません。試さなかった行にはその理由が書かれ
 ます（対称性で他の状態と等しい場合は <code class="docutils literal notranslate"><span class="pre">duplicate</span> <span class="pre">of</span> <span class="pre">&lt;run_id&gt;</span> <span class="pre">(&lt;map&gt;)</span></code>、
 <code class="docutils literal notranslate"><span class="pre">quota:</span> <span class="pre">&lt;family&gt;</span></code>、または理由と提案するセルを伴う <code class="docutils literal notranslate"><span class="pre">unrepresentable</span></code>。
@@ -220,8 +367,8 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 <ul class="simple">
 <li><p>family は <code class="docutils literal notranslate"><span class="pre">para</span></code> と <code class="docutils literal notranslate"><span class="pre">ferro</span></code>（予約行、 <code class="docutils literal notranslate"><span class="pre">SubShape</span></code> ごとに一回実行）、
 <code class="docutils literal notranslate"><span class="pre">random</span></code>、 <code class="docutils literal notranslate"><span class="pre">baseline</span></code>（セルで表せる q でのスピン・電荷パターン）、
-<code class="docutils literal notranslate"><span class="pre">user</span></code> と <code class="docutils literal notranslate"><span class="pre">literature</span></code>（ <code class="docutils literal notranslate"><span class="pre">--extra-candidates</span></code> から。上限で削られ
-ません）です。</p></li>
+<code class="docutils literal notranslate"><span class="pre">orbital</span></code> と <code class="docutils literal notranslate"><span class="pre">instability</span></code>（small tier）、 <code class="docutils literal notranslate"><span class="pre">user</span></code> と
+<code class="docutils literal notranslate"><span class="pre">literature</span></code>（ <code class="docutils literal notranslate"><span class="pre">--extra-candidates</span></code> から。上限で削られません）です。</p></li>
 <li><p>候補は初期状態のパターンで名付けられます（例: <code class="docutils literal notranslate"><span class="pre">spin-z</span> <span class="pre">ferro-orbital</span>
 <span class="pre">q=(1/2,1/2,0)</span> <span class="pre">φ=0</span></code>）。実行後の状態には <code class="docutils literal notranslate"><span class="pre">final_label</span></code> が付き、重みの
 10% 以上を持つ成分を名指しします。逆のパリティの重みが 10% 未満なら時間
@@ -238,15 +385,21 @@ $<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span
 しなかった行や失敗した行は理由とともに並べ、順位は付けません。</p></li>
 </ul>
 </section>
-<section id="id6">
-<h2><span class="section-number">2.1.4. </span>制限<a class="headerlink" href="#id6" title="Link to this heading">¶</a></h2>
+<section id="id8">
+<h2><span class="section-number">2.1.4. </span>制限<a class="headerlink" href="#id8" title="Link to this heading">¶</a></h2>
 <p>UHF は秩序と秩序化温度を過大評価し、k メッシュとセルは有限です。次の状態は
 どの候補にも含まれません: 複数の q の重ね合わせ（double-Q, triple-Q,
 渦の結晶）、残した二つの位相以外のスライド位相、縮退した固有空間での標準
 基底以外の組み合わせ、√3 × √3 のような回転したセルと与えた <code class="docutils literal notranslate"><span class="pre">SubShape</span></code>
-以外のセル、large tier での軌道・ボンドのパターン、候補あたり複数の振幅、
-スピン回転の確認に通らない場合のスパイラル、分母が 16 を超える q。要約にも
-これらの制限が書かれます。</p>
+以外のセル、large tier での軌道・ボンドのパターンとヒント以外のボンドの
+パターン、候補あたり複数の振幅、スピン回転の確認に通らない場合のスパイラル、
+分母が 16 を超える q。要約にもこれらの制限が書かれます。</p>
+<p>ヒントが表すのは常磁性状態だけで、静的に、 <code class="docutils literal notranslate"><span class="pre">T_hint</span></code> で評価したものです。
+一次転移や強結合で到達する状態には、ヒントがまったくないこともあります。
+そのため予約行と baseline の行は常に実行され、ヒントが行を削ることは
+ありません。小さな <code class="docutils literal notranslate"><span class="pre">lambda</span></code> はその状態を否定する根拠ではなく、最大の
+<code class="docutils literal notranslate"><span class="pre">lambda</span></code> が結果を選ぶのでもありません。結果を選ぶのは、試した候補の中での
+収束した実行の自由エネルギーだけです。</p>
 <p>コマンドラインが対応するのは UHFk の入力のみです。ライブラリ関数
 <code class="docutils literal notranslate"><span class="pre">hwave.initial.initial_state</span></code> は、同じ格子の UHFk 入力とサイトの対応表から
 UHFr の <code class="docutils literal notranslate"><span class="pre">Initial</span></code> ファイルも書けます。spin-orbital モードは UHFk のみ対応
@@ -281,9 +434,9 @@ UHFr の <code class="docutils literal notranslate"><span class="pre">Initial</s
 <li class="toctree-l1 current"><a class="reference internal" href="ho-index.html">2. 基本的な使用方法</a><ul class="current">
 <li class="toctree-l2 current"><a class="current reference internal" href="#">2.1. 初期状態の候補（プレビュー）</a><ul>
 <li class="toctree-l3"><a class="reference internal" href="#id2">2.1.1. 使い方の流れ</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id4">2.1.2. 終了コード</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id5">2.1.3. 網羅性レポート</a></li>
-<li class="toctree-l3"><a class="reference internal" href="#id6">2.1.4. 制限</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id6">2.1.2. 終了コード</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id7">2.1.3. 網羅性レポート</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#id8">2.1.4. 制限</a></li>
 </ul>
 </li>
 </ul>
