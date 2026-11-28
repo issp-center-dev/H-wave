@@ -493,6 +493,55 @@ class TestStage0Runs(_Stage0):
                 self.assertEqual(self.tree(work), before)
         self.assertEqual(self.manifest(work)["stage"], "para_pending")
 
+    def racing_mkdir(self, target):
+        """A ``pathlib.Path.mkdir`` that lets another prepare create
+        ``target`` (with a marker file) just before this one's mkdir of it:
+        the window between an existence check and the mkdir."""
+        import pathlib
+        real = pathlib.Path.mkdir
+        marker = os.path.join(target, "theirs.txt")
+
+        def mkdir(path, *args, **kwargs):
+            if os.path.abspath(str(path)) == os.path.abspath(target) \
+                    and not os.path.exists(target):
+                real(path)
+                with open(marker, "w") as f:
+                    f.write("made by another prepare\n")
+            return real(path, *args, **kwargs)
+        return mock.patch.object(pathlib.Path, "mkdir", mkdir), marker
+
+    def test_stage0_para_hf_race_reentry(self):
+        """Re-entry: another prepare creates WORK/para_hf between this one's
+        check and mkdir. This one is refused, and its rollback leaves that
+        para_hf (and the rest of WORK) as it was."""
+        src = self.src()
+        work = self.path("WORK")
+        self.assertEqual(self.prep(src, work)[0], 3)
+        self.run_stage0(work)
+        before = self.tree(work)
+        patch, marker = self.racing_mkdir(os.path.join(work, "para_hf"))
+        with patch:
+            with self.assertRaisesRegex(ValueError, "exists before the preliminary"):
+                self.prep(src, work)
+        self.assertTrue(os.path.isfile(marker))
+        after = self.tree(work)
+        self.assertEqual(after.pop(marker), _sha(marker))
+        self.assertEqual(after, before)
+
+    def test_para_hf_race_in_process(self):
+        """In-process para step into a new WORK: another prepare creates
+        WORK/para_hf first; this one is refused and removes only what it
+        made, so that para_hf survives."""
+        from hwave.initial import cli
+        src = self.src()
+        work = self.path("WORK")
+        patch, marker = self.racing_mkdir(os.path.join(work, "para_hf"))
+        with patch:
+            with self.assertRaisesRegex(ValueError, "exists already"):
+                cli.prepare(src, work, stdout=io.StringIO(), **_KW)
+        self.assertTrue(os.path.isfile(marker))
+        self.assertEqual(sorted(self.tree(work)), [marker])
+
     @heavy
     def test_stage0_work_relocatable(self):
         """Move WORK after the first call, run its stage0_commands.txt there;

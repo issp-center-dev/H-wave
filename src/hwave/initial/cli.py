@@ -747,8 +747,73 @@ def _write_text(path, text):
         raise
 
 
+def _json_text(obj):
+    return json.dumps(obj, indent=1, allow_nan=False) + "\n"
+
+
 def _write_json(path, obj):
-    _write_text(path, json.dumps(obj, indent=1, allow_nan=False) + "\n")
+    _write_text(path, _json_text(obj))
+
+
+# Ownership for the rollback of prepare: a path is this call's own only when
+# this call created it (a successful mkdir, or an exclusive create), never
+# because an existence check found it missing; the rollback removes only
+# those paths, so a concurrent or refused prepare never deletes what another
+# one made.
+_NOT_OURS = ("{}: exists already (another prepare may be writing this WORK, or an "
+             "earlier one stopped); repeat prepare into a new directory")
+
+
+def _claim_work(work):
+    """Create WORK when it is missing; ``True`` when this call created it."""
+    work.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        work.mkdir()
+    except FileExistsError:
+        return False
+    return True
+
+
+def _claim_dir(path, made, message=_NOT_OURS):
+    """Create the directory ``path`` (its parent exists) and record it in
+    ``made``; an existing one is not ours: ``ValueError`` (``message``),
+    nothing recorded."""
+    try:
+        path.mkdir()
+    except FileExistsError:
+        raise ValueError(message.format(path)) from None
+    made.append(path)
+    return path
+
+
+def _create_text(path, text, made):
+    """Write ``text`` to the new file ``path`` (created exclusively, so an
+    existing file or link is never opened) and record it in ``made``; an
+    existing one is not ours: ``ValueError``, nothing recorded."""
+    path = pathlib.Path(os.fspath(path))
+    _refuse_link(path)
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    except FileExistsError:
+        raise ValueError(_NOT_OURS.format(path)) from None
+    made.append(path)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _rollback(work, made, created):
+    """Remove the paths of ``made`` (this call's own, newest first) and
+    WORK itself when this call created it and it is then empty."""
+    for p in reversed(made):
+        if p.is_dir() and not p.is_symlink():
+            shutil.rmtree(p, ignore_errors=True)
+        elif os.path.lexists(str(p)):
+            p.unlink()
+    if created:
+        try:
+            work.rmdir()
+        except OSError:
+            pass
 
 
 def _para_of(work, cset, base):
@@ -890,14 +955,12 @@ def _write_stage0(work, doc, toml, base, thint, *, para_check, record, stdout):
     _plan_run_doc(doc, source_dir=str(toml.parent), overrides=overrides)
     starts = para_starts(base, thint)
     runs = STAGE0_RUNS[:2 if para_check else 1]
-    created = not work.exists()
-    work.mkdir(parents=True, exist_ok=True)
+    created = _claim_work(work)
     made = []
     try:
         entries, staged_bytes = [], 0
         for name, start, cid in runs:
-            rd = work / name
-            made.append(rd)
+            rd = _claim_dir(work / name, made)
             staged = stage_run_dir(rd, doc, source_dir=toml.parent, overrides=overrides,
                                    source_name=toml.name)
             write_start_state(staged.toml_path, starts[start], out=staged.initial_path,
@@ -906,8 +969,8 @@ def _write_stage0(work, doc, toml, base, thint, *, para_check, record, stdout):
                 raise AssertionError("{}: the written start is not verified".format(rd))
             staged_bytes += sum(s.nbytes for s in {s.name: s for s in staged.staged}.values())
             entries.append(_stage0_entry(name, start, cid, staged, rd))
-        _write_text(work / STAGE0_COMMANDS, _commands_text([r[0] for r in runs], stage0=True))
-        made.append(work / STAGE0_COMMANDS)
+        _create_text(work / STAGE0_COMMANDS,
+                     _commands_text([r[0] for r in runs], stage0=True), made)
         manifest = dict(record, manifest_version=MANIFEST_VERSION,
                         hwave_version=hwave.__version__, work_dir_at_prepare=str(work),
                         stage=STAGE_PENDING,
@@ -916,14 +979,7 @@ def _write_stage0(work, doc, toml, base, thint, *, para_check, record, stdout):
                         staged_bytes=staged_bytes, runs=[], para=None)
         _write_json(work / MANIFEST, manifest)
     except BaseException:
-        if created:
-            shutil.rmtree(work, ignore_errors=True)
-        else:
-            for p in made:
-                if p.is_dir():
-                    shutil.rmtree(p, ignore_errors=True)
-                elif p.exists():
-                    p.unlink()
+        _rollback(work, made, created)
         raise
     _print_stage0(work, [r[0] for r in runs], stdout)
     return EXIT_STAGE0_PENDING
@@ -1083,22 +1139,21 @@ def _stage0_reentry(work, manifest, base, thint):
     return para, (runs[idx], outcomes[idx]), outcomes
 
 
-def _keep_stage0_para(work, para, selected):
+def _keep_stage0_para(work, para, selected, made):
     """Keep the para reference ``para`` of the preliminary paramagnetic run
     in ``WORK/para_hf`` as the in-process step does (its green file copied
-    when it has one, and the record); returns the directory."""
+    when it has one, and the record); returns the directory, recorded in
+    ``made`` once this call has created it."""
     from hwave.initial.hints import PARA_GREEN, write_para_record
     root = work / PARA_DIR
     # Not atomic on purpose: a re-entry that dies between the mkdir below
     # and the manifest update leaves WORK/para_hf behind, and every later
-    # re-entry is refused here (prepare's rollback leaves a WORK/para_hf it
-    # did not make, and the manifest, as they are). That fails safe (a
-    # refusal, never a mixed reference), so the directory is not written
-    # through a temporary name.
-    if root.exists():
-        raise ValueError("{}: exists before the preliminary paramagnetic run was read; "
-                         "repeat prepare into a new directory".format(root))
-    root.mkdir()
+    # re-entry is refused here. The directory is ours only when the mkdir
+    # succeeds, so prepare's rollback never removes a WORK/para_hf it did not
+    # make (nor the manifest). That fails safe (a refusal, never a mixed
+    # reference), so the directory is not written through a temporary name.
+    _claim_dir(root, made, "{}: exists before the preliminary paramagnetic run was "
+                           "read; repeat prepare into a new directory")
     entry, outcome = selected
     start = None
     if para.G_para is not None and outcome.green is not None:
@@ -1237,18 +1292,17 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
         return _write_stage0(work, doc, toml, base, thint, para_check=para_check,
                              record=record, stdout=stdout)
 
-    created = not work.exists()
-    work.mkdir(parents=True, exist_ok=True)
-    # the rollback removes only what this call made: a WORK/para_hf that
-    # exists already (a re-entry interrupted after it was written, or a
-    # concurrent prepare) is left as it is, so a refused re-entry changes
-    # nothing and the next one is refused again
-    made = [] if (work / PARA_DIR).exists() else [work / PARA_DIR]
+    created = _claim_work(work)
+    # the rollback removes only what this call created (see _claim_dir): a
+    # WORK/para_hf made by an interrupted re-entry or by a concurrent prepare
+    # is left as it is, so a refused re-entry changes nothing and the next
+    # one is refused again
+    made = []
     try:
         if reentry is not None:
             from hwave.initial.hints import para_from_work
             para0, selected, outcomes = reentry
-            root = _keep_stage0_para(work, para0, selected)
+            root = _keep_stage0_para(work, para0, selected, made)
             # the seeds and labels use the reference read back from
             # WORK/para_hf, as after the in-process step
             given = {"para": para_from_work(base, root) or para0}
@@ -1256,20 +1310,21 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
                 dict(e, outcome=o.state, reason=o.reason)
                 for e, o in zip(stage0_record["runs"], outcomes)])
         else:
-            given = {"para_dir": work / PARA_DIR}
+            given = {"para_dir": _claim_dir(work / PARA_DIR, made)}
         cset = candidate_states(toml, subshapes=subshapes,
                                 tier="auto" if tier is None else tier, t_hint=t_hint,
                                 extra=extras, orbital_site=site, para_check=para_check,
                                 **given, **lim)
-        para, para_entry = _para_of(work, cset, base)
-        if not (work / PARA_DIR).exists() and work / PARA_DIR in made:
+        if reentry is None and not any((work / PARA_DIR).iterdir()):
+            # no para step ran (the large tier): no WORK/para_hf
+            (work / PARA_DIR).rmdir()
             made.remove(work / PARA_DIR)
+        para, para_entry = _para_of(work, cset, base)
         rows = [_thaw_json(r) for r in cset.rows]
         index = {r["run_id"]: i for i, r in enumerate(rows)}
         kept, entries, staged_bytes, cache = [], [], 0, {}
         for run in cset.runs:
-            rd = work / run.run_id
-            made.append(rd)
+            rd = _claim_dir(work / run.run_id, made)
             staged = stage_run_dir(rd, doc, source_dir=toml.parent,
                                    overrides={"SubShape": list(run.subshape)},
                                    source_name=toml.name)
@@ -1317,26 +1372,17 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
         cset2 = dataclasses.replace(cset, runs=tuple(kept), rows=rows)
         chosen = "auto (interim rule)" if tier in (None, "auto") else "user"
         cov = coverage_document(cset2, phase_marker="pre_run", tier_chosen_by=chosen)
-        _write_json(work / CANDIDATES, dict(cset2.to_json(), tier_chosen_by=chosen))
-        made.append(work / CANDIDATES)
-        _write_json(work / COVERAGE, cov)
-        made.append(work / COVERAGE)
-        _write_text(work / COMMANDS, _commands_text([e["run_id"] for e in entries]))
-        made.append(work / COMMANDS)
+        _create_text(work / CANDIDATES, _json_text(dict(cset2.to_json(),
+                                                        tier_chosen_by=chosen)), made)
+        _create_text(work / COVERAGE, _json_text(cov), made)
+        _create_text(work / COMMANDS, _commands_text([e["run_id"] for e in entries]), made)
         manifest = dict(record, manifest_version=MANIFEST_VERSION,
                         hwave_version=hwave.__version__, work_dir_at_prepare=str(work),
                         stage=STAGE_DONE, stage0=stage0_record,
                         staged_bytes=staged_bytes, runs=entries, para=para_entry)
         _write_json(work / MANIFEST, manifest)
     except BaseException:
-        if created:
-            shutil.rmtree(work, ignore_errors=True)
-        else:
-            for p in made:
-                if p.is_dir():
-                    shutil.rmtree(p, ignore_errors=True)
-                elif p.exists():
-                    p.unlink()
+        _rollback(work, made, created)
         raise
     n_not = sum(1 for r in rows if not r["tried"])
     print("{}: {} runs written ({} rows not tried, see {}); {} bytes of staged input "
