@@ -471,6 +471,28 @@ class TestStage0Runs(_Stage0):
         self.assertEqual(rc, 0)
         self.assertIn("nothing to do", out)
 
+    def test_stage0_existing_para_hf_refused_twice(self):
+        """A WORK/para_hf left by an interrupted re-entry: the re-entry is
+        refused, the rollback leaves WORK unchanged (para_hf and the
+        manifest included), and the next re-entry is refused the same way."""
+        src = self.src()
+        work = self.path("WORK")
+        self.assertEqual(self.prep(src, work)[0], 3)
+        self.run_stage0(work)
+        left = os.path.join(work, "para_hf")
+        os.mkdir(left)
+        with open(os.path.join(left, "para_hf.json"), "w") as f:
+            f.write("{}\n")
+        before = self.tree(work)
+        self.assertIn(os.path.join(left, "para_hf.json"), before)
+        for attempt in (1, 2):
+            with self.subTest(attempt=attempt):
+                with self.assertRaisesRegex(ValueError, "exists before the preliminary "
+                                                        "paramagnetic run was read"):
+                    self.prep(src, work)
+                self.assertEqual(self.tree(work), before)
+        self.assertEqual(self.manifest(work)["stage"], "para_pending")
+
     @heavy
     def test_stage0_work_relocatable(self):
         """Move WORK after the first call, run its stage0_commands.txt there;

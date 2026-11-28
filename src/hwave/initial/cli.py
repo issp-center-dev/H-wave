@@ -1091,8 +1091,10 @@ def _keep_stage0_para(work, para, selected):
     root = work / PARA_DIR
     # Not atomic on purpose: a re-entry that dies between the mkdir below
     # and the manifest update leaves WORK/para_hf behind, and every later
-    # re-entry is refused here. That fails safe (a refusal, never a mixed
-    # reference), so the directory is not written through a temporary name.
+    # re-entry is refused here (prepare's rollback leaves a WORK/para_hf it
+    # did not make, and the manifest, as they are). That fails safe (a
+    # refusal, never a mixed reference), so the directory is not written
+    # through a temporary name.
     if root.exists():
         raise ValueError("{}: exists before the preliminary paramagnetic run was read; "
                          "repeat prepare into a new directory".format(root))
@@ -1237,7 +1239,11 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
 
     created = not work.exists()
     work.mkdir(parents=True, exist_ok=True)
-    made = [work / PARA_DIR]
+    # the rollback removes only what this call made: a WORK/para_hf that
+    # exists already (a re-entry interrupted after it was written, or a
+    # concurrent prepare) is left as it is, so a refused re-entry changes
+    # nothing and the next one is refused again
+    made = [] if (work / PARA_DIR).exists() else [work / PARA_DIR]
     try:
         if reentry is not None:
             from hwave.initial.hints import para_from_work
@@ -1256,7 +1262,7 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
                                 extra=extras, orbital_site=site, para_check=para_check,
                                 **given, **lim)
         para, para_entry = _para_of(work, cset, base)
-        if not (work / PARA_DIR).exists():
+        if not (work / PARA_DIR).exists() and work / PARA_DIR in made:
             made.remove(work / PARA_DIR)
         rows = [_thaw_json(r) for r in cset.rows]
         index = {r["run_id"]: i for i, r in enumerate(rows)}

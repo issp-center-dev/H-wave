@@ -758,6 +758,31 @@ class TestParaFromWork(_Tmp):
                         candidate_states(other, tier="small", n_random=0,
                                          para=hints.para_from_work(fo, work))
 
+    def test_in_memory_para_checked(self):
+        """A ParaResult passed directly (no work directory): one computed at
+        the default ene_cutoff is refused for the same files with
+        ene_cutoff = 50, and one without a model is refused outright, by
+        candidate_states and by the writer."""
+        from hwave.initial.enumerate import candidate_states
+        from hwave.initial.writer import initial_state
+        toml = _square_v(self.dest(), L=4, subshape=(1, 1, 1), param={"Ncond": 16})
+        f, para = self.para(toml)
+        self.assertEqual(para.status, "converged", para.skip_reason)
+        self.assertEqual(dict(para.model)["ene_cutoff"], 100.0)
+        other = self.variant(toml, "ene_cutoff")
+        with self.assertRaisesRegex(ValueError, r"another model \(ene_cutoff differ\)"):
+            candidate_states(other, tier="small", n_random=0, para=para)
+        bare = dataclasses.replace(para, model=None)
+        out = os.path.join(self.tmp, "x.npz")
+        with self.assertRaisesRegex(ValueError, "names no model"):
+            candidate_states(toml, tier="small", n_random=0, para=bare)
+        with self.assertRaisesRegex(ValueError, "names no model"):
+            initial_state(toml, _neel(), out=out, para=bare)
+        self.assertFalse(os.path.exists(out))
+        # the reference with its model is accepted for its own input
+        initial_state(toml, _neel(), out=out, para=para)
+        self.assertTrue(os.path.exists(out))
+
     def test_other_input_files_refused(self):
         """Other referenced files: refused (the input digest), also for a
         skipped record."""

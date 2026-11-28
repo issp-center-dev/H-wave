@@ -397,12 +397,16 @@ def _check_para(para, facts, t_hint=None):
         raise ValueError("para: the para reference was computed for other input files "
                          "(input digest {} of the para record, {} of this input)"
                          .format(got_digest, want_digest))
-    if para.model is not None:
-        want = dict(model_key(facts))
-        diff = sorted(k for k in want if dict(para.model).get(k) != want[k])
-        if diff:
-            raise ValueError("para: the para reference was computed for another model "
-                             "({} differ)".format(", ".join(diff)))
+    if para.model is None:
+        raise ValueError("para: the para reference names no model (ParaResult.model is "
+                         "None), so its Ncond, 2Sz, flag_fock, ene_cutoff and CellShape "
+                         "cannot be checked; use a reference from hwave.initial.hints."
+                         "para_hf or para_from_work")
+    want = dict(model_key(facts))
+    diff = sorted(k for k in want if dict(para.model).get(k) != want[k])
+    if diff:
+        raise ValueError("para: the para reference was computed for another model "
+                         "({} differ)".format(", ".join(diff)))
     T = _hint_T(facts, t_hint)
     if not abs(float(para.T) - T) <= _PARA_T_RTOL * max(1.0, abs(T)):
         raise ValueError("para: the para reference was computed at T_hint = {:.12g}, but "
