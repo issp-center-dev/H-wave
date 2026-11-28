@@ -442,27 +442,45 @@ class TestFixedCountChi0(_Tmp):
 
     def test_nonzero_q_unchanged(self):
         """At q != 0 the hint chi0 is the Lindhard response bit for bit, and
-        the eigenpairs equal those of the grand-canonical path bit for bit;
-        at q = 0 they differ."""
+        the eigen-solve receives bit-identical matrices on the new and the
+        grand-canonical path; its eigenpairs then agree to 1e-12 (the dense
+        eigensolver itself is not bit-reproducible from call to call: entries
+        near zero differ in the last bits). At q = 0 they differ."""
         from hwave.initial import cells, hints
         toml = initial_fixtures.wannier_like(self.dest())
         f, para = _para(toml)
         P = hints.pair_space(f)
         q_set = cells.commensurate_q(f.cellshape)
-        new = hints.hint_eigenpairs(f, para, P, q_set)
+
+        def recording(store):
+            def solve(chis, gams, **kw):
+                store.append(({k: np.array(v) for k, v in chis.items()},
+                              {k: np.array(v) for k, v in gams.items()}))
+                return hints.solve_small(chis, gams, **kw)
+            return solve
+        seen_new, seen_old = [], []
+        new = hints.hint_eigenpairs(f, para, P, q_set, solve=recording(seen_new))
         with mock.patch.object(hints, "hint_chi0", hints.lindhard):
-            old = hints.hint_eigenpairs(f, para, P, q_set)
+            old = hints.hint_eigenpairs(f, para, P, q_set, solve=recording(seen_old))
         zero = (Fraction(0),) * 3
-        for q in old:
+        self.assertEqual(list(new), list(old))
+        for q, (cn, gn), (co, go) in zip(new, seen_new, seen_old):
             if q == zero:
+                self.assertFalse(all(np.array_equal(cn[k], co[k]) for k in cn))
                 continue
             self.assertTrue(np.array_equal(hints.hint_chi0(para.bands, q, P),
                                            hints.lindhard(para.bands, q, P)))
+            for k in cn:
+                self.assertTrue(np.array_equal(cn[k], co[k]), (q, k))
+                self.assertTrue(np.array_equal(gn[k], go[k]), (q, k))
             a, b = new[q], old[q]
-            self.assertEqual([lam for lam, _x in a.pairs], [lam for lam, _x in b.pairs])
-            for (_l1, x1), (_l2, x2) in zip(a.pairs, b.pairs):
-                self.assertTrue(np.array_equal(x1, x2))
-            self.assertEqual(a.amplitudes, b.amplitudes)
+            self.assertEqual(len(a.pairs), len(b.pairs))
+            for (l1, x1), (l2, x2) in zip(a.pairs, b.pairs):
+                self.assertAlmostEqual(l1, l2, delta=1e-12)
+                np.testing.assert_allclose(x1, x2, rtol=0, atol=1e-12)
+            for e1, e2 in zip(a.amplitudes, b.amplitudes):
+                self.assertEqual([(e.orb_a, e.orb_b, e.r) for e in e1],
+                                 [(e.orb_a, e.orb_b, e.r) for e in e2])
         self.assertNotEqual([lam for lam, _x in new[zero].pairs],
                             [lam for lam, _x in old[zero].pairs])
 
