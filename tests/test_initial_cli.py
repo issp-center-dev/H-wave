@@ -61,6 +61,212 @@ def _geometry_uhf(L):
 _ONEBODYG = "=====\nNCisAjs 2\n=====\n=====\n=====\n0 0 0 0\n0 0 1 0\n"
 
 
+
+# --------------------------------------------------------------------------
+# the staging cases, shared by the candidate runs (TestPrepare) and the
+# directories of the preliminary paramagnetic run (test_initial_stage0)
+# --------------------------------------------------------------------------
+#
+# STAGING_CASES is a list of ``(name, build, expected)``:
+#
+# * ``build(tc, name) -> (toml, info)`` writes a source input under
+#   ``tc.path(name)`` and returns its TOML and what the checks need;
+# * ``expected`` is ``{"refused": words}`` (prepare exits 1, naming every
+#   word, and writes no WORK; for the TOML and for its directory) or
+#   ``{"check": fn, "after_run": fn}``, each ``fn(tc, target_dir, info)``
+#   asserting on one target directory (a candidate run or a preliminary
+#   paramagnetic run): ``check`` after prepare wrote it, ``after_run``
+#   after hwave ran in it (``None``: nothing to check).
+
+
+def _square_source(tc, name):
+    src = tc.model(name)
+    return os.path.join(src, "input.toml")
+
+
+def _edited_source(edit):
+    def build(tc, name):
+        toml = _square_source(tc, name)
+        _edit(toml, edit)
+        return toml, {}
+    return build
+
+
+def _check_output_paths(tc, rd, info):
+    from hwave.results import open_run
+    doc = _read_toml(os.path.join(rd, "input.toml"))
+    tc.assertEqual(doc["file"]["output"]["path_to_output"], "out/dir")
+    # an omitted energy is written, collect reads it
+    tc.assertEqual(doc["file"]["output"]["energy"], "energy.dat")
+    run = open_run(os.path.join(rd, "input.toml"), base_dir=rd)
+    tc.assertEqual(str(run.output_dir), os.path.join(os.path.realpath(rd), "out", "dir"))
+
+
+def _after_output_paths(tc, rd, info):
+    tc.assertTrue(os.path.isfile(os.path.join(rd, "out", "dir", "energy.dat")))
+
+
+def _build_input_staging(tc, name):
+    src = tc.model(name)
+    toml = os.path.join(src, "input.toml")
+    # absolute, nested and '..' sources; a basename shared by the two tables
+    other = tc.path(name + "_other")
+    os.makedirs(os.path.join(src, "nested"))
+    os.makedirs(other)
+    shutil.move(os.path.join(src, "transfer.dat"), os.path.join(src, "nested",
+                                                                 "transfer.dat"))
+    shutil.move(os.path.join(src, "coulombintra.dat"),
+                os.path.join(other, "coulombintra.dat"))
+    shutil.move(os.path.join(src, "geom.dat"), os.path.join(other, "geom.dat"))
+    os.makedirs(os.path.join(src, "uhf"))
+    with open(os.path.join(src, "uhf", "geom.dat"), "w") as f:
+        f.write(_geometry_uhf(4))
+    with open(os.path.join(src, "uhf", "OneBodyG.dat"), "w") as f:
+        f.write(_ONEBODYG)
+    rel_other = os.path.join("..", "..", os.path.basename(other), "coulombintra.dat")
+
+    def fn(d):
+        fin = d["file"]["input"]
+        fin.update(path_to_input="uhf", geometry_uhf="geom.dat",
+                   onebodyg_uhf="OneBodyG.dat")
+        fin["interaction"] = {"path_to_input": "nested",
+                              "Geometry": os.path.join(other, "geom.dat"),
+                              "Transfer": "transfer.dat",
+                              "CoulombIntra": rel_other}
+        d["file"]["output"]["onebodyg"] = "greenone.dat"
+    _edit(toml, fn)
+    sources = {"Geometry": os.path.join(other, "geom.dat"),
+               "Transfer": os.path.join(src, "nested", "transfer.dat"),
+               "CoulombIntra": os.path.join(other, "coulombintra.dat"),
+               "geometry_uhf": os.path.join(src, "uhf", "geom.dat"),
+               "onebodyg_uhf": os.path.join(src, "uhf", "OneBodyG.dat")}
+    return toml, {"sources": sources, "roots": [src, other]}
+
+
+def _check_input_staging(tc, rd, info):
+    from hwave.solver import initial_facade
+    sources = info["sources"]
+    doc = _read_toml(os.path.join(rd, "input.toml"))
+    fin = doc["file"]["input"]
+    # TOML key order: [file.input] keys come before its interaction table
+    tc.assertEqual(fin["geometry_uhf"], "inputs/geom.dat")
+    tc.assertEqual(fin["interaction"]["Geometry"], "geom-2.dat")
+    files = initial_facade.referenced_input_files(os.path.join(rd, "input.toml"))
+    tc.assertEqual(set(files), set(sources))
+    for key, path in files.items():
+        tc.assertTrue(str(path).startswith(os.path.realpath(rd)) or
+                      str(path).startswith(rd), (key, path))
+        tc.assertFalse(os.path.islink(path))
+        tc.assertTrue(stat.S_ISREG(os.lstat(path).st_mode))
+        tc.assertEqual(_sha(path), _sha(sources[key]), key)
+
+
+def _after_greenone(tc, rd, info):
+    tc.assertTrue(os.path.isfile(os.path.join(rd, "output", "greenone.dat")))
+
+
+def _inputs_dir_source(inter_dir):
+    """A source TOML with [file.input] path_to_input = "inputs" and the
+    model files under ``inter_dir``."""
+    def build(tc, name):
+        base = tc.path(name)
+        model_toml = initial_fixtures.square(os.path.join(base, inter_dir), 4, U=4.0,
+                                             subshape=(2, 2, 1), param={"IterationMax": 1})
+        doc = _read_toml(model_toml)
+        os.remove(model_toml)
+        os.makedirs(os.path.join(base, "inputs"), exist_ok=True)
+        with open(os.path.join(base, "inputs", "geometry_uhf.dat"), "w") as f:
+            f.write(_geometry_uhf(4))
+        with open(os.path.join(base, "inputs", "OneBodyG.dat"), "w") as f:
+            f.write(_ONEBODYG)
+        doc["file"]["input"].update(path_to_input="inputs", geometry_uhf="geometry_uhf.dat",
+                                    onebodyg_uhf="OneBodyG.dat")
+        doc["file"]["input"]["interaction"]["path_to_input"] = inter_dir
+        doc["file"]["output"]["onebodyg"] = "greenone.dat"
+        _write_toml(os.path.join(base, "input.toml"), doc)
+        return os.path.join(base, "input.toml"), {}
+    return build
+
+
+def _check_path_to_input(tc, rd, info):
+    from hwave.initial.writer import solver_initial_path
+    t = os.path.join(rd, "input.toml")
+    fin = _read_toml(t)["file"]["input"]
+    tc.assertEqual(fin["path_to_input"], "")
+    tc.assertEqual(fin["initial"], "initial.npz")
+    tc.assertEqual(fin["geometry_uhf"], "inputs/geometry_uhf.dat")
+    tc.assertEqual(fin["interaction"]["path_to_input"], "inputs")
+    tc.assertTrue(os.path.samefile(solver_initial_path(t), os.path.join(rd, "initial.npz")))
+
+
+def _after_path_to_input(tc, rd, info):
+    with open(os.path.join(rd, "hwave.log")) as f:
+        tc.assertIn("read initial from initial.npz", f.read())
+    _after_greenone(tc, rd, info)
+
+
+STAGING_CASES = [
+    # test_exact_case_variant_refused: a case variant of an exact-case key
+    ("exact_case_Initial", _edited_source(
+        lambda d: d["file"]["input"].update(Initial="x.npz")), {"refused": ("'initial'",)}),
+    ("exact_case_SCF_Status", _edited_source(
+        lambda d: d["file"]["output"].update(SCF_Status="s.dat")),
+     {"refused": ("'scf_status'",)}),
+    ("exact_case_Mode", _edited_source(lambda d: d.update(Mode=d.pop("mode"))),
+     {"refused": ("[mode]",)}),
+    # test_prepare_output_paths
+    ("output_paths", _edited_source(
+        lambda d: d["file"]["output"].update(path_to_output="out/dir")),
+     {"check": _check_output_paths, "after_run": _after_output_paths}),
+] + [
+    ("output_bad_{}_{}".format(key, i), _edited_source(
+        lambda d, key=key, value=value: d["file"]["output"].update({key: value})),
+     {"refused": (key, word)})
+    for i, (key, value, word) in enumerate((
+        ("path_to_output", "/abs/out", "absolute"), ("path_to_output", "../out", "'..'"),
+        ("green", "", 'green = ""'), ("energy", "", 'energy = ""'),
+        ("green", "../g", "'..'"), ("energy", "/e.dat", "absolute")))
+] + [
+    # test_prepare_input_staging: absolute, nested, '..', a basename
+    # collision, geometry_uhf/onebodyg_uhf
+    ("input_staging", _build_input_staging,
+     {"check": _check_input_staging, "after_run": _after_greenone}),
+    # test_prepare_path_to_input_inputs: [file.input] path_to_input = "inputs"
+    ("path_to_input_inputs", _inputs_dir_source("inputs"),
+     {"check": _check_path_to_input, "after_run": _after_path_to_input}),
+    ("path_to_input_data", _inputs_dir_source("data"),
+     {"check": _check_path_to_input, "after_run": _after_path_to_input}),
+]
+
+
+def staging_cases(prefix=""):
+    """The staging cases whose name starts with ``prefix``."""
+    return [c for c in STAGING_CASES if c[0].startswith(prefix)]
+
+
+def check_refused_case(tc, case, *extra):
+    """Run ``prepare`` on the refused ``case`` (its TOML, then its
+    directory) with the arguments ``extra``: exit code 1, every expected
+    word in the message, and no WORK."""
+    name, build, expected = case
+    toml, _ = build(tc, name)
+    for inp in (toml, os.path.dirname(toml)):
+        work = tc.path("W_" + name)
+        rc, _, err = tc.main("prepare", inp, "--out", work, *extra)
+        tc.assertEqual(rc, 1, (name, inp))
+        for word in expected["refused"]:
+            tc.assertIn(word, err, name)
+        tc.assertFalse(os.path.exists(work), name)
+
+
+def _pin_tier(argv):
+    """``prepare`` argv with ``--tier large`` unless a tier is given: these
+    tests check the large tier (the default tier depends on the host
+    memory)."""
+    if argv and argv[0] == "prepare" and "--tier" not in argv and "--help" not in argv:
+        return argv + ["--tier", "large"]
+    return argv
+
 class _Base(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -91,6 +297,7 @@ class _Base(unittest.TestCase):
         from hwave.initial import cli
         kw.setdefault("n_random", 0)
         kw.setdefault("max_candidates", 0)
+        kw.setdefault("tier", "large")
         out = io.StringIO()
         rc = cli.prepare(src, work, stdout=out, **kw)
         self.assertEqual(rc, 0)
@@ -100,7 +307,7 @@ class _Base(unittest.TestCase):
         from hwave.initial import cli
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            rc = cli.main(list(argv))
+            rc = cli.main(_pin_tier([str(a) for a in argv]))
         return rc, out.getvalue(), err.getvalue()
 
     def manifest(self, work):
@@ -244,57 +451,20 @@ class TestPrepare(_Base):
         self.assertFalse(os.path.exists(self.path("W2")))
 
     def test_exact_case_variant_refused(self):
-        cases = (
-            ("Initial", lambda d: d["file"]["input"].update(Initial="x.npz"), "'initial'"),
-            ("SCF_Status", lambda d: d["file"]["output"].update(SCF_Status="s.dat"),
-             "'scf_status'"),
-            ("Mode", lambda d: d.update(Mode=d.pop("mode")), "[mode]"),
-        )
-        for name, fn, spelling in cases:
-            src = self.model("src_" + name)
-            toml = os.path.join(src, "input.toml")
-            _edit(toml, fn)
-            work = self.path("W_" + name)
-            rc, _, err = self.main("prepare", toml, "--out", work)
-            self.assertEqual(rc, 1, name)
-            self.assertIn(spelling, err, name)
-            self.assertFalse(os.path.exists(work), name)
-            # a directory input is refused too, naming the solver spelling
-            rc, _, err = self.main("prepare", src, "--out", work)
-            self.assertEqual(rc, 1, name)
-            self.assertIn(spelling, err, name)
+        for case in staging_cases("exact_case_"):
+            check_refused_case(self, case)
 
     def test_prepare_output_paths(self):
-        from hwave.results import open_run
-        src = self.model()
-        toml = os.path.join(src, "input.toml")
-        _edit(toml, lambda d: d["file"]["output"].update(path_to_output="out/dir"))
-        work = self.path("WORK")
-        self.prepare(src, work)
-        for i in self.run_ids(work):
-            rd = os.path.join(work, i)
-            doc = _read_toml(os.path.join(rd, "input.toml"))
-            self.assertEqual(doc["file"]["output"]["path_to_output"], "out/dir")
-            # an omitted energy is written, collect reads it
-            self.assertEqual(doc["file"]["output"]["energy"], "energy.dat")
-            run = open_run(os.path.join(rd, "input.toml"), base_dir=rd)
-            self.assertEqual(str(run.output_dir), os.path.join(os.path.realpath(rd),
-                                                               "out", "dir"))
-        bad = (("path_to_output", "/abs/out", "absolute"),
-               ("path_to_output", "../out", "'..'"),
-               ("green", "", 'green = ""'), ("energy", "", 'energy = ""'),
-               ("green", "../g", "'..'"), ("energy", "/e.dat", "absolute"))
-        for key, value, word in bad:
-            _edit(toml, lambda d: d["file"]["output"].update({key: value}))
-            w = self.path("W_{}_{}".format(key, len(value)))
-            rc, _, err = self.main("prepare", src, "--out", w)
-            self.assertEqual(rc, 1, (key, value))
-            self.assertIn(key, err)
-            self.assertIn(word, err)
-            self.assertFalse(os.path.exists(w))
-            _edit(toml, lambda d: d["file"]["output"].update(path_to_output="output")
-                  or d["file"]["output"].pop("green", None)
-                  or d["file"]["output"].pop("energy", None))
+        for case in staging_cases("output_"):
+            name, build, expected = case
+            if "refused" in expected:
+                check_refused_case(self, case)
+                continue
+            toml, info = build(self, name)
+            work = self.path("W_" + name)
+            self.prepare(os.path.dirname(toml), work)
+            for i in self.run_ids(work):
+                expected["check"](self, os.path.join(work, i), info)
 
     def _tree(self, root, skip):
         out = {}
@@ -306,108 +476,33 @@ class TestPrepare(_Base):
         return out
 
     def test_prepare_input_staging(self):
-        from hwave.solver import initial_facade
-        src = self.model()
-        toml = os.path.join(src, "input.toml")
-        # absolute, nested and '..' sources; a basename shared by the two tables
-        other = self.path("other")
-        os.makedirs(os.path.join(src, "nested"))
-        os.makedirs(other)
-        shutil.move(os.path.join(src, "transfer.dat"), os.path.join(src, "nested",
-                                                                     "transfer.dat"))
-        shutil.move(os.path.join(src, "coulombintra.dat"),
-                    os.path.join(other, "coulombintra.dat"))
-        shutil.move(os.path.join(src, "geom.dat"), os.path.join(other, "geom.dat"))
-        os.makedirs(os.path.join(src, "uhf"))
-        with open(os.path.join(src, "uhf", "geom.dat"), "w") as f:
-            f.write(_geometry_uhf(4))
-        with open(os.path.join(src, "uhf", "OneBodyG.dat"), "w") as f:
-            f.write(_ONEBODYG)
-        def fn(d):
-            fin = d["file"]["input"]
-            fin.update(path_to_input="uhf", geometry_uhf="geom.dat",
-                       onebodyg_uhf="OneBodyG.dat")
-            fin["interaction"] = {"path_to_input": "nested",
-                                  "Geometry": os.path.join(other, "geom.dat"),
-                                  "Transfer": "transfer.dat",
-                                  "CoulombIntra": "../../other/coulombintra.dat"}
-            d["file"]["output"]["onebodyg"] = "greenone.dat"
-        _edit(toml, fn)
+        (name, build, expected), = staging_cases("input_staging")
+        toml, info = build(self, name)
         work = self.path("WORK")
         before = self._tree(self.tmp, work)
-        self.prepare(src, work)
+        self.prepare(os.path.dirname(toml), work)
         self.assertEqual(self._tree(self.tmp, work), before)
-        sources = {"Geometry": os.path.join(other, "geom.dat"),
-                   "Transfer": os.path.join(src, "nested", "transfer.dat"),
-                   "CoulombIntra": os.path.join(other, "coulombintra.dat"),
-                   "geometry_uhf": os.path.join(src, "uhf", "geom.dat"),
-                   "onebodyg_uhf": os.path.join(src, "uhf", "OneBodyG.dat")}
         ids = self.run_ids(work)
         for i in ids:
-            rd = os.path.join(work, i)
-            doc = _read_toml(os.path.join(rd, "input.toml"))
-            fin = doc["file"]["input"]
-            # TOML key order: [file.input] keys come before its interaction table
-            self.assertEqual(fin["geometry_uhf"], "inputs/geom.dat")
-            self.assertEqual(fin["interaction"]["Geometry"], "geom-2.dat")
-            files = initial_facade.referenced_input_files(os.path.join(rd, "input.toml"))
-            self.assertEqual(set(files), set(sources))
-            for key, path in files.items():
-                self.assertTrue(str(path).startswith(os.path.realpath(rd)) or
-                                str(path).startswith(rd), (key, path))
-                self.assertFalse(os.path.islink(path))
-                self.assertTrue(stat.S_ISREG(os.lstat(path).st_mode))
-                self.assertEqual(_sha(path), _sha(sources[key]), key)
+            expected["check"](self, os.path.join(work, i), info)
         rd = os.path.join(work, ids[0])
         self.assertEqual(self.run_hwave(rd), 0)
-        self.assertTrue(os.path.isfile(os.path.join(rd, "output", "greenone.dat")))
+        expected["after_run"](self, rd, info)
         self.assertEqual(self._tree(self.tmp, work), before)
-
-    def _inputs_dir_source(self, name, inter_dir):
-        """A source TOML with [file.input] path_to_input = "inputs" and the
-        model files under ``inter_dir``."""
-        base = self.path(name)
-        model_toml = initial_fixtures.square(os.path.join(base, inter_dir), 4, U=4.0,
-                                             subshape=(2, 2, 1), param={"IterationMax": 1})
-        doc = _read_toml(model_toml)
-        os.remove(model_toml)
-        os.makedirs(os.path.join(base, "inputs"), exist_ok=True)
-        with open(os.path.join(base, "inputs", "geometry_uhf.dat"), "w") as f:
-            f.write(_geometry_uhf(4))
-        with open(os.path.join(base, "inputs", "OneBodyG.dat"), "w") as f:
-            f.write(_ONEBODYG)
-        doc["file"]["input"].update(path_to_input="inputs", geometry_uhf="geometry_uhf.dat",
-                                    onebodyg_uhf="OneBodyG.dat")
-        doc["file"]["input"]["interaction"]["path_to_input"] = inter_dir
-        doc["file"]["output"]["onebodyg"] = "greenone.dat"
-        _write_toml(os.path.join(base, "input.toml"), doc)
-        return base
 
     @heavy
     def test_prepare_path_to_input_inputs(self):
-        from hwave.initial.writer import solver_initial_path
-        for variant in ("inputs", "data"):
-            src = self._inputs_dir_source("src_" + variant, variant)
-            work = self.path("W_" + variant)
-            self.prepare(src, work)
+        for name, build, expected in staging_cases("path_to_input_"):
+            toml, info = build(self, name)
+            work = self.path("W_" + name)
+            self.prepare(os.path.dirname(toml), work)
             ids = self.run_ids(work)
             for i in ids:
-                rd = os.path.join(work, i)
-                t = os.path.join(rd, "input.toml")
-                fin = _read_toml(t)["file"]["input"]
-                self.assertEqual(fin["path_to_input"], "")
-                self.assertEqual(fin["initial"], "initial.npz")
-                self.assertEqual(fin["geometry_uhf"], "inputs/geometry_uhf.dat")
-                self.assertEqual(fin["interaction"]["path_to_input"], "inputs")
-                self.assertTrue(os.path.samefile(solver_initial_path(t),
-                                                 os.path.join(rd, "initial.npz")))
+                expected["check"](self, os.path.join(work, i), info)
             res = self.bash(os.path.join(work, "commands.txt"))
             self.assertEqual(res.returncode, 0, res.stdout)
             for i in ids:
-                rd = os.path.join(work, i)
-                with open(os.path.join(rd, "hwave.log")) as f:
-                    self.assertIn("read initial from initial.npz", f.read())
-                self.assertTrue(os.path.isfile(os.path.join(rd, "output", "greenone.dat")))
+                expected["after_run"](self, os.path.join(work, i), info)
 
     @heavy
     def test_work_relocatable(self):
@@ -520,7 +615,8 @@ class TestPrepare(_Base):
             f.write("\n")
         from hwave.initial import cli
         with self.assertRaisesRegex(ValueError, "input file Transfer changed"):
-            cli.prepare(src, work, n_random=0, max_candidates=0, stdout=io.StringIO())
+            cli.prepare(src, work, n_random=0, max_candidates=0, tier="large",
+                        stdout=io.StringIO())
         # a foreign directory
         foreign = self.path("foreign")
         os.makedirs(foreign)

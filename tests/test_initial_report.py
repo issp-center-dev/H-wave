@@ -60,7 +60,7 @@ def _cset(dest, *, two_sz=None):
                        modulation="cos", entries=(Entry(0, 0, (0, 0, 0), cz=1.0),))
     user = Candidate.user(pattern=spec, label="quarter")
     return candidate_states(toml, subshapes=[(2, 2, 1), (4, 1, 1)], max_candidates=3,
-                            extra=[user])
+                            extra=[user], tier="large")
 
 
 def _with_rows(cset, rows):

@@ -19,11 +19,25 @@ WORK can be moved, or its sources deleted, and still be run and collected.
 The original TOML's absolute path is kept in ``manifest.json`` for
 ``prepare`` re-entry and display only.
 
+**The preliminary paramagnetic run** (``prepare --stage0``, small tier):
+the paramagnetic Hartree-Fock step that the small tier otherwise runs
+inside ``prepare`` is written as run directories of its own,
+``WORK/stage0_para/`` (and ``WORK/stage0_para_check/`` with
+``--para-check``), staged as the candidate runs are (``SubShape = [1, 1,
+1]``, ``T = T_hint``, ``EPS = max(EPS, 12)``, ``[file.output] green``
+set), with ``WORK/stage0_commands.txt``; ``prepare`` exits with code 3.
+After those runs, the same ``prepare`` command checks their inputs against
+``manifest.json`` and reads their results: when one converged it becomes
+the para reference (``WORK/para_hf/``) and ``prepare`` writes the candidate
+runs; when it ran and failed the seeds use the bare ``H0`` and the hints
+are skipped with the reason; when it has not run yet, ``prepare`` prints
+the commands again and exits with code 3.
+
 **Exit codes** (:data:`EXIT_CODES`): 0 done (for ``check``: verified, or
 unverified without ``--require-provenance``); 1 an error or a refusal; 2 an
-argument error; 3 reserved for a later release (a preliminary paramagnetic
-run is pending; never returned now); 4 ``check
---require-provenance`` on an initial-state file without provenance.
+argument error; 3 a preliminary paramagnetic run is pending (``prepare
+--stage0``); 4 ``check --require-provenance`` on an initial-state file
+without provenance.
 """
 import argparse
 import copy
@@ -58,8 +72,9 @@ EXIT_CODES = (
     (EXIT_OK, "done (check: verified, or unverified without --require-provenance)"),
     (EXIT_ERROR, "error, or the check refused the file"),
     (EXIT_USAGE, "argument error"),
-    (EXIT_STAGE0_PENDING, "reserved for a later release (a preliminary paramagnetic run "
-                          "is pending); never returned now"),
+    (EXIT_STAGE0_PENDING, "prepare --stage0: a preliminary paramagnetic run is pending; "
+                          "run bash WORK/stage0_commands.txt, then re-run the same "
+                          "prepare command"),
     (EXIT_NO_PROVENANCE, "check --require-provenance: the initial-state file has no "
                          "provenance"),
 )
@@ -77,6 +92,22 @@ RUN_TOML = "input.toml"
 RUN_INITIAL = "initial.npz"
 RUN_INPUTS = "inputs"
 RUN_LOG = "hwave.log"
+STAGE0_COMMANDS = "stage0_commands.txt"
+
+#: ``manifest.json`` ``stage``: the preliminary paramagnetic run is written
+#: and has not been read back yet, or prepare is done
+STAGE_PENDING = "para_pending"
+STAGE_DONE = "done"
+#: the directories of the preliminary paramagnetic run: ``(directory, the
+#: start of :func:`hwave.initial.hints.para_starts`, the candidate id of
+#: its start file)``; the second only with ``--para-check``
+STAGE0_RUNS = (("stage0_para", "main", "para-hf-start"),
+               ("stage0_para_check", "check", "para-hf-check-start"))
+#: ``[file.output] green`` of a preliminary paramagnetic run when the input
+#: names none
+STAGE0_GREEN = "green"
+#: the hint printed with the commands of the preliminary paramagnetic run
+PENDING_HINT = "re-run the same prepare command after these finish"
 
 #: ``[file.input]`` keys whose files are staged (output requests of UHFk)
 STAGED_INPUT_KEYS = ("geometry_uhf", "onebodyg_uhf")
@@ -407,8 +438,8 @@ def stage_run_dir(run_dir, doc, *, source_dir, overrides, source_name=None) -> S
     set to ``"energy.dat"``. The written TOML is re-parsed and checked by
     the solver's input reader. ``source_name`` (the original file name)
     goes into the header comment. ``initial = "initial.npz"`` is always
-    written; the caller writes that file (a stage-0 caller must write its
-    starting npz there too). Output names that would overwrite
+    written; the caller writes that file (for the preliminary paramagnetic
+    run, its starting npz). Output names that would overwrite
     ``input.toml``, ``initial.npz``, ``hwave.log`` or ``inputs/`` are
     refused.
 
@@ -576,23 +607,35 @@ def _rho(G, problem):
     return np.swapaxes(g, -1, -2)
 
 
-def _para_green(facts, cache):
-    """The bare-H0 paramagnet of the cell of ``facts`` (the reference of
-    the labels)."""
-    from hwave.initial.hints import t_hint_bare
+#: the para work directory inside WORK (the small tier)
+PARA_DIR = "para_hf"
+
+
+def _para_green(facts, cache, para=None):
+    """The reference of the labels on the cell of ``facts``: the h = 0 seed
+    on the base the seeds use, the para Hartree-Fock Hamiltonian folded to
+    the cell when ``para`` is a converged para reference, else the bare
+    ``H0`` paramagnet."""
+    from hwave.initial.hints import fold_para, t_hint_bare
     from hwave.initial.seed import seed_pattern
-    key = tuple(facts.problem.subshape)
+    on_para = para is not None and para.status == "converged"
+    key = (tuple(facts.problem.subshape), on_para)
     if key not in cache:
         p = facts.problem
-        cache[key] = seed_pattern(facts, p.ham_trans_k, None, T_run=p.T,
-                                  W0=t_hint_bare(p).W0, seed_base="bare").G
+        if on_para:
+            base, seed_base = fold_para(para.H_para_k, facts, p.subshape), "para_hf"
+        else:
+            base, seed_base = p.ham_trans_k, "bare"
+        cache[key] = seed_pattern(facts, base, None, T_run=p.T, W0=t_hint_bare(p).W0,
+                                  seed_base=seed_base).G
     return cache[key]
 
 
 def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False,
-                 ordering=None):
-    """The label of the state ``G`` from ``delta rho`` against the bare-H0
-    paramagnet of its cell (the rho = G^T convention)."""
+                 ordering=None, para=None):
+    """The label of the state ``G`` from ``delta rho`` against the
+    reference of its cell (:func:`_para_green`: the seed base at h = 0;
+    the rho = G^T convention)."""
     from hwave.initial import labels
     from hwave.initial.symmetry import hermitian_green
     from hwave.initial.writer import HERMITE_TOL
@@ -605,8 +648,9 @@ def _state_label(G, facts, cache, *, q=None, phase=None, sign=None, spiral=False
                          "conj(G(-r)_ba)| / 2 = {:.3g})".format(off))
     # Hermitian to round-off: the Hermitian parts, so that a delta rho of
     # round-off size is not judged against its own norm
-    para = hermitian_green(np.asarray(_para_green(facts, cache)).reshape(g5.shape), p.shape)
-    d = _rho(gh, p) - _rho(para, p)
+    ref = hermitian_green(np.asarray(_para_green(facts, cache, para)).reshape(g5.shape),
+                          p.shape)
+    d = _rho(gh, p) - _rho(ref, p)
     if float(np.max(np.abs(d), initial=0.0)) <= labels.PARA_TOL:
         d = np.zeros_like(d)
     return labels.label(d, facts, q=q, eta=None, phase=phase, sign=sign,
@@ -640,17 +684,28 @@ def _dominant_q(op):
     return [q for q, x in zip(qs, w) if x >= Q_TIE * top]
 
 
-def _commands_text(run_ids):
-    lines = ['cd "$(dirname "$0")" || exit 1',
-             "# Candidate runs written by python -m hwave.initial prepare.",
-             "# bash commands.txt works from any directory. For GNU parallel and job",
-             "# arrays, which run single lines, run from WORK: cd WORK && parallel < "
-             "commands.txt",
-             "# Each line checks the initial state, then runs hwave; collect WORK reads "
-             "the results."]
-    for rid in run_ids:
-        lines.append('(cd "{}" && python -m hwave.initial check --require-provenance '
-                     '{} && hwave {} > {} 2>&1)'.format(rid, RUN_TOML, RUN_TOML, RUN_LOG))
+def _command_lines(run_ids):
+    return ['(cd "{}" && python -m hwave.initial check --require-provenance '
+            '{} && hwave {} > {} 2>&1)'.format(rid, RUN_TOML, RUN_TOML, RUN_LOG)
+            for rid in run_ids]
+
+
+def _commands_text(run_ids, *, stage0=False):
+    name = STAGE0_COMMANDS if stage0 else COMMANDS
+    if stage0:
+        what = ["# The preliminary paramagnetic run written by python -m hwave.initial "
+                "prepare --stage0.",
+                "# bash {} works from any directory. For GNU parallel and job".format(name)]
+        done = ("# Each line checks the start, then runs hwave; then {}, and the "
+                "candidate runs are written.".format(PENDING_HINT))
+    else:
+        what = ["# Candidate runs written by python -m hwave.initial prepare.",
+                "# bash {} works from any directory. For GNU parallel and job".format(name)]
+        done = ("# Each line checks the initial state, then runs hwave; collect WORK "
+                "reads the results.")
+    lines = (['cd "$(dirname "$0")" || exit 1'] + what +
+             ["# arrays, which run single lines, run from WORK: cd WORK && parallel < "
+              + name, done] + _command_lines(run_ids))
     return "\n".join(lines) + "\n"
 
 
@@ -692,13 +747,425 @@ def _write_text(path, text):
         raise
 
 
+def _json_text(obj):
+    return json.dumps(obj, indent=1, allow_nan=False) + "\n"
+
+
 def _write_json(path, obj):
-    _write_text(path, json.dumps(obj, indent=1, allow_nan=False) + "\n")
+    _write_text(path, _json_text(obj))
+
+
+# Ownership for the rollback of prepare: a path is this call's own only when
+# this call created it (a successful mkdir, or an exclusive create), never
+# because an existence check found it missing; the rollback removes only
+# those paths, so a concurrent or refused prepare never deletes what another
+# one made.
+_NOT_OURS = ("{}: exists already (another prepare may be writing this WORK, or an "
+             "earlier one stopped); repeat prepare into a new directory")
+
+
+def _claim_work(work):
+    """Create WORK when it is missing; ``True`` when this call created it."""
+    work.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        work.mkdir()
+    except FileExistsError:
+        return False
+    return True
+
+
+def _claim_dir(path, made, message=_NOT_OURS):
+    """Create the directory ``path`` (its parent exists) and record it in
+    ``made``; an existing one is not ours: ``ValueError`` (``message``),
+    nothing recorded."""
+    try:
+        path.mkdir()
+    except FileExistsError:
+        raise ValueError(message.format(path)) from None
+    made.append(path)
+    return path
+
+
+def _create_text(path, text, made):
+    """Write ``text`` to the new file ``path`` (created exclusively, so an
+    existing file or link is never opened) and record it in ``made``; an
+    existing one is not ours: ``ValueError``, nothing recorded."""
+    path = pathlib.Path(os.fspath(path))
+    _refuse_link(path)
+    try:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    except FileExistsError:
+        raise ValueError(_NOT_OURS.format(path)) from None
+    made.append(path)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _rollback(work, made, created):
+    """Remove the paths of ``made`` (this call's own, newest first) and
+    WORK itself when this call created it and it is then empty."""
+    for p in reversed(made):
+        if p.is_dir() and not p.is_symlink():
+            shutil.rmtree(p, ignore_errors=True)
+        elif os.path.lexists(str(p)):
+            p.unlink()
+    if created:
+        try:
+            work.rmdir()
+        except OSError:
+            pass
+
+
+def _para_of(work, cset, base):
+    """``(para, manifest entry)`` of the para step of ``cset`` kept in
+    ``WORK/para_hf`` (the small tier): the para reference rebuilt from its
+    files (:func:`hwave.initial.hints.para_from_work`), so the seeds,
+    the labels and ``collect`` share one reference; ``(None, None)`` when
+    no para Green function was written (the large tier, or a skipped or
+    failed para step: the seeds use the bare ``H0``)."""
+    from hwave.initial.hints import PARA_GREEN, PARA_RECORD, para_from_work
+    root = work / PARA_DIR
+    if cset.tier != "small" or not (root / PARA_RECORD).is_file():
+        return None, None
+    para = para_from_work(base, root)
+    entry = {"dir": PARA_DIR, "record": PARA_DIR + "/" + PARA_RECORD,
+             "record_sha256": _sha256(root / PARA_RECORD), "green": None,
+             "green_sha256": None, "status": None if para is None else para.status,
+             "T": None if para is None else float(para.T)}
+    if para is not None:
+        entry.update(green=PARA_DIR + "/" + PARA_GREEN,
+                     green_sha256=_sha256(root / PARA_GREEN))
+    return para, entry
+
+
+def _check_para_entry(manifest, work):
+    """The para entry of ``manifest`` (``None`` without a para Green
+    function), its files checked: paths inside WORK, SHA-256 as prepare
+    wrote them (``ValueError`` naming the file otherwise)."""
+    entry = manifest.get("para")
+    if not entry or not entry.get("green"):
+        return None
+    for key in ("dir", "record", "green"):
+        name = entry.get(key)
+        if not isinstance(name, str) or os.path.isabs(name) or ".." in _parts(name):
+            raise ValueError("{}: para.{} {!r} is not a path inside WORK".format(
+                work / MANIFEST, key, name))
+    for key in ("record", "green"):
+        path = work / entry[key]
+        if not path.is_file() or _sha256(path) != entry.get(key + "_sha256"):
+            raise ValueError("{}: the para reference file {} is missing or differs from "
+                             "the file prepare wrote; the labels of WORK refer to it"
+                             .format(work, entry[key]))
+    return entry
+
+
+def _uses_para(cset):
+    """Whether the rows of ``cset`` were seeded on a para reference, or its
+    hints were computed from one (the small tier)."""
+    hint = (cset.model or {}).get("hint") or {}
+    return hint.get("status") == "computed" or any(
+        r.get("seed_base") == "para_hf" for r in cset.rows)
+
+
+def _collect_para(cache, facts):
+    """The para reference of the WORK being collected (``cache["para_dir"]``
+    set by :func:`collect`), rebuilt once."""
+    from hwave.initial.hints import para_from_work
+    root = cache.get("para_dir")
+    if root is None:
+        return None
+    if "para" not in cache:
+        cache["para"] = para_from_work(facts, root)
+    return cache["para"]
+
+
+# --------------------------------------------------------------------------
+# the preliminary paramagnetic run (prepare --stage0)
+# --------------------------------------------------------------------------
+
+def _stage0_overrides(doc, toml, thint):
+    """The per-directory values of a preliminary paramagnetic run:
+    ``SubShape = [1, 1, 1]``, ``T = T_hint``, ``EPS`` of the para step and
+    ``[file.output] green`` (the input's name, else :data:`STAGE0_GREEN`)."""
+    from hwave.solver import initial_facade
+    out = (doc.get("file") or {}).get("output") if isinstance(doc.get("file"), dict) else None
+    green = out.get("green") if isinstance(out, dict) else None
+    if not isinstance(green, str) or not green:
+        green = STAGE0_GREEN
+    return {"SubShape": [1, 1, 1], "T": float(thint.T_hint),
+            "EPS": initial_facade.para_eps(toml), "green": green}
+
+
+def _check_stage0_tier(base, tier, lim, subshapes):
+    """Refuse ``--stage0`` unless the small tier is chosen (checked before
+    anything is written), and refuse ``SubShape`` lists the enumeration
+    would refuse."""
+    from hwave.initial import cells, enumerate as en
+    from hwave.initial.facts import NO_SUBSHAPE_WARNING
+    from hwave.initial.symmetry import su2_check
+    if tier == "large":
+        raise ValueError("--stage0 writes the preliminary paramagnetic run of the small "
+                         "tier; the large tier has none. Give --tier small or auto")
+    choice = en.choose_tier(base, "auto" if tier is None else tier,
+                            su2=su2_check(base.problem),
+                            limits=en.Limits.from_keywords(**lim))
+    if choice.name != "small":
+        raise ValueError("--stage0 writes the preliminary paramagnetic run of the small "
+                         "tier, but the tier chosen for this input is {} ({}); give "
+                         "--tier small, or prepare without --stage0".format(
+                             choice.name, "; ".join(choice.warnings) or choice.chosen_by))
+    if subshapes is None:
+        if NO_SUBSHAPE_WARNING in base.warnings:
+            raise ValueError(NO_SUBSHAPE_WARNING)
+    else:
+        cells.check_subshapes(en._subshape_list(subshapes), base.cellshape)
+
+
+def _stage0_entry(name, start, cid, staged, rd):
+    return {"run_dir": name, "start": start, "candidate_id": cid,
+            "input_toml": RUN_TOML, "input_toml_sha256": _sha256(staged.toml_path),
+            "initial": RUN_INITIAL, "initial_sha256": _sha256(staged.initial_path),
+            "input_sha256": {s.key: s.sha256 for s in staged.staged},
+            "staged": [{"table": s.table, "key": s.key, "name": s.name,
+                        "sha256": s.sha256, "bytes": s.nbytes} for s in staged.staged],
+            "outcome": None, "reason": None}
+
+
+def _print_stage0(work, names, stdout):
+    print("{}: the preliminary paramagnetic run is written to {}; it runs outside prepare."
+          .format(work, " and ".join(names)), file=stdout)
+    print("Run: bash {} (or, from WORK, cd {} && parallel < {}):".format(
+        work / STAGE0_COMMANDS, work, STAGE0_COMMANDS), file=stdout)
+    for line in _command_lines(names):
+        print("  " + line, file=stdout)
+    print("Then {}: python -m hwave.initial prepare with the same arguments writes the "
+          "candidate runs (exit code {} until then).".format(PENDING_HINT,
+                                                            EXIT_STAGE0_PENDING),
+          file=stdout)
+
+
+def _write_stage0(work, doc, toml, base, thint, *, para_check, record, stdout):
+    """Write the preliminary paramagnetic run into the new or empty WORK
+    ``work`` and return :data:`EXIT_STAGE0_PENDING`."""
+    import hwave
+    from hwave.initial.hints import para_starts
+    from hwave.initial.writer import check_initial_state, write_start_state
+    overrides = _stage0_overrides(doc, toml, thint)
+    # the staging rules, before anything is written
+    _plan_run_doc(doc, source_dir=str(toml.parent), overrides=overrides)
+    starts = para_starts(base, thint)
+    runs = STAGE0_RUNS[:2 if para_check else 1]
+    created = _claim_work(work)
+    made = []
+    try:
+        entries, staged_bytes = [], 0
+        for name, start, cid in runs:
+            rd = _claim_dir(work / name, made)
+            staged = stage_run_dir(rd, doc, source_dir=toml.parent, overrides=overrides,
+                                   source_name=toml.name)
+            write_start_state(staged.toml_path, starts[start], out=staged.initial_path,
+                              candidate_id=cid)
+            if not check_initial_state(staged.toml_path, require_provenance=True).verified:
+                raise AssertionError("{}: the written start is not verified".format(rd))
+            staged_bytes += sum(s.nbytes for s in {s.name: s for s in staged.staged}.values())
+            entries.append(_stage0_entry(name, start, cid, staged, rd))
+        _create_text(work / STAGE0_COMMANDS,
+                     _commands_text([r[0] for r in runs], stage0=True), made)
+        manifest = dict(record, manifest_version=MANIFEST_VERSION,
+                        hwave_version=hwave.__version__, work_dir_at_prepare=str(work),
+                        stage=STAGE_PENDING,
+                        stage0={"T": float(thint.T_hint), "eps": overrides["EPS"],
+                                "selected": None, "runs": entries},
+                        staged_bytes=staged_bytes, runs=[], para=None)
+        _write_json(work / MANIFEST, manifest)
+    except BaseException:
+        _rollback(work, made, created)
+        raise
+    _print_stage0(work, [r[0] for r in runs], stdout)
+    return EXIT_STAGE0_PENDING
+
+
+def _inside_work(name, where):
+    if not isinstance(name, str) or not name or os.path.isabs(name) or ".." in _parts(name):
+        raise ValueError("{}: {!r} is not a path inside WORK".format(where, name))
+
+
+def _stage0_runs(manifest, work):
+    """The run entries of the preliminary paramagnetic run in
+    ``manifest``, their paths checked."""
+    st = manifest.get("stage0")
+    runs = st.get("runs") if isinstance(st, dict) else None
+    if not isinstance(runs, list) or not runs:
+        raise ValueError("{}: stage {} without the entries of the preliminary paramagnetic "
+                         "run".format(work / MANIFEST, STAGE_PENDING))
+    for i, e in enumerate(runs):
+        where = "{}: stage0.runs[{}]".format(work / MANIFEST, i)
+        if not isinstance(e, dict) or not isinstance(e.get("staged"), list):
+            raise ValueError("{}: an entry of prepare --stage0 expected".format(where))
+        for key in ("run_dir", "input_toml", "initial"):
+            _inside_work(e.get(key), where)
+        for s in e["staged"]:
+            _inside_work(s.get("name") if isinstance(s, dict) else None, where)
+    return runs
+
+
+def _verify_stage0(work, e):
+    """``ValueError`` naming the file when an input of the preliminary
+    paramagnetic run ``e`` is missing or differs from what prepare wrote."""
+    files = [(e["input_toml"], e.get("input_toml_sha256")),
+             (e["initial"], e.get("initial_sha256"))]
+    files += [(s["name"], s.get("sha256")) for s in e["staged"]]
+    for rel, sha in files:
+        path = work / e["run_dir"] / rel
+        shown = os.path.join(e["run_dir"], rel)
+        if not path.is_file():
+            raise ValueError("{}: {} is missing; the preliminary paramagnetic run reads the "
+                             "files prepare wrote. Repeat prepare into a new directory"
+                             .format(work, shown))
+        if _sha256(path) != sha:
+            raise ValueError("{}: {} differs from the file prepare wrote (SHA-256 in {}); "
+                             "the preliminary paramagnetic run must run on the files "
+                             "prepare wrote. Repeat prepare into a new directory".format(
+                                 work, shown, MANIFEST))
+
+
+@dataclass(frozen=True)
+class _Stage0Outcome:
+    """The state of one preliminary paramagnetic run: ``state`` is
+    ``"pending"`` (not run yet), ``"failed"`` (ran and failed: no usable
+    Green function), ``"not_converged"`` (the SCF did not converge) or
+    ``"converged"``; ``para`` its para reference (``None`` when pending),
+    ``green`` its output green file, ``reason`` why it failed."""
+    state: str
+    para: object = None
+    green: Optional[pathlib.Path] = None
+    reason: Optional[str] = None
+
+
+def _stage0_outcome(work, e, base, thint):
+    """Classify the preliminary paramagnetic run ``e`` of WORK: a valid
+    status file decides; without one, ``hwave.log`` (none and no output:
+    not run yet)."""
+    from hwave.initial import hints
+    from hwave.initial.writer import check_green
+    from hwave.results import (ResultsError, UnsupportedLayoutError, open_run, read_energy,
+                               read_scf_status, read_uhfk_green)
+    rd = work / e["run_dir"]
+    toml = rd / e["input_toml"]
+
+    def failed(reason):
+        msg = _relative_text("the preliminary paramagnetic run in {} failed: {}".format(
+            e["run_dir"], reason), rd, work)
+        return _Stage0Outcome("failed", hints.para_failed(base, thint, msg), None, msg)
+
+    try:
+        run = open_run(toml, base_dir=rd)
+    except ResultsError as exc:
+        return failed(str(exc))
+    eps = run.param("EPS")
+    iteration_max = run.param("IterationMax")
+    eps_tol = 10.0 ** (-float(eps))
+    iterations = residual = None
+    status_path = _status_file(run)
+    if status_path is not None:
+        try:
+            st = read_scf_status(run)
+        except UnsupportedLayoutError as exc:
+            return failed("{} unreadable: {}".format(status_path.name, exc))
+        iterations, residual = st.iterations, _plain(st.residual)
+        if st.iterations == 0:
+            return failed(st.note or "no SCF step performed")
+        converged = bool(st.converged)
+    else:
+        log = rd / RUN_LOG
+        if not log.is_file():
+            if not _any_output(run):
+                return _Stage0Outcome("pending")
+            return failed("its outputs exist but {} does not, so the convergence cannot be "
+                          "verified".format(RUN_LOG))
+        verdict, residual, summary = _log_verdict(log, eps_tol)
+        if verdict != "failed" and not _log_ended(log):
+            # no status file and no final line of the solver: still running,
+            # or stopped from outside; not decided here
+            return _Stage0Outcome("pending")
+        if verdict == "failed" or summary is not None:
+            return failed(summary or "the run did not converge")
+        converged = verdict == "converged"
+    try:
+        g = read_uhfk_green(run)
+        if g.green is None:
+            raise UnsupportedLayoutError("{}: {}".format(
+                g.source, g.meta.get("green_unavailable", "no green")))
+        free = read_energy(run).free_total
+        if free is None:
+            raise UnsupportedLayoutError("no FreeEnergy_Total in the energy output")
+        G = np.asarray(g.green)
+        try:
+            check_green(G, base.problem, what="{}: green".format(g.source))
+        except ValueError as exc:
+            return failed("the output green is not a state of this input ({}); it is not "
+                          "used as the para reference".format(exc))
+        para = hints.para_from_green(base, thint, G, free_energy=free,
+                                     converged=converged, iterations=iterations,
+                                     scf_residual=residual, eps=eps,
+                                     iteration_max=iteration_max)
+    except (ResultsError, OSError, ValueError) as exc:
+        return failed("the output green or energy cannot be read: {}".format(exc))
+    return _Stage0Outcome("converged" if converged else "not_converged", para,
+                          pathlib.Path(g.source))
+
+
+def _stage0_reentry(work, manifest, base, thint):
+    """The para reference from the preliminary paramagnetic run of WORK
+    (``(para, selected entry or None, outcomes)``), or ``None`` while a run
+    has not run yet. The inputs are checked against the manifest first."""
+    from hwave.initial.hints import choose_para
+    runs = _stage0_runs(manifest, work)
+    T = manifest["stage0"].get("T")
+    if not isinstance(T, numbers.Real) or abs(float(T) - float(thint.T_hint)) > \
+            1e-12 * max(1.0, abs(float(thint.T_hint))):
+        raise ValueError("{}: the preliminary paramagnetic run was written at T_hint = {}, "
+                         "this input gives {}".format(work / MANIFEST, T, thint.T_hint))
+    for e in runs:
+        _verify_stage0(work, e)
+    outcomes = [_stage0_outcome(work, e, base, thint) for e in runs]
+    if any(o.state == "pending" for o in outcomes):
+        return None
+    if len(outcomes) == 1:
+        para, idx = outcomes[0].para, 0
+    else:
+        para, sel = choose_para(outcomes[0].para, outcomes[1].para)
+        idx = 0 if sel == "main" else 1
+    return para, (runs[idx], outcomes[idx]), outcomes
+
+
+def _keep_stage0_para(work, para, selected, made):
+    """Keep the para reference ``para`` of the preliminary paramagnetic run
+    in ``WORK/para_hf`` as the in-process step does (its green file copied
+    when it has one, and the record); returns the directory, recorded in
+    ``made`` once this call has created it."""
+    from hwave.initial.hints import PARA_GREEN, write_para_record
+    root = work / PARA_DIR
+    # Not atomic on purpose: a re-entry that dies between the mkdir below
+    # and the manifest update leaves WORK/para_hf behind, and every later
+    # re-entry is refused here. The directory is ours only when the mkdir
+    # succeeds, so prepare's rollback never removes a WORK/para_hf it did not
+    # make (nor the manifest). That fails safe (a refusal, never a mixed
+    # reference), so the directory is not written through a temporary name.
+    _claim_dir(root, made, "{}: exists before the preliminary paramagnetic run was "
+                           "read; repeat prepare into a new directory")
+    entry, outcome = selected
+    start = None
+    if para.G_para is not None and outcome.green is not None:
+        shutil.copyfile(str(outcome.green), str(root / PARA_GREEN))
+        start = entry["start"]
+    write_para_record(para, start, str(root))
+    return root
 
 
 def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None,
             t_hint=None, amplitude=None, max_candidates=None, orbital_site=None,
-            para_check=False, stdout=None, **limits) -> int:
+            para_check=False, stage0=False, stdout=None, **limits) -> int:
     """``python -m hwave.initial prepare`` (returns the exit code).
 
     Enumerates the candidates of the UHFk input ``input_path`` (a TOML, or
@@ -706,6 +1173,33 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
     ``coverage.json`` (``pre_run``), ``manifest.json``, ``candidates.json``,
     ``commands.txt`` and one run directory per run (:func:`stage_run_dir`,
     then ``initial.npz``, checked with ``check_initial_state``).
+
+    In the small tier the paramagnetic Hartree-Fock step runs into
+    ``WORK/para_hf`` (``green.npz``, ``para_hf.json`` and its runs; their
+    SHA-256 recorded in ``manifest.json`` under ``para``): the seeds are
+    built on its Hamiltonian, and the labels of prepare and collect take
+    the h = 0 seed on that base as their reference. ``para_check``: the
+    para step also runs from the uniform orbital occupation (small tier;
+    refused with the large tier given explicitly).
+
+    ``stage0`` (small tier; refused when the large tier is given or
+    chosen): the para step runs outside ``prepare``, as the preliminary
+    paramagnetic run (module text): the first call writes
+    ``WORK/stage0_para/`` (and ``stage0_para_check/`` with ``para_check``),
+    ``stage0_commands.txt`` and ``manifest.json`` (``stage =
+    "para_pending"``, the SHA-256 of their inputs) and returns
+    :data:`EXIT_STAGE0_PENDING`. The same command on that WORK checks those
+    inputs against the manifest (a difference is refused, naming the file)
+    and classifies each run: not run yet (no ``hwave.log``, status file or
+    output) returns :data:`EXIT_STAGE0_PENDING` again and changes nothing;
+    otherwise the valid status file, else the log, decides. A converged run
+    becomes the para reference in ``WORK/para_hf`` and the candidate runs
+    are written; a run that ran and failed, or did not converge, gives the
+    bare-``H0`` seeds with the hints skipped for that reason. With
+    ``para_check``, when exactly one of the two runs converged it is kept,
+    with a warning. ``stage0`` is part of the command: a WORK prepared
+    with it re-enters only with it. Without an interacting orbital the
+    para step is skipped at once, so ``stage0`` changes nothing.
 
     ``extra_candidates`` and ``orbital_site`` are JSON file paths;
     ``**limits`` are further :class:`~hwave.initial.enumerate.Limits`
@@ -722,9 +1216,15 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
     import tomli
 
     stdout = stdout or sys.stdout
-    if para_check:
-        raise NotImplementedError("--para-check checks the para Hartree-Fock step of the "
-                                  "small and medium tiers, which arrive in a later release")
+    if tier == "medium":
+        raise NotImplementedError("tier 'medium' arrives in a later release; this release "
+                                  "has the large and small tiers")
+    if para_check and tier == "large":
+        raise ValueError("--para-check checks the para Hartree-Fock step of the small tier; "
+                         "the large tier has none")
+    if stage0 and tier == "large":
+        raise ValueError("--stage0 writes the preliminary paramagnetic run of the small "
+                         "tier; the large tier has none. Give --tier small or auto")
     toml = pathlib.Path(os.path.realpath(_resolve_toml(input_path)))
     work = pathlib.Path(os.path.abspath(os.fspath(out)))
     lim = dict(limits)
@@ -739,7 +1239,7 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
         "subshape": None if subshapes is None else [list(map(int, b)) for b in subshapes],
         "tier": tier, "extra_candidates": extra_path, "t_hint": t_hint,
         "orbital_site": site_path, "para_check": bool(para_check),
-        "limits": {k: lim[k] for k in sorted(lim)},
+        "stage0": bool(stage0), "limits": {k: lim[k] for k in sorted(lim)},
     }
     with open(toml, "rb") as f:
         try:
@@ -751,6 +1251,10 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
     base = model_facts(toml, subshape=(1, 1, 1), orbital_site=site)
     files = [p for p in (extra_path, site_path) if p is not None]
     record = {"command": command, "input": _input_record(toml, base.input_sha256, files)}
+    from hwave.initial.hints import t_hint_bare
+    # the hint temperature of the preliminary paramagnetic run (only then)
+    thint = t_hint_bare(base.problem, t_user=t_hint) if stage0 else None
+    reentry, stage0_record = None, None
 
     if work.exists() and not work.is_dir():
         raise ValueError("{}: --out names a file, not a directory".format(work))
@@ -765,35 +1269,70 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
             raise ValueError("{}: written by another prepare command or for other inputs: "
                              "{}. Give a new directory, or repeat the command that wrote "
                              "it".format(work, "; ".join(diff)))
-        print("{}: already prepared by this command for these inputs; nothing to do. "
-              "Run bash {} and then python -m hwave.initial collect {}".format(
-                  work, work / COMMANDS, work), file=stdout)
-        return EXIT_OK
+        if old.get("stage") == STAGE_PENDING:
+            # the preliminary paramagnetic run: classified before anything else
+            if thint is None:
+                thint = t_hint_bare(base.problem, t_user=t_hint)
+            reentry = _stage0_reentry(work, old, base, thint)
+            if reentry is None:
+                _print_stage0(work, [e["run_dir"] for e in old["stage0"]["runs"]], stdout)
+                return EXIT_STAGE0_PENDING
+            stage0_record = old["stage0"]
+        else:
+            print("{}: already prepared by this command for these inputs; nothing to do. "
+                  "Run bash {} and then python -m hwave.initial collect {}".format(
+                      work, work / COMMANDS, work), file=stdout)
+            return EXIT_OK
 
     # the staging rules are checked before anything is enumerated or written
     _plan_run_doc(doc, source_dir=str(toml.parent), overrides={"SubShape": [1, 1, 1]})
     extras = _extra_candidates(extra_path) if extra_path else ()
-    cset = candidate_states(toml, subshapes=subshapes,
-                            tier="auto" if tier is None else tier, t_hint=t_hint,
-                            extra=extras, orbital_site=site, **lim)
+    if stage0 and reentry is None and base.n_c > 0:
+        _check_stage0_tier(base, tier, lim, subshapes)
+        return _write_stage0(work, doc, toml, base, thint, para_check=para_check,
+                             record=record, stdout=stdout)
 
-    created = not work.exists()
-    work.mkdir(parents=True, exist_ok=True)
+    created = _claim_work(work)
+    # the rollback removes only what this call created (see _claim_dir): a
+    # WORK/para_hf made by an interrupted re-entry or by a concurrent prepare
+    # is left as it is, so a refused re-entry changes nothing and the next
+    # one is refused again
     made = []
     try:
+        if reentry is not None:
+            from hwave.initial.hints import para_from_work
+            para0, selected, outcomes = reentry
+            root = _keep_stage0_para(work, para0, selected, made)
+            # the seeds and labels use the reference read back from
+            # WORK/para_hf, as after the in-process step
+            given = {"para": para_from_work(base, root) or para0}
+            stage0_record = dict(stage0_record, selected=selected[0]["start"], runs=[
+                dict(e, outcome=o.state, reason=o.reason)
+                for e, o in zip(stage0_record["runs"], outcomes)])
+        else:
+            given = {"para_dir": _claim_dir(work / PARA_DIR, made)}
+        cset = candidate_states(toml, subshapes=subshapes,
+                                tier="auto" if tier is None else tier, t_hint=t_hint,
+                                extra=extras, orbital_site=site, para_check=para_check,
+                                **given, **lim)
+        if reentry is None and not any((work / PARA_DIR).iterdir()):
+            # no para step ran (the large tier): no WORK/para_hf
+            (work / PARA_DIR).rmdir()
+            made.remove(work / PARA_DIR)
+        para, para_entry = _para_of(work, cset, base)
         rows = [_thaw_json(r) for r in cset.rows]
         index = {r["run_id"]: i for i, r in enumerate(rows)}
         kept, entries, staged_bytes, cache = [], [], 0, {}
         for run in cset.runs:
-            rd = work / run.run_id
-            made.append(rd)
+            rd = _claim_dir(work / run.run_id, made)
             staged = stage_run_dir(rd, doc, source_dir=toml.parent,
                                    overrides={"SubShape": list(run.subshape)},
                                    source_name=toml.name)
             row = rows[index[run.run_id]]
             try:
                 path, res, facts = seed_and_write(staged.toml_path, run,
-                                                  out=staged.initial_path)
+                                                  out=staged.initial_path, para=para,
+                                                  t_hint=t_hint)
             except InitialStateError as exc:
                 # a writer refusal of a user or literature row becomes a
                 # "refused:" row; for a generated row it is an error
@@ -818,7 +1357,8 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
             row["label"] = _state_label(
                 res.G, facts, cache, q=spec.q if modulated else None,
                 phase=spec.phase if modulated else None,
-                sign=spec.sign if modulated else None, spiral=spec.modulation == "spiral")
+                sign=spec.sign if modulated else None, spiral=spec.modulation == "spiral",
+                para=para)
             kept.append(run)
             staged_bytes += sum(s.nbytes for s in {s.name: s for s in staged.staged}.values())
             entries.append({
@@ -832,25 +1372,17 @@ def prepare(input_path, out, *, subshapes=None, tier=None, extra_candidates=None
         cset2 = dataclasses.replace(cset, runs=tuple(kept), rows=rows)
         chosen = "auto (interim rule)" if tier in (None, "auto") else "user"
         cov = coverage_document(cset2, phase_marker="pre_run", tier_chosen_by=chosen)
-        _write_json(work / CANDIDATES, dict(cset2.to_json(), tier_chosen_by=chosen))
-        made.append(work / CANDIDATES)
-        _write_json(work / COVERAGE, cov)
-        made.append(work / COVERAGE)
-        _write_text(work / COMMANDS, _commands_text([e["run_id"] for e in entries]))
-        made.append(work / COMMANDS)
+        _create_text(work / CANDIDATES, _json_text(dict(cset2.to_json(),
+                                                        tier_chosen_by=chosen)), made)
+        _create_text(work / COVERAGE, _json_text(cov), made)
+        _create_text(work / COMMANDS, _commands_text([e["run_id"] for e in entries]), made)
         manifest = dict(record, manifest_version=MANIFEST_VERSION,
                         hwave_version=hwave.__version__, work_dir_at_prepare=str(work),
-                        staged_bytes=staged_bytes, runs=entries)
+                        stage=STAGE_DONE, stage0=stage0_record,
+                        staged_bytes=staged_bytes, runs=entries, para=para_entry)
         _write_json(work / MANIFEST, manifest)
     except BaseException:
-        if created:
-            shutil.rmtree(work, ignore_errors=True)
-        else:
-            for p in made:
-                if p.is_dir():
-                    shutil.rmtree(p, ignore_errors=True)
-                elif p.exists():
-                    p.unlink()
+        _rollback(work, made, created)
         raise
     n_not = sum(1 for r in rows if not r["tried"])
     print("{}: {} runs written ({} rows not tried, see {}); {} bytes of staged input "
@@ -923,6 +1455,17 @@ def _log_verdict(log_path, eps_tol):
         if m:
             return "not_converged", _float(m.group(1).rstrip(",")), None
     return "not_converged", None, "{} has no convergence message".format(RUN_LOG)
+
+
+def _log_ended(log_path):
+    """Whether ``hwave.log`` holds a final line of the solver (its
+    convergence message, success or failure, or an error)."""
+    with open(log_path, encoding="utf-8", errors="replace") as f:
+        for ln in f:
+            if _SUCCEEDED.search(ln) or _FAILED.search(ln) or _ERROR_LINE.match(ln) \
+                    or ln.startswith("Traceback (most recent call"):
+                return True
+    return False
 
 
 def _seed_problem(entry, run_dir, run_toml):
@@ -1004,7 +1547,8 @@ def _read_outputs(row, run, run_toml, model, facts_cache, para_cache):
     # the ordering vectors come from the on-site amplitudes, so they follow
     # the on-site channels of the name, not a bond channel
     row["final_label"] = _state_label(G, facts, para_cache,
-                                      ordering=[q.split(",") for q in qs])
+                                      ordering=[q.split(",") for q in qs],
+                                      para=_collect_para(para_cache, facts))
 
 
 _OUTPUT_ROW_FIELDS = ("energy_total", "free_energy_total", "rest", "free_energy_per_cell",
@@ -1157,7 +1701,10 @@ def collect(work, *, stdout=None, stderr=None) -> int:
     initial-state check refuses it; otherwise a valid status file decides
     (``iterations = 0`` gives ``failed``); otherwise ``hwave.log``
     (``not_run``, ``convergence_unverified``, ``failed``, ``not_converged``,
-    ``converged``). A status file that exists but cannot be read makes the
+    ``converged``). The final labels take the reference of prepare's
+    labels (the para reference kept in ``WORK/para_hf`` in the small tier,
+    refused when its files differ from the manifest). A status file that
+    exists but cannot be read makes the
     row ``failed`` (``"<file> unreadable: <message>"``): the output readers
     refuse such a run. Outputs of a converged run must be readable, else
     ``failed``. Every reader gets ``base_dir`` = the run directory.
@@ -1169,6 +1716,10 @@ def collect(work, *, stdout=None, stderr=None) -> int:
     for name in (COVERAGE, SUMMARY):
         _refuse_link(work / name)          # before anything is written
     manifest = _read_json(work / MANIFEST, "manifest")
+    if isinstance(manifest, dict) and manifest.get("stage") == STAGE_PENDING:
+        raise ValueError("{}: the preliminary paramagnetic run of WORK is pending; run bash "
+                         "{}, then repeat the prepare command, before collect".format(
+                             work, work / STAGE0_COMMANDS))
     entries = _check_manifest(manifest, work / MANIFEST)
     data = _read_json(work / CANDIDATES, "candidate set")
     if not isinstance(data, dict):
@@ -1181,6 +1732,14 @@ def collect(work, *, stdout=None, stderr=None) -> int:
             work / CANDIDATES, type(exc).__name__, exc)) from None
     model = _thaw_json(cset.model)
     rows, warnings, facts_cache, para_cache = [], [], {}, {}
+    para_entry = _check_para_entry(manifest, work)
+    if para_entry is None and _uses_para(cset):
+        raise ValueError("{}: the candidate set was prepared on a paramagnetic Hartree-Fock "
+                         "reference (seed base para_hf), but the manifest names no para "
+                         "reference file; the labels cannot be computed against it. Repeat "
+                         "prepare into a new directory".format(work / MANIFEST))
+    if para_entry is not None:
+        para_cache["para_dir"] = work / para_entry["dir"]
     for r in cset.rows:
         row = _thaw_json(r)
         if row.get("tried"):
@@ -1278,14 +1837,21 @@ def build_parser():
                     help="a SubShape to evaluate every candidate on (repeatable); "
                          "default: the input's SubShape")
     pp.add_argument("--tier", choices=("auto", "large", "medium", "small"),
-                    help="the enumeration tier (this release: large; auto resolves to it)")
+                    help="the enumeration tier: large (spin and charge patterns), small "
+                         "(adds orbital patterns and instability hints from a paramagnetic "
+                         "Hartree-Fock run); auto chooses small when the pair space |P| <= "
+                         "400, the k points N_q <= 4096 and N_q*|P|^3 <= 1e11 (fixed limits, "
+                         "the same on every host), else large; the host memory never "
+                         "chooses, it only refuses a small tier whose memory estimate does "
+                         "not fit; medium arrives in a later release")
     pp.add_argument("--extra-candidates", metavar="FILE.json",
                     help="a JSON list of {family: user|literature, pattern, label, "
                          "citation}; the pattern follows patternspec.schema.json")
     pp.add_argument("--t-hint", type=_positive_float, metavar="T",
                     help="the hint temperature, in input energy units (default: the input "
-                         "T, or a rule from the bands and k mesh at T = 0); recorded in "
-                         "the report only, it never changes the candidates or the seeds")
+                         "T, or a rule from the bands and k mesh at T = 0); it changes only "
+                         "the instability rows of the small tier, never the other "
+                         "candidates")
     pp.add_argument("--amplitude", type=float, metavar="A",
                     help="the requested seed amplitude, in (0, 1) (default 0.5)")
     pp.add_argument("--max-candidates", type=_nonneg_int, metavar="N",
@@ -1293,8 +1859,16 @@ def build_parser():
     pp.add_argument("--orbital-site", metavar="FILE",
                     help="a JSON list: one site label per physical orbital")
     pp.add_argument("--para-check", action="store_true",
-                    help="also check the para step (small and medium tiers; a later "
-                         "release)")
+                    help="small tier: also run the paramagnetic Hartree-Fock step from "
+                         "the uniform orbital occupation and keep the lower free energy")
+    pp.add_argument("--stage0", action="store_true",
+                    help="small tier: run the paramagnetic Hartree-Fock step outside "
+                         "prepare, as the preliminary paramagnetic run: prepare writes "
+                         "WORK/stage0_para (and WORK/stage0_para_check with --para-check) "
+                         "and WORK/stage0_commands.txt and exits with code 3; run bash "
+                         "WORK/stage0_commands.txt, then re-run the same prepare command, "
+                         "which writes the candidate runs (refused when the large tier is given "
+                         "or chosen by auto)")
     pc = sub.add_parser(
         "check", help="check an initial-state file against the input that reads it",
         epilog=_epilog(), formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1338,7 +1912,8 @@ def main(argv=None) -> int:
             return prepare(args.input, args.out, subshapes=subs, tier=args.tier,
                            extra_candidates=args.extra_candidates, t_hint=args.t_hint,
                            amplitude=args.amplitude, max_candidates=args.max_candidates,
-                           orbital_site=args.orbital_site, para_check=args.para_check)
+                           orbital_site=args.orbital_site, para_check=args.para_check,
+                           stage0=args.stage0)
         if args.command == "check":
             return check(args.config, args.npz, require_provenance=args.require_provenance)
         return collect(args.work)

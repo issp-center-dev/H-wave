@@ -1,0 +1,355 @@
+{
+ "T_hint": 0.2,
+ "captured_by": "tests/initial_reference_capture.py --validation-i2",
+ "description": "V4: the multi-start of the small tier on SubShape 1 x 1 and 2 x 2 (status, final label, free energy per site, max |m_i|, channel and family of every tried row; the lowest converged row) and the W_act near-crossing fixture (W_act, T_hint, E_F and D at delta = -2.4 and -2.4 +- 1e-6)",
+ "hwave_version": "2.0.0",
+ "lowest": {
+  "channel": "spin-z",
+  "family": "instability",
+  "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+  "free_energy_per_site": -5.093097185895181,
+  "moment": 0.08904307368811537,
+  "status": "converged"
+ },
+ "lowest_run_id": "instability-q0_0_0-spin-z-ferro-orbital-q-0-0-0-phi-0-r0-phi0-2-b2x2x1",
+ "model": {
+  "J": 0.6,
+  "L": 4,
+  "T": 0.2,
+  "U": 4.0,
+  "fock": true,
+  "kanamori": "U' = U - 2J; Hund, Exchange, PairHop = J",
+  "ncond": 40,
+  "subshapes": [
+   [
+    1,
+    1,
+    1
+   ],
+   [
+    2,
+    2,
+    1
+   ]
+  ]
+ },
+ "numpy_version": "2.4.6",
+ "rows": {
+  "baseline-q0_1_2_0-charge-q-0-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "charge",
+   "family": "baseline",
+   "final_label": "orbital-current + bond-current",
+   "free_energy_per_site": -5.090860685386543,
+   "moment": 4.9960036108132044e-15,
+   "status": "converged"
+  },
+  "baseline-q0_1_2_0-spin-z-ferro-orbital-q-0-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "baseline",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097160411827,
+   "moment": 0.0890429275153588,
+   "status": "converged"
+  },
+  "baseline-q1_2_0_0-charge-q-1-2-0-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "charge",
+   "family": "baseline",
+   "final_label": "orbital-current + bond-current",
+   "free_energy_per_site": -5.090860685366916,
+   "moment": 6.938893903907228e-16,
+   "status": "converged"
+  },
+  "baseline-q1_2_0_0-spin-z-ferro-orbital-q-1-2-0-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "baseline",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097159566268,
+   "moment": 0.089042922666585,
+   "status": "converged"
+  },
+  "baseline-q1_2_1_2_0-charge-q-1-2-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "charge",
+   "family": "baseline",
+   "final_label": "orbital-current + bond-current",
+   "free_energy_per_site": -5.090860685306808,
+   "moment": 6.106226635438361e-15,
+   "status": "converged"
+  },
+  "baseline-q1_2_1_2_0-spin-z-ferro-orbital-q-1-2-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "baseline",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-spin-z",
+   "free_energy_per_site": -5.090860686745436,
+   "moment": 4.8126038321161246e-08,
+   "status": "converged"
+  },
+  "ferro-q0_0_0-spin-z-ferro-orbital-q-0-0-0-phi-0-r0-phi0-b1x1x1": {
+   "channel": "spin-z",
+   "family": "ferro",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097179234299,
+   "moment": 0.08904303548260173,
+   "status": "converged"
+  },
+  "ferro-q0_0_0-spin-z-ferro-orbital-q-0-0-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "ferro",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097184411148,
+   "moment": 0.08904306517887126,
+   "status": "converged"
+  },
+  "instability-q0_0_0-inter-orbital-spin-z-spin-z-antiferro-orbital-q-0-0-0-phi-0-0293473-r1-phi0-2-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097160278938,
+   "moment": 0.08904292674642858,
+   "status": "converged"
+  },
+  "instability-q0_0_0-inter-orbital-spin-z-spin-z-antiferro-orbital-q-0-0-0-phi-0-0293473-r1-phi0-b1x1x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.0930971665074996,
+   "moment": 0.08904296248173749,
+   "status": "converged"
+  },
+  "instability-q0_0_0-spin-orbital-even-spin-z-ferro-orbital-q-0-0-0-phi-1-38513-r2-phi0-2-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.0930971600288455,
+   "moment": 0.08904292531600547,
+   "status": "converged"
+  },
+  "instability-q0_0_0-spin-orbital-even-spin-z-ferro-orbital-q-0-0-0-phi-1-38513-r2-phi0-b1x1x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.0930971663856734,
+   "moment": 0.0890429617804501,
+   "status": "converged"
+  },
+  "instability-q0_0_0-spin-z-ferro-orbital-q-0-0-0-phi-0-r0-phi0-2-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097185895181,
+   "moment": 0.08904307368811537,
+   "status": "converged"
+  },
+  "instability-q0_0_0-spin-z-ferro-orbital-q-0-0-0-phi-0-r0-phi0-b1x1x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097179066357,
+   "moment": 0.08904303452157,
+   "status": "converged"
+  },
+  "instability-q0_1_2_0-inter-orbital-spin-z-spin-z-antiferro-orbital-q-0-1-2-0-phi-0-0322713-r1-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097160568478,
+   "moment": 0.08904292840680147,
+   "status": "converged"
+  },
+  "instability-q0_1_2_0-spin-z-ferro-orbital-q-0-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097159189959,
+   "moment": 0.08904292051059653,
+   "status": "converged"
+  },
+  "instability-q0_1_2_0-spin-z-ferro-orbital-spin-orbital-even-q-0-1-2-0-phi-0-r2-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097159969192,
+   "moment": 0.08904292497694699,
+   "status": "converged"
+  },
+  "instability-q1_2_0_0-inter-orbital-spin-z-spin-z-antiferro-orbital-q-1-2-0-0-phi-0-00292548-r1-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097159739067,
+   "moment": 0.0890429236538845,
+   "status": "converged"
+  },
+  "instability-q1_2_0_0-spin-z-ferro-orbital-q-1-2-0-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097160676283,
+   "moment": 0.08904292903600786,
+   "status": "converged"
+  },
+  "instability-q1_2_0_0-spin-z-ferro-orbital-spin-orbital-even-inter-orbital-spin-z-q-1-2-0-0-phi-0-r2-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(0,0,0) + bond-spin-z",
+   "free_energy_per_site": -5.093097160564141,
+   "moment": 0.08904292839582145,
+   "status": "converged"
+  },
+  "instability-q1_2_1_2_0-inter-orbital-spin-z-spin-z-antiferro-orbital-q-1-2-1-2-0-phi-0-015475-r1-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-spin-z",
+   "free_energy_per_site": -5.09086068663213,
+   "moment": 4.3420611106625984e-08,
+   "status": "converged"
+  },
+  "instability-q1_2_1_2_0-spin-z-ferro-orbital-inter-orbital-spin-z-q-1-2-1-2-0-phi-0-r2-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-spin-z",
+   "free_energy_per_site": -5.090860687174117,
+   "moment": 3.790983832407946e-08,
+   "status": "converged"
+  },
+  "instability-q1_2_1_2_0-spin-z-ferro-orbital-q-1-2-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "spin-z",
+   "family": "instability",
+   "final_label": "spin-z ferro-orbital q=(1/2,1/2,0) + bond-spin-z",
+   "free_energy_per_site": -5.090860686743638,
+   "moment": 3.8043163924639245e-08,
+   "status": "converged"
+  },
+  "orbital-q0_0_0-orbital-polarization-q-0-0-0-phi-0-r0-phi0-2-b2x2x1": {
+   "channel": "charge",
+   "family": "orbital",
+   "final_label": "orbital-current + bond-current",
+   "free_energy_per_site": -5.090860685904721,
+   "moment": 4.6074255521944e-15,
+   "status": "converged"
+  },
+  "orbital-q0_0_0-orbital-polarization-q-0-0-0-phi-0-r0-phi0-b1x1x1": {
+   "channel": "charge",
+   "family": "orbital",
+   "final_label": "para",
+   "free_energy_per_site": -5.090860686222336,
+   "moment": 5.551115123125783e-17,
+   "status": "converged"
+  },
+  "orbital-q0_0_0-orbital-polarization-q-0-0-0-phi-0-sign-1-r0-phi0-neg-2-b2x2x1": {
+   "channel": "charge",
+   "family": "orbital",
+   "final_label": "orbital-current + bond-current",
+   "free_energy_per_site": -5.090860685287819,
+   "moment": 2.3592239273284576e-15,
+   "status": "converged"
+  },
+  "orbital-q0_0_0-orbital-polarization-q-0-0-0-phi-0-sign-1-r0-phi0-neg-b1x1x1": {
+   "channel": "charge",
+   "family": "orbital",
+   "final_label": "para",
+   "free_energy_per_site": -5.090860685741159,
+   "moment": 6.106226635438361e-16,
+   "status": "converged"
+  },
+  "orbital-q0_1_2_0-orbital-polarization-q-0-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "charge",
+   "family": "orbital",
+   "final_label": "orbital-current + bond-current",
+   "free_energy_per_site": -5.090860685207711,
+   "moment": 4.85722573273506e-15,
+   "status": "converged"
+  },
+  "orbital-q1_2_0_0-orbital-polarization-q-1-2-0-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "charge",
+   "family": "orbital",
+   "final_label": "orbital-current + bond-current",
+   "free_energy_per_site": -5.090860685318288,
+   "moment": 3.164135620181696e-15,
+   "status": "converged"
+  },
+  "orbital-q1_2_1_2_0-orbital-polarization-q-1-2-1-2-0-phi-0-r0-phi0-b2x2x1": {
+   "channel": "charge",
+   "family": "orbital",
+   "final_label": "orbital-current + bond-current",
+   "free_energy_per_site": -5.090860685318794,
+   "moment": 7.771561172376096e-16,
+   "status": "converged"
+  },
+  "para-q0_0_0-para-r0-phi0-b1x1x1": {
+   "channel": "para",
+   "family": "para",
+   "final_label": "para",
+   "free_energy_per_site": -5.090860686742799,
+   "moment": 2.7755575615628914e-17,
+   "status": "converged"
+  },
+  "para-q0_0_0-para-r0-phi0-b2x2x1": {
+   "channel": "para",
+   "family": "para",
+   "final_label": "para",
+   "free_energy_per_site": -5.090860686742798,
+   "moment": 1.1102230246251565e-16,
+   "status": "converged"
+  },
+  "random-s0-b1x1x1": {
+   "channel": "random",
+   "family": "random",
+   "final_label": "spin-x ferro-orbital q=(0,0,0) + bond-spin-x",
+   "free_energy_per_site": -5.0930971786743955,
+   "moment": 0.08904303227228359,
+   "status": "converged"
+  },
+  "random-s1-b2x2x1": {
+   "channel": "random",
+   "family": "random",
+   "final_label": "spin-y ferro-orbital q=(0,0,0) + bond-spin-y + bond-spin-z + bond-spin-x",
+   "free_energy_per_site": -5.093097172499495,
+   "moment": 0.08904299684938667,
+   "status": "converged"
+  },
+  "random-s2-b1x1x1": {
+   "channel": "random",
+   "family": "random",
+   "final_label": "spin-y ferro-orbital q=(0,0,0) + bond-spin-y",
+   "free_energy_per_site": -5.093097178541778,
+   "moment": 0.08904303151708616,
+   "status": "converged"
+  },
+  "random-s3-b2x2x1": {
+   "channel": "random",
+   "family": "random",
+   "final_label": "spin-x ferro-orbital q=(0,0,0) + bond-spin-x + bond-spin-z + bond-spin-y",
+   "free_energy_per_site": -5.093097172499494,
+   "moment": 0.08904299684925827,
+   "status": "converged"
+  }
+ },
+ "solver": {
+  "EPS": 10,
+  "IterationMax": 3000,
+  "Mix": 0.5
+ },
+ "w_act_near_crossing": [
+  {
+   "D": 0.4,
+   "E_F": 0.0,
+   "T_hint": 0.025,
+   "W_act": 0.4,
+   "delta": -2.400001
+  },
+  {
+   "D": 0.4,
+   "E_F": 0.0,
+   "T_hint": 0.28750000000000003,
+   "W_act": 4.6000000000000005,
+   "delta": -2.4
+  },
+  {
+   "D": 0.4,
+   "E_F": 0.0,
+   "T_hint": 0.2874999375,
+   "W_act": 4.599999,
+   "delta": -2.3999989999999998
+  }
+ ]
+}

@@ -86,8 +86,12 @@ STRUCTURAL_EXCLUSIONS = (
 CHOSEN_BY = ("auto", "user", "auto (interim rule)")
 
 #: the interim tier rule of this release
-INTERIM_TIER_RULE = ("auto resolves to the large tier (no cost model in this release; "
-                     "the small and medium tiers arrive later)")
+INTERIM_TIER_RULE = (
+    "auto chooses the small tier when |P| <= 400, N_q <= 4096 and N_q*|P|^3 <= 1e11 "
+    "(fixed limits, the same on every host), otherwise the large tier; the host "
+    "memory only refuses a small tier whose estimate 16*(|P|^2 + N_q*top_k*|P| + "
+    "N_k*nb^2 + N_k*nb*|P|) bytes exceeds it (an interim rule until the calibrated "
+    "cost model; the medium tier arrives later)")
 
 #: the share of the host memory a tier may plan for
 BUDGET_FRACTION = 0.25
@@ -138,9 +142,11 @@ _MODEL_KEYS = ("input_sha256", "hwave_version", "hwave_initial_version", "spin_o
 _HINT_KEYS = ("status", "skip_reason", "T_hint", "rule", "W0", "W_act", "W_all", "E_F",
               "D", "W_act_groups", "W_source", "q_status", "L_min", "t_hint_rule",
               "t_hint_source", "effect", "para_status", "para_free_energy",
-              "para_residual", "gamma_self_adjoint", "method", "q_set")
+              "para_residual", "para_polarisation", "para_eps", "gamma_self_adjoint",
+              "method", "q_set")
 #: null in a skipped hint record
-_HINT_SKIPPED_NULL = ("para_free_energy", "para_residual", "gamma_self_adjoint", "method")
+_HINT_SKIPPED_NULL = ("para_free_energy", "para_residual", "para_polarisation",
+                      "para_eps", "gamma_self_adjoint", "method")
 _TIER_KEYS = ("name", "chosen_by", "estimate", "budget", "constants")
 _LIMIT_KEYS = ("top_k", "max_candidates", "quota_instability", "precedence",
                "max_site_patterns", "n_random", "base_seed", "max_denominator",
@@ -174,14 +180,22 @@ def _skipped_hint():
     return out
 
 
-def _tier_record(name, chosen_by):
-    return {
+def _tier_record(name, chosen_by, record=None):
+    """The ``tier`` record; ``record``: the estimate, budget, constants and
+    preflight of :func:`hwave.initial.enumerate.choose_tier` (absent: no
+    estimate)."""
+    out = {
         "name": name, "chosen_by": chosen_by,
         "estimate": {"bytes": None, "seconds": None, "class": None},
         "budget": {"budget_fraction": BUDGET_FRACTION, "bytes": None},
         "constants": {"budget_fraction": BUDGET_FRACTION},
         "rule": INTERIM_TIER_RULE if chosen_by == "auto (interim rule)" else None,
+        "preflight": None,
     }
+    for key in ("estimate", "budget", "constants", "preflight"):
+        if record and record.get(key) is not None:
+            out[key] = record[key]
+    return out
 
 
 def _t_hint_record(hint):
@@ -259,7 +273,8 @@ def coverage_document(cset, *, phase_marker: Literal["pre_run", "post_run"],
     not given).
 
     The hint record moves from ``model["hint"]`` to the top-level
-    ``hint``; ``limits`` gains ``T_hint`` (value, rule and constants), the
+    ``hint``, and the tier estimate from ``model["tier_record"]`` into
+    ``tier``; ``limits`` gains ``T_hint`` (value, rule and constants), the
     label thresholds (:data:`hwave.initial.labels.THRESHOLDS`),
     ``degeneracy_tol``, ``site_tol``,
     ``quota_boundary`` (:func:`quota_boundary`), the structural exclusions
@@ -273,6 +288,7 @@ def coverage_document(cset, *, phase_marker: Literal["pre_run", "post_run"],
             ", ".join(repr(c) for c in CHOSEN_BY), tier_chosen_by))
     model = _thaw_json(cset.model)
     hint = model.pop("hint", None) or _skipped_hint()
+    tier_record = model.pop("tier_record", None)
     hv, iv = _versions()
     model.setdefault("hwave_version", hv)
     model.setdefault("hwave_initial_version", iv)
@@ -287,7 +303,7 @@ def coverage_document(cset, *, phase_marker: Literal["pre_run", "post_run"],
         fixed_sentence=FIXED_SENTENCE)
     doc = {
         "schema_version": SCHEMA_VERSION, "phase_marker": phase_marker,
-        "model": model, "tier": _tier_record(cset.tier, tier_chosen_by), "hint": hint,
+        "model": model, "tier": _tier_record(cset.tier, tier_chosen_by, tier_record), "hint": hint,
         "cells": _thaw_json(cset.cells), "rows": rows, "limits": limits,
         "ranking": None if ranking is None else ranking.to_json(),
     }
@@ -402,8 +418,14 @@ def _check_hint(hint, errs):
                 errs.append("hint.{}: null when the hint is skipped".format(k))
         if hint["q_set"] != []:
             errs.append("hint.q_set: [] when the hint is skipped")
-    elif hint["skip_reason"] is not None:
-        errs.append("hint.skip_reason: null when the hint is computed")
+    else:
+        if hint["skip_reason"] is not None:
+            errs.append("hint.skip_reason: null when the hint is computed")
+        if hint["para_status"] != "converged":
+            errs.append("hint.para_status: 'converged' when the hint is computed")
+        for k in ("gamma_self_adjoint", "method"):
+            if hint[k] is None:
+                errs.append("hint.{}: set when the hint is computed".format(k))
 
 
 def validate_coverage(doc) -> None:
@@ -1044,9 +1066,14 @@ def summary_text(doc, ranking=None) -> str:
                    m.get("Ncond_per_cell"), m.get("T"), _sz_text(_canon_sz(m.get("2Sz"))),
                    m.get("cellshape"), su2))
     est = tier.get("estimate") or {}
-    cost = ("no cost estimate in this release" if est.get("bytes") is None
-            and est.get("seconds") is None else "estimate {} bytes, {} s ({})".format(
-                est.get("bytes"), est.get("seconds"), est.get("class")))
+    if est.get("bytes") is None and est.get("seconds") is None:
+        cost = "no cost estimate in this release"
+    elif est.get("seconds") is None:
+        cost = "memory estimate {} bytes; no time estimate in this release".format(
+            est.get("bytes"))
+    else:
+        cost = "estimate {} bytes, {} s ({})".format(est.get("bytes"), est.get("seconds"),
+                                                      est.get("class"))
     out.append("Tier: {} (chosen by {}); {}".format(tier.get("name"), tier.get("chosen_by"),
                                                      cost))
     th = lim.get("T_hint") or {}

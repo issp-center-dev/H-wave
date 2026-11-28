@@ -1,0 +1,113 @@
+{
+ "captured_by": "tests/initial_reference_capture.py --validation-i2",
+ "description": "V5: total free energy, convergence and staggered spin vector of the runs from the Neel seeds along x, y and z at lambda = +0.3, -0.3 and 0",
+ "hwave_version": "2.0.0",
+ "model": {
+  "L": 4,
+  "T": 0.2,
+  "U": 3.5,
+  "filling": "half",
+  "soc": 0.3,
+  "subshape": [
+   2,
+   2,
+   1
+  ],
+  "tp": 0.3
+ },
+ "numpy_version": "2.4.6",
+ "runs": {
+  "-0.3": {
+   "x": {
+    "converged": true,
+    "free_energy": -23.75822061111177,
+    "staggered": [
+     0.32960625953911404,
+     8.138366467807965e-17,
+     1.3530843112619095e-16
+    ]
+   },
+   "y": {
+    "converged": true,
+    "free_energy": -23.75822061111182,
+    "staggered": [
+     1.5841836303427193e-17,
+     0.32960625953911404,
+     5.898059818321144e-17
+    ]
+   },
+   "z": {
+    "converged": true,
+    "free_energy": -23.365347126076436,
+    "staggered": [
+     0.0,
+     0.0,
+     0.306734648424261
+    ]
+   }
+  },
+  "0": {
+   "x": {
+    "converged": true,
+    "free_energy": -23.214874710648225,
+    "staggered": [
+     0.3344592566261313,
+     0.0,
+     2.0816681711721685e-17
+    ]
+   },
+   "y": {
+    "converged": true,
+    "free_energy": -23.21487471064828,
+    "staggered": [
+     -2.2531628205869905e-17,
+     0.3344592566261313,
+     -3.469446951953614e-17
+    ]
+   },
+   "z": {
+    "converged": true,
+    "free_energy": -23.21487471064822,
+    "staggered": [
+     0.0,
+     0.0,
+     0.3344592566261313
+    ]
+   }
+  },
+  "0.3": {
+   "x": {
+    "converged": true,
+    "free_energy": -23.75822061111177,
+    "staggered": [
+     0.32960625953911404,
+     -8.138366467807965e-17,
+     1.3530843112619095e-16
+    ]
+   },
+   "y": {
+    "converged": true,
+    "free_energy": -23.758220611111742,
+    "staggered": [
+     1.7439048104163797e-17,
+     0.32960625953911404,
+     4.85722573273506e-17
+    ]
+   },
+   "z": {
+    "converged": true,
+    "free_energy": -23.365347126076436,
+    "staggered": [
+     0.0,
+     0.0,
+     0.306734648424261
+    ]
+   }
+  }
+ },
+ "solver": {
+  "EPS": 12,
+  "IterationMax": 20000,
+  "Mix": 0.5
+ }
+}

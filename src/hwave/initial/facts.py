@@ -88,7 +88,8 @@ class ModelFacts:
 
     ``warnings``: messages about the input. ``input_sha256``: the SHA-256
     of every file the TOML names (:func:`initial_facade.referenced_input_files`),
-    keyed by its TOML key; the TOML itself is not included.
+    keyed by its TOML key; the TOML itself is not included. ``toml_path``:
+    the absolute path of the input TOML that was read.
     """
     problem: "initial_facade.UHFkProblem"
     norb: int
@@ -105,6 +106,7 @@ class ModelFacts:
     two_sz: Optional[int]
     warnings: Tuple[str, ...]
     input_sha256: Mapping[str, str]
+    toml_path: pathlib.Path
 
 
 def _read_toml(path):
@@ -397,4 +399,5 @@ def model_facts(input_path, *, subshape=None, orbital_site=None):
         site_groups=_site_groups(problem, norb_phys, orbital_site, centers, rvec),
         cellshape=tuple(problem.cellshape), T=problem.T, ncond=ncond,
         ncond_per_cell=ncond_per_cell, two_sz=problem.two_sz,
-        warnings=tuple(warnings), input_sha256=_input_sha256(toml))
+        warnings=tuple(warnings), input_sha256=_input_sha256(toml),
+        toml_path=pathlib.Path(os.path.abspath(os.fspath(toml))))

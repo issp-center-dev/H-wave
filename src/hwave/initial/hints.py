@@ -1,4 +1,5 @@
-"""Instability hints: the hint temperature ``T_hint``.
+"""Instability hints: the hint temperature ``T_hint`` and the paramagnetic
+Hartree-Fock reference.
 
 :func:`t_hint_bare` sets the temperature at which the static para hints are
 evaluated, from the bare one-body Hamiltonian ``H0 = T(k)`` and the k mesh
@@ -51,18 +52,75 @@ the ``W0/8`` cap is the ``T_hint`` used.
 rows fill the instability quota; never the q set, the cells, or the
 reserved, baseline, user and literature rows. The UHFk candidate runs stay
 at the input T.
+
+**The para reference.** :func:`para_hf` runs UHFk on the primitive cell at
+``T_hint`` from the free density (:class:`ParaResult`): its Hamiltonian
+``H_para = H0 + Sigma'[G_para]`` gives the bands of the hints, and, folded
+to a candidate cell (:func:`fold_para`), the base Hamiltonian of the seeds
+(``seed_base = "para_hf"``). The reference is accepted only when the SCF
+converged and the state keeps the symmetries of the model (residual at most
+:data:`PARA_RESIDUAL_TOL`): the spin rotations about every axis that ``H0``
+and the Hartree-Fock map both keep (a Zeeman field along z keeps only the
+rotations about z, and the z polarisation it induces is recorded, not
+checked); with a fixed 2Sz the transverse spin and the electron count of
+each sector; in spin-orbital mode time reversal when the model has it.
+Otherwise the hints are skipped with the reason and the seeds use the bare
+``H0``. :func:`para_from_green` rebuilds a reference from a saved para
+Green function; :func:`hint_record` writes the ``hint`` record of the
+coverage report.
+
+**The vertex.** :func:`pair_space` lists the slots the solver's
+Hartree-Fock map reads and writes (:class:`PairSpace`, with its label
+coordinates), :func:`vertex` and :func:`vertex_sparse` give the Jacobian
+``Gamma(q) = dSigma'/drho`` of that map on them (dense for the small tier,
+CSR for the medium tier), and :func:`vertex_self_adjoint` checks that it is
+Hermitian. :func:`lindhard` and :func:`lindhard_apply` give the static
+Lindhard response ``chi0(q)`` of the para bands on the same pair space and
+sectors (dense for the small tier, a matrix-free product for the medium
+tier; one kernel, :func:`hwave.solver.initial_facade.static_lindhard`, at
+fixed ``mu``). :func:`hint_chi0` is the response the eigen-solve uses: the
+Lindhard response, at q = 0 with the electron number of each mu-group held
+fixed (the solver refits one ``mu`` per group), so the uniform modes that
+only change a group number have ``lambda = 0``.
+
+**The eigen-solve.** :func:`solve_small` gives the leading eigenpairs of
+``K(q) = -chi0(q) Gamma(q)`` at one q through the symmetric form ``B =
+chi0^(1/2) (-Gamma) chi0^(1/2)`` (dense, the small tier), the sectors
+merged before ``top_k``; :func:`hint_eigenpairs` runs it over a q set on
+the para bands (:class:`SolveResult` per q) and gives each pair's
+conjugate field ``O = Gamma x`` as a PatternSpec amplitude
+(:func:`amplitude_entries`); :func:`vertex_fields` the vertex fields of
+the hint record. The eigenvalues order the instability rows and never
+remove a row.
 """
+import dataclasses
+import json
+import logging
 import math
 import numbers
+import os
+import shutil
+import tempfile
 from dataclasses import dataclass
-from typing import Literal, Optional, Tuple
+from types import MappingProxyType
+from typing import Literal, Mapping, Optional, Tuple
 
 import numpy as np
 
 from hwave.solver import initial_facade
 
+logger = logging.getLogger("qlms").getChild("initial").getChild("hints")
+
 __all__ = ["THint", "t_hint_bare", "W_FLOOR_ACT", "T_HINT_REL_FLOOR",
-           "STRUCTURAL_AXIS_MAX", "WIDE_WINDOW_FACTOR", "group_bands"]
+           "STRUCTURAL_AXIS_MAX", "WIDE_WINDOW_FACTOR", "group_bands",
+           "ParaResult", "para_hf", "para_from_green", "para_from_work", "para_starts",
+           "para_failed", "choose_para", "write_para_record", "fold_para", "hint_record", "model_key", "input_digest",
+           "PARA_RESIDUAL_TOL", "PARA_CHECK_TOL", "PARA_SYMMETRY_TOL",
+           "PairSpace", "pair_space", "vertex", "vertex_sparse", "vertex_self_adjoint",
+           "SECTOR_FULL", "SECTOR_CHARGE", "SECTOR_SZ", "VERTEX_SELF_ADJOINT_TOL",
+           "lindhard", "lindhard_apply", "hint_chi0", "SolveResult", "solve_small", "amplitude_entries",
+           "hint_eigenpairs", "vertex_fields", "degenerate_clusters", "HINT_METHOD", "REAL_TOL", "Q_OK", "Q_FEW",
+           "Q_NONE", "Q_FAILED", "GENERAL_SOLVE_SOURCE"]
 
 #: the floor of ``W0`` in input energy units (a single flat level)
 W_FLOOR_ACT = 1e-3
@@ -266,3 +324,1579 @@ def t_hint_bare(problem, *, t_user: Optional[float] = None) -> THint:
         W_source=w_source, L_min=l_min, t_hint_rule=t_hint_rule,
         t_hint_source=source, effect=_EFFECT.format(t_hint, float(problem.T)),
         warnings=tuple(warnings))
+
+
+# --------------------------------------------------------------------------
+# the paramagnetic Hartree-Fock reference
+# --------------------------------------------------------------------------
+
+#: the para state is accepted when its symmetry residual is at most this
+PARA_RESIDUAL_TOL = 1e-8
+#: the two para starts of the para check disagree when their free energies
+#: per primitive cell differ by more than this
+PARA_CHECK_TOL = 1e-8
+#: a symmetry of ``H0`` or of the Hartree-Fock map holds to this (relative)
+PARA_SYMMETRY_TOL = 1e-12
+
+PARA_CHECK_WARNING = (
+    "para check: the paramagnetic Hartree-Fock runs from the free density and from "
+    "the uniform orbital occupation reach free energies per cell {:.12g} and {:.12g} "
+    "(difference {:.3g} > {:.0e}); the lower ({}) is kept: the other start is a "
+    "metastable (orbital-ordered) state")
+PARA_CHECK_SWITCHED_WARNING = (
+    "para check: the run from the free density did not give a paramagnetic state "
+    "({}); the run from the uniform orbital occupation is kept")
+PARA_CHECK_FAILED_WARNING = (
+    "para check: the run from the uniform orbital occupation did not give a "
+    "paramagnetic state ({}); the run from the free density is kept")
+
+_AXES = ("x", "y", "z")
+_SIGMA_P = (np.array([[0, 1], [1, 0]], dtype=np.complex128),
+            np.array([[0, -1j], [1j, 0]], dtype=np.complex128),
+            np.array([[1, 0], [0, -1]], dtype=np.complex128))
+
+
+# eq=False: the fields hold arrays
+@dataclass(frozen=True, eq=False)
+class ParaResult:
+    """The paramagnetic Hartree-Fock reference of a model.
+
+    ``status``: ``"converged"`` (the SCF converged and the symmetry residual
+    is at most :data:`PARA_RESIDUAL_TOL`), ``"not_converged"`` (the SCF did
+    not converge, or its state breaks a symmetry the reference must keep)
+    or ``"skipped"`` (the step did not run: no interacting orbital, or the
+    solver refused). Only a converged reference is used; otherwise the
+    hints are skipped with ``skip_reason`` and the seeds use the bare
+    ``H0``.
+
+    ``G_para``: the stored Green function of the primitive cell
+    (``SubShape = [1, 1, 1]``). ``H_para_k``: ``H0(k) + Sigma'[G_para]``
+    ``(prod(CellShape), nd_orig, nd_orig)`` (``H0`` from
+    :func:`initial_facade.primitive_h0_k`, ``Sigma'`` the solver's
+    block-projected potential with its Fock flag). ``bands``:
+    :func:`initial_facade.bands_of` of ``H_para_k`` at ``T``. ``T``: the
+    temperature of the reference (``T_hint``). ``free_energy``: the
+    solver's ``FreeEnergy_Total`` (whole lattice); ``free_energy_per_cell``
+    per primitive cell. ``residual``: the symmetry residual, the largest
+    of ``residual_parts`` (keys among ``"spin"``, ``"transverse spin"``,
+    ``"sector counts"``, ``"time reversal"``); ``checked``: what it covers
+    (a spin axis, or time reversal, is included only when ``H0`` and the
+    Hartree-Fock map both keep it). ``polarisation``: the polarisation the
+    reference is allowed to have, recorded (``"spin"``: the on-site spin
+    density ``[x, y, z]`` of each physical orbital; ``"sector_counts"``:
+    the electrons of each mu-group; ``"time_reversal_odd"``: the largest
+    time-reversal-odd entry, spin-orbital mode; ``"allowed"``: the spin
+    axes along which a polarisation is allowed by the symmetries of the
+    model, or ``"sectors"`` with a fixed 2Sz). ``iterations``,
+    ``scf_residual``: the SCF record; ``eps``: the ``EPS`` exponent of the
+    run (the input's, raised to at least
+    :data:`initial_facade.PARA_EPS_MIN`), ``iteration_max`` its
+    ``IterationMax`` (the input's). ``free_energy_check``: the free
+    energy per cell of the para-check start (``None`` without the check).
+    ``warnings``: messages for the report. ``input_sha256``: of the model
+    the reference belongs to; ``model``: its ``cellshape``, ``norb_orig``,
+    ``ncond``, ``two_sz``, ``iflag_fock``, ``spin_orbital`` and
+    ``ene_cutoff`` (the TOML
+    settings the input files do not fix).
+    """
+    status: Literal["converged", "not_converged", "skipped"]
+    G_para: Optional[np.ndarray]
+    H_para_k: Optional[np.ndarray]
+    bands: Optional["initial_facade.Bands"]
+    free_energy: Optional[float]
+    residual: Optional[float]
+    polarisation: Optional[Mapping]
+    skip_reason: Optional[str]
+    warnings: Tuple[str, ...]
+    T: float
+    free_energy_per_cell: Optional[float] = None
+    residual_parts: Optional[Mapping] = None
+    checked: Tuple[str, ...] = ()
+    iterations: Optional[int] = None
+    scf_residual: Optional[float] = None
+    free_energy_check: Optional[float] = None
+    input_sha256: Optional[Mapping] = None
+    model: Optional[Mapping] = None
+    eps: Optional[int] = None
+    iteration_max: Optional[int] = None
+
+
+def input_digest(input_sha256):
+    """The SHA-256 of the canonical JSON (sorted keys, no whitespace) of an
+    ``input_sha256`` mapping: one string naming the input files of a model
+    (the para record and the seed provenance carry it)."""
+    import hashlib
+    text = json.dumps(dict(input_sha256), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def model_key(facts):
+    """The settings of the model of ``facts`` a para reference must share
+    besides its input files (:attr:`ParaResult.model`)."""
+    p = facts.problem
+    return MappingProxyType({
+        "cellshape": tuple(int(n) for n in p.cellshape), "norb_orig": int(p.norb_orig),
+        "ncond": p.ncond, "two_sz": p.two_sz, "iflag_fock": bool(p.iflag_fock),
+        "spin_orbital": bool(p.enable_spin_orbital), "ene_cutoff": float(p.ene_cutoff)})
+
+
+def _primitive_facts(facts):
+    from hwave.initial.facts import model_facts
+    if tuple(facts.problem.subshape) == (1, 1, 1):
+        return facts
+    return model_facts(facts.toml_path, subshape=(1, 1, 1))
+
+
+def _on_site_spin(G, p):
+    """``[x, y, z]`` of the on-site spin density of each physical orbital,
+    from the stored G (``S^mu = 1/2 sum_st sigma^mu_st <c^dag_s c_t>``)."""
+    g0 = np.asarray(G)[0].reshape(p.nd, p.nd)
+    out = []
+    nphys = p.norb_phys
+    for a in range(nphys):
+        if p.enable_spin_orbital:
+            idx = [initial_facade.interleaved_index(a, s) for s in range(2)]
+        else:
+            idx = [s * p.norb + a for s in range(2)]
+        blk = g0[np.ix_(idx, idx)]
+        out.append([0.5 * float(np.real(np.sum(sig * blk))) for sig in _SIGMA_P])
+    return np.array(out)
+
+
+def _group_counts(G, p):
+    g0 = np.asarray(G)[0].reshape(p.nd, p.nd)
+    counts = []
+    for g in range(len(p.blocks.group_nconds)):
+        idx = np.concatenate([np.asarray(b) for b, gg in
+                              zip(p.blocks.block_info, p.blocks.block_to_group) if gg == g])
+        counts.append(float(p.nvol * np.sum(np.real(g0[idx, idx]))))
+    return counts
+
+
+def _symmetric_axes(p):
+    """The spin axes that ``H0`` and the Hartree-Fock map both keep
+    (normal mode, free Sz)."""
+    from hwave.initial import symmetry
+    h0 = symmetry.h0_spin_commutators(p)
+    hf = symmetry.hf_axis_residuals(p)
+    return tuple(mu for mu in range(3)
+                 if h0[mu] <= PARA_SYMMETRY_TOL and hf[mu] <= PARA_SYMMETRY_TOL)
+
+
+def _residual(G, p):
+    """``(residual_parts, checked, polarisation)`` of the stored G of the
+    primitive-cell problem ``p``."""
+    from hwave.initial import symmetry
+    spin = _on_site_spin(G, p)
+    parts, checked = {}, []
+    pol = {"spin": spin.tolist(), "sector_counts": None, "time_reversal_odd": None,
+           "allowed": None}
+    if p.enable_spin_orbital:
+        tr = symmetry.tr_check(p)
+        odd = float(np.max(np.abs(np.asarray(G) - symmetry.time_reverse_green(G, p)))) / 2
+        pol["time_reversal_odd"] = odd
+        if tr.invariant:
+            parts["time reversal"] = odd
+            checked.append("time reversal")
+            pol["allowed"] = []
+        else:
+            pol["allowed"] = ["time-reversal odd (the model breaks time reversal)"]
+        return parts, tuple(checked), pol
+    if not p.sz_free:
+        counts = _group_counts(G, p)
+        pol["sector_counts"] = counts
+        pol["allowed"] = ["sectors"]
+        parts["transverse spin"] = float(np.max(np.hypot(spin[:, 0], spin[:, 1])))
+        parts["sector counts"] = max(
+            abs(c - n) / max(1.0, float(n)) for c, n in zip(counts, p.blocks.group_nconds))
+        return parts, ("transverse spin", "sector counts"), pol
+    axes = _symmetric_axes(p)
+    if len(axes) >= 2:
+        allowed = ()
+    elif len(axes) == 1:
+        allowed = axes
+    else:
+        allowed = (0, 1, 2)
+    forbidden = [mu for mu in range(3) if mu not in allowed]
+    pol["allowed"] = [_AXES[mu] for mu in allowed]
+    if forbidden:
+        parts["spin"] = float(np.max(np.linalg.norm(spin[:, forbidden], axis=1)))
+        checked.extend("S_" + _AXES[mu] for mu in forbidden)
+    return parts, tuple(checked), pol
+
+
+def _start_free(facts1, thint):
+    """The free density of the primitive cell at ``T_hint``: the bare-H0
+    fill with the solver's mu-groups."""
+    from hwave.initial.seed import seed_pattern
+    p = facts1.problem
+    return np.asarray(seed_pattern(facts1, initial_facade.primitive_h0_k(p), None,
+                                   T_run=thint.T_hint, W0=thint.W0, seed_base="bare").G)
+
+
+def _start_uniform(p):
+    """The uniform orbital occupation: on the r = 0 diagonal of every index
+    of mu-group g the value ``n_g / (nvol * dim_g)``, zero elsewhere."""
+    g = np.zeros((p.nvol, p.nd, p.nd), dtype=np.complex128)
+    for grp, n in enumerate(p.blocks.group_nconds):
+        idx = np.concatenate([np.asarray(b) for b, gg in
+                              zip(p.blocks.block_info, p.blocks.block_to_group) if gg == grp])
+        g[0, idx, idx] = float(n) / (p.nvol * idx.size)
+    return g.reshape(p.nvol, p.ns, p.norb, p.ns, p.norb)
+
+
+def para_starts(facts, thint):
+    """The two starts of the para step on the primitive cell of the model
+    of ``facts`` at ``thint.T_hint``, stored layout ``(prod(CellShape), ns,
+    norb_orig, ns, norb_orig)``: ``{"main": the free density (the bare-H0
+    fill with the solver's mu-groups), "check": the uniform orbital
+    occupation}``. :func:`para_hf` runs from them, and so does the
+    separately run preliminary paramagnetic run of ``python -m
+    hwave.initial prepare --stage0``."""
+    facts1 = _primitive_facts(facts)
+    return {"main": _start_free(facts1, thint), "check": _start_uniform(facts1.problem)}
+
+
+def para_from_green(facts, thint, G_para, *, free_energy, converged, iterations=None,
+                    scf_residual=None, eps=None, iteration_max=None,
+                    warnings=()) -> ParaResult:
+    """The :class:`ParaResult` of a para Green function ``G_para`` of the
+    primitive cell (from :func:`para_hf`, or read back from the green file
+    of a paramagnetic run of the input at ``thint.T_hint``).
+
+    ``H_para_k = H0 + Sigma'[G_para]``, the bands, the symmetry residual
+    and the polarisation are rebuilt from ``G_para``; ``free_energy`` is
+    that run's ``FreeEnergy_Total``, ``converged`` its SCF status and
+    ``eps`` and ``iteration_max`` its ``EPS`` exponent and
+    ``IterationMax``."""
+    facts1 = _primitive_facts(facts)
+    p = facts1.problem
+    G = np.array(G_para, dtype=np.complex128)
+    want = (p.nvol, p.ns, p.norb, p.ns, p.norb)
+    if G.shape != want:
+        raise ValueError("para_from_green: G_para must be the primitive-cell Green function "
+                         "{}, got {}".format(want, G.shape))
+    G.flags.writeable = False
+    H = initial_facade.primitive_h0_k(p) + initial_facade.hf_potential(
+        G, initial_facade.hf_tables(p), include_fock=p.iflag_fock, blocks=p.blocks)
+    H.flags.writeable = False
+    T = float(thint.T_hint)
+    bands = initial_facade.bands_of(H, p.blocks, T, shape=p.shape, ns=p.ns, norb=p.norb,
+                                    ene_cutoff=p.ene_cutoff)
+    parts, checked, pol = _residual(G, p)
+    residual = max(parts.values()) if parts else 0.0
+    ncell = int(np.prod(p.cellshape))
+    f_cell = float(free_energy) / ncell
+    if not converged:
+        status = "not_converged"
+        reason = ("the paramagnetic Hartree-Fock run did not converge at T_hint = {:.6g} "
+                  "({} iterations, residual {}; EPS = {}, IterationMax = {}: the para "
+                  "run converges to EPS >= 12, so it may need a larger IterationMax "
+                  "than the input's)".format(
+                      T, iterations, "unknown" if scf_residual is None
+                      else "{:.3g}".format(scf_residual),
+                      "unknown" if eps is None else eps,
+                      "unknown" if iteration_max is None else iteration_max))
+    elif residual > PARA_RESIDUAL_TOL:
+        status = "not_converged"
+        worst = max(parts, key=parts.get)
+        reason = ("the paramagnetic Hartree-Fock state breaks a symmetry of the model: "
+                  "{} residual {:.3g} > {:.0e}".format(worst, residual, PARA_RESIDUAL_TOL))
+    else:
+        status, reason = "converged", None
+    return ParaResult(
+        status=status, G_para=G, H_para_k=H, bands=bands, free_energy=float(free_energy),
+        residual=float(residual), polarisation=MappingProxyType(pol), skip_reason=reason,
+        warnings=tuple(warnings), T=T, free_energy_per_cell=f_cell,
+        residual_parts=MappingProxyType(dict(parts)), checked=checked,
+        iterations=iterations, scf_residual=scf_residual,
+        input_sha256=MappingProxyType(dict(facts.input_sha256)), model=model_key(facts),
+        eps=None if eps is None else int(eps),
+        iteration_max=None if iteration_max is None else int(iteration_max))
+
+
+#: the files of a para work directory (:func:`para_hf` with ``work_dir``)
+PARA_GREEN = "green.npz"
+PARA_RECORD = "para_hf.json"
+
+
+def para_from_work(facts, work_dir) -> Optional[ParaResult]:
+    """The :class:`ParaResult` kept in the work directory of
+    :func:`para_hf` (``green.npz`` and ``para_hf.json``), rebuilt by
+    :func:`para_from_green` at the recorded T: the same ``H_para_k`` and
+    bands as the run that wrote it, with the recorded status, skip reason,
+    warnings and para-check energy. ``None`` when the step wrote no Green
+    function (it was skipped or failed). ``ValueError`` when the record
+    belongs to another model: other input files (the input digest), or
+    other settings of the TOML that the files do not fix (``CellShape``,
+    ``Ncond``, ``2Sz``, ``flag_fock``, ``ene_cutoff``, the orbital count,
+    spin-orbital mode: :func:`model_key`). Both are checked before anything is read, a
+    record without a Green function included."""
+    from types import SimpleNamespace
+    root = os.path.abspath(os.fspath(work_dir))
+    path = os.path.join(root, PARA_RECORD)
+    with open(path) as f:
+        rec = json.load(f)
+    if rec.get("input_digest") != input_digest(facts.input_sha256):
+        raise ValueError("{}: the para record belongs to other input files (input digest "
+                         "{}, this input {}); rerun prepare into a new directory".format(
+                             path, rec.get("input_digest"), input_digest(facts.input_sha256)))
+    want = _plain_model(model_key(facts))
+    got = rec.get("model")
+    if not isinstance(got, dict):
+        raise ValueError("{}: the para record does not name its model settings; rerun "
+                         "prepare into a new directory".format(path))
+    diff = sorted(k for k in set(want) | set(got) if want.get(k) != got.get(k))
+    if diff:
+        raise ValueError("{}: the para record belongs to another model: {}; rerun prepare "
+                         "into a new directory".format(
+                             path, ", ".join("{} {} (this input {})".format(
+                                 k, json.dumps(got.get(k)), json.dumps(want.get(k)))
+                                 for k in diff)))
+    green = os.path.join(root, PARA_GREEN)
+    if rec.get("selected_start") is None or not os.path.isfile(green):
+        return None
+    with np.load(green, allow_pickle=False) as data:
+        G = np.array(data["green"], dtype=np.complex128)
+    res = para_from_green(facts, SimpleNamespace(T_hint=float(rec["T"])), G,
+                          free_energy=rec["free_energy"],
+                          converged=rec["status"] == "converged",
+                          iterations=rec.get("iterations"),
+                          scf_residual=rec.get("scf_residual"), eps=rec.get("eps"),
+                          iteration_max=rec.get("iteration_max"),
+                          warnings=tuple(rec.get("warnings") or ()))
+    return dataclasses.replace(res, status=rec["status"], skip_reason=rec.get("skip_reason"),
+                               free_energy_check=rec.get("free_energy_check"))
+
+
+def _plain_model(model):
+    """:func:`model_key` in its JSON form (tuples as lists)."""
+    return {k: (list(v) if isinstance(v, tuple) else v) for k, v in model.items()}
+
+
+def _skipped(facts, thint, reason, warnings=(), status="skipped"):
+    return ParaResult(status=status, G_para=None, H_para_k=None, bands=None,
+                      free_energy=None, residual=None, polarisation=None,
+                      skip_reason=reason, warnings=tuple(warnings),
+                      T=float(thint.T_hint),
+                      input_sha256=MappingProxyType(dict(facts.input_sha256)),
+                      model=model_key(facts))
+
+
+def para_failed(facts, thint, reason, warnings=()) -> ParaResult:
+    """The :class:`ParaResult` of a para run that ran and failed without a
+    usable Green function (a traceback, an unreadable output): status
+    ``"not_converged"`` with ``reason`` as its skip reason, no Green
+    function; the hints are skipped and the seeds use the bare ``H0``."""
+    return _skipped(facts, thint, reason, warnings, status="not_converged")
+
+
+def _one_run(facts1, thint, start, work_dir):
+    run = initial_facade.run_para(facts1.toml_path, T=thint.T_hint, start_G=start,
+                                  work_dir=work_dir)
+    res = para_from_green(facts1, thint, run.G, free_energy=run.free_energy,
+                          converged=run.converged, iterations=run.iterations,
+                          scf_residual=run.residual, eps=run.eps,
+                          iteration_max=run.iteration_max)
+    return run, res
+
+
+def write_para_record(res, selected, work_dir):
+    """Write ``work_dir/para_hf.json``, the record of the para reference
+    ``res`` (:func:`para_from_work` reads it back); ``selected`` names the
+    start whose Green function is ``work_dir/green.npz`` (``"main"`` or
+    ``"check"``), ``None`` when no Green function is kept."""
+    out = {
+        "status": res.status, "skip_reason": res.skip_reason, "T": res.T,
+        "free_energy": res.free_energy, "free_energy_per_cell": res.free_energy_per_cell,
+        "residual": res.residual,
+        "residual_parts": None if res.residual_parts is None else dict(res.residual_parts),
+        "checked": list(res.checked), "iterations": res.iterations,
+        "scf_residual": res.scf_residual, "eps": res.eps,
+        "iteration_max": res.iteration_max,
+        "free_energy_check": res.free_energy_check,
+        "polarisation": None if res.polarisation is None else dict(res.polarisation),
+        "selected_start": selected, "warnings": list(res.warnings),
+        "input_sha256": dict(res.input_sha256 or {}),
+        "input_digest": None if res.input_sha256 is None else input_digest(res.input_sha256),
+        "model": None if res.model is None else _plain_model(res.model),
+    }
+    with open(os.path.join(work_dir, "para_hf.json"), "w") as f:
+        json.dump(out, f, indent=1, sort_keys=True, allow_nan=True)
+        f.write("\n")
+
+
+def para_hf(facts, thint, *, para_check=False, work_dir=None) -> ParaResult:
+    """The paramagnetic Hartree-Fock reference of the model of ``facts``.
+
+    UHFk runs on the primitive cell (``SubShape = [1, 1, 1]``) at
+    ``thint.T_hint`` with the input's ``Ncond``, ``2Sz``, Fock flag,
+    tables and mu-groups, through :func:`initial_facade.run_para`. It
+    starts from the free density (the bare-``H0`` fill at ``T_hint``; with
+    a fixed 2Sz the free density of each sector), which the Hartree-Fock
+    map keeps paramagnetic. The result is accepted when the SCF converged
+    and the symmetry residual (:class:`ParaResult`) is at most
+    :data:`PARA_RESIDUAL_TOL`.
+
+    ``para_check`` runs a second start, the uniform orbital occupation, and
+    keeps the lower free energy; a difference per primitive cell above
+    :data:`PARA_CHECK_TOL` is a warning (a metastable orbital-ordered
+    state passes the residual).
+
+    ``work_dir``: the directory of the runs (``main/``, and ``check/`` with
+    the check), kept; the selected run's Green function is copied to
+    ``work_dir/green.npz`` and the result recorded in
+    ``work_dir/para_hf.json`` (also for a skipped step, then without a
+    green file and with ``selected_start = null``). Without it the runs use a temporary
+    directory that is removed.
+
+    A model without an interacting orbital, or a run the solver refuses,
+    gives ``status = "skipped"`` with the reason (no exception).
+    """
+    root = None if work_dir is None else os.path.abspath(os.fspath(work_dir))
+    if root is not None:
+        os.makedirs(root, exist_ok=True)
+    if facts.n_c == 0:
+        res = _skipped(facts, thint, "no interacting orbital (n_c = 0)")
+        if root is not None:
+            write_para_record(res, None, root)
+        return res
+    facts1 = _primitive_facts(facts)
+    tmp = None
+    if root is None:
+        tmp = tempfile.mkdtemp(prefix="hwave-para-")
+    base = root if tmp is None else tmp
+    try:
+        try:
+            run, res = _one_run(facts1, thint, _start_free(facts1, thint),
+                                os.path.join(base, "main"))
+        except (ValueError, initial_facade.MuNotConvergedError) as exc:
+            res = _skipped(facts, thint, "the paramagnetic Hartree-Fock run failed: "
+                           "{}".format(exc))
+            if root is not None:
+                write_para_record(res, None, root)
+            return res
+        selected = "main"
+        if para_check:
+            res, run, selected = _check(facts1, thint, res, run, base)
+        res = dataclasses.replace(res, input_sha256=MappingProxyType(dict(facts.input_sha256)))
+        if root is not None:
+            shutil.copyfile(os.path.join(run.work_dir, "green.npz"),
+                            os.path.join(root, "green.npz"))
+            write_para_record(res, selected, root)
+        return res
+    finally:
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _check(facts1, thint, res, run, root):
+    p = facts1.problem
+    try:
+        run2, res2 = _one_run(facts1, thint, _start_uniform(p), os.path.join(root, "check"))
+    except (ValueError, initial_facade.MuNotConvergedError) as exc:
+        run2, res2 = None, _skipped(facts1, thint, str(exc))
+    kept, sel = choose_para(res, res2)
+    return kept, (run2 if sel == "check" else run), sel
+
+
+def choose_para(main, check):
+    """``(kept, selected)``: the para reference kept from the two starts of
+    the para check, ``main`` (from the free density) and ``check`` (from
+    the uniform orbital occupation), each a :class:`ParaResult`.
+    ``selected`` is ``"main"`` or ``"check"``.
+
+    When the check start is not converged, ``main`` is kept with the
+    warning :data:`PARA_CHECK_FAILED_WARNING`; when only the check start
+    is converged, it is kept with :data:`PARA_CHECK_SWITCHED_WARNING`;
+    when both are, the lower free energy per cell is kept, with
+    :data:`PARA_CHECK_WARNING` when they differ by more than
+    :data:`PARA_CHECK_TOL`. ``free_energy_check`` records the check
+    start's free energy per cell. When neither is converged ``main`` is
+    kept, not converged (the hints are skipped)."""
+    if check.status != "converged":
+        msg = PARA_CHECK_FAILED_WARNING.format(check.skip_reason)
+        logger.warning(msg)
+        return (dataclasses.replace(main, warnings=main.warnings + (msg,),
+                                    free_energy_check=check.free_energy_per_cell),
+                "main")
+    if main.status != "converged":
+        # the check start reached a valid reference where the free start did not
+        msg = PARA_CHECK_SWITCHED_WARNING.format(main.skip_reason)
+        logger.warning(msg)
+        return dataclasses.replace(check, warnings=check.warnings + (msg,),
+                                   free_energy_check=check.free_energy_per_cell), "check"
+    f1, f2 = main.free_energy_per_cell, check.free_energy_per_cell
+    keep, sel = (check, "check") if f2 < f1 else (main, "main")
+    warnings = keep.warnings
+    if abs(f1 - f2) > PARA_CHECK_TOL:
+        msg = PARA_CHECK_WARNING.format(
+            f1, f2, abs(f1 - f2), PARA_CHECK_TOL,
+            "uniform orbital occupation" if sel == "check" else "free density")
+        logger.warning(msg)
+        warnings = warnings + (msg,)
+    return dataclasses.replace(keep, warnings=warnings, free_energy_check=f2), sel
+
+
+def fold_para(H_para_k, facts, subshape):
+    """``H_para_k`` (the primitive-cell para Hamiltonian of
+    :class:`ParaResult`) folded onto the ``SubShape`` ``subshape`` cell of
+    the model of ``facts``: ``(nvol_B, nd_B, nd_B)`` in the solver's folded
+    index order (:func:`initial_facade.fold_hamiltonian_k`), the base
+    Hamiltonian of the seeds on that cell."""
+    p = facts.problem
+    return initial_facade.fold_hamiltonian_k(
+        H_para_k, cellshape=facts.cellshape, subshape=tuple(int(b) for b in subshape),
+        norb_orig=p.norb_orig, ns=p.ns)
+
+
+#: the vertex fields of a computed hint record
+_VERTEX_FIELDS = ("gamma_self_adjoint", "method", "q_status", "q_set")
+
+
+def hint_record(thint, para=None, *, skip_reason=None, vertex=None):
+    """The ``hint`` record of ``coverage.json`` for the hint temperature
+    ``thint`` and the para reference ``para`` (``None``: no para step).
+
+    The record is skipped with ``skip_reason`` when it is given, or with
+    ``para.skip_reason`` when the para reference is not converged; a record
+    without a para reference needs ``skip_reason``. A skipped record has
+    every numeric para field null (its ``para_status`` is kept) and empty
+    vertex fields. A computed record (a converged para and no skip reason)
+    needs ``vertex``, the mapping of the eigen-solve's
+    ``gamma_self_adjoint``, ``method``, ``q_status`` and ``q_set``
+    (``ValueError`` otherwise)."""
+    if skip_reason is None and para is None:
+        raise ValueError("hint_record: a record without a para reference needs skip_reason")
+    if skip_reason is None and para.status != "converged":
+        skip_reason = para.skip_reason
+    skipped = skip_reason is not None
+    if not skipped and vertex is None:
+        raise ValueError("hint_record: a computed record needs the vertex fields "
+                         "({})".format(", ".join(_VERTEX_FIELDS)))
+    out = {
+        "status": "skipped" if skipped else "computed", "skip_reason": skip_reason,
+        "T_hint": thint.T_hint, "rule": thint.rule, "W0": thint.W0, "W_act": thint.W_act,
+        "W_all": thint.W_all, "E_F": list(thint.E_F), "D": list(thint.D),
+        "W_act_groups": list(thint.W_act_groups), "W_source": thint.W_source,
+        "q_status": {}, "L_min": thint.L_min, "t_hint_rule": thint.t_hint_rule,
+        "t_hint_source": thint.t_hint_source, "effect": thint.effect,
+        "para_status": None if para is None else para.status,
+        "para_free_energy": None, "para_residual": None, "para_polarisation": None,
+        "para_eps": None,
+        "gamma_self_adjoint": None, "method": None, "q_set": [],
+    }
+    if not skipped:
+        out["para_free_energy"] = para.free_energy_per_cell
+        out["para_residual"] = para.residual
+        out["para_polarisation"] = _plain(dict(para.polarisation))
+        out["para_eps"] = para.eps
+        missing = [k for k in _VERTEX_FIELDS if k not in vertex]
+        if missing:
+            raise ValueError("hint_record: vertex lacks {}".format(", ".join(missing)))
+        for k in _VERTEX_FIELDS:
+            out[k] = _plain(vertex[k])
+    return out
+
+
+def _plain(obj):
+    if isinstance(obj, Mapping):
+        return {k: _plain(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_plain(v) for v in obj]
+    if isinstance(obj, np.generic):
+        return obj.item()
+    return obj
+
+
+# ---------------------------------------------------------------------------
+# The Hartree-Fock vertex on the pair space
+# ---------------------------------------------------------------------------
+
+#: the one sector of a pair space without a passed spin-rotation check
+SECTOR_FULL = "full"
+#: the charge and S^z sectors of a pair space with a passed spin-rotation check
+SECTOR_CHARGE = "charge"
+SECTOR_SZ = "S^z"
+#: the relative tolerance of :func:`vertex_self_adjoint`
+VERTEX_SELF_ADJOINT_TOL = 1e-12
+#: the dense vertex is built in batches of columns of at most this many
+#: slot-grid entries in total
+_VERTEX_BATCH_ENTRIES = 2 ** 21
+#: the Hartree-loop types of the solver's kernel, in its order (PairHop last)
+_HF_LOOP = ("CoulombIntra", "CoulombInter", "Hund", "Ising", "PairLift", "Exchange")
+
+
+# eq=False: the fields hold arrays
+@dataclass(frozen=True, eq=False)
+class PairSpace:
+    """The pair space ``P`` of the Hartree-Fock vertex of a model.
+
+    **Coordinates.** A label ``m = (a, s, b, t, r)`` is the matrix slot of a
+    lattice one-body operator ``sum_R O_m c^dag_{as}(R + r) c_{bt}(R)``
+    (``a``, ``b`` physical orbitals of the primitive cell, 0-based; ``s``,
+    ``t`` the spins, 0 = up, explicit in every mode, the spin-orbital index
+    ``2*a + s`` included; ``r`` the bond in primitive cells). Its Green
+    function slot is ``G_m = <c^dag_{as}(r) c_{bt}(0)> = G[r, s, a, t, b]``
+    of the stored layout, and ``<O> = sum_m O_m G_m`` per cell. A density
+    vector ``x`` on ``P`` holds rho-components (``rho = G^T``: ``x_m =
+    G_mbar = conj(G_m)`` for a Hermitian state, ``mbar = (b, t, a, s, -r)``);
+    the vertex output and the conjugate field ``O = Gamma x`` hold
+    potential components ``Sigma'_m``, the coefficient of the operator at
+    ``m``. A q-modulated vector carries ``e^{iq.R}`` at the anchor ``R``,
+    the cell of the annihilation operator. With these coordinates the
+    vertex is Hermitian in the plain product ``sum_m conj(u_m) v_m``.
+
+    ``labels``: ``(|P|, 7)`` int64 ``(a, s, b, t, rx, ry, rz)``, sorted by
+    the slot ``(r, s, a, t, b)`` of the stored layout (``r`` as the FFT
+    index of the k-mesh); ``r`` is the representative with ``-N/2 < r_i <=
+    N/2``. ``P`` holds every slot the solver's Hartree-Fock map reads or
+    writes (the Hartree terms always; the Fock terms and the second
+    PairHop contraction with the model's Fock flag), restricted to the
+    interacting orbitals and to slots inside one solver block.
+
+    ``sectors``: ``("full",)``, or ``("charge", "S^z")`` when the
+    spin-rotation check passed (normal mode, free S_z): the vertex is then
+    block diagonal in the basis ``(e_up,up +- e_dn,dn)/sqrt 2`` of each
+    orbital slot and the spin-flip labels, and by the spin rotations the
+    ``S^x`` and ``S^y`` blocks have the nonzero spectrum of the ``S^z``
+    block, so only charge and ``S^z`` are kept. ``sector_basis``: per sector the
+    ``(|P|, d)`` CSR matrix of orthonormal columns (``None`` for the full
+    space); ``sector_labels``: per sector ``(d, 6)`` int64 ``(a, mu, b, rx,
+    ry, rz)`` with ``mu = 0`` (charge) or ``3`` (S^z), or ``None`` for the
+    full space (its labels are ``labels``).
+
+    ``shape``: the k-mesh (``CellShape``), ``norb_phys``, ``include_fock``
+    (the model's Fock flag), ``spin_orbital``, ``su2_status`` (the status
+    of the spin-rotation check used) and ``sector_note`` (why a passed
+    check still gave one sector, else ``None``).
+    """
+    labels: np.ndarray
+    sectors: Tuple[str, ...]
+    sector_basis: Tuple[Optional[object], ...]
+    sector_labels: Tuple[Optional[np.ndarray], ...]
+    shape: Tuple[int, int, int]
+    norb_phys: int
+    include_fock: bool
+    spin_orbital: bool
+    su2_status: str
+    sector_note: Optional[str] = None
+
+    @property
+    def size(self):
+        """``|P|``."""
+        return int(self.labels.shape[0])
+
+    def sector_dim(self, sector):
+        """The dimension of ``sector``."""
+        k = _sector_index(self, sector)
+        basis = self.sector_basis[k]
+        return self.size if basis is None else int(basis.shape[1])
+
+
+def _sector_index(P, sector):
+    if sector is None:
+        return None
+    if sector not in P.sectors:
+        raise ValueError("pair space: unknown sector {!r}; the sectors are {}"
+                         .format(sector, ", ".join(P.sectors)))
+    return P.sectors.index(sector)
+
+
+def _grid_dims(problem):
+    """``(nvol, 2, n, 2, n)``: the slot grid ``(r, s, a, t, b)`` of the
+    primitive cell (``n`` physical orbitals)."""
+    n = int(problem.tables.norb_phys)
+    return (int(problem.nvol), 2, n, 2, n)
+
+
+def _neg_r(shape):
+    nx, ny, nz = shape
+    ix, iy, iz = np.meshgrid(np.arange(nx), np.arange(ny), np.arange(nz), indexing="ij")
+    return (((-iz) % nz) + nz * (((-iy) % ny) + ny * ((-ix) % nx))).ravel()
+
+
+def _r_vectors(shape):
+    """The centred bond vector of each flat r index, ``(nvol, 3)``."""
+    nx, ny, nz = shape
+    idx = np.stack(np.unravel_index(np.arange(nx * ny * nz), shape), axis=1)
+    n = np.array(shape)
+    return np.where(idx <= n // 2, idx, idx - n).astype(np.int64)
+
+
+def _phases(shape, q):
+    """``e^{2 pi i q.r}`` for every flat r index (q on the mesh of
+    ``shape``, reduced exactly before the exponential)."""
+    from hwave.initial.cells import to_qfrac
+    qf = to_qfrac(q)
+    m = []
+    for i, (x, n) in enumerate(zip(qf, shape)):
+        y = x * int(n)
+        if y.denominator != 1:
+            raise ValueError("vertex: q = {} is not on the k-mesh {} (component {} "
+                             "times {} is not an integer)".format(
+                                 ",".join(str(v) for v in qf), list(shape), i, n))
+        m.append(int(y))
+    L = int(np.lcm.reduce([int(n) for n in shape]))
+    idx = np.stack(np.unravel_index(np.arange(int(np.prod(shape))), shape), axis=1)
+    num = sum(m[i] * idx[:, i] * (L // int(shape[i])) for i in range(3)) % L
+    return np.exp(2j * np.pi * num / L)
+
+
+def _nd_index(problem, a, s):
+    """The solver index of physical orbital ``a``, spin ``s`` (arrays)."""
+    if problem.enable_spin_orbital:
+        return initial_facade.interleaved_index(a, s)
+    return s * problem.norb + a
+
+
+def _vertex_terms(problem):
+    """The terms of the vertex, in the order of the solver's kernel (types
+    in its order; per type the Hartree, then the Fock terms; per term the
+    table entries in C order, then the spin entries): ``(out, inp, coef,
+    rid, kind)``, the slot-grid flat indices of the output and the input
+    label, the coefficient without its phase, the flat r of the table entry
+    and the phase kind (``+1``: ``e^{+iq.r}``, ``0``: none, ``-1``:
+    ``e^{-iq.r}``). Every term has a nonzero coefficient."""
+    tables = problem.tables
+    dims = _grid_dims(problem)
+    nvol, n = dims[0], dims[2]
+    neg = _neg_r(problem.shape)
+    fock = bool(problem.iflag_fock)
+    parts = []
+
+    def add(r, J, w, out, inp, kind):
+        # entries x spin entries, entry-major
+        ne, ns_ = r.size, w.size
+        if ne == 0 or ns_ == 0:
+            return
+        parts.append((np.ravel_multi_index(out, dims).reshape(ne * ns_),
+                      np.ravel_multi_index(inp, dims).reshape(ne * ns_),
+                      (J[:, None] * w[None, :]).reshape(ne * ns_),
+                      np.repeat(r, ns_), np.full(ne * ns_, kind, dtype=np.int8)))
+
+    def entries(name):
+        tab = tables.inter_table.get(name)
+        if tab is None:
+            return None
+        jab = np.asarray(tab).reshape(nvol, n, n)
+        r, a, b = np.nonzero(jab)
+        spin = np.asarray(tables.spin_table[name])
+        sp = np.argwhere(spin != 0)
+        w = spin[tuple(sp.T)].astype(np.complex128)
+        return r, a, b, jab[r, a, b].astype(np.complex128), sp, w
+
+    for name in _HF_LOOP:
+        e = entries(name)
+        if e is None:
+            continue
+        r, a, b, J, sp, w = e
+        R, A, B = r[:, None], a[:, None], b[:, None]
+        Z = np.zeros_like(R)
+        p0, p1, p2, p3 = (sp[:, i][None, :] for i in range(4))
+        # Hartree: Sigma'^{st}_{aa}(0) += J_ab(r) spin[s,u,v,t] rho(b v, b u; 0),
+        # b sits at +r from a: e^{+iq.r}
+        add(r, J, w, (Z, p0, A, p3, A), (Z, p2, B, p1, B), 1)
+        if fock:
+            # Fock: Sigma'(a s, b t; -r) -= J_ab(r) spin[s,u,t,v] rho(a v, b u; -r)
+            add(r, -J, w, (neg[R], p0, A, p2, B), (neg[R], p3, A, p1, B), 0)
+    e = entries("PairHop")
+    if e is not None:
+        r, a, b, J, sp, w = e
+        R, A, B = r[:, None], a[:, None], b[:, None]
+        p0, p1, p2, p3 = (sp[:, i][None, :] for i in range(4))
+        # the conjugated read conj(G[r, v,b, u,a]) is the linear read
+        # rho(b v, a u; +r), anchored r cells away from the output: e^{-iq.r}
+        add(r, J, w, (neg[R], p0, A, p3, B), (R, p2, B, p1, A), -1)
+        if fock:
+            add(r, -J, w, (neg[R], p0, A, p2, B), (R, p3, B, p1, A), -1)
+    if not parts:
+        empty = np.zeros(0, dtype=np.int64)
+        return (empty, empty, np.zeros(0, dtype=np.complex128), empty,
+                np.zeros(0, dtype=np.int8))
+    return tuple(np.concatenate([p[i] for p in parts]) for i in range(5))
+
+
+def _allowed_slots(problem, facts1, flat):
+    """Whether each slot-grid flat index is inside one solver block and on
+    interacting orbitals."""
+    dims = _grid_dims(problem)
+    _r, s, a, t, b = np.unravel_index(flat, dims)
+    block_of = np.full(problem.nd, -1, dtype=np.int64)
+    for k, blk in enumerate(problem.blocks.block_info):
+        block_of[np.asarray(blk, dtype=np.int64)] = k
+    ic = np.zeros(dims[2], dtype=bool)
+    ic[list(facts1.interacting_orbitals)] = True
+    i = np.asarray(_nd_index(problem, a, s), dtype=np.int64)
+    j = np.asarray(_nd_index(problem, b, t), dtype=np.int64)
+    return (block_of[i] == block_of[j]) & ic[a] & ic[b]
+
+
+def _kept_terms(problem, facts1):
+    out, inp, coef, rid, kind = _vertex_terms(problem)
+    keep = _allowed_slots(problem, facts1, out) & _allowed_slots(problem, facts1, inp)
+    return out[keep], inp[keep], coef[keep], rid[keep], kind[keep]
+
+
+def _labels_of(problem, flat):
+    dims = _grid_dims(problem)
+    r, s, a, t, b = np.unravel_index(flat, dims)
+    rv = _r_vectors(problem.shape)[r]
+    return np.column_stack([a, s, b, t, rv]).astype(np.int64)
+
+
+def _flat_of(P, labels):
+    """The slot-grid flat index of each label row (r taken modulo the mesh)."""
+    labels = np.asarray(labels, dtype=np.int64)
+    n = int(P.norb_phys)
+    nvol = int(np.prod(P.shape))
+    rr = tuple(labels[:, 4 + i] % int(P.shape[i]) for i in range(3))
+    rid = np.ravel_multi_index(rr, P.shape)
+    return np.ravel_multi_index((rid, labels[:, 1], labels[:, 0], labels[:, 3], labels[:, 2]),
+                                (nvol, 2, n, 2, n))
+
+
+def _su2_sectors(labels):
+    """``(bases, sector_labels)`` of the charge and S^z sectors, or ``None``
+    when an orbital slot carries only one spin-diagonal label."""
+    import scipy.sparse
+    diag = labels[:, 1] == labels[:, 3]
+    pos = {}
+    for k in np.nonzero(diag)[0]:
+        key = (int(labels[k, 0]), int(labels[k, 2])) + tuple(int(v) for v in labels[k, 4:])
+        pos.setdefault(key, {})[int(labels[k, 1])] = int(k)
+    slots = sorted(pos, key=lambda key: min(pos[key].values()))
+    if any(len(pos[key]) != 2 for key in slots):
+        return None
+    d = len(slots)
+    rows = np.array([[pos[key][0], pos[key][1]] for key in slots], dtype=np.int64).reshape(d, 2)
+    cols = np.repeat(np.arange(d), 2)
+    h = 1.0 / math.sqrt(2.0)
+    bases, slabels = [], []
+    for mu, sign in ((0, 1.0), (3, -1.0)):
+        data = np.tile(np.array([h, sign * h], dtype=np.complex128), d)
+        bases.append(scipy.sparse.csr_array((data, (rows.reshape(-1), cols)),
+                                            shape=(labels.shape[0], d)))
+        sl = np.array([[key[0], mu, key[1], key[2], key[3], key[4]] for key in slots],
+                      dtype=np.int64).reshape(d, 6)
+        sl.flags.writeable = False
+        slabels.append(sl)
+    return tuple(bases), tuple(slabels)
+
+
+def pair_space(facts, *, su2=None) -> PairSpace:
+    """The pair space of the Hartree-Fock vertex of the model of ``facts``
+    (:class:`PairSpace`), on its primitive cell.
+
+    ``P`` is the support of the solver's Hartree-Fock map in the label
+    coordinates of :class:`PairSpace`: every slot a Hartree, Fock or
+    PairHop term of a nonzero table entry reads or writes, with the model's
+    Fock flag (without Fock: the on-site orbital-diagonal Hartree slots
+    and the PairHop slots), on the interacting orbitals, and inside one
+    solver block (so the 2Sz block mask and the blocks that separate
+    orbitals without a connecting Transfer remove what the solver
+    removes). The tables are reverse-closed, so the slots read and the
+    slots written are the same set.
+
+    ``su2``: the :class:`~hwave.initial.symmetry.Su2Result` of the model
+    (computed on the primitive cell when ``None``). When its status is
+    ``"passed"`` the pair space carries the charge and ``S^z`` sectors. A
+    given ``"passed"`` result is re-checked cheaply on this model (normal
+    mode, free S_z, ``H0`` and the map with this Fock flag, 3 generic G x 3
+    rotations); when it does not hold, the full check is run again.
+    """
+    from hwave.initial import symmetry
+    facts1 = _primitive_facts(facts)
+    p = facts1.problem
+    out, inp, _coef, _rid, _kind = _kept_terms(p, facts1)
+    flat = np.unique(np.concatenate([out, inp]))
+    labels = _labels_of(p, flat)
+    labels.flags.writeable = False
+    if su2 is None:
+        su2 = symmetry.su2_check(p)
+    elif su2.status == "passed" and not _su2_holds(p):
+        logger.warning("pair_space: the given spin-rotation result says passed, but it "
+                       "does not hold for this model (its Sz mode, spin-orbital mode or "
+                       "Fock setting); the check is run again")
+        su2 = symmetry.su2_check(p)
+    status = su2.status
+    sectors, bases, slabels, note = (SECTOR_FULL,), (None,), (None,), None
+    if status == "passed":
+        split = _su2_sectors(labels)
+        if split is None:
+            note = ("the spin-rotation check passed, but an orbital slot of the pair "
+                    "space has only one spin-diagonal label; one sector is kept")
+            logger.warning(note)
+        else:
+            sectors, bases, slabels = (SECTOR_CHARGE, SECTOR_SZ), split[0], split[1]
+    return PairSpace(labels=labels, sectors=sectors, sector_basis=bases,
+                     sector_labels=slabels, shape=tuple(int(v) for v in p.shape),
+                     norb_phys=int(p.tables.norb_phys), include_fock=bool(p.iflag_fock),
+                     spin_orbital=bool(p.enable_spin_orbital), su2_status=status,
+                     sector_note=note)
+
+
+def _su2_holds(p):
+    """A cheap re-check of a passed spin-rotation result on ``p``: normal
+    mode with a free S_z, ``[S, H0] = 0`` and the Hartree-Fock map (with
+    ``p``'s Fock flag and blocks) equivariant under 3 generic G x 3 random
+    rotations."""
+    from hwave.initial import symmetry
+    if p.enable_spin_orbital or not p.sz_free:
+        return False
+    if symmetry._h0_commutator(p, (0, 1, 2)) > symmetry.SU2_TOL:
+        return False
+    return symmetry._random_residual(p, (0, 1, 2), 364) <= symmetry.SU2_TOL
+
+
+def _check_labels(P, problem, facts1):
+    """``ValueError`` unless ``P`` holds exactly the slots of this model's
+    Hartree-Fock map (a pair space of another model on the same mesh)."""
+    out, inp, _coef, _rid, _kind = _kept_terms(problem, facts1)
+    want = np.unique(np.concatenate([out, inp]))
+    have = np.sort(_flat_of(P, P.labels))
+    if want.shape != have.shape or not np.array_equal(want, have):
+        raise ValueError("vertex: the pair space does not hold exactly the slots of the "
+                         "Hartree-Fock map of this model ({} labels, the model has {}); "
+                         "build it with pair_space(facts) of this model".format(
+                             have.size, want.size))
+
+
+def _check_pair_space(P, problem):
+    if not isinstance(P, PairSpace):
+        raise ValueError("vertex: P must be a PairSpace, got {!r}".format(type(P).__name__))
+    if (tuple(P.shape) != tuple(int(v) for v in problem.shape)
+            or P.norb_phys != int(problem.tables.norb_phys)
+            or P.include_fock != bool(problem.iflag_fock)
+            or P.spin_orbital != bool(problem.enable_spin_orbital)):
+        raise ValueError("vertex: the pair space belongs to another model (mesh {}, {} "
+                         "physical orbitals); build it with pair_space(facts) of this "
+                         "model".format(list(P.shape), P.norb_phys))
+
+
+def _apply_vertex(problem, ph, x):
+    """The vertex on a batch of slot-grid vectors ``x`` ``(c, nvol, 2, n, 2,
+    n)`` (rho-components; ``ph`` the phases ``e^{iq.r}``): the solver's
+    kernel written on the slot grid, with the conjugated PairHop read
+    replaced by its linear read. No block projection (the caller restricts
+    to the pair space)."""
+    tables = problem.tables
+    nvol, _, n = _grid_dims(problem)[:3]
+    neg = _neg_r(problem.shape)
+    fock = bool(problem.iflag_fock)
+    out = np.zeros_like(x)
+    diag = np.arange(n)
+    for name in _HF_LOOP:
+        tab = tables.inter_table.get(name)
+        if tab is None:
+            continue
+        J = np.asarray(tab).reshape(nvol, n, n)
+        spin = np.asarray(tables.spin_table[name])
+        xb = x[:, 0][:, :, diag, :, diag]            # (n, c, v, u): rho(b v, b u; 0)
+        hh = np.einsum("rab,r,suvt,bcvu->csta", J, ph, spin, xb, optimize=True)
+        out[:, 0][:, :, diag, :, diag] += np.moveaxis(hh, 3, 0)
+        if fock:
+            f = np.einsum("rab,sutv,crvaub->crsatb", J, spin, x[:, neg], optimize=True)
+            out -= f[:, neg]
+    tab = tables.inter_table.get("PairHop")
+    if tab is not None:
+        J = np.asarray(tab).reshape(nvol, n, n)
+        spin = np.asarray(tables.spin_table["PairHop"])
+        phc = np.conj(ph)
+        h = np.einsum("rab,r,suvt,crvbua->crsatb", J, phc, spin, x, optimize=True)
+        if fock:
+            h = h - np.einsum("rab,r,sutv,crvbua->crsatb", J, phc, spin, x, optimize=True)
+        out += h[:, neg]
+    return out
+
+
+def vertex(facts, q, P, *, sector=None) -> np.ndarray:
+    """The Hartree-Fock vertex ``Gamma(q) = dSigma'/drho`` on the pair space
+    ``P`` (:func:`pair_space` of the same model), dense ``(|P|, |P|)``
+    complex128 (the small tier).
+
+    ``Gamma`` is the complex-linear extension of the solver's real-linear
+    map (``hf_potential`` with the model's Fock flag and blocks) in the
+    coordinates of :class:`PairSpace`: the PairHop read ``conj(G[r, v, b,
+    u, a])`` is replaced by the linear read ``G[-r, u, a, v, b]`` (equal on
+    Hermitian G). It does not depend on the para state: the map is linear.
+    ``q`` (three rationals, reduced lattice units) must be on the k-mesh of
+    the primitive cell (``ValueError`` otherwise). Facts of a folded cell
+    are reloaded on the primitive cell at every call, so a caller with
+    many q passes primitive-cell facts. ``sector``: one of ``P.sectors``; the block
+    ``U^dag Gamma U`` of that sector's basis (``None``: the full space).
+    """
+    facts1 = _primitive_facts(facts)
+    p = facts1.problem
+    _check_pair_space(P, p)
+    _check_labels(P, p, facts1)
+    k = _sector_index(P, sector)
+    ph = _phases(p.shape, q)
+    dims = _grid_dims(p)
+    gsize = int(np.prod(dims))
+    flat = _flat_of(P, P.labels)
+    npair = flat.size
+    gamma = np.zeros((npair, npair), dtype=np.complex128)
+    batch = max(1, _VERTEX_BATCH_ENTRIES // gsize)
+    for c0 in range(0, npair, batch):
+        cols = np.arange(c0, min(npair, c0 + batch))
+        x = np.zeros((cols.size, gsize), dtype=np.complex128)
+        x[np.arange(cols.size), flat[cols]] = 1.0
+        y = _apply_vertex(p, ph, x.reshape((cols.size,) + dims)).reshape(cols.size, gsize)
+        gamma[:, cols] = y[:, flat].T
+    if k is None or P.sector_basis[k] is None:
+        return gamma
+    u = P.sector_basis[k].toarray()
+    return u.conj().T @ gamma @ u
+
+
+def vertex_sparse(facts, q, P, *, sector=None):
+    """The vertex of :func:`vertex` as a ``scipy.sparse.csr_array``
+    (complex128), assembled entry by entry from the interaction tables
+    without a dense ``|P|^2`` array (the medium tier; its ``nnz`` feeds the
+    cost model).
+
+    The entries are added in the order of the solver's kernel (types,
+    Hartree then Fock, table entries, spin entries), duplicates are summed
+    (``sum_duplicates``) and the indices sorted; an entry whose terms
+    cancel stays stored, so ``nnz`` does not depend on q. ``sector`` as in
+    :func:`vertex` (``U^dag Gamma U`` in sparse arithmetic)."""
+    import scipy.sparse
+    facts1 = _primitive_facts(facts)
+    p = facts1.problem
+    _check_pair_space(P, p)
+    _check_labels(P, p, facts1)
+    k = _sector_index(P, sector)
+    ph = _phases(p.shape, q)
+    out, inp, coef, rid, kind = _kept_terms(p, facts1)
+    flat = _flat_of(P, P.labels)
+    order = np.argsort(flat, kind="stable")
+    sflat = flat[order]
+    row = np.searchsorted(sflat, out)
+    col = np.searchsorted(sflat, inp)
+    npair = flat.size
+    ok = (row < npair) & (col < npair)
+    ok[ok] &= (sflat[row[ok]] == out[ok]) & (sflat[col[ok]] == inp[ok])
+    if not np.all(ok):
+        raise ValueError("vertex_sparse: the pair space does not hold every slot of the "
+                         "Hartree-Fock map of this model; build it with pair_space(facts)")
+    phase = np.where(kind == 1, ph[rid], np.where(kind == -1, np.conj(ph[rid]), 1.0))
+    data = coef * phase
+    g = scipy.sparse.coo_array((data, (order[row], order[col])), shape=(npair, npair))
+    g = scipy.sparse.csr_array(g)
+    g.sum_duplicates()
+    g.sort_indices()
+    if k is None or P.sector_basis[k] is None:
+        return g
+    u = P.sector_basis[k]
+    g = scipy.sparse.csr_array(u.conj().T @ g @ u)
+    g.sum_duplicates()
+    g.sort_indices()
+    return g
+
+
+def vertex_self_adjoint(Gamma) -> Tuple[bool, float]:
+    """``(ok, residual)``: ``residual = ||Gamma - Gamma^dag||_F / max(1,
+    ||Gamma||_F)`` and ``ok`` when it is at most
+    :data:`VERTEX_SELF_ADJOINT_TOL` (dense or sparse ``Gamma``). A failure
+    is a convention or implementation defect, not a property of a model."""
+    import scipy.sparse
+    if scipy.sparse.issparse(Gamma):
+        g = scipy.sparse.csr_array(Gamma)
+        diff = g - g.conj().T
+        dn = float(np.sqrt(np.sum(np.abs(diff.data) ** 2))) if diff.nnz else 0.0
+        gn = float(np.sqrt(np.sum(np.abs(g.data) ** 2))) if g.nnz else 0.0
+    else:
+        g = np.asarray(Gamma)
+        dn = float(np.linalg.norm(g - g.conj().T))
+        gn = float(np.linalg.norm(g))
+    res = dn / max(1.0, gn)
+    return res <= VERTEX_SELF_ADJOINT_TOL, res
+
+
+def _check_bands(bands, P, who):
+    """``ValueError`` unless ``bands`` live on the mesh and index space of
+    the pair space ``P`` (the primitive cell, its mode). The block structure
+    is checked by the facade: a label of ``P`` joining two blocks of the
+    bands (bands of a fixed 2Sz against a pair space without it) is
+    refused there."""
+    if not isinstance(bands, initial_facade.Bands):
+        raise ValueError("{}: bands must be a Bands (initial_facade.bands_of), got {!r}"
+                         .format(who, type(bands).__name__))
+    so = int(bands.ns) == 1
+    nphys = int(bands.norb) // 2 if so else int(bands.norb)
+    if (tuple(int(n) for n in bands.kgrid) != tuple(P.shape) or so != P.spin_orbital
+            or nphys != P.norb_phys):
+        raise ValueError("{}: the bands (mesh {}, {} physical orbitals, spin-orbital {}) "
+                         "do not belong to the pair space (mesh {}, {} physical orbitals, "
+                         "spin-orbital {}); use the bands of the primitive cell of the same "
+                         "model".format(who, list(bands.kgrid), nphys, so, list(P.shape),
+                                        P.norb_phys, P.spin_orbital))
+
+
+def lindhard(bands, q, P, *, sector=None) -> np.ndarray:
+    """The static Lindhard response ``chi0(q)`` on the pair space ``P``
+    (:func:`initial_facade.static_lindhard` on ``P.labels``), dense,
+    Hermitian and positive semidefinite, in the coordinates of
+    :class:`PairSpace` (rho-components in and out: ``delta x = chi0
+    (-h)``). ``bands``: the para bands of the primitive cell
+    (:attr:`ParaResult.bands`). ``sector``: one of ``P.sectors``; the block
+    ``U^dag chi0 U`` of that sector's basis (``None``: the full space)."""
+    _check_bands(bands, P, "lindhard")
+    k = _sector_index(P, sector)
+    chi = initial_facade.static_lindhard(bands, q, P.labels)
+    if k is None or P.sector_basis[k] is None:
+        return chi
+    u = P.sector_basis[k].toarray()
+    return u.conj().T @ chi @ u
+
+
+def _density_labels(bands):
+    """The on-site density labels ``(a, s, a, s, 0, 0, 0)`` of every
+    physical orbital and spin of the bands (non-interacting orbitals
+    included) and the mu-group of each, ``(labels (n, 7), group (n,))``."""
+    so = int(bands.ns) == 1
+    nphys = int(bands.norb) // 2 if so else int(bands.norb)
+    labels = np.array([(a, s, a, s, 0, 0, 0) for s in range(2) for a in range(nphys)],
+                      dtype=np.int64)
+    a, s = labels[:, 0], labels[:, 1]
+    alpha = np.asarray(initial_facade.interleaved_index(a, s) if so
+                       else s * int(bands.norb) + a, dtype=np.int64)
+    # the band that holds most of each index (the index lies in that band's
+    # block, and the band carries the block's mu-group)
+    weight = np.sum(np.abs(np.asarray(bands.vec_k)) ** 2, axis=0)       # (nd, nb)
+    band = np.argmax(weight[alpha], axis=1)
+    group = np.asarray(bands.band_group)[0, band].astype(np.int64)
+    return labels, group
+
+
+def hint_chi0(bands, q, P) -> np.ndarray:
+    """The response ``chi0(q)`` of the hint eigenproblem on the full pair
+    space ``P`` (dense, Hermitian, positive semidefinite).
+
+    At ``q != 0`` it is :func:`lindhard` (the static Lindhard response at
+    fixed ``mu``), unchanged. At ``q = 0`` the solver's fill keeps the
+    electron number of each mu-group (one ``mu`` per group is refitted at
+    every iteration), so the response the SCF map has is the one at fixed
+    group numbers: the Schur complement
+
+    ``chi0_fix = chi0_PP - chi0_PN chi0_NN^+ chi0_NP``
+
+    with ``N_g`` the number operator of mu-group ``g`` over ALL its
+    orbitals (non-interacting ones, outside ``P``, included) and ``^+`` the
+    inverse on the groups with a nonzero number response (a group with
+    ``chi0_NN = 0``, gapped at ``T_hint``, has ``chi0_PN = 0`` and is left
+    alone). Groups never pair in ``chi0`` (they are different solver
+    blocks), so ``chi0_NN`` is diagonal. A mode that only changes a group
+    number (the uniform charge; with a fixed ``2Sz`` also the uniform
+    ``S^z``) then has ``lambda = 0`` and takes no ``top_k`` slot, and
+    ``lambda >= 1`` keeps its meaning at q = 0: the solver's own map is
+    unstable there."""
+    from hwave.initial.cells import to_qfrac
+    C = lindhard(bands, q, P)
+    if any(x != 0 for x in to_qfrac(q)):
+        return C
+    dlab, group = _density_labels(bands)
+    p = P.size
+    ext = initial_facade.static_lindhard(bands, q, np.concatenate([P.labels, dlab]))
+    groups = sorted(set(int(g) for g in group))
+    Ng = np.zeros((dlab.shape[0], len(groups)))
+    for j, g in enumerate(groups):
+        Ng[group == g, j] = 1.0
+    c_pn = ext[:p, p:] @ Ng                                           # (|P|, n_g)
+    c_nn = np.real(np.diag(Ng.T @ ext[p:, p:] @ Ng))
+    scale = max(1.0, float(np.max(np.abs(np.diag(ext)).real, initial=0.0)))
+    out = C.copy()
+    for j in range(len(groups)):
+        if c_nn[j] <= CHI0_CUTOFF * scale:
+            continue
+        out -= np.outer(c_pn[:, j], c_pn[:, j].conj()) / c_nn[j]
+    return (out + out.conj().T) / 2.0
+
+
+def lindhard_apply(bands, q, P, v, *, sector=None) -> np.ndarray:
+    """``chi0(q) v`` of :func:`lindhard` without forming ``chi0``
+    (:func:`initial_facade.apply_lindhard`); ``v`` ``(d,)`` or ``(d, c)``,
+    ``d`` the dimension of ``sector`` (``|P|`` for ``None``)."""
+    _check_bands(bands, P, "lindhard_apply")
+    k = _sector_index(P, sector)
+    if k is None or P.sector_basis[k] is None:
+        return initial_facade.apply_lindhard(bands, q, P.labels, v)
+    u = P.sector_basis[k]
+    v = np.asarray(v)
+    if v.ndim not in (1, 2) or v.shape[0] != u.shape[1]:
+        raise ValueError("lindhard_apply: v must be (d,) or (d, c) with d = {} (sector "
+                         "{}), got {}".format(u.shape[1], sector, v.shape))
+    y = initial_facade.apply_lindhard(bands, q, P.labels, u @ v.astype(np.complex128))
+    return u.conj().T @ y
+
+
+# ---------------------------------------------------------------------------
+# The small-tier eigen-solve and the hint eigenpairs
+# ---------------------------------------------------------------------------
+
+#: the method of the hint record (one kernel for every tier)
+HINT_METHOD = "lindhard_static"
+#: an eigenvalue of the general solve counts as real when ``|Im lambda| <=
+#: REAL_TOL * max(1, max |lambda|)`` (the tolerance of
+#: ``flex_diagnostics.REAL_TOL``)
+REAL_TOL = 1e-6
+#: the eigenvalues ``c_i < CHI0_CUTOFF * max(c)`` of chi0 are set to 0
+CHI0_CUTOFF = 1e-12
+#: the null guard: a pair with ``lambda <= NULL_TOL * max(1, ||Gamma||_F *
+#: chi_bound)`` or ``||Gamma x|| <= NULL_TOL * max(1, ||Gamma||_F)`` is dropped
+NULL_TOL = 1e-10
+#: eigenvalues within ``DEGENERACY_RTOL * max(1, |lambda|)`` of the next
+#: form one degenerate set
+DEGENERACY_RTOL = 1e-8
+#: a retained pair must satisfy ``||K x - lambda x|| <= RESIDUAL_TOL *
+#: max(1, |lambda|) ||x||``
+RESIDUAL_TOL = 1e-8
+#: an amplitude entry (or coefficient) below this fraction of the largest
+#: modulus of ``O = Gamma x`` is round-off and set to zero
+AMPLITUDE_ZERO_RTOL = 1e-9
+
+Q_OK = "ok"
+Q_FEW = "fewer than top_k positive eigenvalues"
+Q_NONE = "no positive eigenvalue"
+Q_FAILED = "solve failed: {}"
+
+GAMMA_NOT_SELF_ADJOINT_WARNING = (
+    "the Hartree-Fock vertex is not self-adjoint at q = {} (relative residual {:.3g}); "
+    "the eigenvalues come from the general solve of K = -chi0 Gamma (an eigenvalue "
+    "counts as real when |Im| <= {:.0e} max(1, max |lambda|)) and the rows are marked. "
+    "This is a convention or implementation defect, not a property of the model")
+#: the source mark of an instability row from the general solve
+GENERAL_SOLVE_SOURCE = "general solve (vertex not self-adjoint)"
+
+
+# eq=False: the fields hold arrays
+@dataclass(frozen=True, eq=False)
+class SolveResult:
+    """The eigenpairs of ``K(q) = -chi0(q) Gamma(q)`` at one q.
+
+    ``pairs``: ``(lambda, x)`` with ``lambda > 0`` in descending order
+    of their degenerate sets (:func:`degenerate_clusters`; inside a set by
+    sector order, then the index within the sector, never by round-off of
+    lambda), ``x`` the
+    density shape in the coordinates of its sector (``||x||_2 = 1``),
+    after the merge of the sectors and ``top_k`` (a degenerate set
+    crossing the cutoff is kept whole; a degenerate set within one
+    sector is given its canonical basis,
+    :func:`hwave.initial.patterns.canonical_basis`). ``q_status``:
+    ``"ok"``, ``"fewer than top_k positive eigenvalues"``, ``"no positive
+    eigenvalue"`` or ``"solve failed: [<sector>: ]<reason>"`` (the other
+    sectors' pairs are kept). ``gamma_self_adjoint``: whether ``Gamma``
+    is Hermitian in every sector (otherwise the general solve was used).
+    ``lambda_imag``: the imaginary part of each pair's eigenvalue (0 on
+    the symmetric path). ``sectors``: the sector of each pair;
+    ``groups``: the degenerate set of each pair (consecutive integers in
+    pair order); ``fields``: ``Gamma x`` of each pair in its sector's
+    coordinates; ``n_positive``: the number of positive pairs before
+    ``top_k``; ``warnings``.
+
+    :func:`hint_eigenpairs` adds ``amplitudes`` (the conjugate field
+    ``O = Gamma x`` of each pair as the entries of a PatternSpec amplitude,
+    normalised to ``||O||_2 = 1`` on the pair space) and ``x_full`` (``x``
+    on the full pair space)."""
+    pairs: Tuple[Tuple[float, np.ndarray], ...]
+    q_status: str
+    gamma_self_adjoint: bool
+    lambda_imag: Tuple[float, ...]
+    sectors: Tuple[str, ...] = ()
+    groups: Tuple[int, ...] = ()
+    fields: Tuple[np.ndarray, ...] = ()
+    n_positive: int = 0
+    warnings: Tuple[str, ...] = ()
+    amplitudes: Tuple[Tuple, ...] = ()
+    x_full: Tuple[np.ndarray, ...] = ()
+
+
+def degenerate_clusters(values):
+    """The degenerate set of each value: the values sorted descending are cut
+    where two neighbours differ by more than ``DEGENERACY_RTOL * max(1,
+    |lambda|)``; set 0 holds the largest values. Returns one integer per
+    value, in the given order."""
+    vals = [float(v) for v in values]
+    order = sorted(range(len(vals)), key=lambda i: -vals[i])
+    out = [0] * len(vals)
+    gid, prev = 0, None
+    for i in order:
+        if prev is not None and abs(prev - vals[i]) > DEGENERACY_RTOL * max(1.0, abs(prev)):
+            gid += 1
+        out[i] = gid
+        prev = vals[i]
+    return out
+
+
+def _as_sectors(chi0, Gamma):
+    if isinstance(chi0, Mapping) != isinstance(Gamma, Mapping):
+        raise ValueError("solve_small: chi0 and Gamma must both be matrices or both "
+                         "mappings sector -> matrix")
+    if not isinstance(chi0, Mapping):
+        return {SECTOR_FULL: chi0}, {SECTOR_FULL: Gamma}
+    if list(chi0) != list(Gamma):
+        raise ValueError("solve_small: chi0 and Gamma must have the same sectors in the "
+                         "same order, got {} and {}".format(list(chi0), list(Gamma)))
+    return dict(chi0), dict(Gamma)
+
+
+def _sector_pairs(c, g, top_k, chi_bound, sector, label):
+    """The positive pairs of one sector: ``(pairs, self_adjoint, warnings,
+    failure)``, each pair ``(lambda, lambda_imag, x, Gamma x)``."""
+    import scipy.linalg
+    c = np.asarray(c, dtype=np.complex128)
+    g = np.asarray(g, dtype=np.complex128)
+    if c.ndim != 2 or c.shape[0] != c.shape[1] or c.shape != g.shape:
+        raise ValueError("solve_small: chi0 and Gamma of sector {!r} must be square of "
+                         "one shape, got {} and {}".format(sector, c.shape, g.shape))
+    n = c.shape[0]
+    if n == 0:
+        return [], True, [], None
+    ok, res = vertex_self_adjoint(g)
+    gnorm = float(np.linalg.norm(g))
+    chi = 0.5 * (c + c.conj().T)
+    cv, V = np.linalg.eigh(chi)
+    cmax = float(max(cv.max(), 0.0))
+    if cmax <= 0.0:
+        return [], ok, [], None
+    cv = np.where(cv < CHI0_CUTOFF * cmax, 0.0, cv)
+    chi_c = (V * cv) @ V.conj().T
+    bound = cmax if chi_bound is None else float(chi_bound)
+    lam_tol = NULL_TOL * max(1.0, gnorm * bound)
+    f_tol = NULL_TOL * max(1.0, gnorm)
+    warnings = []
+    found = []
+    if ok:
+        S = (V * np.sqrt(cv)) @ V.conj().T
+        B = S @ (-g) @ S
+        B = 0.5 * (B + B.conj().T)
+        lam, Y = np.linalg.eigh(B)
+        for j in range(n - 1, -1, -1):
+            if lam[j] <= lam_tol:
+                break
+            x = S @ Y[:, j]
+            nx = float(np.linalg.norm(x))
+            if nx == 0.0:
+                continue
+            x = x / nx
+            f = g @ x
+            if float(np.linalg.norm(f)) <= f_tol:
+                continue
+            found.append((float(lam[j]), 0.0, x, f))
+    else:
+        msg = GAMMA_NOT_SELF_ADJOINT_WARNING.format(label, res, REAL_TOL)
+        logger.warning(msg)
+        warnings.append(msg)
+        K = -(chi_c @ g)
+        w, X = scipy.linalg.eig(K)
+        scale = max(1.0, float(np.max(np.abs(w), initial=0.0)))
+        sel = [j for j in range(n) if abs(w[j].imag) <= REAL_TOL * scale
+               and w[j].real > lam_tol]
+        sel.sort(key=lambda j: (-w[j].real, j))
+        for j in sel:
+            x = X[:, j] / np.linalg.norm(X[:, j])
+            f = g @ x
+            if float(np.linalg.norm(f)) <= f_tol:
+                continue
+            found.append((float(w[j].real), float(w[j].imag), x, f))
+    K = -(chi_c @ g)
+    for lam_, lim_, x, _f in found:
+        r = float(np.linalg.norm(K @ x - (lam_ + 1j * lim_) * x))
+        if r > RESIDUAL_TOL * max(1.0, abs(lam_)):
+            return [], ok, warnings, "residual {:.3g} of lambda = {:.6g}".format(r, lam_)
+    return found, ok, warnings, None
+
+
+def solve_small(chi0, Gamma, *, top_k=3, chi_bound=None) -> SolveResult:
+    """The leading eigenpairs of ``K = -chi0 Gamma`` at one q (the small
+    tier, dense).
+
+    ``chi0``, ``Gamma``: dense ``(d, d)`` matrices (one sector), or
+    mappings ``sector -> matrix`` in the sector order (charge, then
+    ``S^z``, under a passed spin-rotation check). ``chi0`` is Hermitian
+    positive semidefinite (the static Lindhard response), ``Gamma``
+    Hermitian (the Hartree-Fock vertex) in the same inner product.
+
+    **Symmetric form.** ``chi0 = V diag(c) V^dag`` with ``c_i <
+    1e-12 max(c)`` set to 0, ``chi0^(1/2) = V diag(sqrt c) V^dag`` and ``B =
+    chi0^(1/2) (-Gamma) chi0^(1/2)`` (Hermitian, dense ``eigh``); ``B y =
+    lambda y`` gives ``x = chi0^(1/2) y`` with ``K x = lambda x``,
+    normalised ``||x||_2 = 1``. **Null guard**: a pair with ``lambda <=
+    1e-10 max(1, ||Gamma||_F chi_bound)`` (``chi_bound``: the largest
+    ``c`` unless given) or ``||Gamma x|| <= 1e-10 max(1, ||Gamma||_F)`` is
+    dropped; only ``lambda > 0`` is kept, never filled with null vectors.
+    Every retained pair must satisfy ``||K x - lambda x|| <= 1e-8 max(1,
+    |lambda|)`` (else that sector's ``q_status`` is ``solve failed``).
+
+    **Not self-adjoint** (:func:`vertex_self_adjoint` fails): a warning,
+    the general solve of ``K`` (an eigenvalue counts as real when ``|Im
+    lambda| <= REAL_TOL max(1, max |lambda|)``, its real part used, the
+    imaginary part reported in ``lambda_imag``) and
+    ``gamma_self_adjoint = False``.
+
+    The pairs of all sectors are merged, sorted by ``lambda`` (ties:
+    sector order, then index), and ``top_k`` is applied to the merged
+    list; a degenerate set (:data:`DEGENERACY_RTOL`) crossing the cutoff
+    is kept whole. The pairs of one degenerate set and sector are replaced
+    by the canonical basis of their span
+    (:func:`hwave.initial.patterns.canonical_basis`, a single pair
+    included), so neither the basis nor the phase of the eigensolver
+    reaches a pattern. Returns a :class:`SolveResult`."""
+    from hwave.initial.patterns import canonical_basis
+    if isinstance(top_k, bool) or not isinstance(top_k, numbers.Integral) or top_k < 1:
+        raise ValueError("solve_small: top_k must be an integer >= 1, got {!r}".format(top_k))
+    chis, gams = _as_sectors(chi0, Gamma)
+    found, failures, warnings = [], [], []
+    self_adjoint = True
+    for si, s in enumerate(chis):
+        pairs, ok, warn, fail = _sector_pairs(chis[s], gams[s], top_k, chi_bound, s, s)
+        self_adjoint &= ok
+        warnings.extend(warn)
+        if fail is not None:
+            failures.append(fail if len(chis) == 1 else "{}: {}".format(s, fail))
+        for j, (lam, lim, x, f) in enumerate(pairs):
+            found.append((lam, si, j, lim, x, f, s))
+    # degenerate sets first (eigenvalues within DEGENERACY_RTOL), then the
+    # tie keys inside each set (sector order, index), so that round-off of
+    # eigenvalues equal by symmetry never decides the order
+    cluster = degenerate_clusters([t[0] for t in found])
+    order = sorted(range(len(found)), key=lambda i: (cluster[i], found[i][1], found[i][2]))
+    found = [found[i] for i in order]
+    groups = [cluster[i] for i in order]
+    n_pos = len(found)
+    keep = min(top_k, n_pos)
+    while keep < n_pos and keep > 0 and groups[keep] == groups[keep - 1]:
+        keep += 1
+    found, groups = found[:keep], groups[:keep]
+    xs = [t[4] for t in found]
+    fs = [t[5] for t in found]
+    # the canonical basis of each degenerate set within one sector (a single
+    # pair included: its phase is then fixed by its pivot entry, so the
+    # pattern does not carry the arbitrary phase of the eigensolver)
+    for g in sorted(set(groups)):
+        for s in chis:
+            idx = [i for i in range(keep) if groups[i] == g and found[i][6] == s]
+            if not idx:
+                continue
+            W = canonical_basis(np.stack([xs[i] for i in idx], axis=1))
+            gam = np.asarray(gams[s], dtype=np.complex128)
+            for col, i in enumerate(idx):
+                xs[i] = W[:, col]
+                fs[i] = gam @ W[:, col]
+    if failures:
+        status = Q_FAILED.format("; ".join(failures))
+    elif n_pos == 0:
+        status = Q_NONE
+    elif n_pos < top_k:
+        status = Q_FEW
+    else:
+        status = Q_OK
+    return SolveResult(
+        pairs=tuple((t[0], x) for t, x in zip(found, xs)), q_status=status,
+        gamma_self_adjoint=bool(self_adjoint), lambda_imag=tuple(t[3] for t in found),
+        sectors=tuple(t[6] for t in found), groups=tuple(groups), fields=tuple(fs),
+        n_positive=n_pos, warnings=tuple(warnings))
+
+
+def amplitude_entries(P, O):
+    """The conjugate field ``O`` (``(|P|,)``, potential components on the
+    labels of the pair space ``P``) as the entries of a PatternSpec
+    amplitude: per bond slot ``(a, b, r)`` the spin block ``X[s, t] =
+    O_m`` (``m = (a, s, b, t, r)``), written as ``c^mu = tr(sigma^mu X)``
+    (:class:`hwave.initial.patterns.Entry`, physical orbitals). Entries and
+    coefficients below :data:`AMPLITUDE_ZERO_RTOL` of the largest modulus
+    are round-off and dropped. Sorted by ``(a, b, r)``."""
+    from hwave.initial.patterns import Entry
+    O = np.asarray(O, dtype=np.complex128).reshape(-1)
+    if O.shape[0] != P.size:
+        raise ValueError("amplitude_entries: O must have |P| = {} components, got {}"
+                         .format(P.size, O.shape[0]))
+    top = float(np.max(np.abs(O), initial=0.0))
+    if top == 0.0:
+        raise ValueError("amplitude_entries: the field is zero")
+    tol = AMPLITUDE_ZERO_RTOL * top
+    blocks = {}
+    for m, lab in enumerate(P.labels):
+        a, s, b, t = (int(v) for v in lab[:4])
+        key = (a, b, tuple(int(v) for v in lab[4:]))
+        blocks.setdefault(key, np.zeros((2, 2), dtype=np.complex128))[s, t] = O[m]
+    sig = (np.eye(2), _SIGMA_P[0], _SIGMA_P[1], _SIGMA_P[2])
+    out = []
+    for key in sorted(blocks):
+        X = blocks[key]
+        c = []
+        for sm in sig:
+            z = complex(np.trace(sm @ X))
+            re = z.real if abs(z.real) > tol else 0.0
+            im = z.imag if abs(z.imag) > tol else 0.0
+            c.append(complex(re, im))
+        if all(z == 0 for z in c):
+            continue
+        out.append(Entry(key[0], key[1], key[2], c0=c[0], cx=c[1], cy=c[2], cz=c[3]))
+    return tuple(out)
+
+
+def hint_eigenpairs(facts, para, P, q_set, *, solve=None, top_k=3) -> dict:
+    """The hint eigenpairs at every q of ``q_set``: ``{q: SolveResult}``
+    (``q`` the reduced three-Fraction tuple, in ``q_set`` order).
+
+    ``para``: a converged :class:`ParaResult` of the model (its bands at
+    ``T_hint`` give ``chi0``); ``P``: :func:`pair_space` of the model;
+    ``q_set``: q on the k-mesh of the primitive cell (the small tier: the
+    whole mesh, :func:`hwave.initial.cells.commensurate_q` of
+    ``CellShape``). Per q the vertex (:func:`vertex`, which depends on the
+    model only) and the response of :func:`hint_chi0` (the Lindhard
+    response; at q = 0 with the electron number of each mu-group fixed, as
+    in the solver's fill) are built on the full pair space once and
+    projected onto each sector of ``P``;
+    ``solve(chi0, Gamma, top_k=top_k)`` (default :func:`solve_small`)
+    receives the mappings ``sector -> dense matrix``. The result gains the
+    amplitudes of :func:`amplitude_entries` (the conjugate field ``O =
+    Gamma x`` on the full pair space, ``||O||_2 = 1``) and ``x`` on the
+    full pair space."""
+    from hwave.initial.cells import to_qfrac
+    if not isinstance(para, ParaResult) or para.status != "converged":
+        raise ValueError("hint_eigenpairs: a converged ParaResult is required (got {})"
+                         .format(getattr(para, "status", type(para).__name__)))
+    solve = solve_small if solve is None else solve
+    facts1 = _primitive_facts(facts)
+    out = {}
+    for q in q_set:
+        qf = to_qfrac(q)
+        G = vertex(facts1, qf, P)
+        C = hint_chi0(para.bands, qf, P)
+        chis, gams, bases = {}, {}, {}
+        for k, s in enumerate(P.sectors):
+            U = P.sector_basis[k]
+            if U is None:
+                chis[s], gams[s], bases[s] = C, G, None
+            else:
+                u = U.toarray()
+                chis[s] = u.conj().T @ C @ u
+                gams[s] = u.conj().T @ G @ u
+                bases[s] = u
+        res = solve(chis, gams, top_k=top_k)
+        amps, xf = [], []
+        for (lam, x), s, f in zip(res.pairs, res.sectors, res.fields):
+            u = bases[s]
+            ff = np.asarray(f) if u is None else u @ np.asarray(f)
+            xx = np.asarray(x) if u is None else u @ np.asarray(x)
+            ff = ff / np.linalg.norm(ff)
+            amps.append(amplitude_entries(P, ff))
+            xf.append(xx)
+        out[qf] = dataclasses.replace(res, amplitudes=tuple(amps), x_full=tuple(xf))
+    return out
+
+
+def vertex_fields(eigenpairs) -> dict:
+    """The vertex fields of a computed hint record from the result of
+    :func:`hint_eigenpairs`: ``gamma_self_adjoint`` (every q), ``method``,
+    ``q_status`` keyed by the q string and ``q_set``."""
+    from hwave.initial.cells import q_string
+    return {
+        "gamma_self_adjoint": all(r.gamma_self_adjoint for r in eigenpairs.values()),
+        "method": HINT_METHOD,
+        "q_status": {q_string(q): r.q_status for q, r in eigenpairs.items()},
+        "q_set": [q_string(q) for q in eigenpairs],
+    }

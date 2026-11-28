@@ -51,7 +51,8 @@ __all__ = [
     "SU2_TOL", "TR_TOL", "MAP_TOL", "TR_SPIN_ROTATION", "MAX_HF_APPLICATIONS", "SZ_WARNING",
     "Su2Result", "TrResult", "su2_check", "tr_check", "find_map",
     "sign_map_verified", "map_invariants", "table_probes", "hermitian_green", "rotate_green",
-    "spin_rotation", "time_reverse_green",
+    "spin_rotation", "time_reverse_green", "h0_spin_commutators", "hf_axis_residuals",
+    "axis_projection",
 ]
 
 logger = logging.getLogger(__name__)
@@ -272,6 +273,64 @@ def _h0_commutator(problem, axes):
         S = np.kron(_SIGMA[mu] / 2, np.eye(problem.norb))
         res = max(res, float(np.max(np.linalg.norm(S @ mats - mats @ S, axis=(1, 2)))))
     return res / scale
+
+
+def h0_spin_commutators(problem):
+    """``(x, y, z)``: the relative ``max_R ||[S_mu, H0(R)]||`` of each spin
+    axis (normal mode; divided by ``max(1, max_R ||H0(R)||)``). A Zeeman
+    field along z gives ``x, y > 0`` and ``z = 0``."""
+    if problem.enable_spin_orbital:
+        raise ValueError("h0_spin_commutators: normal mode only (the spin-orbital "
+                         "layout has no separate spin index)")
+    return tuple(_h0_commutator(problem, (mu,)) for mu in range(3))
+
+
+def axis_projection(green, axis, norb):
+    """The part of ``green`` (stored layout, normal mode, or any ``(n, 2
+    norb, 2 norb)`` spin-block array) invariant under the spin rotations
+    about ``axis`` (0, 1, 2 = x, y, z): in each 2 x 2 spin block the
+    ``sigma^0`` and ``sigma^axis`` components, the transverse ones
+    dropped. The subspace is the same for ``G`` and for ``Sigma'`` (both
+    transform by a conjugation with a spin rotation)."""
+    g = np.asarray(green, dtype=np.complex128)
+    shape = g.shape
+    n = shape[0]
+    m = g.reshape(n, 2, norb, 2, norb)
+    s0 = np.eye(2, dtype=np.complex128)
+    sm = _SIGMA[axis]
+    out = np.zeros_like(m)
+    for basis in (s0, sm):
+        c = np.einsum("ts,ksatb->kab", basis, m)          # tr(basis M) per block
+        out += 0.5 * np.einsum("st,kab->ksatb", basis, c)
+    return out.reshape(shape)
+
+
+def hf_axis_residuals(problem, *, rng_seed=364):
+    """``(x, y, z)``: does the Hartree-Fock map of ``problem`` keep the
+    states invariant under the spin rotations about each axis? For 3
+    generic Hermitian G projected on that subspace (:func:`axis_projection`,
+    ``default_rng(rng_seed)``), the relative norm of the part of
+    ``Sigma'[G]`` outside it (divided by ``max(1, ||Sigma'||)``). Normal
+    mode only."""
+    if problem.enable_spin_orbital:
+        raise ValueError("hf_axis_residuals: normal mode only")
+    sigma = _sigma_map(problem)
+    gshape = _green_shape(problem)
+    norb = problem.norb
+    out = []
+    for mu in range(3):
+        rng = np.random.default_rng(rng_seed)
+        res = 0.0
+        norm = 0.0
+        for _ in range(3):
+            g = hermitian_green(rng.normal(size=gshape) + 1j * rng.normal(size=gshape),
+                                problem.shape)
+            g = axis_projection(g, mu, norb)
+            s = sigma(g)
+            norm = max(norm, float(np.linalg.norm(s)))
+            res = max(res, float(np.linalg.norm(s - axis_projection(s, mu, norb))))
+        out.append(res / max(1.0, norm))
+    return tuple(out)
 
 
 def _generator_residuals(problem, probes, axes):
